@@ -1,25 +1,25 @@
 use crate::users::accounts::CommitAuthor;
 use anyhow::Result;
-use codeyard_db_core::models::AdminAccountSummary;
-use codeyard_db_core::models::AdminActivityPoint;
-use codeyard_db_core::models::AdminUser;
-use codeyard_db_core::models::User;
-use codeyard_db_core::pool::SqlitePool;
+use codeyard_database::models::AdminAccountSummary;
+use codeyard_database::models::AdminActivityPoint;
+use codeyard_database::models::AdminUser;
+use codeyard_database::models::User;
+use codeyard_database::pool::SqlitePool;
 
 pub async fn create_user(pool: &SqlitePool, username: &str, email: Option<&str>) -> Result<User> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     crate::sqlite::users::transitions::require_user_namespace(&mut tx, username).await?;
     let user = sqlx::query_as(&format!(
         "INSERT INTO users(home_cell,username,email) VALUES ({cell_home},?1,?2) RETURNING *",
-        cell_home = codeyard_db_core::cells::LOCAL_HOME_SQL
+        cell_home = codeyard_database::cells::LOCAL_HOME_SQL
     ))
     .bind(username)
     .bind(email)
     .fetch_one(&mut *tx)
     .await?;
     anyhow::ensure!(
-        codeyard_db_core::cells::directory::sqlite::user(pool, &mut tx, &user).await?,
-        codeyard_db_core::cells::directory::Refusal::Conflict
+        codeyard_database::cells::directory::sqlite::user(pool, &mut tx, &user).await?,
+        codeyard_database::cells::directory::Refusal::Conflict
     );
     tx.commit().await?;
     Ok(user)
@@ -44,12 +44,12 @@ pub async fn create_user_with_password_and_flags(
 ) -> Result<User> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     crate::sqlite::users::transitions::require_user_namespace(&mut tx, username).await?;
-    let user = sqlx::query_as(&format!("INSERT INTO users(home_cell,username,email,password_hash,is_admin,must_change_password) VALUES ({cell_home},?1,?2,?3,?4,?5) RETURNING *", cell_home = codeyard_db_core::cells::LOCAL_HOME_SQL))
+    let user = sqlx::query_as(&format!("INSERT INTO users(home_cell,username,email,password_hash,is_admin,must_change_password) VALUES ({cell_home},?1,?2,?3,?4,?5) RETURNING *", cell_home = codeyard_database::cells::LOCAL_HOME_SQL))
         .bind(username).bind(email).bind(password_hash).bind(is_admin).bind(must_change_password)
         .fetch_one(&mut *tx).await?;
     anyhow::ensure!(
-        codeyard_db_core::cells::directory::sqlite::user(pool, &mut tx, &user).await?,
-        codeyard_db_core::cells::directory::Refusal::Conflict
+        codeyard_database::cells::directory::sqlite::user(pool, &mut tx, &user).await?,
+        codeyard_database::cells::directory::Refusal::Conflict
     );
     tx.commit().await?;
     Ok(user)
@@ -100,7 +100,7 @@ pub async fn update_user_password(
         .await?;
     if must_change_password {
         // A forced change locks the account out of CI like a ban does.
-        codeyard_db_core::queries::sqlite::ci::stop_actor_ci_runs(&mut tx, user_id).await?;
+        codeyard_database::queries::sqlite::ci::stop_actor_ci_runs(&mut tx, user_id).await?;
         crate::sqlite::users::transitions::stop_ownerless_organization_ci(&mut tx, &organizations)
             .await?;
     }
@@ -213,11 +213,11 @@ pub async fn create_user_from_oauth(
 ) -> Result<User> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     crate::sqlite::users::transitions::require_user_namespace(&mut tx, username).await?;
-    let user = sqlx::query_as(&format!("INSERT INTO users(home_cell,username,email,display_name,email_verified) VALUES ({cell_home},?1,?2,?3,?4) RETURNING *", cell_home = codeyard_db_core::cells::LOCAL_HOME_SQL))
+    let user = sqlx::query_as(&format!("INSERT INTO users(home_cell,username,email,display_name,email_verified) VALUES ({cell_home},?1,?2,?3,?4) RETURNING *", cell_home = codeyard_database::cells::LOCAL_HOME_SQL))
         .bind(username).bind(email).bind(display_name).bind(email.is_some()).fetch_one(&mut *tx).await?;
     anyhow::ensure!(
-        codeyard_db_core::cells::directory::sqlite::user(pool, &mut tx, &user).await?,
-        codeyard_db_core::cells::directory::Refusal::Conflict
+        codeyard_database::cells::directory::sqlite::user(pool, &mut tx, &user).await?,
+        codeyard_database::cells::directory::Refusal::Conflict
     );
     tx.commit().await?;
     Ok(user)
@@ -226,7 +226,7 @@ pub async fn create_user_from_oauth(
 pub async fn set_user_avatar(
     pool: &SqlitePool,
     user_id: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     avatar_file_id: Option<uuid::Uuid>,
 ) -> Result<crate::users::accounts::UserAvatarOutcome> {
     use crate::users::accounts::UserAvatarOutcome;
@@ -260,7 +260,7 @@ pub async fn set_user_avatar(
         .execute(&mut *tx)
         .await?;
     if let Some(old) = previous.filter(|old| Some(*old) != avatar_file_id) {
-        codeyard_db_core::queries::sqlite::files::delete_unreferenced_file_in_transaction(
+        codeyard_database::queries::sqlite::files::delete_unreferenced_file_in_transaction(
             &mut tx, old,
         )
         .await?;
@@ -279,7 +279,7 @@ pub async fn update_user_profile(
     website: Option<&str>,
 ) -> Result<Option<User>> {
     use crate::users::profiles::ProfilePatch;
-    use codeyard_db_core::queries::users::accounts::AccountCredential;
+    use codeyard_database::queries::users::accounts::AccountCredential;
     use codeyard_types::credentials::AccountRestricted;
     match crate::sqlite::users::profiles::save_profile(
         pool,
@@ -309,7 +309,7 @@ pub async fn count_matching_users<'a>(
     Ok(sqlx::query_as(
         "SELECT COUNT(*), COALESCE(SUM(is_admin),0), COALESCE(SUM(is_banned),0) FROM users WHERE NOT is_stub AND (username REGEXP ?1 OR COALESCE(email,'') REGEXP ?1)",
     )
-    .bind(codeyard_db_core::queries::sqlite::search::contains(text.trim()))
+    .bind(codeyard_database::queries::sqlite::search::contains(text.trim()))
     .fetch_one(pool)
     .await?)
 }
@@ -322,7 +322,7 @@ pub async fn list_admin_users<'a>(
     offset: i64,
 ) -> Result<Vec<AdminUser>> {
     Ok(sqlx::query_as("SELECT id,username,email,is_admin,is_banned,must_change_password,two_factor_enabled,created_at FROM users WHERE NOT is_stub AND (username REGEXP ?1 OR COALESCE(email,'') REGEXP ?1) AND CASE ?4 WHEN 'admins' THEN is_admin WHEN 'banned' THEN is_banned ELSE 1 END ORDER BY username,id LIMIT ?2 OFFSET ?3")
-        .bind(codeyard_db_core::queries::sqlite::search::contains(text.trim())).bind(limit.clamp(1,100)).bind(offset.max(0)).bind(role).fetch_all(pool).await?)
+        .bind(codeyard_database::queries::sqlite::search::contains(text.trim())).bind(limit.clamp(1,100)).bind(offset.max(0)).bind(role).fetch_all(pool).await?)
 }
 
 pub async fn admin_users_page(

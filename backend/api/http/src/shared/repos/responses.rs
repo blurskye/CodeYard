@@ -4,7 +4,7 @@ use axum::Json;
 use chrono::TimeZone;
 use chrono::Utc;
 pub async fn repository_fork_counts(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     headers: Option<&axum::http::HeaderMap>,
     ids: &[i64],
 ) -> Result<std::collections::HashMap<i64, i32>, (StatusCode, Json<ApiError>)> {

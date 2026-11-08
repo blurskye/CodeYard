@@ -1,6 +1,6 @@
 use anyhow::Result;
-use codeyard_db_core::models::AuditEntry;
-use codeyard_db_core::pool::SqlitePool;
+use codeyard_database::models::AuditEntry;
+use codeyard_database::pool::SqlitePool;
 
 pub async fn page(
     pool: &SqlitePool,
@@ -15,14 +15,14 @@ pub async fn page(
         return Ok(None);
     }
     let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM audit_log a LEFT JOIN users u ON u.id=a.actor_id WHERE a.action REGEXP ?1 AND COALESCE(u.username,'') REGEXP ?2")
-        .bind(codeyard_db_core::queries::sqlite::search::contains(action.trim())).bind(codeyard_db_core::queries::sqlite::search::contains(actor.trim())).fetch_one(&mut *tx).await?;
+        .bind(codeyard_database::queries::sqlite::search::contains(action.trim())).bind(codeyard_database::queries::sqlite::search::contains(actor.trim())).fetch_one(&mut *tx).await?;
     let limit = limit.clamp(1, 100);
     let page = page.clamp(1, ((total + limit - 1) / limit).max(1));
     let entries = sqlx::query_as(AUDIT_ROWS)
-        .bind(codeyard_db_core::queries::sqlite::search::contains(
+        .bind(codeyard_database::queries::sqlite::search::contains(
             action.trim(),
         ))
-        .bind(codeyard_db_core::queries::sqlite::search::contains(
+        .bind(codeyard_database::queries::sqlite::search::contains(
             actor.trim(),
         ))
         .bind(limit)
@@ -35,8 +35,8 @@ pub async fn page(
 
 pub async fn count_audit_entries(pool: &SqlitePool, action: &str, actor: &str) -> Result<i64> {
     Ok(sqlx::query_scalar("SELECT COUNT(*) FROM audit_log a LEFT JOIN users u ON u.id=a.actor_id WHERE a.action REGEXP ?1 AND COALESCE(u.username,'') REGEXP ?2")
-        .bind(codeyard_db_core::queries::sqlite::search::contains(action.trim()))
-        .bind(codeyard_db_core::queries::sqlite::search::contains(actor.trim()))
+        .bind(codeyard_database::queries::sqlite::search::contains(action.trim()))
+        .bind(codeyard_database::queries::sqlite::search::contains(actor.trim()))
         .fetch_one(pool)
         .await?)
 }
@@ -51,10 +51,10 @@ pub async fn list_audit_entries(
     offset: i64,
 ) -> Result<Vec<AuditEntry>> {
     Ok(sqlx::query_as(AUDIT_ROWS)
-        .bind(codeyard_db_core::queries::sqlite::search::contains(
+        .bind(codeyard_database::queries::sqlite::search::contains(
             action.trim(),
         ))
-        .bind(codeyard_db_core::queries::sqlite::search::contains(
+        .bind(codeyard_database::queries::sqlite::search::contains(
             actor.trim(),
         ))
         .bind(limit.clamp(1, 100))

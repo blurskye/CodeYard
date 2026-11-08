@@ -10,12 +10,12 @@ use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::app::AppState;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
 use codeyard_repos_pulls::repositories::content_search::Entry;
 use codeyard_repos_pulls::repositories::content_search::KindOfSearch;
 use codeyard_repos_pulls::repositories::content_search::Query as SearchQuery;
 use codeyard_repos_pulls::repositories::content_search::Sort;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde_json::json;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -67,7 +67,7 @@ async fn content(
         if let Some(found) = crate::search::global::search(
             &state,
             authentication.as_ref(),
-            codeyard_db_core::cells::search::Kind::Code,
+            codeyard_database::cells::search::Kind::Code,
             query.search_filter(),
             q.get("sort").filter(|sort| !sort.is_empty()).cloned(),
             ascending,
@@ -206,7 +206,7 @@ fn code_document<'a>(
     language: Option<&str>,
     fragments: impl Iterator<Item = (i64, &'a str)>,
 ) -> Value {
-    let repo_api = codeyard_model::urls::repo_url(owner, name);
+    let repo_api = codeyard_types::urls::repo_url(owner, name);
     let encoded = codeyard_types::ref_path::encode_path(path);
     let url = format!("{repo_api}/contents/{encoded}?ref={revision}");
     let (lines, matches): (Vec<_>, Vec<_>) = fragments
@@ -219,7 +219,7 @@ fn code_document<'a>(
         .unzip();
     let html = format!(
         "{}/{}/{}",
-        codeyard_model::http_config::link_origin(),
+        codeyard_types::http_config::link_origin(),
         codeyard_types::paths::encode_component(owner),
         codeyard_types::paths::encode_component(name)
     );

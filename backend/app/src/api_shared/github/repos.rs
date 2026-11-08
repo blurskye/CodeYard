@@ -4,14 +4,16 @@ use axum::extract::Path;
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::http::StatusCode;
-use codeyard_db_core::models::Repository;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_database::models::Repository;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde_json::json;
 use serde_json::Value;
 use std::sync::Arc;
-pub fn lifecycle_error(error: codeyard_repos_core::repositories::lifecycle::StorageError) -> Error {
-    use codeyard_repos_core::repositories::lifecycle::LifecycleFailure::*;
+pub fn lifecycle_error(
+    error: codeyard_git_storage::repositories::lifecycle::StorageError,
+) -> Error {
+    use codeyard_git_storage::repositories::lifecycle::LifecycleFailure::*;
     let status = match error.kind {
         Invalid | OwnRepositoryFork | Conflict => StatusCode::UNPROCESSABLE_ENTITY,
         Denied => StatusCode::FORBIDDEN,
@@ -214,7 +216,7 @@ async fn document_with(
         }
         value["permissions"] = json!({
             "admin": level.can_admin(), "maintain": level.can_maintain(),
-            "push": level.can_write(), "triage": level >= codeyard_db_core::models::AccessLevel::Triage,
+            "push": level.can_write(), "triage": level >= codeyard_database::models::AccessLevel::Triage,
             "pull": !repo.is_private || level.can_read(),
         });
     }
@@ -228,7 +230,7 @@ pub async fn remove(
 ) -> Result<StatusCode> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, true).await?;
     let actor = actor.ok_or_else(codeyard_identity::github_auth::required)?;
-    codeyard_repos_core::repositories::lifecycle::delete(
+    codeyard_git_storage::repositories::lifecycle::delete(
         &state.pool,
         state.cluster.as_ref(),
         actor.database_actor(),

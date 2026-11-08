@@ -4,7 +4,7 @@ use crate::reactions::ReactionRefusal;
 use crate::reactions::Subject;
 use crate::reactions::Target;
 use anyhow::Result;
-use codeyard_db_core::pool::SqlitePool;
+use codeyard_database::pool::SqlitePool;
 use sqlx::Sqlite;
 use sqlx::Transaction;
 
@@ -18,7 +18,7 @@ use sqlx::Transaction;
 pub async fn toggle_reaction(
     pool: &SqlitePool,
     actor_id: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     repo_id: i64,
     item_id: i64,
     subject: Subject,
@@ -70,7 +70,7 @@ pub async fn toggle_reaction(
 async fn begin_write<'a>(
     pool: &'a SqlitePool,
     actor_id: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     target: Target,
 ) -> Result<Transaction<'a, Sqlite>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
@@ -101,7 +101,7 @@ async fn begin_write<'a>(
             .await?;
         anyhow::ensure!(
             !draft
-                || codeyard_db_core::queries::sqlite::discussions::lock_write_authority(
+                || codeyard_database::queries::sqlite::discussions::lock_write_authority(
                     &mut tx,
                     actor_id,
                     target.repo_id
@@ -111,7 +111,7 @@ async fn begin_write<'a>(
         );
     }
     anyhow::ensure!(
-        codeyard_db_core::queries::sqlite::users::transitions::credential_live(
+        codeyard_database::queries::sqlite::users::transitions::credential_live(
             &mut tx, actor_id, credential, true
         )
         .await?,
@@ -123,7 +123,7 @@ async fn begin_write<'a>(
 pub async fn create_reaction(
     pool: &SqlitePool,
     actor_id: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     target: Target,
     content: &str,
 ) -> Result<(Reaction, bool)> {
@@ -146,7 +146,7 @@ pub async fn create_reaction(
 pub async fn delete_reaction(
     pool: &SqlitePool,
     actor_id: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     target: Target,
     reaction_id: i64,
 ) -> Result<bool> {

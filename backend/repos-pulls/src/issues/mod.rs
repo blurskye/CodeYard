@@ -86,9 +86,9 @@ fn database_error<E>(_: E) -> OperationError {
 
 /// The repository a caller already resolved, read again by ID with its owner's name.
 pub(super) async fn repository(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     id: i64,
-) -> Result<(codeyard_db_core::models::Repository, String), OperationError> {
+) -> Result<(codeyard_database::models::Repository, String), OperationError> {
     use codeyard_identity::repository_access::current_repository_with_owner;
     use codeyard_identity::repository_access::AccessError;
     current_repository_with_owner(pool, id)
@@ -103,9 +103,9 @@ pub(super) async fn repository(
 }
 
 pub(super) async fn actor(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     id: i64,
-) -> Result<codeyard_db_core::models::User, OperationError> {
+) -> Result<codeyard_database::models::User, OperationError> {
     codeyard_db_identity::users::accounts::get_user_by_id(pool, id)
         .await
         .map_err(write_error)?
@@ -146,9 +146,9 @@ fn access_error(error: codeyard_identity::repository_access::AccessError) -> Ope
 }
 
 pub(super) async fn require_read(
-    pool: &codeyard_db_core::DbPool,
-    user: &codeyard_db_core::models::User,
-    repo: &codeyard_db_core::models::Repository,
+    pool: &codeyard_database::DbPool,
+    user: &codeyard_database::models::User,
+    repo: &codeyard_database::models::Repository,
 ) -> Result<(), OperationError> {
     codeyard_identity::repository_access::check_read(pool, repo.id, Some(user.id))
         .await
@@ -157,9 +157,9 @@ pub(super) async fn require_read(
 }
 
 pub(super) async fn require_write(
-    pool: &codeyard_db_core::DbPool,
-    user: &codeyard_db_core::models::User,
-    repo: &codeyard_db_core::models::Repository,
+    pool: &codeyard_database::DbPool,
+    user: &codeyard_database::models::User,
+    repo: &codeyard_database::models::Repository,
 ) -> Result<(), OperationError> {
     codeyard_identity::repository_access::check_write(pool, repo.id, user.id)
         .await
@@ -168,7 +168,7 @@ pub(super) async fn require_write(
 }
 
 pub(super) fn write_error(error: anyhow::Error) -> OperationError {
-    use codeyard_db_core::queries::discussions::DiscussionWriteRefusal;
+    use codeyard_database::queries::discussions::DiscussionWriteRefusal;
     if error.is::<codeyard_types::credentials::AccountRestricted>() {
         return OperationError::Denied {
             code: "forbidden",
@@ -292,8 +292,8 @@ pub(super) fn write_error(error: anyhow::Error) -> OperationError {
 
 #[cfg(test)]
 mod tests {
-    use codeyard_model::issue_input::validate_body;
-    use codeyard_model::issue_input::validate_title;
+    use codeyard_types::issue_input::validate_body;
+    use codeyard_types::issue_input::validate_title;
 
     #[test]
     fn blank_and_oversized_text_is_refused_in_bytes() {
@@ -310,10 +310,10 @@ mod tests {
     #[test]
     fn label_descriptions_are_bounded_in_bytes() {
         assert!(
-            codeyard_model::issue_input::validate_label("label", Some(&"x".repeat(1024))).is_ok()
+            codeyard_types::issue_input::validate_label("label", Some(&"x".repeat(1024))).is_ok()
         );
         assert!(
-            codeyard_model::issue_input::validate_label("label", Some(&"x".repeat(1025))).is_err()
+            codeyard_types::issue_input::validate_label("label", Some(&"x".repeat(1025))).is_err()
         );
     }
 

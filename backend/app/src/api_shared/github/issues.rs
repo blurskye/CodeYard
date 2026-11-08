@@ -5,7 +5,7 @@ use axum::{
     http::HeaderMap,
     Json,
 };
-use codeyard_model::github_error::Result;
+use codeyard_types::github_error::Result;
 use codeyard_webhooks::issue_documents::{document, Reader};
 use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};

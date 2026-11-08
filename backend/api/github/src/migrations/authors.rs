@@ -12,12 +12,12 @@ use axum::routing::patch;
 use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_app::app::AppState;
-use codeyard_db_core::queries::source_imports::ImportRefusal;
+use codeyard_database::queries::source_imports::ImportRefusal;
 use codeyard_db_identity::import_authors::Author;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
-use codeyard_model::urls::repo_url;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_git_storage::repositories::store::repo_store;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
+use codeyard_types::urls::repo_url;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -59,7 +59,7 @@ async fn documents(
                     .clone()
             })
             .collect::<Vec<_>>();
-        let users = codeyard_repos_core::repositories::reads::commit_authors(&state.pool, &emails)
+        let users = codeyard_git_storage::repositories::reads::commit_authors(&state.pool, &emails)
             .await
             .map_err(Error::unavailable)?;
         for row in chunk {
@@ -96,9 +96,9 @@ async fn list(
         .ok_or_else(Error::missing)?;
     let store = repo_store(&repo, state.cluster.as_ref());
     let (refs, _) =
-        codeyard_repos_core::repositories::reads::refs_and_default(&repo, state.cluster.as_ref())
+        codeyard_git_storage::repositories::reads::refs_and_default(&repo, state.cluster.as_ref())
             .await
-            .map_err(codeyard_repos_core::api_shared::github::contents::store_error)?;
+            .map_err(codeyard_git_storage::api_shared::github::contents::store_error)?;
     let mut authors = BTreeSet::new();
     let deadline = Instant::now() + codeyard_git::COMMIT_WALK_TIMEOUT;
     // Walk branch and tag tips; tag-only and older merge-parent authors belong to the import.
@@ -114,7 +114,7 @@ async fn list(
             let commits = store
                 .commits_until(sha, offset, 100, &Default::default(), deadline)
                 .await
-                .map_err(codeyard_repos_core::api_shared::github::contents::store_error)?;
+                .map_err(codeyard_git_storage::api_shared::github::contents::store_error)?;
             let count = commits.len();
             for commit in commits {
                 if seen.insert(commit.sha) {
@@ -154,12 +154,12 @@ async fn map(
     actor.require_write()?;
     let bytes = to_bytes(request.into_body(), 16 * 1024)
         .await
-        .map_err(codeyard_model::github_error::json_bytes_error)?;
+        .map_err(codeyard_types::github_error::json_bytes_error)?;
     let input = if bytes.is_empty() {
         Mapping::default()
     } else {
         serde_json::from_slice::<Option<Mapping>>(&bytes)
-            .map_err(codeyard_model::github_error::json_parse_error)?
+            .map_err(codeyard_types::github_error::json_parse_error)?
             .unwrap_or_default()
     };
     if input.name.as_ref().is_some_and(|value| {
@@ -170,7 +170,7 @@ async fn map(
     if input
         .email
         .as_ref()
-        .is_some_and(|value| codeyard_model::account_input::validate_email(value).is_err())
+        .is_some_and(|value| codeyard_types::account_input::validate_email(value).is_err())
     {
         return Err(Error::validation("PorterAuthor", "email", "invalid"));
     }

@@ -33,7 +33,7 @@ fn same_origin_with_public_url(headers: &HeaderMap, public_url: Option<&str>) ->
         return false;
     }
     if let Some(public_url) = public_url.map(str::trim).filter(|value| !value.is_empty()) {
-        return codeyard_model::http_config::parse_public_url(public_url)
+        return codeyard_types::http_config::parse_public_url(public_url)
             .is_ok_and(|target| target.origin() == origin.origin());
     }
     let Some(host) = headers.get(header::HOST).and_then(|v| v.to_str().ok()) else {

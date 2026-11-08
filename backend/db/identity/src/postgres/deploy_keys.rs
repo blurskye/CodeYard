@@ -1,8 +1,8 @@
 use crate::deploy_keys::NewDeployKey;
 use anyhow::Result;
-use codeyard_db_core::models::DeployKey;
-use codeyard_db_core::pool::PgPool;
-use codeyard_model::identity::SshKeyWriteRefusal;
+use codeyard_database::models::DeployKey;
+use codeyard_database::pool::PgPool;
+use codeyard_types::identity::SshKeyWriteRefusal;
 
 const COLUMNS: &str = "id, repo_id, name AS title, fingerprint, public_key, NOT read_only AS can_write, created_by_id, last_used_at, created_at";
 
@@ -12,14 +12,14 @@ pub async fn list_deploy_keys(
     pool: &PgPool,
     actor: i64,
     repo_id: i64,
-    credential: impl Into<codeyard_db_core::queries::users::accounts::OwnedAccountCredential>,
+    credential: impl Into<codeyard_database::queries::users::accounts::OwnedAccountCredential>,
     after: i64,
     limit: i64,
 ) -> Result<Vec<DeployKey>> {
-    let credential: codeyard_db_core::queries::users::accounts::OwnedAccountCredential =
+    let credential: codeyard_database::queries::users::accounts::OwnedAccountCredential =
         credential.into();
     let mut tx = pool.begin().await?;
-    let live = codeyard_db_core::queries::postgres::credentials::repository(
+    let live = codeyard_database::queries::postgres::credentials::repository(
         &mut tx,
         &(actor, &credential).into(),
         repo_id,
@@ -27,8 +27,8 @@ pub async fn list_deploy_keys(
         false,
     )
     .await?;
-    anyhow::ensure!(live, codeyard_model::repositories::DeployKeyError::Denied);
-    let access = codeyard_db_core::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL;
+    anyhow::ensure!(live, codeyard_types::repositories::DeployKeyError::Denied);
+    let access = codeyard_database::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL;
     let sql = format!("SELECT {COLUMNS} FROM deploy_keys WHERE repo_id=$1 AND id>$3 AND EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=$2 WHERE r.id=deploy_keys.repo_id AND NOT r.is_gist AND NOT u.is_banned AND NOT u.must_change_password AND ((r.owner_kind='user' AND u.is_admin) OR ({access})>=5)) ORDER BY id LIMIT $4");
     let keys = sqlx::query_as(&sql)
         .bind(repo_id)
@@ -73,10 +73,10 @@ async fn require_admin(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     actor: i64,
     repo: i64,
-    credential: codeyard_db_core::queries::users::accounts::OwnedAccountCredential,
+    credential: codeyard_database::queries::users::accounts::OwnedAccountCredential,
 ) -> Result<()> {
-    use codeyard_db_core::queries::postgres::repositories::access::lock_user_repo_access_in_transaction;
-    use codeyard_db_core::queries::postgres::repositories::access::RepositoryRowLock;
+    use codeyard_database::queries::postgres::repositories::access::lock_user_repo_access_in_transaction;
+    use codeyard_database::queries::postgres::repositories::access::RepositoryRowLock;
     let access =
         lock_user_repo_access_in_transaction(tx, actor, repo, RepositoryRowLock::Shared, true)
             .await?;
@@ -91,7 +91,7 @@ async fn require_admin(
             access.access.can_admin() || (!access.organization && access.is_admin)
         });
     // Fine-grained, app, CI and OAuth tokens each need repository administration.
-    let live = codeyard_db_core::queries::postgres::credentials::repository(
+    let live = codeyard_database::queries::postgres::credentials::repository(
         tx,
         &(actor, &credential).into(),
         repo,
@@ -101,7 +101,7 @@ async fn require_admin(
     .await?;
     anyhow::ensure!(
         allowed && live,
-        codeyard_model::repositories::DeployKeyError::Denied
+        codeyard_types::repositories::DeployKeyError::Denied
     );
     Ok(())
 }
@@ -109,20 +109,20 @@ async fn require_admin(
 pub async fn insert_deploy_key(
     pool: &PgPool,
     key: &NewDeployKey,
-    credential: impl Into<codeyard_db_core::queries::users::accounts::OwnedAccountCredential>,
+    credential: impl Into<codeyard_database::queries::users::accounts::OwnedAccountCredential>,
 ) -> Result<DeployKey> {
     let mut tx = pool.begin().await?;
-    let credential: codeyard_db_core::queries::users::accounts::OwnedAccountCredential =
+    let credential: codeyard_database::queries::users::accounts::OwnedAccountCredential =
         credential.into();
     require_admin(&mut tx, key.created_by_id, key.repo_id, credential.clone()).await?;
     let enabled:bool=sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM repositories r JOIN organization_settings s ON s.org_id=r.owner_org_id WHERE r.id=$1 AND r.owner_kind='org' AND r.owner_user_id IS NULL AND NOT s.deploy_keys_enabled_for_repositories)").bind(key.repo_id).fetch_one(&mut *tx).await?;
     anyhow::ensure!(
         enabled,
-        codeyard_model::repositories::DeployKeyError::Denied
+        codeyard_types::repositories::DeployKeyError::Denied
     );
 
     // The same advisory lock as account-key enrollment, so one fingerprint is checked once.
-    codeyard_db_core::queries::postgres::users::transitions::lock_fingerprints(
+    codeyard_database::queries::postgres::users::transitions::lock_fingerprints(
         &mut tx,
         &[&key.fingerprint],
     )
@@ -148,13 +148,13 @@ pub async fn insert_deploy_key(
         .await?;
     if pool.directory().is_some() {
         let fingerprint =
-            codeyard_model::cells::Key::new(codeyard_model::cells::KeyKind::Ssh, &key.fingerprint)?;
+            codeyard_types::cells::Key::new(codeyard_types::cells::KeyKind::Ssh, &key.fingerprint)?;
         anyhow::ensure!(
-            codeyard_db_core::cells::directory::postgres::publish(
+            codeyard_database::cells::directory::postgres::publish(
                 pool,
                 &mut tx,
-                codeyard_model::cells::Object {
-                    kind: codeyard_model::cells::ObjectKind::Repository,
+                codeyard_types::cells::Object {
+                    kind: codeyard_types::cells::ObjectKind::Repository,
                     id: key.repo_id
                 },
                 &[fingerprint]
@@ -173,7 +173,7 @@ pub async fn delete_deploy_key(
     repo_id: i64,
     key_id: i64,
     actor: i64,
-    credential: impl Into<codeyard_db_core::queries::users::accounts::OwnedAccountCredential>,
+    credential: impl Into<codeyard_database::queries::users::accounts::OwnedAccountCredential>,
 ) -> Result<bool> {
     let mut tx = pool.begin().await?;
     require_admin(&mut tx, actor, repo_id, credential.into()).await?;
@@ -189,12 +189,12 @@ pub async fn delete_deploy_key(
             .as_ref()
             .map(|fingerprint| -> Result<_> {
                 Ok((
-                    codeyard_model::cells::Object {
-                        kind: codeyard_model::cells::ObjectKind::Repository,
+                    codeyard_types::cells::Object {
+                        kind: codeyard_types::cells::ObjectKind::Repository,
                         id: repo_id,
                     },
-                    codeyard_model::cells::Key::new(
-                        codeyard_model::cells::KeyKind::Ssh,
+                    codeyard_types::cells::Key::new(
+                        codeyard_types::cells::KeyKind::Ssh,
                         fingerprint,
                     )?,
                 ))
@@ -204,7 +204,7 @@ pub async fn delete_deploy_key(
         None
     };
     if let Some((object, key)) = &cleanup {
-        codeyard_db_core::cells::outbox::postgres::release(
+        codeyard_database::cells::outbox::postgres::release(
             pool,
             &mut tx,
             *object,
@@ -214,7 +214,7 @@ pub async fn delete_deploy_key(
     }
     tx.commit().await?;
     if let Some((object, key)) = &cleanup {
-        codeyard_db_core::cells::directory::postgres::finish_release(
+        codeyard_database::cells::directory::postgres::finish_release(
             pool,
             *object,
             std::slice::from_ref(key),

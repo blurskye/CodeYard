@@ -9,7 +9,7 @@ use crate::support::http_client::Client;
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
 use codeyard_ci::config::CiConfig;
-use codeyard_db_core::queries::users::accounts::AccountCredential;
+use codeyard_database::queries::users::accounts::AccountCredential;
 use codeyard_identity as identity;
 use codeyard_identity::email_links as links;
 use codeyard_identity::email_links::Purpose;

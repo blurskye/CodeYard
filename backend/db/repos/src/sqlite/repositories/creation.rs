@@ -4,12 +4,12 @@ use crate::repositories::creation::RepositoryCreationOwner;
 use crate::repositories::creation::RepositoryStorageRefusal;
 use crate::repositories::creation::RepositoryTarget;
 use anyhow::Result;
-use codeyard_db_core::models::OrgRole;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::pool::SqlitePool;
-use codeyard_db_core::queries::organizations::properties::invalid as invalid_property;
-use codeyard_db_core::queries::organizations::properties::ValueInput;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
+use codeyard_database::models::OrgRole;
+use codeyard_database::models::Repository;
+use codeyard_database::pool::SqlitePool;
+use codeyard_database::queries::organizations::properties::invalid as invalid_property;
+use codeyard_database::queries::organizations::properties::ValueInput;
+use codeyard_database::queries::organizations::OrganizationOutcome;
 
 /// Whether the actor may create a repository for this owner; `Ok(true)` for site admins.
 pub(crate) async fn creation_authority(
@@ -25,7 +25,7 @@ pub(crate) async fn creation_authority(
         .await?
         .ok_or_else(|| RepositoryStorageRefusal::Denied.into()),
         RepositoryTarget::Organization(org) => {
-            match codeyard_db_core::queries::sqlite::organizations::authority::authority(
+            match codeyard_database::queries::sqlite::organizations::authority::authority(
                 connection,
                 owner.actor_id,
                 org,
@@ -95,14 +95,14 @@ async fn fork_source(
         .await?
         .ok_or(RepositoryStorageRefusal::Denied)?;
     anyhow::ensure!(
-        !codeyard_db_core::queries::sqlite::users::blocks::repository_interaction_blocked(
+        !codeyard_database::queries::sqlite::users::blocks::repository_interaction_blocked(
             connection, actor, id
         )
         .await?,
         RepositoryStorageRefusal::Denied
     );
     let access =
-        codeyard_db_core::queries::sqlite::repositories::access::user_repo_access_in_transaction(
+        codeyard_database::queries::sqlite::repositories::access::user_repo_access_in_transaction(
             connection, actor, id,
         )
         .await?;
@@ -225,7 +225,7 @@ async fn insert_kind(
             );
             Some(
                 foreign
-                    .check(&codeyard_db_core::DbPool::Sqlite(pool.clone()))
+                    .check(&codeyard_database::DbPool::Sqlite(pool.clone()))
                     .await?
                     .repository,
             )
@@ -251,13 +251,13 @@ async fn insert_kind(
             RepositoryStorageRefusal::Denied
         );
         let source = input.source_id.ok_or(RepositoryStorageRefusal::Denied)?;
-        let advisory = codeyard_db_core::queries::sqlite::advisories::administration(
+        let advisory = codeyard_database::queries::sqlite::advisories::administration(
             &mut tx, creator, source, ghsa,
         )
         .await?;
         anyhow::ensure!(
             advisory.state == "draft" && advisory.private_fork_id.is_none(),
-            codeyard_model::advisories::Refusal::Conflict
+            codeyard_types::advisories::Refusal::Conflict
         );
     }
     if let Some(source_id) = input.source_id.filter(|_| admission.advisory.is_none()) {
@@ -288,7 +288,7 @@ async fn insert_kind(
     }
     let repository = sqlx::query_as::<_, Repository>(
         &format!("INSERT INTO repositories (home_cell,owner_kind,owner_user_id,owner_org_id,name,description,is_private,disk_path,is_fork,forked_from_id,default_branch,storage_node_id,created_by_id,is_gist,visibility_locked)
-         VALUES ({cell_home},?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14) ON CONFLICT DO NOTHING RETURNING *", cell_home = codeyard_db_core::cells::LOCAL_HOME_SQL),
+         VALUES ({cell_home},?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14) ON CONFLICT DO NOTHING RETURNING *", cell_home = codeyard_database::cells::LOCAL_HOME_SQL),
     )
     .bind(kind)
     .bind(user)
@@ -307,7 +307,7 @@ async fn insert_kind(
     .fetch_optional(&mut *tx)
     .await?;
     if let Some(repository) = &repository {
-        codeyard_db_core::queries::sqlite::code_security::apply_default(&mut tx, repository)
+        codeyard_database::queries::sqlite::code_security::apply_default(&mut tx, repository)
             .await?;
         if source.is_some() {
             sqlx::query("INSERT INTO repo_actions_settings(repo_id,enabled) VALUES(?1,false)")
@@ -327,11 +327,11 @@ async fn insert_kind(
     }
     if let Some(repository) = repository.as_ref() {
         grant_creator(&mut tx, input.owner, repository.id).await?;
-        codeyard_db_core::cells::directory::sqlite::repository(pool, &mut tx, repository).await?;
+        codeyard_database::cells::directory::sqlite::repository(pool, &mut tx, repository).await?;
     }
     if let Some(foreign) = admission.foreign_source {
         let current = foreign
-            .check(&codeyard_db_core::DbPool::Sqlite(pool.clone()))
+            .check(&codeyard_database::DbPool::Sqlite(pool.clone()))
             .await?;
         anyhow::ensure!(
             (!current.repository.is_private || private)
@@ -365,7 +365,7 @@ pub async fn repository_visibility_locked(pool: &SqlitePool, repo_id: i64) -> Re
 /// Reads the native source with the same fork policy and retained credential used by creation.
 pub async fn read_fork_source(
     pool: &SqlitePool,
-    actor: &codeyard_db_core::queries::credentials::Actor,
+    actor: &codeyard_database::queries::credentials::Actor,
     id: i64,
 ) -> Result<Option<Repository>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
@@ -397,7 +397,7 @@ pub async fn read_fork_source(
             return Ok(None);
         }
     }
-    if !codeyard_db_core::queries::sqlite::credentials::repository(
+    if !codeyard_database::queries::sqlite::credentials::repository(
         &mut tx, actor, id, "contents", false,
     )
     .await?
@@ -411,13 +411,13 @@ pub async fn read_fork_source(
 /// A native metadata/content read retains the original credential and repository authority.
 pub async fn read_repository_source(
     pool: &SqlitePool,
-    actor: &codeyard_db_core::queries::credentials::Actor,
+    actor: &codeyard_database::queries::credentials::Actor,
     id: i64,
 ) -> Result<Option<Repository>> {
     let mut tx = pool.begin().await?;
-    if !codeyard_db_core::queries::sqlite::repositories::access::lock_readable_repository_in_transaction(
+    if !codeyard_database::queries::sqlite::repositories::access::lock_readable_repository_in_transaction(
         &mut tx, actor.user_id, id,
-    ).await? || !codeyard_db_core::queries::sqlite::credentials::repository(
+    ).await? || !codeyard_database::queries::sqlite::credentials::repository(
         &mut tx, actor, id, "contents", false,
     ).await? {
         return Ok(None);

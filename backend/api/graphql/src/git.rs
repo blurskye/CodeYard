@@ -8,8 +8,8 @@ use crate::url;
 use crate::RequestContext;
 use crate::Result;
 use codeyard_git::CommitInfo;
-use codeyard_model::node_id;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_git_storage::repositories::store::repo_store;
+use codeyard_types::node_id;
 use serde_json::json;
 use serde_json::Value;
 
@@ -80,7 +80,7 @@ pub(super) fn commit(
 }
 
 pub(super) async fn load(
-    repo: &codeyard_db_core::models::Repository,
+    repo: &codeyard_database::models::Repository,
     oid: &str,
     scope: &str,
     request: &RequestContext,
@@ -288,7 +288,7 @@ pub(super) async fn resolve(
     }
 }
 
-pub(super) fn status(repo: i64, row: &codeyard_db_core::models::CommitStatus) -> Value {
+pub(super) fn status(repo: i64, row: &codeyard_database::models::CommitStatus) -> Value {
     json!({"__typename":"StatusContext","_repo":repo,"_scope":"statuses","_oid":row.sha,"_creator":row.creator_id,
         "id":node_id::scoped("CS",repo,row.id),"context":row.context,"state":row.state.to_uppercase(),"description":row.description,"targetUrl":row.target_url,"createdAt":row.created_at})
 }

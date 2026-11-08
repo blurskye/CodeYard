@@ -8,8 +8,8 @@ use codeyard_api_http::error::ApiError;
 use codeyard_api_http::session::get_current_user;
 use codeyard_app::app::AppState;
 use codeyard_ci_engine::admission::is_safe_owner;
-use codeyard_repos_core::repositories::store::repo_store;
-use codeyard_repos_core::workflows::list_workflows_for_ref;
+use codeyard_git_storage::repositories::store::repo_store;
+use codeyard_git_storage::workflows::list_workflows_for_ref;
 use serde::Deserialize;
 use serde::Serialize;
 use std::sync::Arc;
@@ -33,7 +33,7 @@ pub async fn list_ci_workflows(
     let user = get_current_user(&state.pool, &headers).await?;
 
     if !is_safe_owner(&query.owner)
-        || codeyard_repos_core::repositories::lifecycle::validate_name(&query.repo).is_err()
+        || codeyard_git_storage::repositories::lifecycle::validate_name(&query.repo).is_err()
     {
         return Err((
             StatusCode::BAD_REQUEST,

@@ -4,7 +4,7 @@ use crate::support::fake_webui_bundle as bundle;
 use crate::support::http_client::Client;
 use axum::http::StatusCode;
 
-use codeyard_repos_core::repositories::lifecycle;
+use codeyard_git_storage::repositories::lifecycle;
 use codeyard_webui::app::Page;
 use codeyard_webui::pages::repos as view;
 use serde_json::{json, Value};

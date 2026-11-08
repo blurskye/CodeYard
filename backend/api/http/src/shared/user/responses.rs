@@ -34,8 +34,8 @@ impl PublicUserResponse {
     }
 }
 
-impl From<codeyard_db_core::models::User> for PublicUserResponse {
-    fn from(user: codeyard_db_core::models::User) -> Self {
+impl From<codeyard_database::models::User> for PublicUserResponse {
+    fn from(user: codeyard_database::models::User) -> Self {
         Self {
             id: user.id,
             username: user.username.clone(),

@@ -289,7 +289,7 @@ pub(crate) async fn exchange_profile(
     Ok(profile)
 }
 
-use codeyard_model::oauth_apps::pkce_challenge;
+use codeyard_types::oauth_apps::pkce_challenge;
 
 #[cfg(test)]
 mod tests {
@@ -298,7 +298,7 @@ mod tests {
         http::{header, HeaderMap, StatusCode},
         Json,
     };
-    use codeyard_model::oauth_apps::validated_public_origin;
+    use codeyard_types::oauth_apps::validated_public_origin;
 
     #[test]
     fn provider_metadata_covers_every_provider() {

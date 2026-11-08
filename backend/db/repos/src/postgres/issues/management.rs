@@ -3,9 +3,9 @@ use crate::issues::management::LinkedBranch;
 use crate::issues::management::Refusal;
 use anyhow::ensure;
 use anyhow::Result;
-use codeyard_db_core::models::Issue;
-use codeyard_db_core::pool::PgPool;
-use codeyard_db_core::queries::credentials::Actor;
+use codeyard_database::models::Issue;
+use codeyard_database::pool::PgPool;
+use codeyard_database::queries::credentials::Actor;
 use codeyard_types::credentials::AccountRestricted;
 use sqlx::Postgres;
 use sqlx::Transaction;
@@ -21,12 +21,12 @@ pub async fn closing_candidates(
     scope: &str,
     number: i32,
     before: i64,
-) -> Result<Vec<codeyard_db_core::models::PullRequest>> {
+) -> Result<Vec<codeyard_database::models::PullRequest>> {
     Ok(sqlx::query_as(&format!(
         "SELECT p.* FROM pull_requests p JOIN repositories r ON r.id=p.repo_id LEFT JOIN users u ON u.id=$1
          WHERE (p.body LIKE $2 OR p.body LIKE $5) AND (p.repo_id=$3 OR p.body ILIKE $4) AND p.base_branch=r.default_branch AND ($6<=0 OR p.id<$6) AND {}
          ORDER BY p.id DESC LIMIT 100",
-        codeyard_db_core::queries::postgres::repositories::access::readable_condition()
+        codeyard_database::queries::postgres::repositories::access::readable_condition()
     ))
     .bind(viewer)
     .bind(format!("%#{number}%"))
@@ -120,7 +120,7 @@ pub async fn delete(pool: &PgPool, actor: impl Into<Actor>, repo: i64, id: i64) 
     let actor = authority.user_id;
     let mut tx = pool.begin().await?;
     ensure!(
-        codeyard_db_core::queries::postgres::discussions::lock_admin_authority(
+        codeyard_database::queries::postgres::discussions::lock_admin_authority(
             &mut tx, actor, repo
         )
         .await?,
@@ -286,11 +286,11 @@ pub async fn close_duplicate_with_previous(
                 Refusal::Denied
             );
         } else {
-            let access = codeyard_db_core::queries::postgres::repositories::access::lock_user_repo_access_in_transaction(
+            let access = codeyard_database::queries::postgres::repositories::access::lock_user_repo_access_in_transaction(
                 &mut tx,
                 actor,
                 current,
-                codeyard_db_core::queries::postgres::repositories::access::RepositoryRowLock::Shared,
+                codeyard_database::queries::postgres::repositories::access::RepositoryRowLock::Shared,
                 true,
             )
             .await?;

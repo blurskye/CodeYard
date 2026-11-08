@@ -15,8 +15,8 @@ status=0
 echo '=== graphql types'
 python3 -I scripts/github-graphql-types.py --check || { echo '=== FAILED: graphql types'; status=1; }
 cargo test --locked -p codeyard -p codeyard-cache -p codeyard-app -p codeyard-api-github \
-    -p codeyard-api-http -p codeyard-db-core -p codeyard-db-identity -p codeyard-db-repos \
-    -p codeyard-identity -p codeyard-cells-router -p codeyard-repos-core -p codeyard-repos-rpc \
+    -p codeyard-api-http -p codeyard-database -p codeyard-db-identity -p codeyard-db-repos \
+    -p codeyard-identity -p codeyard-router -p codeyard-git-storage -p codeyard-repos-rpc \
     -p codeyard-ssh --lib --test writes --test database --test valkey --test cluster \
     --no-run --message-format=json >"$artifacts" || exit 1
 export GITSERV_TEST_OPENSSH_HELPER

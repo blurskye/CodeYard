@@ -13,7 +13,7 @@ use codeyard_webui::components::references::References;
 /// anything else is a comment.
 pub(crate) async fn resolve_references(
     ctx: &PageContext,
-    repository: &codeyard_db_core::models::Repository,
+    repository: &codeyard_database::models::Repository,
     owner: &str,
     name: &str,
     texts: &[&str],
@@ -46,7 +46,7 @@ pub(crate) async fn resolve_references(
 /// failing the page.
 pub(crate) async fn resolve_references_or_none(
     ctx: &PageContext,
-    repository: &codeyard_db_core::models::Repository,
+    repository: &codeyard_database::models::Repository,
     owner: &str,
     name: &str,
     texts: &[&str],

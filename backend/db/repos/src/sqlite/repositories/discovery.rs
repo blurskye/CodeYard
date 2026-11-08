@@ -5,13 +5,13 @@ use crate::repositories::discovery::RepositorySearch;
 use crate::repositories::records::RepositorySort;
 use anyhow::ensure;
 use anyhow::Result;
-use codeyard_db_core::models::Issue;
-use codeyard_db_core::models::PullRequest;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::models::User;
-use codeyard_db_core::pool::SqlitePool;
-use codeyard_db_core::queries::sqlite::repositories::access::readable_condition;
-use codeyard_db_core::queries::sqlite::search::contains;
+use codeyard_database::models::Issue;
+use codeyard_database::models::PullRequest;
+use codeyard_database::models::Repository;
+use codeyard_database::models::User;
+use codeyard_database::pool::SqlitePool;
+use codeyard_database::queries::sqlite::repositories::access::readable_condition;
+use codeyard_database::queries::sqlite::search::contains;
 
 pub async fn create_forked_repository(
     pool: &SqlitePool,
@@ -22,10 +22,10 @@ pub async fn create_forked_repository(
     // preserve/narrow descendants after source changes; no HTTP backend branch.
     let result = sqlx::query_as::<_, Repository>(&format!(r#"INSERT INTO repositories(home_cell,owner_kind,owner_user_id,name,description,is_private,disk_path,is_fork,forked_from_id,default_branch,created_by_id)
         SELECT {cell_home},'user',?1,?2,?3,(?4 OR source.is_private OR source.visibility_locked),?5,1,?6,?7,?1
-        FROM repositories source WHERE source.id=?6 AND NOT source.is_gist RETURNING *"#, cell_home = codeyard_db_core::cells::LOCAL_HOME_SQL))
+        FROM repositories source WHERE source.id=?6 AND NOT source.is_gist RETURNING *"#, cell_home = codeyard_database::cells::LOCAL_HOME_SQL))
         .bind(input.owner_id).bind(input.name).bind(input.description).bind(input.is_private)
         .bind(input.disk_path).bind(input.forked_from).bind(input.default_branch).fetch_one(&mut *tx).await?;
-    codeyard_db_core::cells::directory::sqlite::repository(pool, &mut tx, &result).await?;
+    codeyard_database::cells::directory::sqlite::repository(pool, &mut tx, &result).await?;
     tx.commit().await?;
     Ok(result)
 }
@@ -418,7 +418,7 @@ mod tests {
             .max_connections(1)
             .connect("sqlite::memory:")
             .await
-            .map(codeyard_db_core::pool::Pool::from)
+            .map(codeyard_database::pool::Pool::from)
             .unwrap();
         let mut connection = search_connection(&pool).await.unwrap();
         let error = sqlx::query_scalar::<_,i64>("WITH RECURSIVE n(x) AS (VALUES(0) UNION ALL SELECT x+1 FROM n WHERE x<1000000000) SELECT sum(x) FROM n")

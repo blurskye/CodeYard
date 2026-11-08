@@ -169,7 +169,7 @@ async fn dispatch_contract(pg: bool) {
         f.pool(),
         bob,
         repo.id,
-        codeyard_db_core::models::AccessLevel::Write,
+        codeyard_database::models::AccessLevel::Write,
     )
     .await
     .unwrap();

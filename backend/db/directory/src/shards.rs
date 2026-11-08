@@ -9,7 +9,7 @@
 use super::{Directory, Refusal};
 use anyhow::{ensure, Result};
 use chrono::{DateTime, Utc};
-use codeyard_db_core::pool::PgPool;
+use codeyard_database::pool::PgPool;
 use sqlx::{Postgres, Transaction};
 use std::collections::BTreeMap;
 

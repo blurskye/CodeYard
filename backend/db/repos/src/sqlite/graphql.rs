@@ -1,6 +1,6 @@
 use crate::graphql::RateLimit;
 use anyhow::Result;
-use codeyard_db_core::pool::SqlitePool;
+use codeyard_database::pool::SqlitePool;
 
 pub async fn linked_branch(
     pool: &SqlitePool,
@@ -30,7 +30,7 @@ pub async fn issue_type_repositories(
     after: i64,
     viewer: i64,
 ) -> Result<Vec<i64>> {
-    Ok(sqlx::query_scalar(&format!("SELECT r.id FROM repositories r JOIN issue_attributes a ON a.owner_user_id=r.owner_user_id OR a.owner_org_id=r.owner_org_id LEFT JOIN users u ON u.id=?3 WHERE a.id=?1 AND a.kind='type' AND r.id>?2 AND ({}) ORDER BY r.id LIMIT 100", codeyard_db_core::queries::sqlite::repositories::access::readable_condition()))
+    Ok(sqlx::query_scalar(&format!("SELECT r.id FROM repositories r JOIN issue_attributes a ON a.owner_user_id=r.owner_user_id OR a.owner_org_id=r.owner_org_id LEFT JOIN users u ON u.id=?3 WHERE a.id=?1 AND a.kind='type' AND r.id>?2 AND ({}) ORDER BY r.id LIMIT 100", codeyard_database::queries::sqlite::repositories::access::readable_condition()))
         .bind(id).bind(after).bind(viewer).fetch_all(pool).await?)
 }
 
@@ -69,7 +69,7 @@ pub async fn reaction(pool: &SqlitePool, id: i64) -> Result<Option<crate::reacti
 pub async fn status(
     pool: &SqlitePool,
     id: i64,
-) -> Result<Option<codeyard_db_core::models::CommitStatus>> {
+) -> Result<Option<codeyard_database::models::CommitStatus>> {
     Ok(sqlx::query_as("SELECT id,repo_id,sha,context,state,description,target_url,creator_id,created_at,created_at AS updated_at FROM commit_status_history WHERE id=?1")
         .bind(id)
         .fetch_optional(pool)
@@ -78,7 +78,7 @@ pub async fn status(
 
 pub async fn admit_query(
     pool: &SqlitePool,
-    actor: &codeyard_db_core::queries::credentials::Actor,
+    actor: &codeyard_database::queries::credentials::Actor,
 ) -> Result<Option<RateLimit>> {
     let credential = actor
         .credential()

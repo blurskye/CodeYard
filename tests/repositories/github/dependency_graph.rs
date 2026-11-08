@@ -54,7 +54,7 @@ async fn contract(pg: bool) {
     let alice = f.actor("alice").await;
     let bob = f.actor("bob").await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard_repos_core::repositories::lifecycle::provision(
+    let repo = codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
@@ -482,7 +482,7 @@ async fn vulnerability_contract(pg: bool) {
     use codeyard_app::app::AppState;
     use codeyard_app::vulnerabilities;
     use codeyard_ci::config::CiConfig;
-    use codeyard_db_core::queries::organizations::OrganizationOutcome;
+    use codeyard_database::queries::organizations::OrganizationOutcome;
     use codeyard_db_orgs::organizations::profiles::NewOrganization;
     use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
     use codeyard_storage::ObjectStore;

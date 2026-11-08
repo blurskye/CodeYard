@@ -1,6 +1,6 @@
 use anyhow::Result;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 use serde::Deserialize;
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -179,7 +179,7 @@ pub(crate) struct Eligibility {
 impl Eligibility {
     pub fn allows(
         &self,
-        run: &codeyard_db_core::models::CiRun,
+        run: &codeyard_database::models::CiRun,
         mode: &str,
         platforms: &[String],
     ) -> Result<bool> {
@@ -203,7 +203,7 @@ impl Eligibility {
             let policy = serde_json::from_str(policy)?;
             if !crate::action_settings::organization_allows(
                 &policy,
-                codeyard_db_core::queries::action_settings::Setting::Runners,
+                codeyard_database::queries::action_settings::Setting::Runners,
                 run.repo_id,
             ) {
                 return Ok(false);
@@ -285,10 +285,9 @@ impl Eligibility {
 pub struct Scheduling {
     pub labels: Vec<String>,
     pub group: Option<String>,
-    pub concurrency: Option<codeyard_db_core::ci_concurrency::Configuration>,
+    pub concurrency: Option<codeyard_database::ci_concurrency::Configuration>,
     /// Expression and non-run contexts retained until the enqueue transaction assigns identity.
-    pub concurrency_expression:
-        Option<(serde_yaml::Value, codeyard_actions::expressions::Contexts)>,
+    pub concurrency_expression: Option<(serde_yaml::Value, codeyard_runner::expressions::Contexts)>,
 }
 
 #[derive(Clone, Debug)]
@@ -361,17 +360,17 @@ native_operation!(crate::postgres::runners::remove_token, crate::sqlite::runners
 native_operation!(crate::postgres::runners::remove_with_token, crate::sqlite::runners::remove_with_token,
     fn remove_with_token(pool:&DbPool,id:i64,hash:&str)->Result<()>);
 
-use codeyard_db_core::queries::runners::Scope;
+use codeyard_database::queries::runners::Scope;
 
-use codeyard_db_core::queries::runners::Window;
+use codeyard_database::queries::runners::Window;
 
-use codeyard_db_core::queries::runners::Refusal;
+use codeyard_database::queries::runners::Refusal;
 
-use codeyard_db_core::queries::runners::Runner;
+use codeyard_database::queries::runners::Runner;
 
-use codeyard_db_core::queries::runners::Group;
+use codeyard_database::queries::runners::Group;
 
-use codeyard_db_core::queries::runners::RunnerQuery;
+use codeyard_database::queries::runners::RunnerQuery;
 
 #[cfg(test)]
 mod tests {

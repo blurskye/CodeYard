@@ -1,4 +1,4 @@
-use codeyard_model::node_roles::NodeRoles;
+use codeyard_types::node_roles::NodeRoles;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
@@ -10,7 +10,7 @@ pub struct ServeConfig {
     pub roles: NodeRoles,
     pub repos_path: PathBuf,
     pub state_dir: PathBuf,
-    pub ssh_mode: codeyard_support::ssh_mode::SshMode,
+    pub ssh_mode: codeyard_types::ssh_mode::SshMode,
     pub ssh_socket: PathBuf,
     pub ssh_git_user: String,
     pub ssh_install_manifest: PathBuf,

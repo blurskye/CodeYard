@@ -42,7 +42,7 @@ use codeyard_app::app::AppState;
 use codeyard_db_repos::discussions::ListFilter;
 use codeyard_db_repos::discussions::ListSort;
 use codeyard_db_repos::discussions::Pick;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_repos_pulls::issues::mutations::CreateIssueRequest;
 use codeyard_repos_pulls::repositories::issue_templates::compose_form_body;
 use codeyard_repos_pulls::repositories::issue_templates::first_missing_answer;
@@ -70,7 +70,7 @@ pub async fn create_issue(
     let issue = codeyard_repos_pulls::issues::mutations::create_issue(
         &state.pool,
         &state.notification_broadcaster,
-        codeyard_db_core::queries::credentials::Actor::from((
+        codeyard_database::queries::credentials::Actor::from((
             current_actor.id,
             codeyard_api_http::session::extract_session_id(&headers).unwrap_or_default(),
         )),
@@ -304,7 +304,7 @@ async fn add_row_milestones(
 async fn list_filters(
     ctx: &PageContext,
     repo: &RepositoryData,
-    milestones: Vec<codeyard_db_core::models::Milestone>,
+    milestones: Vec<codeyard_database::models::Milestone>,
     selected_labels: Vec<String>,
     selected_author: Option<i64>,
 ) -> ResultPage<view::ListFilters> {
@@ -1130,9 +1130,9 @@ pub(crate) async fn native_create(
     let validation = (if compare_only && draft.title.is_empty() {
         Ok(())
     } else {
-        codeyard_model::issue_input::validate_title(&draft.title)
+        codeyard_types::issue_input::validate_title(&draft.title)
     })
-    .and_then(|_| codeyard_model::issue_input::validate_body(&draft.body, false))
+    .and_then(|_| codeyard_types::issue_input::validate_body(&draft.body, false))
     .and_then(|_| issue_choices_valid(&draft, &choices))
     .and_then(|_| {
         if kind == Kind::Pull

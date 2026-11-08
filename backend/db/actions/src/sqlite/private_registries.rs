@@ -1,8 +1,8 @@
 use crate::private_registries::Configuration;
 use crate::private_registries::Registry;
 use crate::private_registries::RegistryError;
-use codeyard_db_core::pool::SqlitePool;
-use codeyard_db_core::queries::secrets::SecretsError;
+use codeyard_database::pool::SqlitePool;
+use codeyard_database::queries::secrets::SecretsError;
 use codeyard_support::secrets::SecretEncryptor;
 use serde_json::Value;
 
@@ -42,7 +42,7 @@ pub async fn list(
         return Err(RegistryError::Invalid("page"));
     }
     let mut tx =
-        codeyard_db_core::queries::sqlite::dependabot::authorized(pool, actor, org, false).await?;
+        codeyard_database::queries::sqlite::dependabot::authorized(pool, actor, org, false).await?;
     let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM org_private_registries WHERE org_id=$1 AND ($2 IS NULL OR lower(name)=lower($2))")
         .bind(org).bind(name).fetch_one(&mut *tx).await?;
     let mut registries: Vec<Registry> = sqlx::query_as("SELECT name,configuration,created_at,updated_at FROM org_private_registries WHERE org_id=$1 AND ($2 IS NULL OR lower(name)=lower($2)) ORDER BY name LIMIT $3 OFFSET $4")
@@ -67,13 +67,13 @@ pub async fn save(
     pool: &SqlitePool,
     encryptor: Option<&SecretEncryptor>,
     actor: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     org: i64,
     name: Option<&str>,
     input: &Value,
     value: Option<&str>,
 ) -> Result<Registry, RegistryError> {
-    let mut tx = codeyard_db_core::queries::sqlite::dependabot::authorized(
+    let mut tx = codeyard_database::queries::sqlite::dependabot::authorized(
         pool,
         (actor, credential),
         org,
@@ -106,7 +106,7 @@ pub async fn save(
     let config = crate::private_registries::configuration(stored.as_deref(), input)?;
     config.validate(value, stored.is_some())?;
     if let Some(ids) = &config.selected_repository_ids {
-        codeyard_db_core::queries::sqlite::dependabot::check_repositories(&mut tx, org, ids)
+        codeyard_database::queries::sqlite::dependabot::check_repositories(&mut tx, org, ids)
             .await?;
     }
     let generated = format!(
@@ -149,11 +149,11 @@ pub async fn save(
 pub async fn delete(
     pool: &SqlitePool,
     actor: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     org: i64,
     name: &str,
 ) -> Result<(), RegistryError> {
-    let mut tx = codeyard_db_core::queries::sqlite::dependabot::authorized(
+    let mut tx = codeyard_database::queries::sqlite::dependabot::authorized(
         pool,
         (actor, credential),
         org,

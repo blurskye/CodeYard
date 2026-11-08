@@ -15,11 +15,11 @@ use axum::Router;
 use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_api_http::context::PageContext;
 use codeyard_app::app::AppState;
-use codeyard_db_core::models::OrgRole;
-use codeyard_db_core::queries::fine_grained_tokens::Policy;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
+use codeyard_database::models::OrgRole;
+use codeyard_database::queries::fine_grained_tokens::Policy;
+use codeyard_database::queries::organizations::OrganizationOutcome;
 use codeyard_identity::fine_grained::MAX_DAYS;
-use codeyard_model::fine_grained::catalog;
+use codeyard_types::fine_grained::catalog;
 use codeyard_webui::pages::orgs as view;
 use serde_json::Map;
 use serde_json::Value;
@@ -59,7 +59,7 @@ async fn require_owner(ctx: &PageContext, actor: i64, org: i64) -> Result<(), Re
 /// Projects listed tokens with their users and selected repository names.
 async fn grants(
     ctx: &PageContext,
-    rows: Vec<codeyard_db_core::queries::fine_grained_tokens::Token>,
+    rows: Vec<codeyard_database::queries::fine_grained_tokens::Token>,
     repositories: &HashMap<i64, Vec<String>>,
 ) -> anyhow::Result<Vec<view::TokenGrant>> {
     let mut ids: Vec<_> = rows.iter().map(|token| token.user_id).collect();
@@ -200,7 +200,7 @@ fn policy(form: &Fields) -> Result<Policy, &'static str> {
 }
 
 async fn apply(ctx: &PageContext, actor: i64, org: i64, form: &Fields) -> anyhow::Result<Outcome> {
-    let actor = codeyard_db_core::queries::credentials::Actor::from((
+    let actor = codeyard_database::queries::credentials::Actor::from((
         actor,
         codeyard_api_http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
     ));

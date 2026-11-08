@@ -4,15 +4,15 @@ use crate::organizations::roles::UserAssignment;
 use crate::sqlite::organizations::authority::cancel_actor;
 use crate::sqlite::organizations::authority::credential;
 use anyhow::Result;
-use codeyard_db_core::models::OrgRole;
-use codeyard_db_core::models::Team;
-use codeyard_db_core::pool::SqlitePool;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_db_core::queries::sqlite::organizations::authority::active;
-use codeyard_db_core::queries::sqlite::organizations::authority::begin;
-use codeyard_db_core::queries::sqlite::organizations::authority::begin_read;
-use codeyard_db_core::queries::sqlite::organizations::authority::membership_role;
-use codeyard_db_core::require_read_org_sqlite;
+use codeyard_database::models::OrgRole;
+use codeyard_database::models::Team;
+use codeyard_database::pool::SqlitePool;
+use codeyard_database::queries::organizations::OrganizationOutcome;
+use codeyard_database::queries::sqlite::organizations::authority::active;
+use codeyard_database::queries::sqlite::organizations::authority::begin;
+use codeyard_database::queries::sqlite::organizations::authority::begin_read;
+use codeyard_database::queries::sqlite::organizations::authority::membership_role;
+use codeyard_database::require_read_org_sqlite;
 use sqlx::SqliteConnection;
 use OrganizationOutcome::Applied;
 use OrganizationOutcome::Conflict;
@@ -93,7 +93,7 @@ pub async fn teams(
 }
 pub async fn change(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     org: i64,
     target: &RoleTarget,
     role: Option<i64>,
@@ -194,4 +194,4 @@ pub async fn change(
     Ok(Applied(()))
 }
 
-use codeyard_db_core::queries::sqlite::organizations::roles::manages_security;
+use codeyard_database::queries::sqlite::organizations::roles::manages_security;

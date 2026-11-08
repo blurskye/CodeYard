@@ -24,7 +24,7 @@ use codeyard_identity::login::PasswordCredentials;
 use codeyard_identity::sessions::InitiatingSession;
 use codeyard_identity::sessions::SessionContext;
 
-use codeyard_db_core::models::User;
+use codeyard_database::models::User;
 use codeyard_identity::two_factor::TwoFactorError;
 use codeyard_storage::ObjectStore;
 use std::sync::Arc;
@@ -498,7 +498,7 @@ async fn settings_forms(pg: bool) {
     let shown = recovery_codes_in(&String::from_utf8_lossy(&enabled.body));
     assert_eq!(shown.len(), 10, "codes are shown once in the response");
     assert!(
-        codeyard_db_cluster::node_config::get_node_configuration(database.pool())
+        codeyard_db_placement::node_config::get_node_configuration(database.pool())
             .await
             .unwrap()
             .is_none(),
@@ -521,7 +521,7 @@ async fn settings_forms(pg: bool) {
     assert_eq!(new_codes.len(), 10);
     assert_ne!(new_codes, shown);
     assert!(
-        codeyard_db_cluster::node_config::get_node_configuration(database.pool())
+        codeyard_db_placement::node_config::get_node_configuration(database.pool())
             .await
             .unwrap()
             .is_none()
@@ -917,12 +917,12 @@ async fn unsuccessful_disable_changes_nothing(pg: bool) {
     );
     let sql = "SELECT COUNT(*) FROM two_factor_recovery_codes WHERE user_id=$1";
     let remaining: i64 = match database.pool() {
-        codeyard_db_core::DbPool::Postgres(pool) => sqlx::query_scalar(sql)
+        codeyard_database::DbPool::Postgres(pool) => sqlx::query_scalar(sql)
             .bind(alice.id)
             .fetch_one(pool)
             .await
             .unwrap(),
-        codeyard_db_core::DbPool::Sqlite(pool) => sqlx::query_scalar(sql)
+        codeyard_database::DbPool::Sqlite(pool) => sqlx::query_scalar(sql)
             .bind(alice.id)
             .fetch_one(pool)
             .await

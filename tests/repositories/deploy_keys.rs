@@ -31,7 +31,7 @@ async fn setup(pg: bool) -> (Database, tempfile::TempDir, Client, Client) {
     let alice_id = database.actor("alice").await;
     let bob_id = database.actor("bob").await;
     let root = tempfile::tempdir().unwrap();
-    codeyard_repos_core::repositories::lifecycle::provision(
+    codeyard_git_storage::repositories::lifecycle::provision(
         (database.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
@@ -80,7 +80,7 @@ async fn stale_admin_native_mutations(pg: bool) {
         database.pool(),
         bob.id,
         repo,
-        codeyard_db_core::models::AccessLevel::Admin,
+        codeyard_database::models::AccessLevel::Admin,
     )
     .await
     .unwrap();
@@ -104,7 +104,7 @@ async fn stale_admin_native_mutations(pg: bool) {
         database.pool(),
         bob.id,
         repo,
-        codeyard_db_core::models::AccessLevel::Write,
+        codeyard_database::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -284,8 +284,8 @@ async fn keys_api_and_forms(pg: bool) {
         .await
         .unwrap_err();
     assert_eq!(
-        refused.downcast_ref::<codeyard_model::identity::SshKeyWriteRefusal>(),
-        Some(&codeyard_model::identity::SshKeyWriteRefusal::AlreadyUsed)
+        refused.downcast_ref::<codeyard_types::identity::SshKeyWriteRefusal>(),
+        Some(&codeyard_types::identity::SshKeyWriteRefusal::AlreadyUsed)
     );
 
     // The settings form adds and deletes the same way, and redirects with a notice.
@@ -410,7 +410,7 @@ async fn live_authority(pg: bool) {
         let (_, access) = codeyard_repos::deploy_keys::authorize(pool, key.id, &repository, write)
             .await
             .unwrap();
-        assert_eq!(access, codeyard_db_core::models::AccessLevel::Write);
+        assert_eq!(access, codeyard_database::models::AccessLevel::Write);
     }
     codeyard_db_identity::users::sessions::delete_session(pool, &alice.session)
         .await
@@ -426,7 +426,7 @@ async fn live_authority(pg: bool) {
             false
         )
         .await,
-        Err(codeyard_model::repositories::DeployKeyError::Denied)
+        Err(codeyard_types::repositories::DeployKeyError::Denied)
     ));
     assert!(codeyard_db_identity::deploy_keys::delete_deploy_key(
         pool,
@@ -468,7 +468,7 @@ async fn live_authority(pg: bool) {
     .await
     .unwrap()
     {
-        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(org) => org,
+        codeyard_database::queries::organizations::OrganizationOutcome::Applied(org) => org,
         _ => panic!("organization creation"),
     };
     database.execute("UPDATE repositories SET owner_kind='org',owner_user_id=NULL,owner_org_id=$1 WHERE id=$2", &[org.id, repository.id]).await;

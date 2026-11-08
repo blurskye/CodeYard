@@ -4,10 +4,10 @@ use crate::support::database::wait_until_blocked;
 use crate::support::native_database as native;
 use crate::support::organizations::applied;
 
-use codeyard_db_core::models::AccessLevel;
-use codeyard_db_core::models::CiRun;
-use codeyard_db_core::models::OrgRole;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
+use codeyard_database::models::AccessLevel;
+use codeyard_database::models::CiRun;
+use codeyard_database::models::OrgRole;
+use codeyard_database::queries::organizations::OrganizationOutcome;
 use codeyard_db_identity::users::transitions::BanChange;
 use std::time::Duration;
 use uuid::Uuid;
@@ -15,7 +15,7 @@ use uuid::Uuid;
 const WORKER: &str = "access-change-worker";
 const SECOND_WORKER: &str = "access-change-worker-2";
 
-async fn repository_with_writer(pool: &codeyard_db_core::DbPool, name: &str) -> (i64, i64, i64) {
+async fn repository_with_writer(pool: &codeyard_database::DbPool, name: &str) -> (i64, i64, i64) {
     let owner =
         codeyard_db_identity::users::accounts::create_user(pool, &format!("{name}_owner"), None)
             .await
@@ -49,7 +49,7 @@ async fn repository_with_writer(pool: &codeyard_db_core::DbPool, name: &str) -> 
 }
 
 async fn enqueue(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     repo: i64,
     actor: i64,
     trusted: &[i64],
@@ -77,14 +77,14 @@ async fn enqueue(
     .await
 }
 
-async fn run(pool: &codeyard_db_core::DbPool, id: Uuid) -> CiRun {
+async fn run(pool: &codeyard_database::DbPool, id: Uuid) -> CiRun {
     codeyard_db_actions::ci::get_ci_run_by_run_id(pool, id)
         .await
         .unwrap()
         .unwrap()
 }
 
-async fn grant_changes(pool: &codeyard_db_core::DbPool) {
+async fn grant_changes(pool: &codeyard_database::DbPool) {
     for (name, level, reduced) in [
         ("downgrade", AccessLevel::Read, true),
         ("unchanged", AccessLevel::Write, false),
@@ -149,7 +149,7 @@ async fn grant_changes(pool: &codeyard_db_core::DbPool) {
             assert_eq!(queued_now.status, "cancelled");
             assert_eq!(
                 queued_now.error_message.as_deref(),
-                Some(codeyard_db_core::ci_policy::ACCESS_LOST_MESSAGE)
+                Some(codeyard_database::ci_policy::ACCESS_LOST_MESSAGE)
             );
             assert!(queued_now.completed_at.is_some());
             assert!(queued_now.worker.is_none() && queued_now.started_at.is_none());
@@ -300,8 +300,8 @@ async fn postgres_ban_allows_ci_finish_notification_foreign_keys() {
 /// way revocation and deletion do. Returns the run id, the holding transaction and
 /// its backend id.
 async fn claimed_run_behind_repository_lock(
-    pool: &codeyard_db_core::DbPool,
-    raw: &codeyard_db_core::pool::PgPool,
+    pool: &codeyard_database::DbPool,
+    raw: &codeyard_database::pool::PgPool,
     name: &str,
 ) -> (i64, sqlx::Transaction<'static, sqlx::Postgres>, i32) {
     let (owner, writer, repo) = repository_with_writer(pool, name).await;
@@ -564,8 +564,8 @@ async fn postgres_cancellation_rechecks_admin_after_waiting() {
             .unwrap_err();
         assert!(
             matches!(
-                error.downcast_ref::<codeyard_db_core::ci_policy::CiAdmissionRefusal>(),
-                Some(codeyard_db_core::ci_policy::CiAdmissionRefusal::Denied(_))
+                error.downcast_ref::<codeyard_database::ci_policy::CiAdmissionRefusal>(),
+                Some(codeyard_database::ci_policy::CiAdmissionRefusal::Denied(_))
             ),
             "{error:?}"
         );
@@ -575,7 +575,7 @@ async fn postgres_cancellation_rechecks_admin_after_waiting() {
     }
 }
 
-async fn cancellation_after_access_loss(pool: &codeyard_db_core::DbPool) {
+async fn cancellation_after_access_loss(pool: &codeyard_database::DbPool) {
     let (owner, writer, repo) = repository_with_writer(pool, "starter_cancel").await;
     let running = enqueue(pool, repo, writer, &[writer]).await.unwrap();
     assert_eq!(
@@ -597,10 +597,10 @@ async fn cancellation_after_access_loss(pool: &codeyard_db_core::DbPool) {
         .unwrap();
     let archive = "UPDATE repositories SET is_archived=TRUE WHERE id=$1";
     match pool {
-        codeyard_db_core::DbPool::Postgres(raw) => {
+        codeyard_database::DbPool::Postgres(raw) => {
             sqlx::query(archive).bind(repo).execute(raw).await.unwrap();
         }
-        codeyard_db_core::DbPool::Sqlite(raw) => {
+        codeyard_database::DbPool::Sqlite(raw) => {
             sqlx::query(archive).bind(repo).execute(raw).await.unwrap();
         }
     };
@@ -650,8 +650,8 @@ async fn postgres_starter_can_cancel_after_access_loss() {
 /// An organization repository that a team member can write only through the team's
 /// grant. Returns the owner, the member, the organization, the team and the repository.
 async fn team_writer_repository(
-    pool: &codeyard_db_core::DbPool,
-    raw: &codeyard_db_core::pool::PgPool,
+    pool: &codeyard_database::DbPool,
+    raw: &codeyard_database::pool::PgPool,
     name: &str,
 ) -> (i64, i64, i64, i64, i64) {
     let owner =
@@ -841,7 +841,7 @@ async fn postgres_team_grant_revocation_and_claim_do_not_deadlock() {
     assert_eq!(cancelled.status, "cancelled");
     assert_eq!(
         cancelled.error_message.as_deref(),
-        Some(codeyard_db_core::ci_policy::ACCESS_LOST_MESSAGE)
+        Some(codeyard_database::ci_policy::ACCESS_LOST_MESSAGE)
     );
 }
 

@@ -1,8 +1,8 @@
 use crate::repositories::push_teams::validate_count;
 use crate::repositories::push_teams::TeamAccess;
 use anyhow::Result;
-use codeyard_db_core::models::Team;
-use codeyard_db_core::pool::SqlitePool;
+use codeyard_database::models::Team;
+use codeyard_database::pool::SqlitePool;
 use sqlx::SqliteConnection;
 
 const PERMISSION:&str="MAX(CASE WHEN a.permission BETWEEN 1 AND 5 THEN a.permission ELSE 0 END,COALESCE((SELECT s.default_repository_permission FROM organization_settings s WHERE s.org_id=t.org_id AND s.default_repository_permission IN (1,3,5)),0),COALESCE((SELECT MAX(role.base_level) FROM organization_role_assignments assigned JOIN organization_roles role ON role.id=assigned.role_id AND role.base_level BETWEEN 1 AND 5 JOIN team_ancestors ancestor ON ancestor.ancestor_id=assigned.team_id AND ancestor.team_id=t.id WHERE assigned.org_id=t.org_id AND assigned.user_id IS NULL),0))";

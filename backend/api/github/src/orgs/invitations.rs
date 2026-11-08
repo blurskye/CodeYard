@@ -17,14 +17,14 @@ use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::app::AppState;
-use codeyard_db_core::models::OrgInvitation;
-use codeyard_db_core::models::OrgRole;
-use codeyard_db_core::models::Organization;
+use codeyard_database::models::OrgInvitation;
+use codeyard_database::models::OrgRole;
+use codeyard_database::models::Organization;
 use codeyard_db_orgs::organizations::invitations::InvitationFilter;
 use codeyard_db_orgs::organizations::invitations::InvitationTeams;
 use codeyard_db_orgs::organizations::invitations::NewInvitation;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -104,7 +104,7 @@ async fn create(
     body: std::result::Result<Json<Input>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Response> {
     let (org, actor) = context(&state, &headers, &name, true).await?;
-    let Json(input) = body.map_err(codeyard_model::github_error::json_error)?;
+    let Json(input) = body.map_err(codeyard_types::github_error::json_error)?;
     let role = match input.role.as_deref().unwrap_or("direct_member") {
         "admin" => OrgRole::Owner,
         "direct_member" | "reinstate" => OrgRole::Member,

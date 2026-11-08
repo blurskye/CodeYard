@@ -2,29 +2,29 @@ use crate::repositories::autolinks::Autolink;
 use crate::repositories::autolinks::NewAutolink;
 use crate::repositories::autolinks::Refusal;
 use anyhow::Result;
-use codeyard_db_core::pool::SqlitePool;
+use codeyard_database::pool::SqlitePool;
 use sqlx::Sqlite;
 use sqlx::Transaction;
 
 async fn admin(
     tx: &mut Transaction<'_, Sqlite>,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo: i64,
     write: bool,
 ) -> Result<()> {
     let credential = actor.into();
     let actor = credential.user_id;
     let allowed = if write {
-        codeyard_db_core::queries::sqlite::discussions::lock_admin_authority(tx, actor, repo)
+        codeyard_database::queries::sqlite::discussions::lock_admin_authority(tx, actor, repo)
             .await?
     } else {
-        codeyard_db_core::queries::sqlite::discussions::lock_archive_authority(tx, actor, repo)
+        codeyard_database::queries::sqlite::discussions::lock_archive_authority(tx, actor, repo)
             .await?
     };
     anyhow::ensure!(allowed, Refusal::Denied);
     if write {
         anyhow::ensure!(
-            codeyard_db_core::queries::sqlite::credentials::writes(
+            codeyard_database::queries::sqlite::credentials::writes(
                 tx,
                 &credential,
                 Some(repo),
@@ -39,7 +39,7 @@ async fn admin(
 }
 pub async fn create(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo: i64,
     input: &NewAutolink,
 ) -> Result<Autolink> {
@@ -93,7 +93,7 @@ pub async fn get(pool: &SqlitePool, actor: i64, repo: i64, id: i64) -> Result<Au
 }
 pub async fn remove(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo: i64,
     id: i64,
 ) -> Result<()> {

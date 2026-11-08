@@ -1,8 +1,8 @@
 use chrono::DateTime;
 use chrono::NaiveDate;
 use chrono::Utc;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 
 #[derive(Debug, Clone)]
 pub enum Expr {
@@ -405,7 +405,7 @@ impl Search {
         Ok(search)
     }
     /// The query for the cells' shared index, with the text fields it searches.
-    pub fn search_filter(&self) -> codeyard_db_core::cells::search::Filter {
+    pub fn search_filter(&self) -> codeyard_database::cells::search::Filter {
         with_fields(&self.expr, self.fields.iter().copied())
     }
     pub fn needs_viewer(&self) -> bool {
@@ -473,8 +473,8 @@ impl Search {
     }
 }
 /// The same expression in the cells' shared search index's terms.
-pub fn filter(expr: &Expr) -> codeyard_db_core::cells::search::Filter {
-    use codeyard_db_core::cells::search::Filter;
+pub fn filter(expr: &Expr) -> codeyard_database::cells::search::Filter {
+    use codeyard_database::cells::search::Filter;
     match expr {
         Expr::Term(key, value) => Filter::Term(key.clone(), value.clone()),
         Expr::And(items) => Filter::All(items.iter().map(filter).collect()),
@@ -486,8 +486,8 @@ pub fn filter(expr: &Expr) -> codeyard_db_core::cells::search::Filter {
 pub fn with_fields<'a>(
     expr: &Expr,
     fields: impl IntoIterator<Item = &'a str>,
-) -> codeyard_db_core::cells::search::Filter {
-    use codeyard_db_core::cells::search::Filter;
+) -> codeyard_database::cells::search::Filter {
+    use codeyard_database::cells::search::Filter;
     let fields = fields.into_iter().collect::<Vec<_>>().join(",");
     if fields.is_empty() {
         return filter(expr);
@@ -539,7 +539,7 @@ impl Statement {
             return readable.to_owned();
         };
         let token = self.bind(token.to_string());
-        let allowed = codeyard_db_core::queries::fine_grained_tokens::classic_allowed_condition(
+        let allowed = codeyard_database::queries::fine_grained_tokens::classic_allowed_condition(
             &token,
             "r.owner_org_id",
         );

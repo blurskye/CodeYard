@@ -20,7 +20,7 @@ async fn setup(pg: bool) -> (Database, tempfile::TempDir, Client, Client) {
     let alice_id = database.actor("alice").await;
     let bob_id = database.actor("bob").await;
     let root = tempfile::tempdir().unwrap();
-    codeyard_repos_core::repositories::lifecycle::provision(
+    codeyard_git_storage::repositories::lifecycle::provision(
         (database.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
@@ -722,7 +722,7 @@ async fn sqlite_reaction_returns_to_its_discussion_page() {
 }
 
 /// The id of alice's repository, for checks that read the database.
-async fn proj_id(pool: &codeyard_db_core::DbPool) -> i64 {
+async fn proj_id(pool: &codeyard_database::DbPool) -> i64 {
     codeyard_db_repos::repositories::records::get_repository(pool, "alice", "proj")
         .await
         .unwrap()
@@ -731,7 +731,7 @@ async fn proj_id(pool: &codeyard_db_core::DbPool) -> i64 {
 }
 
 /// The number of `unassigned` lines in the timeline of an issue.
-async fn unassigned_lines(pool: &codeyard_db_core::DbPool, issue: i64) -> usize {
+async fn unassigned_lines(pool: &codeyard_database::DbPool, issue: i64) -> usize {
     codeyard_db_repos::timeline::list_events(
         pool,
         proj_id(pool).await,
@@ -750,7 +750,7 @@ async fn unassigned_lines(pool: &codeyard_db_core::DbPool, issue: i64) -> usize 
 }
 
 /// The reactions of `viewer` on an issue, summed over every reaction.
-async fn reaction_total(pool: &codeyard_db_core::DbPool, issue: i64, viewer: i64) -> i64 {
+async fn reaction_total(pool: &codeyard_database::DbPool, issue: i64, viewer: i64) -> i64 {
     codeyard_db_repos::reactions::reaction_counts(pool, "issue", &[issue], viewer)
         .await
         .unwrap()
@@ -764,8 +764,8 @@ fn assert_denied(result: anyhow::Result<bool>) {
     let error = result.expect_err("the toggle is refused");
     assert!(
         matches!(
-            error.downcast_ref::<codeyard_db_core::queries::discussions::DiscussionWriteRefusal>(),
-            Some(codeyard_db_core::queries::discussions::DiscussionWriteRefusal::Denied)
+            error.downcast_ref::<codeyard_database::queries::discussions::DiscussionWriteRefusal>(),
+            Some(codeyard_database::queries::discussions::DiscussionWriteRefusal::Denied)
         ),
         "{error:#}"
     );
@@ -793,9 +793,9 @@ async fn toggles_check_access_in_their_transaction(pg: bool) {
         .unwrap()
         .id;
     let owner_credential =
-        codeyard_db_core::queries::users::accounts::AccountCredential::Session(&_alice.session);
+        codeyard_database::queries::users::accounts::AccountCredential::Session(&_alice.session);
     let bob_credential =
-        codeyard_db_core::queries::users::accounts::AccountCredential::Session(&_bob.session);
+        codeyard_database::queries::users::accounts::AccountCredential::Session(&_bob.session);
     let toggle = |actor: i64| {
         codeyard_db_repos::reactions::toggle_reaction(
             pool,
@@ -825,7 +825,7 @@ async fn toggles_check_access_in_their_transaction(pg: bool) {
         pool,
         bob,
         repo,
-        codeyard_db_core::models::AccessLevel::Read,
+        codeyard_database::models::AccessLevel::Read,
     )
     .await
     .unwrap();
@@ -870,7 +870,7 @@ async fn concurrent_toggles_do_not_lose_updates(pg: bool) {
         .unwrap()
         .id;
     let credential =
-        codeyard_db_core::queries::users::accounts::AccountCredential::Session(&_alice.session);
+        codeyard_database::queries::users::accounts::AccountCredential::Session(&_alice.session);
     for _ in 0..10 {
         let (first, second) = tokio::join!(
             codeyard_db_repos::reactions::toggle_reaction(

@@ -6,12 +6,12 @@ use crate::unavailable;
 use crate::url;
 use crate::RequestContext;
 use crate::Result;
-use codeyard_model::node_id;
+use codeyard_types::node_id;
 use serde_json::json;
 use serde_json::Value;
 
 pub(super) async fn object(
-    row: &codeyard_db_core::models::CommitComment,
+    row: &codeyard_database::models::CommitComment,
     request: &RequestContext,
 ) -> Result<Value> {
     let repo = crate::repository::by_id(row.repo_id, request).await?;

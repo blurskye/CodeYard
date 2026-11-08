@@ -55,11 +55,11 @@ fn failure(ctx: &PageContext, error: anyhow::Error) -> Response {
             "A live unrestricted credential is required.",
         );
     }
-    use codeyard_model::advisories::Refusal;
+    use codeyard_types::advisories::Refusal;
     if let Some(
-        graph @ (codeyard_model::dependency_graph::GraphError::Limit
-        | codeyard_model::dependency_graph::GraphError::Disabled),
-    ) = error.downcast_ref::<codeyard_model::dependency_graph::GraphError>()
+        graph @ (codeyard_types::dependency_graph::GraphError::Limit
+        | codeyard_types::dependency_graph::GraphError::Disabled),
+    ) = error.downcast_ref::<codeyard_types::dependency_graph::GraphError>()
     {
         return ctx.error(StatusCode::UNPROCESSABLE_ENTITY, &graph.to_string());
     }

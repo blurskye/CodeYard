@@ -137,7 +137,7 @@ pub(crate) async fn native_change(
             Ok(())
         }
         "branch" => {
-            let oid = codeyard_repos_core::repositories::store::repo_store(
+            let oid = codeyard_git_storage::repositories::store::repo_store(
                 &repo.record,
                 ctx.state.cluster.as_ref(),
             )
@@ -202,7 +202,7 @@ pub(crate) async fn pinned(
 pub(crate) async fn load(
     ctx: &PageContext,
     repo: &RepositoryData,
-    issue: &codeyard_db_core::models::Issue,
+    issue: &codeyard_database::models::Issue,
 ) -> ResultPage<Box<IssueManagement>> {
     let pool = &ctx.state.pool;
     let mut controls = IssueManagement {
@@ -236,7 +236,7 @@ pub(crate) async fn load(
             continue;
         };
         if let std::collections::hash_map::Entry::Vacant(slot) = references.entry(target.id) {
-            let refs = codeyard_repos_core::repositories::store::repo_store(
+            let refs = codeyard_git_storage::repositories::store::repo_store(
                 target,
                 ctx.state.cluster.as_ref(),
             )
@@ -272,7 +272,7 @@ pub(crate) async fn load(
         issue,
         &repo.view.owner,
         &repo.record.name,
-        &codeyard_model::http_config::link_origin(),
+        &codeyard_types::http_config::link_origin(),
     )
     .await
     .map_err(|_| unavailable(ctx))?
@@ -335,13 +335,13 @@ pub(crate) async fn load(
     Ok(Box::new(controls))
 }
 
-type TargetCache = HashMap<i64, Option<(codeyard_db_core::models::Repository, String)>>;
+type TargetCache = HashMap<i64, Option<(codeyard_database::models::Repository, String)>>;
 
 async fn cached_target<'a>(
     ctx: &PageContext,
     id: i64,
     targets: &'a mut TargetCache,
-) -> ResultPage<Option<&'a (codeyard_db_core::models::Repository, String)>> {
+) -> ResultPage<Option<&'a (codeyard_database::models::Repository, String)>> {
     if let std::collections::hash_map::Entry::Vacant(slot) = targets.entry(id) {
         let target = if let Some(target) = readable_target(ctx, id).await? {
             let owner = codeyard_db_repos::repositories::records::repository_owner_name(
@@ -363,7 +363,7 @@ async fn cached_target<'a>(
 async fn readable_target(
     ctx: &PageContext,
     id: i64,
-) -> ResultPage<Option<codeyard_db_core::models::Repository>> {
+) -> ResultPage<Option<codeyard_database::models::Repository>> {
     let target =
         codeyard_db_repos::repositories::records::get_repository_by_id(&ctx.state.pool, id)
             .await

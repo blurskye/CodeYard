@@ -1,7 +1,7 @@
 use crate::support::native_database::NativeDatabase;
 use crate::support::native_database::PostgresDatabase;
 
-use codeyard_db_core::DbPool;
+use codeyard_database::DbPool;
 
 async fn long_branch_activity(pool: &DbPool) {
     let user = codeyard_db_identity::users::accounts::create_user(pool, "branch-owner", None)
@@ -128,7 +128,7 @@ async fn cli_escapes_emails_descriptions_and_key_labels() {
 }
 
 async fn primary_read_hints(pool: &DbPool) {
-    use codeyard_db_core::read_routing::{primary_required, Credential};
+    use codeyard_database::read_routing::{primary_required, Credential};
     let user = codeyard_db_identity::users::accounts::create_user(pool, "read-hints", None)
         .await
         .unwrap();

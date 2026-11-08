@@ -6,7 +6,7 @@ use crate::unavailable;
 use crate::RequestContext;
 use crate::Result;
 use codeyard_db_repos::assignees::AssignedItem;
-use codeyard_model::node_id;
+use codeyard_types::node_id;
 use serde_json::json;
 use serde_json::Value;
 
@@ -87,13 +87,13 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
             .as_str()
             .or_else(|| existing.as_ref().map(|r| r.name.as_str()))
             .ok_or_else(missing)?;
-        codeyard_model::issue_input::validate_label(name, input["description"].as_str())
+        codeyard_types::issue_input::validate_label(name, input["description"].as_str())
             .map_err(async_graphql::Error::new)?;
         let color = input["color"]
             .as_str()
             .map(codeyard_api_github::issues::labels::color)
             .transpose()
-            .map_err(codeyard_model::github_error::Error::graphql)?;
+            .map_err(codeyard_types::github_error::Error::graphql)?;
         let row = if let Some(old) = existing {
             codeyard_db_repos::labels::update_label(
                 pool,
@@ -219,7 +219,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
                 pool, authority, repo.id, item, &changes, false,
             )
             .await
-            .map_err(codeyard_model::github_error::Error::graphql)?;
+            .map_err(codeyard_types::github_error::Error::graphql)?;
         } else if label {
             for label_id in changes {
                 match item {

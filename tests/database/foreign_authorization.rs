@@ -1,10 +1,10 @@
 //! Heartbeat proofs belong to one operation and never create local credentials.
 use crate::support::database::Database;
-use codeyard_db_core::{
+use codeyard_database::{
     cells::authorization::{self, Answer, Authority, Home, Proof},
     DbPool,
 };
-use codeyard_types::cells::Prefix;
+use codeyard_types::cell_ids::Prefix;
 use std::sync::{
     atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     Arc,
@@ -20,7 +20,7 @@ impl Home for Provider {
     fn user<'a>(
         &'a self,
         name: &'a str,
-    ) -> futures_util::future::BoxFuture<'a, anyhow::Result<Option<codeyard_db_core::models::User>>>
+    ) -> futures_util::future::BoxFuture<'a, anyhow::Result<Option<codeyard_database::models::User>>>
     {
         Box::pin(async move {
             Ok(
@@ -87,7 +87,7 @@ async fn sessions(database: &Database, mut answer: Answer, owner: i64) {
     let user = provider.answer.user.id;
     database.complete_setup().await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard_repos_core::repositories::lifecycle::provision(
+    let repo = codeyard_git_storage::repositories::lifecycle::provision(
         (pool, None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),
@@ -102,7 +102,7 @@ async fn sessions(database: &Database, mut answer: Answer, owner: i64) {
         pool,
         user,
         repo.id,
-        codeyard_db_core::models::AccessLevel::Write,
+        codeyard_database::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -218,7 +218,7 @@ async fn sessions(database: &Database, mut answer: Answer, owner: i64) {
     assert!(codeyard_db_identity::users::profiles::save_profile(
         pool,
         user,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&value),
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(&value),
         &codeyard_db_identity::users::profiles::ProfilePatch {
             display_name: Some("local overwrite"),
             ..Default::default()
@@ -234,7 +234,8 @@ async fn sessions(database: &Database, mut answer: Answer, owner: i64) {
             .display_name,
         provider.answer.user.display_name
     );
-    let credential = codeyard_db_core::queries::users::accounts::AccountCredential::Session(&value);
+    let credential =
+        codeyard_database::queries::users::accounts::AccountCredential::Session(&value);
     assert!(codeyard_db_identity::users::emails::change_emails(
         pool,
         user,
@@ -287,7 +288,7 @@ async fn sessions(database: &Database, mut answer: Answer, owner: i64) {
         owner,
         repo.id,
         &provider.answer.user.username,
-        codeyard_db_core::models::AccessLevel::Write,
+        codeyard_database::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -337,7 +338,7 @@ async fn sessions(database: &Database, mut answer: Answer, owner: i64) {
         pool,
         user,
         repo.id,
-        codeyard_db_core::models::AccessLevel::Admin,
+        codeyard_database::models::AccessLevel::Admin,
     )
     .await
     .unwrap();
@@ -347,7 +348,7 @@ async fn sessions(database: &Database, mut answer: Answer, owner: i64) {
         (user, value.clone()),
         repo.id,
         "queued-target",
-        codeyard_db_core::models::AccessLevel::Write,
+        codeyard_database::models::AccessLevel::Write,
     )
     .await
     .err()
@@ -530,11 +531,11 @@ async fn renewal(pool: &DbPool, answer: Answer, user: i64) {
         hash: "c".repeat(64),
     };
     let hash = proof.hash();
-    let credential = codeyard_db_core::queries::users::accounts::AccountCredential::ForeignToken(
+    let credential = codeyard_database::queries::users::accounts::AccountCredential::ForeignToken(
         answer.credential_id.unwrap(),
         &hash,
     );
-    let actor: codeyard_db_core::queries::credentials::Actor = (user, &credential).into();
+    let actor: codeyard_database::queries::credentials::Actor = (user, &credential).into();
     authorization::scope(async {
         authorization::authorize(pool, &proof)
             .await
@@ -687,11 +688,11 @@ async fn contract(pg: bool) {
         &foreign_hash,
     )
     .await;
-    let credential = codeyard_db_core::queries::users::accounts::AccountCredential::ForeignToken(
+    let credential = codeyard_database::queries::users::accounts::AccountCredential::ForeignToken(
         provider.answer.credential_id.unwrap(),
         &foreign_hash,
     );
-    let actor: codeyard_db_core::queries::credentials::Actor = (remote.id, &credential).into();
+    let actor: codeyard_database::queries::credentials::Actor = (remote.id, &credential).into();
     assert_eq!(
         codeyard_db_repos::graphql::admit_query(pool, &actor)
             .await
@@ -705,7 +706,7 @@ async fn contract(pg: bool) {
         0,
         "a foreign quota never creates a local token"
     );
-    let forged = codeyard_db_core::queries::credentials::Actor {
+    let forged = codeyard_database::queries::credentials::Actor {
         user_id: native.id,
         credential: actor.credential.clone(),
     };

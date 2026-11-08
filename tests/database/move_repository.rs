@@ -9,10 +9,10 @@ use axum::{
     http::{Request, StatusCode},
     Router,
 };
-use codeyard_db_cluster::moves::{self, Account};
-use codeyard_model::cells::{Cell, Key, KeyKind, Object, ObjectKind, State};
+use codeyard_db_placement::moves::{self, Account};
 use codeyard_support::node_identity::{self, NodeKey};
-use codeyard_types::cells::Prefix;
+use codeyard_types::cell_ids::Prefix;
+use codeyard_types::cells::{Cell, Key, KeyKind, Object, ObjectKind, State};
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, time::Duration};
 use tower::ServiceExt;
@@ -21,10 +21,12 @@ async fn cells() -> (PostgresDatabase, PostgresDatabase) {
     let source = PostgresDatabase::new().await;
     let target = PostgresDatabase::new().await;
     for (database, prefix) in [(&source, 1), (&target, 2)] {
-        codeyard_db_core::cells::initialize(&database.pool, Prefix::new(prefix))
+        codeyard_database::cells::initialize(&database.pool, Prefix::new(prefix))
             .await
             .unwrap();
-        codeyard_db_core::cells::load(&database.pool).await.unwrap();
+        codeyard_database::cells::load(&database.pool)
+            .await
+            .unwrap();
     }
     (source, target)
 }
@@ -325,7 +327,7 @@ async fn cli_repository_transfer_survives_a_failed_load_and_a_failed_directory_s
             .await
             .unwrap();
     }
-    let listener = codeyard_cells_router::directory::Listener::bind(
+    let listener = codeyard_router::directory::Listener::bind(
         directory.clone(),
         &server_key,
         "127.0.0.1:0".parse().unwrap(),
@@ -486,7 +488,7 @@ async fn cli_repository_transfer_survives_a_failed_load_and_a_failed_directory_s
         .await
         .unwrap();
     assert_eq!(moving, 0, "{}", stderr(&unreachable));
-    let listener = codeyard_cells_router::directory::Listener::bind(
+    let listener = codeyard_router::directory::Listener::bind(
         directory.clone(),
         &server_key,
         directory_address,

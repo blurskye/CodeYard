@@ -1,17 +1,17 @@
 use crate::runs::CiRuns;
 use anyhow::Context;
-use codeyard_db_core::ci_admission::AdmissionError;
-use codeyard_db_core::models::PullRequest;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::DbPool;
-use codeyard_model::workflow_glob::WorkflowMatchBudget;
-use codeyard_repos_core::receive_ci::CiRunRequest;
-use codeyard_repos_core::repositories::pull_requests::OperationError;
-use codeyard_repos_core::repositories::store::repo_store;
-use codeyard_repos_core::workflows::commit_message_for_ref;
-use codeyard_repos_core::workflows::infer_pipeline_from_workflow_path;
-use codeyard_repos_core::workflows::list_workflows_for_ref;
-use codeyard_repos_core::workflows::should_skip_run_from_message;
+use codeyard_database::ci_admission::AdmissionError;
+use codeyard_database::models::PullRequest;
+use codeyard_database::models::Repository;
+use codeyard_database::DbPool;
+use codeyard_git_storage::receive_ci::CiRunRequest;
+use codeyard_git_storage::repositories::pull_requests::OperationError;
+use codeyard_git_storage::repositories::store::repo_store;
+use codeyard_git_storage::workflows::commit_message_for_ref;
+use codeyard_git_storage::workflows::infer_pipeline_from_workflow_path;
+use codeyard_git_storage::workflows::list_workflows_for_ref;
+use codeyard_git_storage::workflows::should_skip_run_from_message;
+use codeyard_types::workflow_glob::WorkflowMatchBudget;
 
 /// Queues the workflows that `pulls` now need on their new base.
 /// Let admission finish: cancelling it after a saved revision would lose these runs.
@@ -30,7 +30,7 @@ pub async fn queue_moved_pull_requests_ci(
             pull,
             actor_id,
             false,
-            codeyard_db_core::models::AccessLevel::Owner,
+            codeyard_database::models::AccessLevel::Owner,
         )
         .await;
     }
@@ -48,7 +48,7 @@ pub async fn queue_pull_request_ci(
     pull: &PullRequest,
     actor_id: i64,
     manual: bool,
-    access: codeyard_db_core::models::AccessLevel,
+    access: codeyard_database::models::AccessLevel,
 ) -> Result<(), AdmissionError> {
     if pull.state != "open" || pull.is_draft {
         return Ok(());
@@ -97,7 +97,7 @@ pub async fn queue_pull_request_event_ci(
     repository: &Repository,
     pull: &PullRequest,
     actor_id: i64,
-    access: codeyard_db_core::models::AccessLevel,
+    access: codeyard_database::models::AccessLevel,
     payload: &serde_json::Value,
 ) {
     if payload.is_null() {
@@ -125,7 +125,7 @@ async fn queue_pull_request_workflow_event(
     pull: &PullRequest,
     actor_id: i64,
     manual: bool,
-    access: codeyard_db_core::models::AccessLevel,
+    access: codeyard_database::models::AccessLevel,
     event: &str,
     payload: &serde_json::Value,
 ) -> Result<(), AdmissionError> {
@@ -379,8 +379,8 @@ pub async fn run_pull_request_workflows(
     request: RunWorkflowsRequest,
 ) -> Result<PullRequest, OperationError> {
     // The caller resolved and authorized this repository; a rename must not switch it.
-    let user = codeyard_repos_core::repositories::pull_requests::actor(pool, actor_id).await?;
-    codeyard_repos_core::repositories::pull_requests::require_write(pool, &user, repository)
+    let user = codeyard_git_storage::repositories::pull_requests::actor(pool, actor_id).await?;
+    codeyard_git_storage::repositories::pull_requests::require_write(pool, &user, repository)
         .await?;
     // Only trusted actors can queue these workflows, so no one else may record an
     // approval for them.
@@ -393,7 +393,7 @@ pub async fn run_pull_request_workflows(
     let pull =
         codeyard_db_repos::pull_requests::records::get_pull_request(pool, repository.id, number)
             .await
-            .map_err(codeyard_repos_core::repositories::pull_requests::write_error)?
+            .map_err(codeyard_git_storage::repositories::pull_requests::write_error)?
             .ok_or_else(|| OperationError::Missing {
                 code: "not_found",
                 message: "Pull request not found".to_owned(),
@@ -409,7 +409,7 @@ pub async fn run_pull_request_workflows(
     })?;
     let pull = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(pool, pull.id)
         .await
-        .map_err(codeyard_repos_core::repositories::pull_requests::write_error)?
+        .map_err(codeyard_git_storage::repositories::pull_requests::write_error)?
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",
             message: "Pull request not found".to_owned(),
@@ -421,7 +421,7 @@ pub async fn run_pull_request_workflows(
         &request.expected_head,
     )
     .await
-    .map_err(codeyard_repos_core::repositories::pull_requests::write_error)?
+    .map_err(codeyard_git_storage::repositories::pull_requests::write_error)?
     {
         return Err(OperationError::Conflict {
             code: "revision_conflict",
@@ -446,7 +446,7 @@ pub async fn run_pull_request_workflows(
         &pull,
         user.id,
         true,
-        codeyard_db_core::models::AccessLevel::Owner,
+        codeyard_database::models::AccessLevel::Owner,
     )
     .await;
     let released = release_awaiting_runs(pool, ci, repository, &pull, user.id).await;
@@ -499,7 +499,7 @@ async fn release_awaiting_runs(
             pull,
             actor_id,
             true,
-            codeyard_db_core::models::AccessLevel::Owner,
+            codeyard_database::models::AccessLevel::Owner,
             "pull_request",
             &payload,
         )

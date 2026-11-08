@@ -2,9 +2,9 @@ use crate::dependency_graph::Reader;
 use crate::dependency_graph::Submission;
 use crate::dependency_graph::SBOM_REPORTS_PER_REPOSITORY;
 use crate::dependency_graph::SBOM_REPORT_LIFETIME_SECONDS;
-use codeyard_db_core::pool::PgPool;
-use codeyard_model::dependency_graph::GraphError;
-use codeyard_model::dependency_graph::Snapshot;
+use codeyard_database::pool::PgPool;
+use codeyard_types::dependency_graph::GraphError;
+use codeyard_types::dependency_graph::Snapshot;
 
 async fn authorize_in(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
@@ -14,8 +14,8 @@ async fn authorize_in(
 ) -> Result<(), GraphError> {
     match reader {
         Reader::Viewer(Some(actor)) => {
-            use codeyard_db_core::queries::postgres::repositories::access::lock_readable_repository_in_transaction;
-            use codeyard_db_core::queries::postgres::repositories::access::RepositoryRowLock;
+            use codeyard_database::queries::postgres::repositories::access::lock_readable_repository_in_transaction;
+            use codeyard_database::queries::postgres::repositories::access::RepositoryRowLock;
             let lock = if exclusive {
                 RepositoryRowLock::Exclusive
             } else {
@@ -24,7 +24,7 @@ async fn authorize_in(
             if !lock_readable_repository_in_transaction(tx, actor.user_id, repo, lock)
                 .await
                 .map_err(GraphError::Authority)?
-                || !codeyard_db_core::queries::postgres::credentials::repository(
+                || !codeyard_database::queries::postgres::credentials::repository(
                     tx, actor, repo, "contents", false,
                 )
                 .await
@@ -39,7 +39,7 @@ async fn authorize_in(
             } else {
                 "FOR SHARE"
             };
-            codeyard_db_core::queries::postgres::repositories::records::lock_fork_ancestors(
+            codeyard_database::queries::postgres::repositories::records::lock_fork_ancestors(
                 tx,
                 repo,
                 source_lock,
@@ -47,7 +47,7 @@ async fn authorize_in(
             .await
             .map_err(GraphError::Authority)?;
             let lock = if exclusive { "FOR UPDATE" } else { "FOR SHARE" };
-            let row: Option<i64> = sqlx::query_scalar(&format!("SELECT r.id FROM repositories r LEFT JOIN users u ON FALSE WHERE r.id=$1 AND NOT r.is_gist AND ($2 OR {}) AND (NOT $2 OR NOT r.is_archived) {lock} OF r", codeyard_db_core::queries::postgres::repositories::access::readable_condition()))
+            let row: Option<i64> = sqlx::query_scalar(&format!("SELECT r.id FROM repositories r LEFT JOIN users u ON FALSE WHERE r.id=$1 AND NOT r.is_gist AND ($2 OR {}) AND (NOT $2 OR NOT r.is_archived) {lock} OF r", codeyard_database::queries::postgres::repositories::access::readable_condition()))
                 .bind(repo).bind(matches!(reader, Reader::Scan(_))).fetch_optional(&mut **tx).await?;
             if row.is_none() {
                 return Err(GraphError::Denied);
@@ -99,7 +99,7 @@ pub(super) async fn drop_replaced_snapshots(
 
 pub async fn submit(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo: i64,
     snapshot: &Snapshot,
 ) -> Result<Submission, GraphError> {
@@ -115,7 +115,7 @@ pub async fn submit(
     {
         return Err(GraphError::Denied);
     }
-    if !codeyard_db_core::queries::postgres::credentials::repository(
+    if !codeyard_database::queries::postgres::credentials::repository(
         &mut tx,
         &credential,
         repo,
@@ -241,8 +241,8 @@ pub async fn report(
     Ok(body)
 }
 
-use codeyard_db_core::queries::postgres::dependency_graph::bounded_snapshot_ids;
+use codeyard_database::queries::postgres::dependency_graph::bounded_snapshot_ids;
 
-use codeyard_db_core::queries::postgres::dependency_graph::snapshots_in;
+use codeyard_database::queries::postgres::dependency_graph::snapshots_in;
 
-use codeyard_db_core::queries::postgres::dependency_graph::enabled_in;
+use codeyard_database::queries::postgres::dependency_graph::enabled_in;

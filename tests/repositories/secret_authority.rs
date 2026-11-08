@@ -8,9 +8,9 @@ mod fixture;
 
 use codeyard_support::secrets::SecretEncryptor;
 
-use codeyard_db_core::models::AccessLevel;
-use codeyard_db_core::models::OrgRole;
-use codeyard_db_core::queries::secrets::SecretsError;
+use codeyard_database::models::AccessLevel;
+use codeyard_database::models::OrgRole;
+use codeyard_database::queries::secrets::SecretsError;
 use database::Database;
 
 const NAME: &str = "SENSITIVE_DEPLOY_TOKEN";
@@ -25,7 +25,7 @@ fn denied<T>(result: Result<T, SecretsError>) {
     );
 }
 async fn put(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     repo: i64,
     actor: Option<i64>,
 ) -> Result<(), SecretsError> {
@@ -36,7 +36,7 @@ async fn put(
         NAME,
         VALUE,
         actor,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&format!(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(&format!(
             "{:064x}",
             actor.unwrap_or(-1)
         )),
@@ -59,7 +59,7 @@ async fn refuse_writes(d: &Database, repo: i64, actor: i64) {
             "DENIED_NEW_NAME",
             "denied replacement",
             Some(actor),
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&format!(
+            &codeyard_database::queries::users::accounts::AccountCredential::Session(&format!(
                 "{actor:064x}"
             )),
         )
@@ -71,7 +71,7 @@ async fn refuse_writes(d: &Database, repo: i64, actor: i64) {
             actor,
             repo,
             NAME,
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&format!(
+            &codeyard_database::queries::users::accounts::AccountCredential::Session(&format!(
                 "{actor:064x}"
             )),
         )
@@ -83,7 +83,7 @@ async fn refuse_writes(d: &Database, repo: i64, actor: i64) {
             actor,
             repo,
             "UNKNOWN_NAME",
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&format!(
+            &codeyard_database::queries::users::accounts::AccountCredential::Session(&format!(
                 "{actor:064x}"
             )),
         )
@@ -116,7 +116,7 @@ async fn allow(d: &Database, repo: i64, actor: i64) {
         actor,
         repo,
         NAME,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&format!(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(&format!(
             "{actor:064x}"
         ))
     )
@@ -127,7 +127,7 @@ async fn allow(d: &Database, repo: i64, actor: i64) {
         actor,
         repo,
         NAME,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&format!(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(&format!(
             "{actor:064x}"
         ))
     )
@@ -159,7 +159,7 @@ async fn validation_contract(d: &Database, repo: i64, owner: i64) {
             name,
             "private hostile value",
             Some(owner),
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&format!(
+            &codeyard_database::queries::users::accounts::AccountCredential::Session(&format!(
                 "{owner:064x}"
             )),
         )
@@ -175,7 +175,7 @@ async fn validation_contract(d: &Database, repo: i64, owner: i64) {
             name,
             "private reserved value",
             Some(owner),
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&format!(
+            &codeyard_database::queries::users::accounts::AccountCredential::Session(&format!(
                 "{owner:064x}"
             )),
         )
@@ -190,7 +190,7 @@ async fn validation_contract(d: &Database, repo: i64, owner: i64) {
         "VALID_NAME",
         "private\0value",
         Some(owner),
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&format!(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(&format!(
             "{owner:064x}"
         )),
     )
@@ -202,9 +202,9 @@ async fn validation_contract(d: &Database, repo: i64, owner: i64) {
         &encryptor(),
         repo,
         "VALID_NAME",
-        &"x".repeat(codeyard_actions::values::MAX_VALUE_BYTES + 1),
+        &"x".repeat(codeyard_runner::values::MAX_VALUE_BYTES + 1),
         Some(owner),
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&format!(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(&format!(
             "{owner:064x}"
         )),
     )
@@ -215,9 +215,9 @@ async fn validation_contract(d: &Database, repo: i64, owner: i64) {
 
     let longest_name = format!(
         "A{}",
-        "Z".repeat(codeyard_actions::values::MAX_NAME_BYTES - 1)
+        "Z".repeat(codeyard_runner::values::MAX_NAME_BYTES - 1)
     );
-    let largest_value = "v".repeat(codeyard_actions::values::MAX_VALUE_BYTES);
+    let largest_value = "v".repeat(codeyard_runner::values::MAX_VALUE_BYTES);
     codeyard_db_actions::secrets::create_or_update_secret(
         d.pool(),
         &encryptor(),
@@ -225,7 +225,7 @@ async fn validation_contract(d: &Database, repo: i64, owner: i64) {
         &longest_name,
         &largest_value,
         Some(owner),
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&format!(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(&format!(
             "{owner:064x}"
         )),
     )
@@ -238,7 +238,7 @@ async fn validation_contract(d: &Database, repo: i64, owner: i64) {
         "_",
         "",
         Some(owner),
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&format!(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(&format!(
             "{owner:064x}"
         )),
     )
@@ -259,7 +259,7 @@ async fn validation_contract(d: &Database, repo: i64, owner: i64) {
         owner,
         repo,
         &longest_name,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&format!(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(&format!(
             "{owner:064x}"
         ))
     )
@@ -270,7 +270,7 @@ async fn validation_contract(d: &Database, repo: i64, owner: i64) {
         owner,
         repo,
         "_",
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&format!(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(&format!(
             "{owner:064x}"
         ))
     )
@@ -283,7 +283,7 @@ async fn validation_contract(d: &Database, repo: i64, owner: i64) {
         .unwrap()
         .len();
     let fill = |index: usize| format!("FILL_{index}");
-    for index in held..codeyard_actions::values::MAX_SCOPE_VALUES {
+    for index in held..codeyard_runner::values::MAX_SCOPE_VALUES {
         codeyard_db_actions::secrets::create_or_update_secret(
             d.pool(),
             &encryptor(),
@@ -291,7 +291,7 @@ async fn validation_contract(d: &Database, repo: i64, owner: i64) {
             &fill(index),
             "v",
             Some(owner),
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&format!(
+            &codeyard_database::queries::users::accounts::AccountCredential::Session(&format!(
                 "{owner:064x}"
             )),
         )
@@ -305,7 +305,7 @@ async fn validation_contract(d: &Database, repo: i64, owner: i64) {
         "ONE_TOO_MANY",
         "v",
         Some(owner),
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&format!(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(&format!(
             "{owner:064x}"
         )),
     )
@@ -319,19 +319,19 @@ async fn validation_contract(d: &Database, repo: i64, owner: i64) {
         &fill(held),
         "replaced",
         Some(owner),
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&format!(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(&format!(
             "{owner:064x}"
         )),
     )
     .await
     .unwrap();
-    for index in held..codeyard_actions::values::MAX_SCOPE_VALUES {
+    for index in held..codeyard_runner::values::MAX_SCOPE_VALUES {
         assert!(codeyard_db_actions::secrets::delete_secret(
             d.pool(),
             owner,
             repo,
             &fill(index),
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&format!(
+            &codeyard_database::queries::users::accounts::AccountCredential::Session(&format!(
                 "{owner:064x}"
             ))
         )
@@ -349,7 +349,7 @@ async fn validation_contract(d: &Database, repo: i64, owner: i64) {
         "DEPLOY_KEY",
         "deploy value",
         Some(owner),
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&format!(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(&format!(
             "{owner:064x}"
         )),
     )
@@ -377,7 +377,7 @@ async fn validation_contract(d: &Database, repo: i64, owner: i64) {
         "GITHUB_DEPLOY_KEY",
         "replacement must be refused",
         Some(owner),
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&format!(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(&format!(
             "{owner:064x}"
         )),
     )
@@ -390,7 +390,7 @@ async fn validation_contract(d: &Database, repo: i64, owner: i64) {
         owner,
         repo,
         "GITHUB_DEPLOY_KEY",
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&format!(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(&format!(
             "{owner:064x}"
         ))
     )
@@ -476,7 +476,7 @@ async fn contract(pg: bool) {
                 "MISSING_ACTOR",
                 VALUE,
                 None,
-                &codeyard_db_core::queries::users::accounts::AccountCredential::Session(""),
+                &codeyard_database::queries::users::accounts::AccountCredential::Session(""),
             )
             .await,
         );
@@ -493,7 +493,7 @@ async fn contract(pg: bool) {
         owner,
         private,
         NAME,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&format!(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(&format!(
             "{owner:064x}"
         )),
     )
@@ -509,7 +509,7 @@ async fn contract(pg: bool) {
         NAME,
         "changed fixture value",
         Some(admin),
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&format!(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(&format!(
             "{admin:064x}"
         )),
     )

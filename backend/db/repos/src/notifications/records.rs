@@ -1,7 +1,7 @@
 use anyhow::Result;
-use codeyard_db_core::models::Notification;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::Notification;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 use serde_json::Value;
 
 native_operation!(crate::postgres::notifications::records::received,
@@ -94,7 +94,7 @@ pub(crate) async fn foreign_unread(pool: &DbPool, user: i64) -> Result<i64> {
     let home = pool.foreign_authorization();
     let mut count = 0;
     for (repository, unread) in rows {
-        if codeyard_db_core::cells::notices::readable_until(home.as_ref(), repository, deadline)
+        if codeyard_database::cells::notices::readable_until(home.as_ref(), repository, deadline)
             .await
         {
             count += unread;
@@ -114,7 +114,7 @@ pub struct NotificationCursor {
 /// when a query first reaches it, under row locks, and SQLite decides every scope of the
 /// recipient in its first statement.
 pub(crate) struct NotificationScopes {
-    pub home: Option<codeyard_db_core::cells::authorization::Provider>,
+    pub home: Option<codeyard_database::cells::authorization::Provider>,
     pub remote_deadline: tokio::time::Instant,
     pub classic_token: bool,
     pub high_water: i64,
@@ -329,4 +329,4 @@ native_operation!(crate::postgres::notifications::records::mark_all_notification
     crate::sqlite::notifications::records::mark_all_notifications_read,
     fn mark_all_notifications_read(pool: &DbPool, user_id: i64) -> Result<u64>);
 
-use codeyard_db_core::queries::notifications::records::NewNotification;
+use codeyard_database::queries::notifications::records::NewNotification;

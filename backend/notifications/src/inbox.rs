@@ -13,7 +13,7 @@ pub enum InboxError {
 
 /// The original session and recipient are checked inside the native transaction.
 pub async fn inbox(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     broadcaster: &NotificationBroadcaster,
     session_id: &str,
     user_id: i64,
@@ -31,7 +31,7 @@ pub async fn inbox(
 
 /// Personal-token access uses the same native transaction, not a browser session.
 pub async fn token_inbox(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     broadcaster: &NotificationBroadcaster,
     token_id: i64,
     user_id: i64,
@@ -47,7 +47,7 @@ pub async fn token_inbox(
     .await
 }
 async fn with_credential(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     broadcaster: &NotificationBroadcaster,
     credential: codeyard_db_repos::notifications::records::NotificationCredential<'_>,
     user_id: i64,

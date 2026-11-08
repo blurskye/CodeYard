@@ -1,13 +1,13 @@
 use crate::sqlite::organizations::authority::cancel_actor;
 use anyhow::Result;
-use codeyard_db_core::models::OrgRole;
-use codeyard_db_core::models::User;
-use codeyard_db_core::pool::SqlitePool;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_db_core::queries::sqlite::organizations::authority::begin;
-use codeyard_db_core::queries::sqlite::organizations::authority::begin_read;
-use codeyard_db_core::queries::sqlite::organizations::authority::membership_role;
-use codeyard_db_core::require_read_org_sqlite;
+use codeyard_database::models::OrgRole;
+use codeyard_database::models::User;
+use codeyard_database::pool::SqlitePool;
+use codeyard_database::queries::organizations::OrganizationOutcome;
+use codeyard_database::queries::sqlite::organizations::authority::begin;
+use codeyard_database::queries::sqlite::organizations::authority::begin_read;
+use codeyard_database::queries::sqlite::organizations::authority::membership_role;
+use codeyard_database::require_read_org_sqlite;
 use sqlx::SqliteConnection;
 use OrganizationOutcome::Applied;
 use OrganizationOutcome::Conflict;
@@ -65,7 +65,7 @@ pub async fn check(
 }
 pub async fn change(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     org: i64,
     target: i64,
     blocked: bool,
@@ -76,7 +76,7 @@ pub async fn change(
     if require_org!(tx, actor, org) != OrgRole::Owner {
         return Ok(Denied);
     }
-    if !codeyard_db_core::queries::sqlite::credentials::live(&mut tx, &grant, true).await? {
+    if !codeyard_database::queries::sqlite::credentials::live(&mut tx, &grant, true).await? {
         return Ok(Denied);
     }
     let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id=?1)")

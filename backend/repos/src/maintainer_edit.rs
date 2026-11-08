@@ -1,13 +1,13 @@
 //! Personal-fork consent is scoped to one open pull request, never general Git write access.
 
-use codeyard_db_core::models::PullRequest;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::models::User;
+use codeyard_database::models::PullRequest;
+use codeyard_database::models::Repository;
+use codeyard_database::models::User;
 
 /// A fork's ongoing publication grant follows the real contributor's live access.
 /// Importing an issue's author must never borrow that historical user's authority.
 pub async fn publication_authorized(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     publisher: Option<i64>,
     head: &Repository,
 ) -> anyhow::Result<bool> {
@@ -24,7 +24,7 @@ pub async fn publication_authorized(
 }
 
 pub async fn can_update_head(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     actor: &User,
     base: &Repository,
     head: &Repository,

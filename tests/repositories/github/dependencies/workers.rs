@@ -1,8 +1,8 @@
 use super::*;
 use codeyard_db_repos::repositories::dependencies as records;
 use codeyard_db_repos::repositories::dependencies::AlertState;
+use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_repos::editor::FileWrite;
-use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_repos_pulls::repositories::pull_requests::mutations::update_pull_request;
 use codeyard_repos_pulls::repositories::pull_requests::mutations::UpdatePullRequestRequest;
 fn seed(w: &World, provider: &provider::Provider) -> String {
@@ -315,7 +315,7 @@ async fn revoked(pg: bool) {
         w.f.pool(),
         bob,
         w.repo.id,
-        codeyard_db_core::models::AccessLevel::Admin,
+        codeyard_database::models::AccessLevel::Admin,
     )
     .await
     .unwrap();

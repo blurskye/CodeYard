@@ -63,7 +63,7 @@ pub(super) async fn run(
     root: &std::path::Path,
     actors: (i64, i64),
     credentials: (&str, &str, &str),
-    personal: &codeyard_db_core::models::Repository,
+    personal: &codeyard_database::models::Repository,
 ) {
     let (alice, bob) = actors;
     let (writer, reader, outsider) = credentials;
@@ -146,7 +146,7 @@ pub(super) async fn run(
             alice,
             org,
             bob,
-            codeyard_db_core::models::OrgRole::Member,
+            codeyard_database::models::OrgRole::Member,
         )
         .await
         .unwrap(),
@@ -312,7 +312,7 @@ pub(super) async fn run(
             codeyard_db_repos::projects::create(
                 f.pool(),
                 alice,
-                &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+                &codeyard_database::queries::users::accounts::AccountCredential::Session(
                     &crate::support::live_session(f.pool(), alice).await,
                 ),
                 owner,
@@ -327,7 +327,7 @@ pub(super) async fn run(
     codeyard_db_repos::projects::create(
         f.pool(),
         bob,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), bob).await,
         ),
         codeyard_db_repos::projects::Owner::User(bob),
@@ -342,7 +342,7 @@ pub(super) async fn run(
         codeyard_db_repos::projects::add_field(
             f.pool(),
             alice,
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+            &codeyard_database::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(f.pool(), alice).await,
             ),
             projects[0].id,

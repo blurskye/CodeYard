@@ -21,7 +21,7 @@ the `DX` and `TAILWIND` variables.
 
 ```bash
 DX=/path/to/dx TAILWIND=/path/to/tailwindcss scripts/build-webui.sh release
-cargo build --release -p codeyard -p codeyard-actions --bin codeyard --bin codeyard-actions
+cargo build --release -p codeyard -p codeyard-runner --bin codeyard --bin codeyard-actions
 
 WEBUI_DIST="$PWD/dist/webui" PUBLIC_URL=http://localhost:3000 \
   ./target/release/codeyard serve

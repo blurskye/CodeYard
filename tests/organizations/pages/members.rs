@@ -1,6 +1,6 @@
 use super::fixture::{applied, Fixture, INDEX};
 use axum::http::StatusCode;
-use codeyard_db_core::models::OrgRole;
+use codeyard_database::models::OrgRole;
 use codeyard_db_orgs::organizations::invitations::accept_organization_invitation;
 use codeyard_db_orgs::organizations::membership::add_organization_member;
 use codeyard_db_orgs::organizations::membership::remove_organization_member;

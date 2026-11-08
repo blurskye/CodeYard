@@ -37,7 +37,7 @@ impl World {
         let carol_id = database.actor("carol").await;
         let dave_id = database.actor("dave").await;
         let root = tempfile::tempdir().unwrap();
-        let repository = codeyard_repos_core::repositories::lifecycle::provision(
+        let repository = codeyard_git_storage::repositories::lifecycle::provision(
             (database.pool(), None),
             root.path(),
             codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
@@ -49,9 +49,9 @@ impl World {
         .await
         .unwrap();
         for (user, level) in [
-            (bob_id, codeyard_db_core::models::AccessLevel::Write),
-            (carol_id, codeyard_db_core::models::AccessLevel::Write),
-            (dave_id, codeyard_db_core::models::AccessLevel::Read),
+            (bob_id, codeyard_database::models::AccessLevel::Write),
+            (carol_id, codeyard_database::models::AccessLevel::Write),
+            (dave_id, codeyard_database::models::AccessLevel::Read),
         ] {
             codeyard_db_repos::repositories::access::grant_repo_access(
                 database.pool(),
@@ -411,7 +411,7 @@ async fn private_teams_and_unverified_email_do_not_resolve(pg: bool) {
         resolved["@acme/council"].is_empty(),
         "personal repositories must not expand organization teams"
     );
-    let org_repo = codeyard_repos_core::repositories::lifecycle::provision(
+    let org_repo = codeyard_git_storage::repositories::lifecycle::provision(
         (pool, None),
         world._root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner {
@@ -431,7 +431,7 @@ async fn private_teams_and_unverified_email_do_not_resolve(pg: bool) {
         pool,
         carol.id,
         org_repo.id,
-        codeyard_db_core::models::AccessLevel::Write,
+        codeyard_database::models::AccessLevel::Write,
     )
     .await
     .unwrap();

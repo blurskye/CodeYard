@@ -1,7 +1,7 @@
 use super::templates::setup;
 use axum::http::StatusCode;
 
-use codeyard_db_core::models::AccessLevel;
+use codeyard_database::models::AccessLevel;
 use codeyard_db_repos::assignees::AssignedItem;
 use codeyard_webui::app::Page;
 use codeyard_webui::pages::repos::issues;

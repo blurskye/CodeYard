@@ -14,9 +14,9 @@ use axum::routing::put;
 use axum::routing::MethodRouter;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::app::AppState;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_database::queries::organizations::OrganizationOutcome;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use std::sync::Arc;
 
 pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {

@@ -13,8 +13,8 @@ use crate::sessions::AccountAuthorityError;
 use codeyard_support::secrets::SecretEncryptor;
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use codeyard_db_core::models::User;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::User;
+use codeyard_database::DbPool;
 use codeyard_db_identity::users::two_factor::FactorAuthority;
 use codeyard_db_identity::users::two_factor::StoredTwoFactor;
 use data_encoding::BASE32_NOPAD;

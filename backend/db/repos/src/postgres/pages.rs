@@ -10,7 +10,7 @@ use crate::repositories::credentials::repository_condition;
 use crate::repositories::credentials::Access;
 use crate::repositories::credentials::Reader;
 use anyhow::Result;
-use codeyard_db_core::pool::PgPool;
+use codeyard_database::pool::PgPool;
 
 async fn begin_read<'a>(
     pool: &'a PgPool,
@@ -21,7 +21,7 @@ async fn begin_read<'a>(
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         .execute(&mut *tx)
         .await?;
-    let allowed: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=$1 WHERE r.id=$2 AND ({}) AND ({}))", codeyard_db_core::queries::postgres::repositories::access::readable_condition(), repository_condition(true, "pages", Access::PublicRead, "$3", "$4", "$5")))
+    let allowed: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=$1 WHERE r.id=$2 AND ({}) AND ({}))", codeyard_database::queries::postgres::repositories::access::readable_condition(), repository_condition(true, "pages", Access::PublicRead, "$3", "$4", "$5")))
         .bind(reader.user).bind(repo).bind(reader.token()).bind(reader.session()).bind(reader.hash()).fetch_one(&mut *tx).await?;
     anyhow::ensure!(allowed, Refusal::Missing);
     Ok(tx)
@@ -30,13 +30,13 @@ async fn begin_read<'a>(
 async fn authorize_write(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     actor: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     repo: i64,
     role: Role,
 ) -> Result<()> {
     let allowed = match role {
         Role::Admin => {
-            codeyard_db_core::queries::postgres::discussions::lock_repository_mutation_authority(
+            codeyard_database::queries::postgres::discussions::lock_repository_mutation_authority(
                 tx, actor, repo,
             )
             .await?
@@ -45,13 +45,13 @@ async fn authorize_write(
             crate::postgres::discussions::lock_exclusive_maintain_authority(tx, actor, repo).await?
         }
         Role::Write => {
-            codeyard_db_core::queries::postgres::discussions::lock_write_authority(tx, actor, repo)
+            codeyard_database::queries::postgres::discussions::lock_write_authority(tx, actor, repo)
                 .await?
         }
     };
     anyhow::ensure!(
         allowed
-            && codeyard_db_core::queries::postgres::users::transitions::credential_live(
+            && codeyard_database::queries::postgres::users::transitions::credential_live(
                 tx, actor, credential, true
             )
             .await?,
@@ -72,7 +72,7 @@ pub async fn site(pool: &PgPool, reader: &Reader<'_>, repo: i64) -> Result<Optio
 pub async fn save(
     pool: &PgPool,
     actor: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     repo: i64,
     input: &Update,
     create: bool,
@@ -131,7 +131,7 @@ pub async fn save(
 pub async fn delete(
     pool: &PgPool,
     actor: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     repo: i64,
 ) -> Result<()> {
     let mut tx = pool.begin().await?;
@@ -186,7 +186,7 @@ pub async fn build(
 pub async fn request_build(
     pool: &PgPool,
     actor: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     repo: i64,
     sha: &str,
 ) -> Result<Build> {
@@ -206,7 +206,7 @@ pub async fn request_build(
 pub async fn request_deployment(
     pool: &PgPool,
     actor: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     repo: i64,
     input: Attempt<'_>,
 ) -> Result<Deployment> {
@@ -247,7 +247,7 @@ pub async fn deployment(
 pub async fn cancel(
     pool: &PgPool,
     actor: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     repo: i64,
     id: i64,
 ) -> Result<()> {

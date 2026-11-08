@@ -7,10 +7,10 @@ use crate::organization_values::SettingsValue;
 use crate::organization_values::StoredValue;
 use crate::organization_values::ValueError;
 use crate::organization_values::SETTINGS_PAGE_SIZE;
-use codeyard_db_core::pool::PgPool as Pool;
-use codeyard_db_core::queries::organizations::administers;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_db_core::queries::users::accounts::AccountCredential;
+use codeyard_database::pool::PgPool as Pool;
+use codeyard_database::queries::organizations::administers;
+use codeyard_database::queries::organizations::OrganizationOutcome;
+use codeyard_database::queries::users::accounts::AccountCredential;
 use codeyard_support::secrets::SecretEncryptor;
 use codeyard_support::secrets::SecretError;
 use sqlx::PgConnection as Connection;
@@ -18,7 +18,7 @@ use sqlx::Postgres;
 use sqlx::Transaction;
 
 async fn authorize(connection: &mut Connection, actor: i64, org: i64) -> Result<(), ValueError> {
-    match codeyard_db_core::queries::postgres::organizations::authority::authority(
+    match codeyard_database::queries::postgres::organizations::authority::authority(
         connection, actor, org,
     )
     .await
@@ -37,7 +37,7 @@ async fn authorize_write(
     org: i64,
 ) -> Result<(), ValueError> {
     authorize(tx, actor, org).await?;
-    if !codeyard_db_core::queries::postgres::users::transitions::credential_live(
+    if !codeyard_database::queries::postgres::users::transitions::credential_live(
         tx, actor, credential, true,
     )
     .await
@@ -92,7 +92,7 @@ pub async fn settings_page(
 ) -> Result<SettingsPage, ValueError> {
     let mut tx = pool.begin().await?;
     authorize(&mut tx, actor, org).await?;
-    if !codeyard_db_core::queries::postgres::users::transitions::live_session(
+    if !codeyard_database::queries::postgres::users::transitions::live_session(
         &mut tx, actor, session,
     )
     .await
@@ -159,12 +159,12 @@ async fn delivery_budget(c: &mut Connection, org: i64) -> Result<(), ValueError>
     for private in [false, true] {
         let bytes: i64 = sqlx::query_scalar("SELECT COALESCE(SUM(bytes),0)::BIGINT FROM (SELECT octet_length(name)+octet_length(encrypted_value)-16 AS bytes FROM org_actions_values WHERE org_id=$1 AND kind='secret' AND (visibility='all' OR ($2 AND visibility='private')) ORDER BY name LIMIT 100) v")
             .bind(org).bind(private).fetch_one(&mut *c).await?;
-        if bytes > codeyard_actions::values::MAX_SECRET_BYTES as i64 {
+        if bytes > codeyard_runner::values::MAX_SECRET_BYTES as i64 {
             return Err(ValueError::SecretsSize);
         }
     }
     let invalid: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories r WHERE r.owner_kind='org' AND r.owner_org_id=$1 AND COALESCE((SELECT SUM(i.bytes) FROM (SELECT v.name,octet_length(v.name)+octet_length(v.encrypted_value)-16 AS bytes FROM org_actions_values v WHERE v.org_id=$1 AND v.kind='secret' AND (v.visibility='all' OR (v.visibility='private' AND r.is_private) OR (v.visibility='selected' AND EXISTS(SELECT 1 FROM org_actions_value_repositories s WHERE s.org_id=v.org_id AND s.kind=v.kind AND s.name=v.name AND s.repo_id=r.id))) ORDER BY v.name LIMIT 100) i WHERE NOT EXISTS(SELECT 1 FROM repo_secrets s WHERE s.repo_id=r.id AND upper(s.name)=upper(i.name))),0) + COALESCE((SELECT SUM(octet_length(s.name)+octet_length(s.encrypted_value)-16) FROM repo_secrets s WHERE s.repo_id=r.id),0)>$2)")
-        .bind(org).bind(codeyard_actions::values::MAX_SECRET_BYTES as i64).fetch_one(c).await?;
+        .bind(org).bind(codeyard_runner::values::MAX_SECRET_BYTES as i64).fetch_one(c).await?;
     if invalid {
         return Err(ValueError::SecretsSize);
     }
@@ -323,7 +323,7 @@ pub async fn repositories(
 ) -> Result<
     (
         i64,
-        Vec<codeyard_db_core::queries::repository_stats::RepositorySnapshot>,
+        Vec<codeyard_database::queries::repository_stats::RepositorySnapshot>,
     ),
     ValueError,
 > {
@@ -332,7 +332,7 @@ pub async fn repositories(
             "Invalid repository page"
         )));
     }
-    codeyard_db_core::queries::postgres::retry_on_conflict(|| async {
+    codeyard_database::queries::postgres::retry_on_conflict(|| async {
         repositories_once(pool, actor, org, kind, name, offset, limit)
             .await
             .map_err(anyhow::Error::from)
@@ -356,7 +356,7 @@ async fn repositories_once(
 ) -> Result<
     (
         i64,
-        Vec<codeyard_db_core::queries::repository_stats::RepositorySnapshot>,
+        Vec<codeyard_database::queries::repository_stats::RepositorySnapshot>,
     ),
     ValueError,
 > {
@@ -375,7 +375,7 @@ async fn repositories_once(
         .await?;
     let rows = sqlx::query_as(&format!(
         "SELECT r.*,{},o.name AS owner {selection} ORDER BY r.id LIMIT $4 OFFSET $5",
-        codeyard_db_core::queries::postgres::repository_stats::DOCUMENT_FACTS
+        codeyard_database::queries::postgres::repository_stats::DOCUMENT_FACTS
     ))
     .bind(org)
     .bind(kind.as_str())
@@ -434,7 +434,7 @@ pub async fn inherited(
     kind: Kind,
 ) -> Result<Vec<OrganizationValue>, ValueError> {
     let mut tx = pool.begin().await?;
-    let allowed = codeyard_db_core::queries::postgres::discussions::lock_settings_read_authority(
+    let allowed = codeyard_database::queries::postgres::discussions::lock_settings_read_authority(
         &mut tx,
         actor,
         repo,

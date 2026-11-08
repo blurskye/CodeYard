@@ -1,10 +1,10 @@
 use anyhow::Result;
 use chrono::DateTime;
 use chrono::Utc;
-use codeyard_db_core::models::CiRun;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::CiRun;
+use codeyard_database::models::Repository;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 use sqlx::types::Json;
 use sqlx::FromRow;
 

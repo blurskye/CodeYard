@@ -125,12 +125,12 @@ fn session_context<'a>(fresh: &'a str, old: Option<&'a str>) -> SessionContext<'
 type Database = native::PostgresDatabase;
 impl Database {
     /// A second pool on the same schema, as a restarted server would open.
-    async fn reconnect(&self) -> codeyard_db_core::DbPool {
+    async fn reconnect(&self) -> codeyard_database::DbPool {
         PgPoolOptions::new()
             .max_connections(8)
             .connect(&self.connection_url())
             .await
-            .map(codeyard_db_core::pool::Pool::from)
+            .map(codeyard_database::pool::Pool::from)
             .expect("reconnect owned schema")
             .into()
     }
@@ -160,7 +160,7 @@ impl Database {
             }
         }).await.expect("requests must reach a real PostgreSQL lock barrier");
     }
-    async fn setup(&self, mode: &str) -> codeyard_db_core::models::User {
+    async fn setup(&self, mode: &str) -> codeyard_database::models::User {
         match transitions::complete_setup(&self.pool, "admin", None, PHC, mode, None)
             .await
             .unwrap()
@@ -209,7 +209,7 @@ async fn setup_competitors_have_one_transactional_admin_and_mode() {
         .unwrap();
     assert_eq!(users.len(), 1);
     assert!(users[0].is_admin);
-    let config = codeyard_db_cluster::node_config::get_node_configuration(&fixture.pool)
+    let config = codeyard_db_placement::node_config::get_node_configuration(&fixture.pool)
         .await
         .unwrap()
         .unwrap();
@@ -305,7 +305,7 @@ async fn setup_config_failure_rolls_back_and_original_admin_can_recover() {
     .await
     .is_err());
     assert!(
-        codeyard_db_cluster::node_config::get_node_configuration(&fixture.pool)
+        codeyard_db_placement::node_config::get_node_configuration(&fixture.pool)
             .await
             .unwrap()
             .unwrap()
@@ -1043,7 +1043,7 @@ async fn oauth_state_requires_browser_provider_origin_and_one_atomic_consumer() 
     .unwrap()
     .is_none());
     // Running the migrations again changes nothing and keeps existing state.
-    codeyard_db_core::run_migrations(&fixture.pool)
+    codeyard_database::run_migrations(&fixture.pool)
         .await
         .unwrap();
     assert!(

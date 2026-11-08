@@ -16,14 +16,14 @@ use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_db_core::models::Repository;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
-use codeyard_model::urls::repo_url;
-use codeyard_repos_core::api_shared::github::contents::store_error;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_database::models::Repository;
+use codeyard_git_storage::api_shared::github::contents::store_error;
+use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_repos_pulls::repositories::commit_comments::CommentDetails;
 use codeyard_repos_pulls::repositories::commit_comments::CommentError;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
+use codeyard_types::urls::repo_url;
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -63,7 +63,7 @@ fn document(
     )
 }
 async fn document_one(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     entry: &CommentDetails,
     repo: &Repository,
     owner: &str,
@@ -84,7 +84,7 @@ async fn writer(
     headers: &HeaderMap,
     owner: &str,
     name: &str,
-) -> Result<(Repository, codeyard_db_core::queries::credentials::Actor)> {
+) -> Result<(Repository, codeyard_database::queries::credentials::Actor)> {
     // Comment participation needs read access, not permission to push to the repository.
     let (repo, auth) = repository(state, headers, owner, name, false).await?;
     let auth = auth.ok_or_else(codeyard_identity::github_auth::required)?;

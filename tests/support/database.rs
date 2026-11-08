@@ -35,14 +35,14 @@ impl Database {
         }
         database
     }
-    pub fn pool(&self) -> &codeyard_db_core::DbPool {
+    pub fn pool(&self) -> &codeyard_database::DbPool {
         match self {
             Self::Postgres(f) => &f.pool,
             Self::Sqlite(f) => &f.pool,
         }
     }
     /// The PostgreSQL connection pool, for tests that only make sense on PostgreSQL.
-    pub fn pg(&self) -> &codeyard_db_core::pool::PgPool {
+    pub fn pg(&self) -> &codeyard_database::pool::PgPool {
         match self {
             Self::Postgres(f) => &f.raw,
             Self::Sqlite(_) => panic!("this test needs PostgreSQL"),
@@ -121,7 +121,7 @@ impl Database {
     pub async fn count(&self) -> i64 {
         self.scalar("SELECT COUNT(*) FROM repositories", &[]).await
     }
-    pub async fn repository(&self, id: i64) -> codeyard_db_core::models::Repository {
+    pub async fn repository(&self, id: i64) -> codeyard_database::models::Repository {
         let sql = "SELECT * FROM repositories WHERE id=$1";
         match self {
             Self::Postgres(f) => sqlx::query_as(sql)
@@ -138,7 +138,7 @@ impl Database {
     }
     /// Marks first-run setup as done, so the pages are served instead of the setup form.
     pub async fn complete_setup(&self) {
-        codeyard_db_cluster::node_config::upsert_node_configuration(self.pool(), "public", true)
+        codeyard_db_placement::node_config::upsert_node_configuration(self.pool(), "public", true)
             .await
             .unwrap();
     }
@@ -149,7 +149,7 @@ impl Database {
 }
 
 /// The application router over `pool`, with repositories and objects under `root`.
-pub async fn router(pool: &codeyard_db_core::DbPool, root: &Path) -> Router {
+pub async fn router(pool: &codeyard_database::DbPool, root: &Path) -> Router {
     create_router(AppState::new(
         pool.clone(),
         root.to_owned(),
@@ -162,7 +162,7 @@ pub async fn router(pool: &codeyard_db_core::DbPool, root: &Path) -> Router {
 
 /// How many backends are stuck behind the transaction of backend `blocker`, directly or through
 /// each other, read from the server's lock graph.
-pub async fn blocked_count(raw: &codeyard_db_core::pool::PgPool, blocker: i32) -> i64 {
+pub async fn blocked_count(raw: &codeyard_database::pool::PgPool, blocker: i32) -> i64 {
     sqlx::query_scalar(
         "WITH RECURSIVE waiting(pid) AS (
              SELECT pid FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))
@@ -179,7 +179,7 @@ pub async fn blocked_count(raw: &codeyard_db_core::pool::PgPool, blocker: i32) -
 /// Waits until at least `waiters` backends are stuck behind the transaction of backend
 /// `blocker`, directly or through each other. It reads the server's lock graph, so a sleep
 /// never stands in for "the request is waiting".
-pub async fn wait_until_blocked(raw: &codeyard_db_core::pool::PgPool, blocker: i32, waiters: i64) {
+pub async fn wait_until_blocked(raw: &codeyard_database::pool::PgPool, blocker: i32, waiters: i64) {
     // A generous cap for a loaded runner; the loop returns as soon as the waiters show up.
     let deadline = Instant::now() + Duration::from_secs(120);
     loop {

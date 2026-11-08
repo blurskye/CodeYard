@@ -1,9 +1,9 @@
 //! Traffic means observed native navigations and completed initial Git object transfers.
 use anyhow::ensure;
 use anyhow::Result;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::models::User;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::Repository;
+use codeyard_database::models::User;
+use codeyard_database::DbPool;
 use codeyard_db_repos::repositories::traffic::Identity;
 use codeyard_db_repos::repositories::traffic::Kind;
 use codeyard_db_repos::repositories::traffic::Metric;

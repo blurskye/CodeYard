@@ -251,7 +251,7 @@ pub(super) async fn react(
     if let Err(error) = codeyard_db_repos::reactions::toggle_reaction(
         &ctx.state.pool,
         actor,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &codeyard_api_http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
         ),
         loaded.repository.id,
@@ -268,7 +268,7 @@ pub(super) async fn react(
         {
             ctx.error(StatusCode::NOT_FOUND, "Commit comment not found.")
         } else if error
-            .downcast_ref::<codeyard_db_core::queries::discussions::DiscussionWriteRefusal>()
+            .downcast_ref::<codeyard_database::queries::discussions::DiscussionWriteRefusal>()
             .is_some()
         {
             ctx.error(StatusCode::FORBIDDEN, "Reaction mutation denied.")

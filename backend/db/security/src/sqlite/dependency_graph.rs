@@ -2,9 +2,9 @@ use crate::dependency_graph::Reader;
 use crate::dependency_graph::Submission;
 use crate::dependency_graph::SBOM_REPORTS_PER_REPOSITORY;
 use crate::dependency_graph::SBOM_REPORT_LIFETIME_SECONDS;
-use codeyard_db_core::pool::SqlitePool;
-use codeyard_model::dependency_graph::GraphError;
-use codeyard_model::dependency_graph::Snapshot;
+use codeyard_database::pool::SqlitePool;
+use codeyard_types::dependency_graph::GraphError;
+use codeyard_types::dependency_graph::Snapshot;
 
 async fn authorize_in(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
@@ -13,14 +13,14 @@ async fn authorize_in(
 ) -> Result<(), GraphError> {
     match reader {
         Reader::Viewer(Some(actor)) => {
-            if !codeyard_db_core::queries::sqlite::repositories::access::lock_readable_repository_in_transaction(
+            if !codeyard_database::queries::sqlite::repositories::access::lock_readable_repository_in_transaction(
                 tx,
                 actor.user_id,
                 repo,
             )
             .await
             .map_err(GraphError::Authority)?
-                || !codeyard_db_core::queries::sqlite::credentials::repository(tx, actor, repo, "contents", false)
+                || !codeyard_database::queries::sqlite::credentials::repository(tx, actor, repo, "contents", false)
                     .await
                     .map_err(GraphError::Authority)?
             {
@@ -28,7 +28,7 @@ async fn authorize_in(
             }
         }
         Reader::Viewer(None) | Reader::Scan(_) => {
-            let visible: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON FALSE WHERE r.id=$1 AND NOT r.is_gist AND ($2 OR {}) AND (NOT $2 OR NOT r.is_archived))", codeyard_db_core::queries::sqlite::repositories::access::readable_condition()))
+            let visible: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON FALSE WHERE r.id=$1 AND NOT r.is_gist AND ($2 OR {}) AND (NOT $2 OR NOT r.is_archived))", codeyard_database::queries::sqlite::repositories::access::readable_condition()))
                 .bind(repo).bind(matches!(reader, Reader::Scan(_))).fetch_one(&mut **tx).await?;
             if !visible {
                 return Err(GraphError::Denied);
@@ -80,7 +80,7 @@ pub(super) async fn drop_replaced_snapshots(
 
 pub async fn submit(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo: i64,
     snapshot: &Snapshot,
 ) -> Result<Submission, GraphError> {
@@ -88,13 +88,13 @@ pub async fn submit(
     let credential = actor.into();
     let actor = credential.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    if !codeyard_db_core::queries::sqlite::discussions::lock_write_authority(&mut tx, actor, repo)
+    if !codeyard_database::queries::sqlite::discussions::lock_write_authority(&mut tx, actor, repo)
         .await
         .map_err(GraphError::Authority)?
     {
         return Err(GraphError::Denied);
     }
-    if !codeyard_db_core::queries::sqlite::credentials::repository(
+    if !codeyard_database::queries::sqlite::credentials::repository(
         &mut tx,
         &credential,
         repo,
@@ -208,8 +208,8 @@ pub async fn report(
     Ok(body)
 }
 
-use codeyard_db_core::queries::sqlite::dependency_graph::enabled_in;
+use codeyard_database::queries::sqlite::dependency_graph::enabled_in;
 
-use codeyard_db_core::queries::sqlite::dependency_graph::snapshots_in;
+use codeyard_database::queries::sqlite::dependency_graph::snapshots_in;
 
-use codeyard_db_core::queries::sqlite::dependency_graph::bounded_snapshot_ids;
+use codeyard_database::queries::sqlite::dependency_graph::bounded_snapshot_ids;

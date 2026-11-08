@@ -5,9 +5,10 @@ use git2::{ObjectType, Oid, Repository};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+use codeyard_types::ci::MAX_CI_WORKFLOW_BYTES;
+
 use super::repository::{find_commit_checked, peel_to_commit_checked, tree_entry};
 
-pub const MAX_CI_WORKFLOW_BYTES: usize = 256 * 1024;
 pub const MAX_WORKFLOW_DIRECTORY_ENTRIES: usize = 64;
 pub const MAX_WORKFLOW_FILE_NAME_BYTES: usize = 255;
 // A serialized tree entry is mode + space + name + NUL + a 20-byte SHA-1.

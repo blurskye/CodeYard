@@ -8,12 +8,12 @@ use axum::{
     body::{to_bytes, Body},
     http::{header, Request, StatusCode},
 };
-use codeyard_db_core::models::AccessLevel;
+use codeyard_database::models::AccessLevel;
 use codeyard_db_repos::repositories::commit_comments as records;
 use codeyard_identity::repository_access::change_collaborator;
 use tower::ServiceExt;
 
-async fn delivery(pool: &codeyard_db_core::DbPool, hook: i64, comment: i64) -> Value {
+async fn delivery(pool: &codeyard_database::DbPool, hook: i64, comment: i64) -> Value {
     // The hook's host never resolves, so the delivery is recorded after its retries (7 s).
     for _ in 0..1500 {
         for row in codeyard_db_repos::webhooks::list_deliveries(pool, hook)
@@ -32,7 +32,7 @@ async fn delivery(pool: &codeyard_db_core::DbPool, hook: i64, comment: i64) -> V
 
 pub(super) async fn run(
     router: &Router,
-    resource: (&codeyard_db_core::DbPool, i64, i64, i64),
+    resource: (&codeyard_database::DbPool, i64, i64, i64),
     base: &str,
     tokens: (&str, &str, &str),
     sha: &str,
@@ -48,10 +48,10 @@ pub(super) async fn run(
         pool,
         hook_owner,
         alice,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(pool, alice).await,
         ),
-        &codeyard_db_core::queries::webhooks::WebhookFields {
+        &codeyard_database::queries::webhooks::WebhookFields {
             username: None,
             password: None,
             payload_url: "https://example.test/commit-comment-hook".into(),
@@ -664,7 +664,7 @@ pub(super) async fn run(
         pool,
         hook_owner,
         alice,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(pool, alice).await
         ),
         hook

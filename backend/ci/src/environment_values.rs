@@ -2,9 +2,9 @@
 use anyhow::ensure;
 use anyhow::Context;
 use anyhow::Result;
+use codeyard_database::models::CiRun;
+use codeyard_database::DbPool;
 use codeyard_db_actions::environment_values::WorkflowValues;
-use codeyard_db_core::models::CiRun;
-use codeyard_db_core::DbPool;
 use codeyard_support::secrets::SecretEncryptor;
 use serde::Deserialize;
 use serde::Serialize;
@@ -22,7 +22,7 @@ pub async fn load(
     run: &CiRun,
     definitions: &BTreeMap<String, Vec<u8>>,
 ) -> Result<EnvironmentValues> {
-    let definitions = codeyard_model::workflow_yaml::parse_definitions(definitions).await?;
+    let definitions = codeyard_types::workflow_yaml::parse_definitions(definitions).await?;
     let mut result = EnvironmentValues::default();
     // Each definition's bindings use its own job IDs. The run's roots qualify them through their calls.
     let mut local = BTreeMap::new();
@@ -83,7 +83,7 @@ fn qualify(
     out: &mut BTreeMap<String, String>,
 ) -> Result<()> {
     ensure!(
-        prefix.matches('/').count() < codeyard_actions::workflow::MAX_REUSABLE_LEVELS,
+        prefix.matches('/').count() < codeyard_runner::workflow::MAX_REUSABLE_LEVELS,
         "Called workflow nesting exceeds limit"
     );
     let Some(workflow) = definitions.get(path) else {
@@ -97,7 +97,7 @@ fn qualify(
         // Nested calls multiply, so the walk shares the same job budget as credential expansion.
         *visited += 1;
         ensure!(
-            *visited <= codeyard_model::ci::MAX_EXPANDED_JOBS,
+            *visited <= codeyard_types::ci::MAX_EXPANDED_JOBS,
             "workflow run expands to too many jobs"
         );
         let job = job.as_str().context("Invalid admitted job ID")?;
@@ -136,7 +136,7 @@ mod tests {
             .map(|(path, bytes)| {
                 (
                     path,
-                    codeyard_model::workflow_yaml::parse_yaml(&bytes).unwrap(),
+                    codeyard_types::workflow_yaml::parse_yaml(&bytes).unwrap(),
                 )
             })
             .collect();

@@ -1,6 +1,6 @@
 use anyhow::Result;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 use serde::Deserialize;
 use serde::Serialize;
 

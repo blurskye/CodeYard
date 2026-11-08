@@ -75,7 +75,7 @@ pub(super) async fn authenticate(
     let Some(id) = grant.token_id else {
         return crate::packages::authenticate(state, &HeaderMap::new(), write).await;
     };
-    let configured = codeyard_db_cluster::node_config::get_node_configuration(&state.pool)
+    let configured = codeyard_db_placement::node_config::get_node_configuration(&state.pool)
         .await
         .map_err(Error::db)?
         .is_some_and(|config| config.setup_completed);
@@ -126,9 +126,9 @@ pub(super) async fn exchange(
                 .filter(|name| name.len() <= 512)
                 .ok_or_else(Error::invalid)?;
             let (owner, name) = resource.split_once('/').ok_or_else(Error::invalid)?;
-            if !codeyard_model::package_input::valid_name(owner)
+            if !codeyard_types::package_input::valid_name(owner)
                 || owner.contains('/')
-                || !codeyard_model::package_input::valid_name(name)
+                || !codeyard_types::package_input::valid_name(name)
             {
                 return Err(Error::invalid());
             }

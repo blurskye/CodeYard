@@ -8,7 +8,7 @@
 
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
-use codeyard_repos_core::repositories::store::RepoStore;
+use codeyard_git_storage::repositories::store::RepoStore;
 use codeyard_types::git_limits::MAX_TEMPLATES;
 use codeyard_types::git_limits::MAX_TEMPLATE_BYTES;
 
@@ -230,7 +230,7 @@ fn parse_template(path: &str, text: &str) -> IssueTemplate {
 }
 
 fn parse_yaml(text: &str) -> anyhow::Result<serde_yaml::Value> {
-    codeyard_model::workflow_yaml::parse_yaml_with_limit(
+    codeyard_types::workflow_yaml::parse_yaml_with_limit(
         text.as_bytes(),
         4 * MAX_TEMPLATE_BYTES as usize,
     )

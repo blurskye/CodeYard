@@ -5,7 +5,7 @@ set -euo pipefail
 export RUST_MIN_STACK=33554432 RUST_TEST_THREADS=1 RUST_BACKTRACE=1
 artifacts=$(mktemp)
 trap 'rm -f "$artifacts"' EXIT
-cargo build --locked -p codeyard -p codeyard-actions --bin codeyard --bin codeyard-actions --message-format=json >"$artifacts"
+cargo build --locked -p codeyard -p codeyard-runner --bin codeyard --bin codeyard-actions --message-format=json >"$artifacts"
 export GITSERV_TEST_OPENSSH_HELPER=$(python3 -I scripts/cargo-executable.py codeyard <"$artifacts")
 export CODEYARD_ACTIONS_BIN=$(python3 -I scripts/cargo-executable.py codeyard-actions <"$artifacts")
 status=0

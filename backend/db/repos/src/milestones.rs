@@ -1,8 +1,8 @@
 use anyhow::Result;
-use codeyard_db_core::models::Milestone;
-use codeyard_db_core::models::MilestoneSummary;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::Milestone;
+use codeyard_database::models::MilestoneSummary;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 
 #[derive(Debug, sqlx::FromRow)]
 pub struct MilestoneDocumentFacts {
@@ -55,17 +55,17 @@ pub(crate) fn calendar_due_on(
 
 native_operation!(crate::postgres::milestones::save_milestone,
     crate::sqlite::milestones::save_milestone,
-    fn save_milestone(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo_id: i64, number: Option<i32>, input: MilestoneInput<'_>) -> Result<Milestone>);
+    fn save_milestone(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, repo_id: i64, number: Option<i32>, input: MilestoneInput<'_>) -> Result<Milestone>);
 
 native_operation!(crate::postgres::milestones::save_milestone_checked,
     crate::sqlite::milestones::save_milestone_checked,
-    fn save_milestone_checked(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo_id: i64, number: Option<i32>, input: MilestoneInput<'_>, expected: Option<&str>) -> Result<Milestone>);
+    fn save_milestone_checked(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, repo_id: i64, number: Option<i32>, input: MilestoneInput<'_>, expected: Option<&str>) -> Result<Milestone>);
 
 native_operation!(crate::postgres::milestones::create_milestone,
     crate::sqlite::milestones::create_milestone,
     fn create_milestone(
     pool: &DbPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     title: &str,
     description: Option<&str>,
@@ -76,7 +76,7 @@ native_operation!(crate::postgres::milestones::update_milestone,
     crate::sqlite::milestones::update_milestone,
     fn update_milestone(
     pool: &DbPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     number: i32,
     title: &str,
@@ -87,12 +87,12 @@ native_operation!(crate::postgres::milestones::update_milestone,
 // Sets the state to `open` or `closed`.
 native_operation!(crate::postgres::milestones::set_milestone_state,
     crate::sqlite::milestones::set_milestone_state,
-    fn set_milestone_state(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo_id: i64, number: i32, state: &str) -> Result<Milestone>);
+    fn set_milestone_state(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, repo_id: i64, number: i32, state: &str) -> Result<Milestone>);
 
 // Deletes the milestone and clears it from every issue that named it.
 native_operation!(crate::postgres::milestones::delete_milestone,
     crate::sqlite::milestones::delete_milestone,
-    fn delete_milestone(pool: &DbPool, actor_id: impl Into<codeyard_db_core::queries::credentials::Actor>, repo_id: i64, number: i32, expected_id: i64) -> Result<()>);
+    fn delete_milestone(pool: &DbPool, actor_id: impl Into<codeyard_database::queries::credentials::Actor>, repo_id: i64, number: i32, expected_id: i64) -> Result<()>);
 
 native_operation!(crate::postgres::milestones::read_milestones,
     crate::sqlite::milestones::read_milestones,
@@ -187,9 +187,9 @@ native_operation!(crate::postgres::milestones::milestone_choices_by_ids,
 // the same repository.
 native_operation!(crate::postgres::milestones::set_issue_milestone,
     crate::sqlite::milestones::set_issue_milestone,
-    fn set_issue_milestone(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo_id: i64, issue_id: i64, milestone_number: Option<i32>) -> Result<()>);
+    fn set_issue_milestone(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, repo_id: i64, issue_id: i64, milestone_number: Option<i32>) -> Result<()>);
 
 // The same for a pull request.
 native_operation!(crate::postgres::milestones::set_pull_request_milestone,
     crate::sqlite::milestones::set_pull_request_milestone,
-    fn set_pull_request_milestone(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo_id: i64, pull_request_id: i64, milestone_number: Option<i32>) -> Result<()>);
+    fn set_pull_request_milestone(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, repo_id: i64, pull_request_id: i64, milestone_number: Option<i32>) -> Result<()>);

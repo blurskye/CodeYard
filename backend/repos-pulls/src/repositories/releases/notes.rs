@@ -1,14 +1,14 @@
 //! Release notes derived from a pinned Git range and the repository's real merged pull requests.
 use super::*;
 use codeyard_git::error::ErrorKind;
-use codeyard_model::http_config::link_origin;
-use codeyard_repos_core::context::NodeContext;
-use codeyard_repos_core::repositories::releases::unavailable;
-use codeyard_repos_core::repositories::releases::validate_fields;
-use codeyard_repos_core::repositories::releases::validate_tag;
-use codeyard_repos_core::repositories::releases::ReleaseError;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_git_storage::context::NodeContext;
+use codeyard_git_storage::repositories::releases::unavailable;
+use codeyard_git_storage::repositories::releases::validate_fields;
+use codeyard_git_storage::repositories::releases::validate_tag;
+use codeyard_git_storage::repositories::releases::ReleaseError;
+use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_storage::range::ByteRange as BlobRange;
+use codeyard_types::http_config::link_origin;
 use serde::Deserialize;
 use std::fmt::Write;
 
@@ -93,7 +93,7 @@ fn markdown_text(text: &str) -> String {
     escaped
 }
 async fn configuration(
-    store: &codeyard_repos_core::repositories::store::RepoStore,
+    store: &codeyard_git_storage::repositories::store::RepoStore,
     sha: &str,
     path: Option<&str>,
 ) -> Result<Config, ReleaseError> {
@@ -138,7 +138,7 @@ async fn configuration(
                 "Release notes configuration must be a regular UTF-8 file of at most 64 KiB",
             ));
         }
-        let yaml = codeyard_model::workflow_yaml::parse_yaml_with_limit(&blob.bytes, 8 * 65536)
+        let yaml = codeyard_types::workflow_yaml::parse_yaml_with_limit(&blob.bytes, 8 * 65536)
             .map_err(|_| ReleaseError::Invalid("Invalid release notes YAML"))?;
         let config: Config = serde_yaml::from_value(yaml)
             .map_err(|_| ReleaseError::Invalid("Invalid release notes configuration"))?;
@@ -165,7 +165,7 @@ async fn configuration(
 }
 
 pub async fn generate_notes(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     cluster: Option<&NodeContext>,
     actor: i64,
     repository_id: i64,

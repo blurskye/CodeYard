@@ -1,0 +1,59 @@
+[package]
+name = "codeyard-database"
+version.workspace = true
+edition.workspace = true
+description = "Codeyard database connections, migrations and shared records"
+license = "LGPL-3.0-or-later"
+
+[dependencies]
+anyhow.workspace = true
+futures-util.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+url.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+tracing-subscriber.workspace = true
+
+[lints]
+workspace = true
+
+
+[dependencies.codeyard-runner]
+workspace = true
+
+[dependencies.codeyard-git]
+workspace = true
+
+
+[dependencies.thiserror]
+workspace = true
+
+[dependencies.serde_yaml]
+workspace = true
+
+[dependencies.codeyard-support]
+workspace = true
+
+[dependencies.regex]
+workspace = true
+
+[dependencies.semver]
+workspace = true
+
+[dependencies.tempfile]
+workspace = true
+
+[dependencies.tracing-subscriber]
+workspace = true
+
+[dependencies.codeyard-types]
+workspace = true

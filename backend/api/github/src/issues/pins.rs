@@ -8,8 +8,8 @@ use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -33,7 +33,7 @@ async fn change(
     p: &HashMap<String, String>,
     pinned: bool,
 ) -> Result<(
-    codeyard_db_core::models::Repository,
+    codeyard_database::models::Repository,
     codeyard_webhooks::comment_documents::Comment,
 )> {
     let (repo, auth) = repository(state, headers, &p["owner"], &p["repo"], true).await?;

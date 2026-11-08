@@ -1,11 +1,11 @@
 //! Repository events use the default branch's workflow and the webhook's unchanged document.
 use crate::runs::CiRuns;
-use codeyard_db_core::ci_admission::AdmissionError;
-use codeyard_db_core::models::AccessLevel;
-use codeyard_db_core::models::Repository;
-use codeyard_model::workflow_glob::WorkflowMatchBudget;
-use codeyard_repos_core::receive_ci::CiRunRequest;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_database::ci_admission::AdmissionError;
+use codeyard_database::models::AccessLevel;
+use codeyard_database::models::Repository;
+use codeyard_git_storage::receive_ci::CiRunRequest;
+use codeyard_git_storage::repositories::store::repo_store;
+use codeyard_types::workflow_glob::WorkflowMatchBudget;
 use serde_json::Value;
 
 pub(crate) fn is_repository_event(event: &str) -> bool {
@@ -33,14 +33,14 @@ impl CiRuns {
         sender: i64,
         event_type: String,
         client_payload: Value,
-        credential: codeyard_db_core::queries::ci::CiCredential,
+        credential: codeyard_database::queries::ci::CiCredential,
     ) -> Result<(), AdmissionError> {
         if repo.is_archived {
             return Err(AdmissionError::Denied(
                 "Repository was archived so is read-only",
             ));
         }
-        let payload = codeyard_repos_core::webhooks::emit_repository_dispatch(
+        let payload = codeyard_git_storage::webhooks::emit_repository_dispatch(
             &self.pool,
             repo,
             actor,
@@ -67,7 +67,7 @@ impl CiRuns {
 
     pub(crate) async fn emit_workflow_run(
         &self,
-        run: &codeyard_db_core::models::CiRun,
+        run: &codeyard_database::models::CiRun,
         action: &str,
     ) {
         if action == "requested" && run.workflow_run_attempt.unwrap_or(1) > 1 {
@@ -80,7 +80,7 @@ impl CiRuns {
 
     async fn workflow_run_event(
         &self,
-        run: &codeyard_db_core::models::CiRun,
+        run: &codeyard_database::models::CiRun,
         action: &str,
     ) -> anyhow::Result<()> {
         let Some(actor) = run.triggered_by_id else {
@@ -230,7 +230,7 @@ impl CiRuns {
         document["triggering_actor"] = codeyard_webhooks::payloads::user(&sender);
         let snapshot = repo.clone();
         let action = action.to_owned();
-        let payload = codeyard_repos_core::webhooks::emit(
+        let payload = codeyard_git_storage::webhooks::emit(
             &self.pool,
             &repo,
             "workflow_run",
@@ -293,7 +293,7 @@ impl CiRuns {
         };
         let steps = codeyard_db_actions::action_jobs::steps(&self.pool, repo.id, job_id).await?;
         let snapshot = repo.clone();
-        codeyard_repos_core::webhooks::emit(
+        codeyard_git_storage::webhooks::emit(
             &self.pool,
             &repo,
             "workflow_job",
@@ -326,7 +326,7 @@ impl CiRuns {
         actor: i64,
         event: &str,
         payload: &Value,
-        credential: Option<codeyard_db_core::queries::ci::CiCredential>,
+        credential: Option<codeyard_database::queries::ci::CiCredential>,
     ) -> Result<(), AdmissionError> {
         if !is_repository_event(event) || !self.actor_may_discover_workflows(repo.id, actor).await?
         {
@@ -345,7 +345,7 @@ impl CiRuns {
             Err(error) => return Err(error.into()),
         };
         let definitions =
-            codeyard_repos_core::workflows::list_workflows_for_ref(&store, &commit.sha).await?;
+            codeyard_git_storage::workflows::list_workflows_for_ref(&store, &commit.sha).await?;
         let mut budget = WorkflowMatchBudget::new();
         let mut matched = Vec::new();
         let branch = if event == "workflow_run" {
@@ -378,9 +378,10 @@ impl CiRuns {
                         head_sha: Some(commit.sha.clone()),
                         event: event.to_owned(),
                         pull_request_id: None,
-                        pipeline: codeyard_repos_core::workflows::infer_pipeline_from_workflow_path(
-                            &definition.path,
-                        ),
+                        pipeline:
+                            codeyard_git_storage::workflows::infer_pipeline_from_workflow_path(
+                                &definition.path,
+                            ),
                         workflow_paths: vec![definition.path],
                         environment: None,
                         inputs: None,

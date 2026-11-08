@@ -5,7 +5,7 @@ use crate::RequestContext;
 use crate::Result;
 use codeyard_db_repos::reactions::Subject;
 use codeyard_db_repos::reactions::Target;
-use codeyard_model::node_id;
+use codeyard_types::node_id;
 use serde_json::json;
 use serde_json::Value;
 

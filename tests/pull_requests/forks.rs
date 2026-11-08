@@ -13,9 +13,9 @@ use codeyard_ci::config::CiExecutionMode;
 use codeyard_ci_engine::queue::RunQueue;
 use codeyard_ci_engine::runs::CiRuns;
 use codeyard_ci_engine::workers::CiWorkers;
+use codeyard_git_storage::repositories::lifecycle::provision;
+use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_repos::editor::FileWrite;
-use codeyard_repos_core::repositories::lifecycle::provision;
-use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_storage::ObjectStore;
 use codeyard_support::secrets::SecretEncryptor;
 use database::Database;
@@ -84,7 +84,7 @@ async fn contract(pg: bool) {
         "BASE_SECRET",
         "must-not-be-delivered",
         Some(alice_id),
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), alice_id).await,
         ),
     )
@@ -334,7 +334,7 @@ async fn contract(pg: bool) {
         None,
         &ci_runs,
         bob_id,
-        codeyard_db_core::models::AccessLevel::Owner,
+        codeyard_database::models::AccessLevel::Owner,
     )
     .await
     .unwrap();
@@ -719,7 +719,7 @@ echo isolated-checkout-only-admitted-objects
         f.pool(),
         bob_id,
         base.id,
-        codeyard_db_core::models::AccessLevel::Write,
+        codeyard_database::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -1051,7 +1051,7 @@ async fn private_fork_revocation_contract(pg: bool) {
         f.pool(),
         bob_id,
         fork.id,
-        codeyard_db_core::models::AccessLevel::Read,
+        codeyard_database::models::AccessLevel::Read,
     )
     .await
     .unwrap();
@@ -1183,7 +1183,7 @@ async fn private_fork_revocation_contract(pg: bool) {
             Some(&["main", "later"][..]),
             &ci,
             alice_id,
-            codeyard_db_core::models::AccessLevel::Owner
+            codeyard_database::models::AccessLevel::Owner
         )
         .await
         .is_err()

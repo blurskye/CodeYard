@@ -13,11 +13,11 @@ use codeyard_app::api_shared::github::repos::document;
 use codeyard_app::api_shared::github::repos::lifecycle_error;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_db_core::models::User;
+use codeyard_database::models::User;
 use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
 use codeyard_db_repos::repositories::creation::RepositoryTarget;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
@@ -107,12 +107,12 @@ async fn fork(
         None => RepositoryCreationOwner::personal(auth.user.id),
     };
     crate::auth::require_copy_owner(&state, &auth, target.target).await?;
-    let repo = codeyard_repos_core::repositories::lifecycle::fork_into(
+    let repo = codeyard_git_storage::repositories::lifecycle::fork_into(
         &state.pool,
         state.cluster.as_ref(),
         &state.repos_path,
         &state.notification_broadcaster,
-        codeyard_repos_core::repositories::lifecycle::ForkOptions {
+        codeyard_git_storage::repositories::lifecycle::ForkOptions {
             foreign_source: source.admission.as_ref(),
             owner: target,
             name: input.name.as_deref(),
@@ -153,12 +153,12 @@ async fn generate(
     let auth = actor.ok_or_else(codeyard_identity::github_auth::required)?;
     let target = owner(&state, &auth.user, input.owner.as_deref()).await?;
     crate::auth::require_copy_owner(&state, &auth, target.target).await?;
-    let repo = codeyard_repos_core::repositories::lifecycle::generate(
+    let repo = codeyard_git_storage::repositories::lifecycle::generate(
         (&state.pool, state.cluster.as_ref()),
         &state.repos_path,
         target,
         source.id,
-        codeyard_repos_core::repositories::lifecycle::TemplateOptions {
+        codeyard_git_storage::repositories::lifecycle::TemplateOptions {
             name: &input.name,
             description: input.description.as_deref(),
             private: input.private,

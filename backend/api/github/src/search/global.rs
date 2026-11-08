@@ -3,10 +3,10 @@
 //! whole account, as that cell named the account a reader.
 use axum::http::StatusCode;
 use codeyard_app::app::AppState;
-use codeyard_db_core::cells::search::{Filter, Hit, Kind, Query, Refusal};
+use codeyard_database::cells::search::{Filter, Hit, Kind, Query, Refusal};
 use codeyard_identity::github_auth::Authentication;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 
 pub struct Found {
     pub total: i64,

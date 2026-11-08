@@ -6,7 +6,7 @@ use axum::http::Uri;
 use axum::response::Response;
 use codeyard_api_http::context::PageContext;
 use codeyard_app::app::AppState;
-use codeyard_db_core::models::AccessLevel;
+use codeyard_database::models::AccessLevel;
 use codeyard_webui::app::Page as AppPage;
 use codeyard_webui::pages::discovery as view;
 use codeyard_webui::pages::discovery::HomeModel;
@@ -36,7 +36,7 @@ pub(super) async fn home(
         .unwrap_or_default();
     // This scope comes from the verified session, never from a query/form owner.
     let page_size =
-        codeyard_db_core::cells::pointers::Config::default().browser_repository_page_size as i64;
+        codeyard_database::cells::pointers::Config::default().browser_repository_page_size as i64;
     let page = ctx
         .query
         .get("page")
@@ -53,7 +53,7 @@ pub(super) async fn home(
             &ctx.database_actor(user.id),
             user.is_stub,
             session,
-            codeyard_db_core::cells::pointers::List::BrowserRepositories,
+            codeyard_database::cells::pointers::List::BrowserRepositories,
             vec![("q".into(), find.clone())],
             wanted,
         )
@@ -97,7 +97,7 @@ pub(super) async fn home(
         Err(()) => return unavailable(&ctx, "home_shared_repositories"),
     };
     if let Some(remote) = remote {
-        let Ok(mut budget) = codeyard_db_core::cells::pointers::Budget::new(Default::default())
+        let Ok(mut budget) = codeyard_database::cells::pointers::Budget::new(Default::default())
         else {
             return unavailable(&ctx, "home_membership_limits");
         };
@@ -200,7 +200,7 @@ async fn indexed_trending(
     username: &str,
     find: &str,
 ) -> Option<Vec<codeyard_webui::pages::discovery::RepositoryCard>> {
-    use codeyard_db_core::cells::search::Filter;
+    use codeyard_database::cells::search::Filter;
     let mut terms = vec![Filter::Not(Box::new(Filter::Term(
         "owner".into(),
         username.into(),
@@ -239,12 +239,12 @@ async fn shared_cards(
     wanted: usize,
     offset: i64,
 ) -> Result<(Vec<SharedRepositoryCard>, i64), ()> {
-    let config = codeyard_db_core::cells::pointers::Config::default();
+    let config = codeyard_database::cells::pointers::Config::default();
     if wanted == 0 || wanted > config.maximum_scan {
         return Err(());
     }
     let mut cards = Vec::new();
-    let mut budget = codeyard_db_core::cells::pointers::Budget::new(config).map_err(|_| ())?;
+    let mut budget = codeyard_database::cells::pointers::Budget::new(config).map_err(|_| ())?;
     let mut count = 0;
     while cards.len() < wanted {
         let limit = (wanted - cards.len()).min(config.page_size);

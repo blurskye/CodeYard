@@ -2,23 +2,23 @@ use crate::repository_stats::LanguageSource;
 use crate::repository_stats::RepoActivityPoint;
 use crate::repository_stats::WorkflowUsage;
 use anyhow::Result;
-use codeyard_db_core::models::RepoLanguage;
-use codeyard_db_core::pool::SqlitePool;
+use codeyard_database::models::RepoLanguage;
+use codeyard_database::pool::SqlitePool;
 
 pub async fn readable_snapshots(
     pool: &SqlitePool,
     viewer: Option<i64>,
     ids: &[i64],
-) -> Result<Vec<codeyard_db_core::queries::repository_stats::RepositorySnapshot>> {
+) -> Result<Vec<codeyard_database::queries::repository_stats::RepositorySnapshot>> {
     anyhow::ensure!(ids.len() <= 500, "Repository page exceeds its limit");
-    Ok(sqlx::query_as(&format!("SELECT r.*,{DOCUMENT_FACTS},COALESCE(person.username,org.name) AS owner FROM repositories r LEFT JOIN users person ON person.id=r.owner_user_id LEFT JOIN organizations org ON org.id=r.owner_org_id LEFT JOIN users u ON u.id=?1 WHERE r.id IN(SELECT value FROM json_each(?2)) AND {}", codeyard_db_core::queries::sqlite::repositories::access::readable_condition()))
+    Ok(sqlx::query_as(&format!("SELECT r.*,{DOCUMENT_FACTS},COALESCE(person.username,org.name) AS owner FROM repositories r LEFT JOIN users person ON person.id=r.owner_user_id LEFT JOIN organizations org ON org.id=r.owner_org_id LEFT JOIN users u ON u.id=?1 WHERE r.id IN(SELECT value FROM json_each(?2)) AND {}", codeyard_database::queries::sqlite::repositories::access::readable_condition()))
         .bind(viewer).bind(serde_json::to_string(ids)?).fetch_all(pool).await?)
 }
 
 pub async fn repository_document_facts(
     pool: &SqlitePool,
     repo: i64,
-) -> Result<codeyard_db_core::queries::repository_stats::RepositoryDocumentFacts> {
+) -> Result<codeyard_database::queries::repository_stats::RepositoryDocumentFacts> {
     repository_document_metadata(pool, &[repo])
         .await?
         .into_iter()
@@ -198,4 +198,4 @@ pub async fn list_workflow_usage(
         .bind(repo_id).bind(days.clamp(7, 730)).fetch_all(pool).await?)
 }
 
-use codeyard_db_core::queries::sqlite::repository_stats::DOCUMENT_FACTS;
+use codeyard_database::queries::sqlite::repository_stats::DOCUMENT_FACTS;

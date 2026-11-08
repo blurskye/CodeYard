@@ -14,8 +14,8 @@ use codeyard_db_repos::catalog_search::Kind;
 use codeyard_db_repos::catalog_search::Options;
 use codeyard_db_repos::catalog_search::Search;
 use codeyard_identity::repository_access::AccessError;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -91,7 +91,7 @@ async fn catalog(
         if let Some(found) = crate::search::global::search(
             &state,
             authentication.as_ref(),
-            codeyard_db_core::cells::search::Kind::Repositories,
+            codeyard_database::cells::search::Kind::Repositories,
             search.search_filter(),
             q.get("sort").filter(|sort| !sort.is_empty()).cloned(),
             ascending,

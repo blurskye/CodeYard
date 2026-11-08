@@ -143,7 +143,7 @@ pub(crate) async fn visibility_post(
     let result = codeyard_identity::profiles::save(
         &ctx.state.pool,
         user.id,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session),
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(&session),
         &codeyard_db_identity::users::profiles::ProfilePatch {
             primary_visibility: (!form.contains_key("public_address")).then_some(visibility),
             // Showing the primary address replaces a chosen secondary one.
@@ -182,7 +182,7 @@ pub(crate) async fn secondary_post(
     match codeyard_identity::emails::change(
         &ctx.state.pool,
         user.id,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session),
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(&session),
         &[address],
         !remove,
     )
@@ -255,7 +255,7 @@ pub(crate) async fn notifications_post(
     let wanted = field(&form, "email_notifications") == "yes";
     let session = codeyard_api_http::session::extract_session_id(&ctx.headers).unwrap_or_default();
     let credential =
-        codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session);
+        codeyard_database::queries::users::accounts::AccountCredential::Session(&session);
     match codeyard_db_identity::email::set_email_notifications(
         &ctx.state.pool,
         user.id,

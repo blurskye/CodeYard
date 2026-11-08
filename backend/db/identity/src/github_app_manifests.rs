@@ -1,9 +1,9 @@
 use crate::github_apps::App;
 use anyhow::Result;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::queries::webhooks::SealedSecret;
-use codeyard_db_core::queries::webhooks::WebhookFields;
-use codeyard_db_core::DbPool;
+use codeyard_database::native_operation;
+use codeyard_database::queries::webhooks::SealedSecret;
+use codeyard_database::queries::webhooks::WebhookFields;
+use codeyard_database::DbPool;
 
 #[derive(Clone, Debug, sqlx::FromRow)]
 pub struct Draft {

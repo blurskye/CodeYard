@@ -18,12 +18,12 @@ use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_db_core::models::Repository;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
-use codeyard_model::urls::repo_url;
-use codeyard_repos_core::api_shared::github::contents::store_error;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_database::models::Repository;
+use codeyard_git_storage::api_shared::github::contents::store_error;
+use codeyard_git_storage::repositories::store::repo_store;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
+use codeyard_types::urls::repo_url;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -103,7 +103,7 @@ struct Create {
     custom_properties: Option<
         HashMap<
             String,
-            Option<codeyard_db_core::queries::organizations::properties::PropertyValue>,
+            Option<codeyard_database::queries::organizations::properties::PropertyValue>,
         >,
     >,
 }
@@ -126,7 +126,7 @@ async fn create(
     merge_methods
         .resolve((true, true, true))
         .map_err(settings_error)?;
-    codeyard_repos_core::repositories::lifecycle::validate_description(
+    codeyard_git_storage::repositories::lifecycle::validate_description(
         input.description.as_deref().unwrap_or(""),
     )
     .map_err(lifecycle_error)?;
@@ -182,16 +182,16 @@ async fn create(
         .unwrap_or_default()
         .into_iter()
         .map(|(property_name, value)| {
-            codeyard_db_core::queries::organizations::properties::ValueInput {
+            codeyard_database::queries::organizations::properties::ValueInput {
                 property_name,
                 value,
             }
         })
         .collect::<Vec<_>>();
-    let repo = codeyard_repos_core::repositories::lifecycle::provision_with_initial_properties(
+    let repo = codeyard_git_storage::repositories::lifecycle::provision_with_initial_properties(
         (&state.pool, state.cluster.as_ref()),
         &state.repos_path,
-        codeyard_repos_core::repositories::lifecycle::CreationInput {
+        codeyard_git_storage::repositories::lifecycle::CreationInput {
             owner: codeyard_db_repos::repositories::creation::RepositoryCreationOwner {
                 actor_id: actor.user.id,
                 target,
@@ -206,7 +206,7 @@ async fn create(
         &input.name,
         input.description.as_deref(),
         private,
-        codeyard_repos_core::repositories::lifecycle::InitialFiles {
+        codeyard_git_storage::repositories::lifecycle::InitialFiles {
             readme: input.auto_init,
             gitignore,
             license,
@@ -304,11 +304,11 @@ async fn update(
         ));
     }
     if let Some(name) = input.name.as_deref() {
-        codeyard_repos_core::repositories::lifecycle::validate_name(name)
+        codeyard_git_storage::repositories::lifecycle::validate_name(name)
             .map_err(lifecycle_error)?;
     }
     if value.get("description").is_some() {
-        codeyard_repos_core::repositories::lifecycle::validate_description(
+        codeyard_git_storage::repositories::lifecycle::validate_description(
             input.description.as_deref().unwrap_or(""),
         )
         .map_err(lifecycle_error)?;
@@ -392,7 +392,7 @@ async fn transfer(
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
     let auth = auth.ok_or_else(codeyard_identity::github_auth::required)?;
-    let repo = codeyard_repos_core::repositories::lifecycle::transfer(
+    let repo = codeyard_git_storage::repositories::lifecycle::transfer(
         &state.pool,
         state.cluster.as_ref(),
         auth.database_actor(),
@@ -401,8 +401,8 @@ async fn transfer(
     )
     .await
     .map_err(|error| match error.kind {
-        codeyard_repos_core::repositories::lifecycle::LifecycleFailure::Invalid
-        | codeyard_repos_core::repositories::lifecycle::LifecycleFailure::Conflict => {
+        codeyard_git_storage::repositories::lifecycle::LifecycleFailure::Invalid
+        | codeyard_git_storage::repositories::lifecycle::LifecycleFailure::Conflict => {
             Error::invalid(error.message)
         }
         _ => lifecycle_error(error),
@@ -500,7 +500,7 @@ async fn tags(
     let values = tags.into_iter().skip(offset).take(limit).map(|tag| {
         let reference = codeyard_types::ref_path::encode_path(&format!("refs/tags/{}", tag.name));
         json!({"name": tag.name,
-            "node_id": codeyard_model::node_id::reference(repo.id, &format!("refs/tags/{}", tag.name)),
+            "node_id": codeyard_types::node_id::reference(repo.id, &format!("refs/tags/{}", tag.name)),
             "commit": {"sha": tag.commit, "url": format!("{base}/commits/{}", tag.commit)},
             "zipball_url": format!("{base}/zipball/{reference}"), "tarball_url": format!("{base}/tarball/{reference}"),
         })
@@ -669,7 +669,7 @@ async fn list(
                 &state.pool,
                 auth,
                 &headers,
-                codeyard_db_core::cells::pointers::List::Repositories,
+                codeyard_database::cells::pointers::List::Repositories,
                 parameters,
                 offset.saturating_add(limit).saturating_add(1),
             )
@@ -739,7 +739,7 @@ async fn list(
             break;
         }
         if remote.is_some()
-            && scanned >= codeyard_db_core::cells::pointers::Config::default().maximum_scan as i64
+            && scanned >= codeyard_database::cells::pointers::Config::default().maximum_scan as i64
         {
             return Err(Error::unavailable(anyhow::anyhow!(
                 "Membership scan exceeds its limit"
@@ -786,7 +786,7 @@ async fn list(
                     axum::http::header::LINK,
                     format!(
                         "<{}?since={}>; rel=\"next\"",
-                        codeyard_model::urls::api_url("/repositories"),
+                        codeyard_types::urls::api_url("/repositories"),
                         last.id
                     )
                     .parse()
@@ -819,7 +819,7 @@ async fn dispatch(
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
     let auth = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     let actor = auth.workflow_actor(&state, repo.id).await?;
-    let Json(input) = input.map_err(codeyard_model::github_error::json_error)?;
+    let Json(input) = input.map_err(codeyard_types::github_error::json_error)?;
     if !codeyard_ci_engine::events::valid_dispatch(&input.event_type, &input.client_payload) {
         return Err(Error::invalid("Invalid repository dispatch"));
     }
@@ -898,7 +898,7 @@ async fn property_values(
 
 #[derive(Deserialize)]
 struct PropertyValues {
-    properties: Vec<codeyard_db_core::queries::organizations::properties::ValueInput>,
+    properties: Vec<codeyard_database::queries::organizations::properties::ValueInput>,
 }
 
 async fn set_property_values(
@@ -908,7 +908,7 @@ async fn set_property_values(
     input: std::result::Result<Json<PropertyValues>, axum::extract::rejection::JsonRejection>,
 ) -> Result<StatusCode> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let Json(input) = input.map_err(codeyard_model::github_error::json_error)?;
+    let Json(input) = input.map_err(codeyard_types::github_error::json_error)?;
     let auth = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     codeyard_db_orgs::organizations::properties::set_repository_values(
         &state.pool,

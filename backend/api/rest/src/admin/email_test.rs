@@ -1,4 +1,4 @@
-use codeyard_db_core::DbPool;
+use codeyard_database::DbPool;
 use codeyard_db_identity::mail_config as config;
 use codeyard_notifications::email::send;
 use codeyard_support::secrets::SecretEncryptor;
@@ -34,7 +34,7 @@ pub async fn send_test(
         .map(str::trim)
         .filter(|email| !email.is_empty())
         .ok_or(TestMailError::NoAddress)?;
-    let mail = codeyard_model::mail_messages::test_message();
+    let mail = codeyard_types::mail_messages::test_message();
     send::send(&config, to, &mail.subject, &mail.body)
         .await
         .map_err(TestMailError::Delivery)?;

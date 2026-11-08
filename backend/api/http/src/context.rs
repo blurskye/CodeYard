@@ -10,7 +10,7 @@ use axum::http::StatusCode;
 use axum::http::Uri;
 use axum::response::Response;
 use codeyard_app::app::AppState;
-use codeyard_db_core::models::User;
+use codeyard_database::models::User;
 use codeyard_support::crypto::is_hex_token;
 use codeyard_webui::document::Chrome;
 use codeyard_webui::document::Theme;
@@ -39,7 +39,7 @@ pub(crate) enum ExistingCsrfError {
 
 async fn csrf_token_for_session(
     state: &AppState,
-    browser_session: &codeyard_db_core::models::BrowserSession,
+    browser_session: &codeyard_database::models::BrowserSession,
 ) -> anyhow::Result<Option<String>> {
     let candidate = codeyard_support::crypto::random_hex();
     let ttl = CSRF_TTL_SECONDS
@@ -94,7 +94,7 @@ pub struct PageContext {
 }
 
 impl PageContext {
-    pub fn database_actor(&self, user_id: i64) -> codeyard_db_core::queries::credentials::Actor {
+    pub fn database_actor(&self, user_id: i64) -> codeyard_database::queries::credentials::Actor {
         (
             user_id,
             crate::session::extract_session_id(&self.headers).unwrap_or_default(),
@@ -113,7 +113,7 @@ impl PageContext {
                 "The service is temporarily unavailable. Please try again.",
             )
         };
-        let config = codeyard_db_cluster::node_config::get_node_configuration(&state.pool)
+        let config = codeyard_db_placement::node_config::get_node_configuration(&state.pool)
             .await
             .map_err(|_| unavailable())?;
         let setup_completed = config.as_ref().is_some_and(|c| c.setup_completed);
@@ -418,7 +418,7 @@ mod tests {
     #[tokio::test]
     async fn forms_require_a_preexisting_verified_session_and_preserve_cookie() {
         let mut ctx = PageContext {
-            state: Arc::new(codeyard_test_support::closed_state().await),
+            state: Arc::new(codeyard_testing::closed_state().await),
             headers: HeaderMap::new(),
             user: None,
             session_id: None,
@@ -461,7 +461,7 @@ mod tests {
     #[tokio::test]
     async fn theme_form_needs_no_token_only_without_a_session() {
         let mut ctx = PageContext {
-            state: Arc::new(codeyard_test_support::closed_state().await),
+            state: Arc::new(codeyard_testing::closed_state().await),
             headers: HeaderMap::new(),
             user: None,
             session_id: None,
@@ -516,7 +516,7 @@ mod tests {
             HeaderValue::from_static(codeyard_webui::bootstrap::MODEL_CONTENT_TYPE),
         );
         let ctx = PageContext {
-            state: Arc::new(codeyard_test_support::closed_state().await),
+            state: Arc::new(codeyard_testing::closed_state().await),
             headers,
             user: Some(user),
             session_id: None,

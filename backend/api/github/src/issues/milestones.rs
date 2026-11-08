@@ -16,9 +16,9 @@ use chrono::Utc;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_db_core::models::MilestoneSummary;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_database::models::MilestoneSummary;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -44,7 +44,7 @@ fn write_error(error: anyhow::Error) -> Error {
 }
 
 pub(crate) async fn document(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     summary: &MilestoneSummary,
     owner: &str,
     repo: &str,
@@ -64,7 +64,7 @@ pub(crate) async fn document(
 }
 
 async fn find(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     repo_id: i64,
     number: &str,
 ) -> Result<MilestoneSummary> {
@@ -139,10 +139,10 @@ async fn save(
         return Err(Error::invalid("Title is required"));
     }
     if let Some(title) = input.title.as_deref() {
-        codeyard_model::issue_input::validate_milestone(title, "").map_err(Error::invalid)?;
+        codeyard_types::issue_input::validate_milestone(title, "").map_err(Error::invalid)?;
     }
     if let Some(description) = input.description.as_deref() {
-        codeyard_model::issue_input::validate_milestone("title", description)
+        codeyard_types::issue_input::validate_milestone("title", description)
             .map_err(Error::invalid)?;
     }
     if input

@@ -2,7 +2,7 @@ use crate::organizations::organization::Fields;
 use axum::http::StatusCode;
 use axum::response::Response;
 use codeyard_api_http::context::PageContext;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
+use codeyard_database::queries::organizations::OrganizationOutcome;
 use codeyard_db_orgs::organizations::roles::RoleTarget;
 use codeyard_webui::pages::orgs as view;
 
@@ -70,7 +70,7 @@ fn project<T>(
         _ => Err(crate::organizations::organization::unavailable(ctx)),
     }
 }
-fn team_view(team: codeyard_db_core::models::Team) -> view::RoleTeam {
+fn team_view(team: codeyard_database::models::Team) -> view::RoleTeam {
     view::RoleTeam {
         id: team.id,
         name: team.name,

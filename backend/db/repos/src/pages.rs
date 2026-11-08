@@ -1,8 +1,8 @@
 use anyhow::Result;
 use chrono::DateTime;
 use chrono::Utc;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
@@ -194,23 +194,23 @@ pub struct Deployment {
 native_operation!(crate::postgres::pages::site,crate::sqlite::pages::site,
     fn site(pool:&DbPool,reader:&crate::repositories::credentials::Reader<'_>,repo:i64)->Result<Option<Site>>);
 native_operation!(crate::postgres::pages::save,crate::sqlite::pages::save,
-    fn save(pool:&DbPool,actor:i64,credential:&codeyard_db_core::queries::users::accounts::AccountCredential<'_>,repo:i64,update:&Update,create:bool)->Result<Site>);
+    fn save(pool:&DbPool,actor:i64,credential:&codeyard_database::queries::users::accounts::AccountCredential<'_>,repo:i64,update:&Update,create:bool)->Result<Site>);
 native_operation!(crate::postgres::pages::delete,crate::sqlite::pages::delete,
-    fn delete(pool:&DbPool,actor:i64,credential:&codeyard_db_core::queries::users::accounts::AccountCredential<'_>,repo:i64)->Result<()>);
+    fn delete(pool:&DbPool,actor:i64,credential:&codeyard_database::queries::users::accounts::AccountCredential<'_>,repo:i64)->Result<()>);
 native_operation!(crate::postgres::pages::builds,crate::sqlite::pages::builds,
     fn builds(pool:&DbPool,reader:&crate::repositories::credentials::Reader<'_>,repo:i64,offset:i64,limit:i64)->Result<Vec<Build>>);
 native_operation!(crate::postgres::pages::build,crate::sqlite::pages::build,
     fn build(pool:&DbPool,reader:&crate::repositories::credentials::Reader<'_>,repo:i64,id:i64)->Result<Option<Build>>);
 native_operation!(crate::postgres::pages::request_build,crate::sqlite::pages::request_build,
-    fn request_build(pool:&DbPool,actor:i64,credential:&codeyard_db_core::queries::users::accounts::AccountCredential<'_>,repo:i64,sha:&str)->Result<Build>);
+    fn request_build(pool:&DbPool,actor:i64,credential:&codeyard_database::queries::users::accounts::AccountCredential<'_>,repo:i64,sha:&str)->Result<Build>);
 pub struct Attempt<'a> {
     pub sha: &'a str,
     pub environment: &'a str,
     pub artifact_id: Option<i64>,
 }
 native_operation!(crate::postgres::pages::request_deployment,crate::sqlite::pages::request_deployment,
-    fn request_deployment(pool:&DbPool,actor:i64,credential:&codeyard_db_core::queries::users::accounts::AccountCredential<'_>,repo:i64,input:Attempt<'_>)->Result<Deployment>);
+    fn request_deployment(pool:&DbPool,actor:i64,credential:&codeyard_database::queries::users::accounts::AccountCredential<'_>,repo:i64,input:Attempt<'_>)->Result<Deployment>);
 native_operation!(crate::postgres::pages::deployment,crate::sqlite::pages::deployment,
     fn deployment(pool:&DbPool,reader:&crate::repositories::credentials::Reader<'_>,repo:i64,id:i64)->Result<Option<Deployment>>);
 native_operation!(crate::postgres::pages::cancel,crate::sqlite::pages::cancel,
-    fn cancel(pool:&DbPool,actor:i64,credential:&codeyard_db_core::queries::users::accounts::AccountCredential<'_>,repo:i64,id:i64)->Result<()>);
+    fn cancel(pool:&DbPool,actor:i64,credential:&codeyard_database::queries::users::accounts::AccountCredential<'_>,repo:i64,id:i64)->Result<()>);

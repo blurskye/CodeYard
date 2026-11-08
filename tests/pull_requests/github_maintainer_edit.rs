@@ -4,11 +4,11 @@ use crate::support::http_client::Client;
 use axum::{http::StatusCode, Router};
 use base64::Engine;
 
+use codeyard_git_storage::repositories::lifecycle;
+use codeyard_git_storage::repositories::store::repo_store;
+use codeyard_git_storage::store_types::PullBranchUpdate;
 use codeyard_identity::tokens;
 use codeyard_identity::tokens::TokenInput;
-use codeyard_repos_core::repositories::lifecycle;
-use codeyard_repos_core::repositories::store::repo_store;
-use codeyard_repos_core::store_types::PullBranchUpdate;
 use serde_json::{json, Value};
 
 async fn call(
@@ -127,7 +127,7 @@ async fn contract(pg: bool) {
     let source = repo_store(&base, None);
     // A Git receive by the base owner may move this pull head branch, and nothing else.
     {
-        use codeyard_repos_core::repositories::git_sessions::ReceiveCredential;
+        use codeyard_git_storage::repositories::git_sessions::ReceiveCredential;
         let push = |reference: &str| codeyard_repos::validation::RefUpdate {
             old: fork_sha.clone(),
             new: "c".repeat(40),

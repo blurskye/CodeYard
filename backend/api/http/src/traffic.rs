@@ -64,7 +64,7 @@ pub(super) fn page(ctx: &PageContext, title: &str, page: &Page) -> Option<Observ
         ctx.headers
             .get(header::REFERER)
             .and_then(|header| header.to_str().ok()),
-        &codeyard_model::http_config::link_origin(),
+        &codeyard_types::http_config::link_origin(),
     )
     .ok()?;
     Some(Observation {

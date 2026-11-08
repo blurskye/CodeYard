@@ -9,7 +9,7 @@ use chrono::{Duration, Utc};
 use codeyard_db_orgs::organizations::profiles::NewOrganization;
 use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
 
-use codeyard_db_core::models::OrgRole;
+use codeyard_database::models::OrgRole;
 use codeyard_identity::fine_grained::Access;
 use codeyard_identity::fine_grained::Owner;
 

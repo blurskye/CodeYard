@@ -1,9 +1,9 @@
 use anyhow::Result;
-use codeyard_db_core::models::Webhook;
-use codeyard_db_core::models::WebhookDelivery;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::queries::users::accounts::AccountCredential;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::Webhook;
+use codeyard_database::models::WebhookDelivery;
+use codeyard_database::native_operation;
+use codeyard_database::queries::users::accounts::AccountCredential;
+use codeyard_database::DbPool;
 
 /// The supported fan-out of one owner's isolated event must fit its delivery queue.
 pub const MAX_HOOKS_PER_OWNER: usize = 16;
@@ -153,10 +153,10 @@ native_operation!(crate::postgres::webhooks::list_delivery_summaries, crate::sql
 native_operation!(crate::postgres::webhooks::get_delivery, crate::sqlite::webhooks::get_delivery,
     fn get_delivery(pool: &DbPool, webhook_id: i64, delivery_id: i64) -> Result<Option<WebhookDelivery>>);
 
-use codeyard_db_core::queries::webhooks::WebhookFields;
+use codeyard_database::queries::webhooks::WebhookFields;
 
-use codeyard_db_core::queries::webhooks::NewDelivery;
+use codeyard_database::queries::webhooks::NewDelivery;
 
-use codeyard_db_core::queries::webhooks::WebhookPatch;
+use codeyard_database::queries::webhooks::WebhookPatch;
 
-use codeyard_db_core::queries::webhooks::SealedSecret;
+use codeyard_database::queries::webhooks::SealedSecret;

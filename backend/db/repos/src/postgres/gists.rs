@@ -8,9 +8,9 @@ use crate::gists::ListScope;
 use crate::gists::NewGist;
 use crate::gists::PendingWrite;
 use anyhow::Result;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::pool::PgPool;
-use codeyard_db_core::queries::users::accounts::AccountCredential;
+use codeyard_database::models::Repository;
+use codeyard_database::pool::PgPool;
+use codeyard_database::queries::users::accounts::AccountCredential;
 use sqlx::PgConnection;
 
 const FIELDS:&str="g.repo_id,g.id,r.owner_user_id AS owner_id,r.forked_from_id,g.description,g.is_public,g.ready,g.created_at,g.updated_at,(SELECT COUNT(*) FROM gist_comments c WHERE c.repo_id=g.repo_id) AS comments";
@@ -46,7 +46,7 @@ async fn lock_accounts(connection: &mut PgConnection, actor: i64, repo: i64) -> 
     let mut accounts: Vec<i64> = sqlx::query_scalar("SELECT owner_user_id FROM repositories WHERE (id=$1 OR id=(SELECT forked_from_id FROM repositories WHERE id=$1)) AND owner_user_id IS NOT NULL")
         .bind(repo).fetch_all(&mut *connection).await?;
     accounts.push(actor);
-    codeyard_db_core::queries::postgres::users::transitions::lock_accounts_shared(
+    codeyard_database::queries::postgres::users::transitions::lock_accounts_shared(
         connection, &accounts,
     )
     .await
@@ -182,7 +182,7 @@ async fn authority(
     }
     if interact {
         anyhow::ensure!(
-            !codeyard_db_core::queries::postgres::users::blocks::repository_interaction_blocked(
+            !codeyard_database::queries::postgres::users::blocks::repository_interaction_blocked(
                 &mut *connection,
                 actor,
                 repo
@@ -225,7 +225,7 @@ pub async fn reserve(
         .ok_or(GistRefusal::Missing)?;
         anyhow::ensure!(
             public == input.is_public
-                && !codeyard_db_core::queries::postgres::users::blocks::repository_interaction_blocked(
+                && !codeyard_database::queries::postgres::users::blocks::repository_interaction_blocked(
                     &mut tx, actor, source
                 )
                 .await?,
@@ -357,20 +357,20 @@ pub async fn delete(
         .bind(repo.id)
         .execute(&mut *tx)
         .await?;
-    codeyard_db_core::cells::outbox::postgres::forget(
+    codeyard_database::cells::outbox::postgres::forget(
         pool,
         &mut tx,
-        codeyard_model::cells::Object {
-            kind: codeyard_model::cells::ObjectKind::Repository,
+        codeyard_types::cells::Object {
+            kind: codeyard_types::cells::ObjectKind::Repository,
             id: repo.id,
         },
     )
     .await?;
     tx.commit().await?;
-    codeyard_db_core::cells::directory::postgres::finish_forget(
+    codeyard_database::cells::directory::postgres::finish_forget(
         pool,
-        codeyard_model::cells::Object {
-            kind: codeyard_model::cells::ObjectKind::Repository,
+        codeyard_types::cells::Object {
+            kind: codeyard_types::cells::ObjectKind::Repository,
             id: repo.id,
         },
     )
@@ -381,21 +381,21 @@ pub async fn discard(pool: &PgPool, repo: i64, orphan_only: bool) -> Result<Opti
     let mut tx = pool.begin().await?;
     let deleted = sqlx::query_as("DELETE FROM repositories r WHERE r.id=$1 AND r.is_gist AND NOT EXISTS(SELECT 1 FROM gists g WHERE g.repo_id=r.id AND ($2 OR g.ready OR g.pending_sha IS NOT NULL)) RETURNING r.*").bind(repo).bind(orphan_only).fetch_optional(&mut *tx).await?;
     if deleted.is_some() {
-        codeyard_db_core::cells::outbox::postgres::forget(
+        codeyard_database::cells::outbox::postgres::forget(
             pool,
             &mut tx,
-            codeyard_model::cells::Object {
-                kind: codeyard_model::cells::ObjectKind::Repository,
+            codeyard_types::cells::Object {
+                kind: codeyard_types::cells::ObjectKind::Repository,
                 id: repo,
             },
         )
         .await?;
     }
     tx.commit().await?;
-    codeyard_db_core::cells::directory::postgres::finish_forget(
+    codeyard_database::cells::directory::postgres::finish_forget(
         pool,
-        codeyard_model::cells::Object {
-            kind: codeyard_model::cells::ObjectKind::Repository,
+        codeyard_types::cells::Object {
+            kind: codeyard_types::cells::ObjectKind::Repository,
             id: repo,
         },
     )

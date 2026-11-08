@@ -8,8 +8,8 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
-use codeyard_model::node_id;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_git_storage::repositories::store::repo_store;
+use codeyard_types::node_id;
 use serde_json::json;
 use serde_json::Value;
 
@@ -39,7 +39,7 @@ fn decode_reference(value: &str) -> Option<(i64, String)> {
 }
 
 pub(super) async fn load(
-    repo: &codeyard_db_core::models::Repository,
+    repo: &codeyard_database::models::Repository,
     oid: &str,
     request: &RequestContext,
 ) -> Result<Value> {
@@ -68,7 +68,7 @@ pub(super) async fn load(
             request.charge(blob.size.min(8_000) as usize)?;
             Ok(
                 json!({"__typename":"Blob","_repo":repo.id,"id":node_id::git_object("B",repo.id,oid),"oid":oid,"byteSize":blob.size,
-                "isBinary":blob.is_binary,"isTruncated":blob.size > codeyard_repos_core::store_types::MAX_BLOB_RESPONSE_BYTES as u64}),
+                "isBinary":blob.is_binary,"isTruncated":blob.size > codeyard_git_storage::store_types::MAX_BLOB_RESPONSE_BYTES as u64}),
             )
         }
         "tree" => {
@@ -136,7 +136,7 @@ pub(super) async fn blob_text(parent: &Value, request: &RequestContext) -> Resul
 
 // Callers authorize before I/O; recheck after it and charge the map plus cloned names.
 async fn loaded_refs(
-    repo: &codeyard_db_core::models::Repository,
+    repo: &codeyard_database::models::Repository,
     request: &RequestContext,
 ) -> Result<std::collections::HashMap<String, String>> {
     let refs = repo_store(repo, request.state.cluster.as_ref())
@@ -153,7 +153,7 @@ async fn loaded_refs(
 }
 
 pub(super) async fn reference(
-    repo: &codeyard_db_core::models::Repository,
+    repo: &codeyard_database::models::Repository,
     name: &str,
     request: &RequestContext,
 ) -> Result<Value> {
@@ -166,7 +166,7 @@ pub(super) async fn reference(
 }
 
 pub(super) async fn reference_at(
-    repo: &codeyard_db_core::models::Repository,
+    repo: &codeyard_database::models::Repository,
     name: &str,
     oid: &str,
     _request: &RequestContext,
@@ -219,7 +219,7 @@ pub(super) async fn reference_field(
         .map_err(unavailable)?
         .ok_or_else(missing)?;
         let source = crate::repository::by_id(source.id, request).await?;
-        if !codeyard_repos_core::repositories::reads::same_fork_network(
+        if !codeyard_git_storage::repositories::reads::same_fork_network(
             &request.state.pool,
             &repo,
             &source,
@@ -324,7 +324,7 @@ pub(super) async fn node(value: &str, request: &RequestContext) -> Result<Value>
 pub(super) async fn resolve(
     field: &str,
     args: &crate::arguments::Arguments,
-    repo: &codeyard_db_core::models::Repository,
+    repo: &codeyard_database::models::Repository,
     request: &RequestContext,
 ) -> Result<Value> {
     request.authorize(repo.id, "contents", false).await?;
@@ -448,7 +448,7 @@ pub(super) async fn resolve(
     }
 }
 async fn checked(
-    repo: &codeyard_db_core::models::Repository,
+    repo: &codeyard_database::models::Repository,
     kind: &str,
     oid: &str,
     request: &RequestContext,

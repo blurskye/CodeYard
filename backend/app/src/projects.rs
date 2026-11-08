@@ -4,8 +4,8 @@ use codeyard_db_repos::projects::field_configuration;
 use codeyard_db_repos::projects::Field;
 use codeyard_db_repos::projects::Item;
 use codeyard_db_repos::projects::NewView;
-use codeyard_model::project_query::query_terms;
-use codeyard_model::project_query::Refusal;
+use codeyard_types::project_query::query_terms;
+use codeyard_types::project_query::Refusal;
 use serde_json::Value;
 
 pub fn filter_items(

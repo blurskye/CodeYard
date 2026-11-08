@@ -1,7 +1,7 @@
 use anyhow::Result;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::Repository;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 
 /// Teams that reach the repository, each with the permission it holds including what it inherits
 /// from parents. A public repository lists only teams with an explicit grant, as GitHub does;
@@ -11,10 +11,10 @@ pub(crate) const REPOSITORY_TEAMS_SQL:&str="SELECT t.*,e.permission FROM effecti
 #[derive(sqlx::FromRow)]
 pub struct RepositoryTeam {
     #[sqlx(flatten)]
-    pub team: codeyard_db_core::models::Team,
+    pub team: codeyard_database::models::Team,
     pub permission: i16,
     #[sqlx(skip)]
-    pub parent: Option<codeyard_db_core::models::Team>,
+    pub parent: Option<codeyard_database::models::Team>,
 }
 
 native_operation!(crate::postgres::repositories::github::repository_teams,

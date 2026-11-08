@@ -4,11 +4,11 @@ use crate::support::database::wait_until_blocked;
 use crate::support::database::Database;
 use crate::support::http_client::Client;
 
-use codeyard_db_core::queries::users::accounts::AccountCredential;
+use codeyard_database::queries::users::accounts::AccountCredential;
 use codeyard_db_repos::repositories::creation::NewRepository;
 use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
 
-use codeyard_db_core::models::AccessLevel;
+use codeyard_database::models::AccessLevel;
 use codeyard_identity::tokens::TokenInput;
 use serde_json::json;
 
@@ -157,7 +157,7 @@ async fn contract(pg: bool) {
             f.pool(),
             a,
             b,
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+            &codeyard_database::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(f.pool(), a).await,
             ),
         )
@@ -178,7 +178,7 @@ async fn contract(pg: bool) {
         issue.id,
         bob,
         "Before block",
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), bob).await,
         ),
     )
@@ -186,7 +186,7 @@ async fn contract(pg: bool) {
     .unwrap();
     codeyard_db_repos::notifications::records::create_notification(
         f.pool(),
-        codeyard_db_core::queries::notifications::records::NewNotification {
+        codeyard_database::queries::notifications::records::NewNotification {
             user_id: alice,
             actor_id: Some(bob),
             repo_id: Some(public.id),
@@ -312,7 +312,7 @@ async fn contract(pg: bool) {
     assert!(codeyard_db_repos::reactions::create_reaction(
         f.pool(),
         bob,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &other_session.session
         ),
         target,
@@ -320,7 +320,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap_err()
-    .is::<codeyard_db_core::queries::discussions::DiscussionWriteRefusal>());
+    .is::<codeyard_database::queries::discussions::DiscussionWriteRefusal>());
     let reply = other_session
         .form_reply(
             &format!("/alice/project/issues/{}/comments", issue.number),
@@ -336,7 +336,7 @@ async fn contract(pg: bool) {
         codeyard_db_repos::issues::create_issue(f.pool(), public.id, bob, "Refused", "Body")
             .await
             .unwrap_err()
-            .is::<codeyard_db_core::queries::discussions::DiscussionWriteRefusal>()
+            .is::<codeyard_database::queries::discussions::DiscussionWriteRefusal>()
     );
     assert!(codeyard_db_repos::issues::add_issue_comment(
         f.pool(),
@@ -344,7 +344,7 @@ async fn contract(pg: bool) {
         issue.id,
         bob,
         "Refused",
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), bob).await
         )
     )
@@ -393,7 +393,7 @@ async fn contract(pg: bool) {
         .is::<codeyard_db_repos::repositories::creation::RepositoryStorageRefusal>());
     let refused = codeyard_db_repos::notifications::records::create_notification(
         f.pool(),
-        codeyard_db_core::queries::notifications::records::NewNotification {
+        codeyard_database::queries::notifications::records::NewNotification {
             user_id: alice,
             actor_id: Some(bob),
             repo_id: Some(public.id),
@@ -407,7 +407,7 @@ async fn contract(pg: bool) {
     .await;
     assert!(refused
         .unwrap_err()
-        .is::<codeyard_db_core::queries::notifications::records::NotificationSuppressed>());
+        .is::<codeyard_database::queries::notifications::records::NotificationSuppressed>());
     // Unrelated owners and organization scopes are not account-wide bans.
     let organization = codeyard_db_orgs::organizations::profiles::NewOrganization::new(
         "shared-org",
@@ -422,7 +422,7 @@ async fn contract(pg: bool) {
     .await
     .unwrap()
     {
-        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(org) => org,
+        codeyard_database::queries::organizations::OrganizationOutcome::Applied(org) => org,
         other => panic!("{other:?}"),
     };
     let org_repo = codeyard_db_repos::repositories::creation::insert_repository(
@@ -582,7 +582,7 @@ async fn contract(pg: bool) {
         issue.id,
         bob,
         "After unblock",
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), bob).await,
         ),
     )
@@ -660,7 +660,7 @@ async fn contract(pg: bool) {
                 &pool,
                 bob,
                 alice,
-                &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+                &codeyard_database::queries::users::accounts::AccountCredential::Session(
                     &crate::support::live_session(&pool, bob).await,
                 ),
             )

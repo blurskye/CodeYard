@@ -3,12 +3,12 @@ use codeyard_app::app::AppState;
 use codeyard_db_repos::assignees::AssignedItem;
 use codeyard_db_repos::repository_exports as exports;
 use codeyard_db_repos::repository_exports::RepositoryExport;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_repos::migration_archive::MigrationArchive;
-use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_repos_pulls::repositories::releases::ReleaseDetail;
 use codeyard_storage::Upload;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde_json::json;
 use serde_json::Value;
 use sha2::Digest;
@@ -137,7 +137,7 @@ async fn metadata(
     state: &AppState,
     headers: &HeaderMap,
     actor: i64,
-    repo: &codeyard_db_core::models::Repository,
+    repo: &codeyard_database::models::Repository,
     owner: &str,
     archive: &mut MigrationArchive,
 ) -> Result<()> {
@@ -331,7 +331,7 @@ async fn metadata(
 
 async fn issue_comments(
     state: &AppState,
-    repo: &codeyard_db_core::models::Repository,
+    repo: &codeyard_database::models::Repository,
     owner: &str,
     id: i64,
     archive: &mut MigrationArchive,
@@ -347,7 +347,7 @@ async fn issue_comments(
             let comment = codeyard_webhooks::comment_documents::find(
                 &state.pool,
                 repo.id,
-                codeyard_model::webhook_ids::conversation_comment_id(row.comment.id, false),
+                codeyard_types::webhook_ids::conversation_comment_id(row.comment.id, false),
             )
             .await?;
             values.push(
@@ -368,9 +368,9 @@ async fn issue_comments(
 
 async fn pull_comments(
     state: &AppState,
-    repo: &codeyard_db_core::models::Repository,
+    repo: &codeyard_database::models::Repository,
     owner: &str,
-    pull: &codeyard_db_core::models::PullRequest,
+    pull: &codeyard_database::models::PullRequest,
     archive: &mut MigrationArchive,
 ) -> Result<()> {
     let mut offset = 0;
@@ -408,7 +408,7 @@ async fn pull_comments(
                 let comment = codeyard_webhooks::comment_documents::find(
                     &state.pool,
                     repo.id,
-                    codeyard_model::webhook_ids::conversation_comment_id(row.comment.id, true),
+                    codeyard_types::webhook_ids::conversation_comment_id(row.comment.id, true),
                 )
                 .await?;
                 conversation.push(
@@ -438,7 +438,7 @@ async fn pull_comments(
 
 async fn release_records(
     state: &AppState,
-    repo: &codeyard_db_core::models::Repository,
+    repo: &codeyard_database::models::Repository,
     owner: &str,
     attachments: bool,
     archive: &mut MigrationArchive,
@@ -536,14 +536,14 @@ async fn organization(
     org: i64,
     archive: &mut MigrationArchive,
 ) -> Result<()> {
-    use codeyard_db_core::queries::organizations::OrganizationOutcome;
+    use codeyard_database::queries::organizations::OrganizationOutcome;
     use codeyard_db_orgs::organizations::OrganizationPage;
     let record =
         codeyard_db_orgs::organizations::profiles::get_public_organization_by_id(&state.pool, org)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
-    let origin = codeyard_model::http_config::link_origin();
+    let origin = codeyard_types::http_config::link_origin();
     let url = format!(
         "{origin}{}",
         codeyard_types::paths::profile_path(&record.name)
@@ -588,7 +588,7 @@ async fn teams(
     slug: &str,
     archive: &mut MigrationArchive,
 ) -> Result<()> {
-    use codeyard_db_core::queries::organizations::OrganizationOutcome;
+    use codeyard_database::queries::organizations::OrganizationOutcome;
     use codeyard_db_orgs::organizations::OrganizationPage;
     let mut after = 0;
     loop {
@@ -618,7 +618,7 @@ async fn teams(
             );
             value["organization"] = json!(format!(
                 "{}{}",
-                codeyard_model::http_config::link_origin(),
+                codeyard_types::http_config::link_origin(),
                 codeyard_types::paths::profile_path(slug)
             ));
             value["parent_team_id"] = json!(row.team.parent_team_id);
@@ -678,7 +678,7 @@ async fn teams(
                 let mut grants = Vec::new();
                 for repository in repositories {
                     repository_after = repository.id;
-                    grants.push(json!({"id":repository.id,"team":team_url,"repository":format!("{}/{}/{}",codeyard_model::http_config::link_origin(),codeyard_types::paths::encode_component(&repository.owner),codeyard_types::paths::encode_component(&repository.name)),"permission":repository.permission}));
+                    grants.push(json!({"id":repository.id,"team":team_url,"repository":format!("{}/{}/{}",codeyard_types::http_config::link_origin(),codeyard_types::paths::encode_component(&repository.owner),codeyard_types::paths::encode_component(&repository.name)),"permission":repository.permission}));
                 }
                 archive
                     .records("team_repository", grants)

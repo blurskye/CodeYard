@@ -9,7 +9,7 @@ use crate::support::fake_webui_bundle as bundle;
 use crate::support::http_client as pulls;
 use axum::http::StatusCode;
 
-use codeyard_db_core::models::AccessLevel;
+use codeyard_database::models::AccessLevel;
 use database::Database;
 use pulls::Client;
 use serde_json::json;
@@ -35,7 +35,7 @@ async fn setup(pg: bool) -> World {
     let carol_id = database.actor("carol").await;
     let dave_id = database.actor("dave").await;
     let root = tempfile::tempdir().unwrap();
-    let proj = codeyard_repos_core::repositories::lifecycle::provision(
+    let proj = codeyard_git_storage::repositories::lifecycle::provision(
         (database.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
@@ -228,7 +228,7 @@ async fn edit_and_delete_rules(pg: bool) {
         stored.issue_id,
         stored.author_id,
         "After lock",
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(database.pool(), stored.author_id).await
         )
     )
@@ -364,7 +364,7 @@ async fn late_notifications_and_long_discussions(pg: bool) {
     let alice_id = repo.owner_user_id.unwrap();
     let comment_id = comment(&world.bob, "issues/1", "deleted private text").await;
     let metadata = json!({"comment_id": comment_id});
-    let input = |kind| codeyard_db_core::queries::notifications::records::NewNotification {
+    let input = |kind| codeyard_database::queries::notifications::records::NewNotification {
         user_id: alice_id,
         actor_id: None,
         repo_id: Some(repo.id),
@@ -383,7 +383,7 @@ async fn late_notifications_and_long_discussions(pg: bool) {
         repo.id,
         issue_id,
         comment_id,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(pool, alice_id).await
         )
     )

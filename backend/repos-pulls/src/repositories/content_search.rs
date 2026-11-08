@@ -4,7 +4,7 @@ use anyhow::Result;
 use chrono::DateTime;
 use chrono::NaiveDate;
 use chrono::Utc;
-use codeyard_db_core::models::Repository;
+use codeyard_database::models::Repository;
 use codeyard_db_repos::catalog_search::Kind;
 use codeyard_db_repos::catalog_search::Options;
 use codeyard_db_repos::catalog_search::Search;
@@ -12,9 +12,9 @@ use codeyard_db_repos::discussion_search::Expr;
 use codeyard_git as git;
 use codeyard_git::CommitFilter;
 use codeyard_git::CommitInfo;
-use codeyard_repos_core::context::NodeContext;
-use codeyard_repos_core::repositories::store::repo_store;
-use codeyard_repos_core::repositories::store::RepoStore;
+use codeyard_git_storage::context::NodeContext;
+use codeyard_git_storage::repositories::store::repo_store;
+use codeyard_git_storage::repositories::store::RepoStore;
 use codeyard_storage::range::ByteRange as BlobRange;
 use std::collections::BTreeSet;
 use std::collections::HashMap;
@@ -126,7 +126,7 @@ impl Query {
         matches
     }
     /// The query for the cells' shared index, with the text fields it searches.
-    pub fn search_filter(&self) -> codeyard_db_core::cells::search::Filter {
+    pub fn search_filter(&self) -> codeyard_database::cells::search::Filter {
         let fields = [("file", self.file), ("path", self.path)]
             .into_iter()
             .filter(|(_, wanted)| *wanted)
@@ -460,7 +460,7 @@ impl Scan<'_> {
     }
     async fn commits(
         &mut self,
-        pool: &codeyard_db_core::DbPool,
+        pool: &codeyard_database::DbPool,
         store: &RepoStore,
         scope: &Arc<Scope>,
         tip: &CommitInfo,
@@ -491,7 +491,7 @@ impl Scan<'_> {
                     .iter()
                     .flat_map(|c| [c.author_email.clone(), c.committer_email.clone()])
                     .collect::<Vec<_>>();
-                codeyard_repos_core::repositories::reads::commit_authors(pool, &emails).await?
+                codeyard_git_storage::repositories::reads::commit_authors(pool, &emails).await?
             } else {
                 HashMap::new()
             };
@@ -593,7 +593,7 @@ struct CommitContext<'a> {
     scope: &'a Scope,
     viewer: Option<i64>,
     commit: &'a CommitInfo,
-    people: &'a HashMap<String, codeyard_db_core::models::User>,
+    people: &'a HashMap<String, codeyard_database::models::User>,
 }
 impl CommitContext<'_> {
     fn term(&self, key: &str, value: &str) -> Option<bool> {
@@ -719,7 +719,7 @@ async fn until<T, E>(
 }
 
 pub async fn search(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     cluster: Option<&NodeContext>,
     viewer: Option<i64>,
     query: &Query,

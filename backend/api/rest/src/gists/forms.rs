@@ -14,7 +14,7 @@ use codeyard_api_http::shared::user::responses::Fields;
 use codeyard_app::app::AppState;
 use codeyard_git::gist_types::GistEdit;
 use codeyard_git::gist_types::GistFileChange;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_repos_pulls::repositories::files::native_text;
 use std::collections::btree_map::Entry;
 use std::collections::BTreeMap;

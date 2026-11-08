@@ -5,8 +5,8 @@ use crate::code_scanning::PullSelection;
 use crate::code_scanning::PullSnapshot;
 use crate::code_scanning::ANALYSIS_COLUMNS;
 use anyhow::Result;
-use codeyard_db_core::pool::SqlitePool;
-use codeyard_db_core::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
+use codeyard_database::pool::SqlitePool;
+use codeyard_database::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
 use sqlx::SqliteConnection;
 
 async fn allowed(c: &mut SqliteConnection, actor: i64, session: &str, repo: i64) -> Result<bool> {
@@ -16,8 +16,10 @@ async fn allowed(c: &mut SqliteConnection, actor: i64, session: &str, repo: i64)
     match authority {
         Some((_, true)) => Ok(true),
         Some((Some(org), false)) => {
-            codeyard_db_core::queries::sqlite::organizations::roles::manages_security(c, actor, org)
-                .await
+            codeyard_database::queries::sqlite::organizations::roles::manages_security(
+                c, actor, org,
+            )
+            .await
         }
         _ => Ok(false),
     }

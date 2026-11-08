@@ -109,7 +109,7 @@ pub async fn metadata(
     template: Option<bool>,
 ) -> Result<Project> {
     anyhow::ensure!(
-        readme.is_none_or(|text| codeyard_model::issue_input::validate_body(text, false).is_ok()),
+        readme.is_none_or(|text| codeyard_types::issue_input::validate_body(text, false).is_ok()),
         Refusal::Invalid
     );
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
@@ -226,7 +226,7 @@ pub async fn copy(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     owner_authority(&mut tx, actor, owner).await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::sqlite::users::transitions::credential_live(
+        codeyard_database::queries::sqlite::users::transitions::credential_live(
             &mut tx, actor, credential, true
         )
         .await?,

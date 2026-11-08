@@ -1,5 +1,5 @@
 use crate::notifications::events::EventBatch;
-use codeyard_db_core::pool::PgPool;
+use codeyard_database::pool::PgPool;
 
 /// The high-water mark, the active transactions, and the event ids, transactions and payloads.
 type PollRow = (i64, Vec<i64>, Vec<i64>, Vec<Option<i64>>, Vec<String>);

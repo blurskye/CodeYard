@@ -12,7 +12,7 @@ use axum::Router;
 use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_api_http::context::PageContext;
 use codeyard_app::app::AppState;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_webui::app::Page;
 use codeyard_webui::pages::repos::page::Page as RepoPage;
 use codeyard_webui::pages::repos::pages::Build;
@@ -39,7 +39,7 @@ async fn render(
         user: ctx.user.as_ref().map(|user| user.id),
         credential: session
             .as_deref()
-            .map(codeyard_db_core::queries::users::accounts::AccountCredential::Session),
+            .map(codeyard_database::queries::users::accounts::AccountCredential::Session),
     };
     let site = match codeyard_db_repos::pages::site(&ctx.state.pool, &reader, loaded.repository.id)
         .await
@@ -149,11 +149,11 @@ async fn submit(
     let actor = ctx.user.as_ref().unwrap().id;
     let session = codeyard_api_http::session::extract_session_id(&ctx.headers).unwrap_or_default();
     let credential =
-        codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session);
+        codeyard_database::queries::users::accounts::AccountCredential::Session(&session);
     let reader = codeyard_db_repos::repositories::credentials::Reader {
         user: Some(actor),
         credential: Some(
-            codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session),
+            codeyard_database::queries::users::accounts::AccountCredential::Session(&session),
         ),
     };
     let settings = Settings {

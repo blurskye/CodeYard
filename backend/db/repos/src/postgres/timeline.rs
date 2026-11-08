@@ -4,7 +4,7 @@ use crate::timeline::TimelineEvent;
 use anyhow::Result;
 use chrono::DateTime;
 use chrono::Utc;
-use codeyard_db_core::pool::PgPool;
+use codeyard_database::pool::PgPool;
 
 pub async fn get_event(pool: &PgPool, repo_id: i64, id: i64) -> Result<Option<Event>> {
     Ok(

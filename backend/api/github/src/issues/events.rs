@@ -13,8 +13,8 @@ use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
 use codeyard_db_repos::assignees::AssignedItem;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde_json::json;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -25,7 +25,7 @@ type Params = HashMap<String, String>;
 async fn event_document(
     state: &AppState,
     auth: Option<&codeyard_identity::github_auth::Authentication>,
-    repo: &codeyard_db_core::models::Repository,
+    repo: &codeyard_database::models::Repository,
     owner: &str,
     id: i64,
     include_issue: bool,
@@ -113,7 +113,7 @@ async fn read(
 
 async fn review_document(
     state: &AppState,
-    repo: &codeyard_db_core::models::Repository,
+    repo: &codeyard_database::models::Repository,
     owner: &str,
     id: i64,
 ) -> Result<Value> {
@@ -198,7 +198,7 @@ async fn list(
                 let comment = codeyard_webhooks::comment_documents::find(
                     &state.pool,
                     repo.id,
-                    codeyard_model::webhook_ids::conversation_comment_id(id, kind == "pr_comment"),
+                    codeyard_types::webhook_ids::conversation_comment_id(id, kind == "pr_comment"),
                 )
                 .await?;
                 let mut value = codeyard_webhooks::comment_documents::document(

@@ -4,11 +4,11 @@ use crate::pull_caps::PullCapReached;
 use crate::pull_caps::PullCapRefusal;
 use crate::pull_caps::PullCapScope;
 use anyhow::Result;
-use codeyard_db_core::models::OrgRole;
-use codeyard_db_core::models::User;
-use codeyard_db_core::pool::PgPool;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_db_core::queries::users::accounts::AccountCredential;
+use codeyard_database::models::OrgRole;
+use codeyard_database::models::User;
+use codeyard_database::pool::PgPool;
+use codeyard_database::queries::organizations::OrganizationOutcome;
+use codeyard_database::queries::users::accounts::AccountCredential;
 use sqlx::PgConnection;
 
 async fn authorize(
@@ -28,7 +28,7 @@ async fn authorize(
     }
     let allowed = match scope {
         PullCapScope::Organization(org) => matches!(
-            codeyard_db_core::queries::postgres::organizations::authority::authority(
+            codeyard_database::queries::postgres::organizations::authority::authority(
                 &mut *connection,
                 actor,
                 org
@@ -37,11 +37,11 @@ async fn authorize(
             OrganizationOutcome::Applied(OrgRole::Owner | OrgRole::Admin)
         ),
         PullCapScope::Repository(repo) => {
-            codeyard_db_core::queries::postgres::discussions::lock_policy_authority_with(
+            codeyard_database::queries::postgres::discussions::lock_policy_authority_with(
                 connection,
                 actor,
                 repo,
-                codeyard_db_core::queries::postgres::repositories::access::RepositoryRowLock::Exclusive,
+                codeyard_database::queries::postgres::repositories::access::RepositoryRowLock::Exclusive,
                 maintain,
             )
             .await?
@@ -55,7 +55,7 @@ async fn cap(connection: &mut PgConnection, scope: PullCapScope) -> Result<PullC
 }
 pub async fn get_cap(pool: &PgPool, actor: i64, scope: PullCapScope) -> Result<PullCap> {
     let mut tx = pool.begin().await?;
-    codeyard_db_core::queries::postgres::users::transitions::lock_accounts_shared(
+    codeyard_database::queries::postgres::users::transitions::lock_accounts_shared(
         &mut tx,
         &[actor],
     )
@@ -74,7 +74,7 @@ pub async fn update_cap(
 ) -> Result<PullCap> {
     input.validate()?;
     let mut tx = pool.begin().await?;
-    codeyard_db_core::queries::postgres::users::transitions::lock_accounts_shared(
+    codeyard_database::queries::postgres::users::transitions::lock_accounts_shared(
         &mut tx,
         &[actor],
     )
@@ -89,7 +89,7 @@ pub async fn update_cap(
 }
 pub async fn bypass_users(pool: &PgPool, actor: i64, repo: i64) -> Result<Vec<User>> {
     let mut tx = pool.begin().await?;
-    codeyard_db_core::queries::postgres::users::transitions::lock_accounts_shared(
+    codeyard_database::queries::postgres::users::transitions::lock_accounts_shared(
         &mut tx,
         &[actor],
     )
@@ -109,7 +109,7 @@ pub async fn change_bypass(
 ) -> Result<()> {
     anyhow::ensure!(names.len() <= 100, PullCapRefusal::Limit);
     let mut tx = pool.begin().await?;
-    codeyard_db_core::queries::postgres::users::transitions::lock_accounts_shared(
+    codeyard_database::queries::postgres::users::transitions::lock_accounts_shared(
         &mut tx,
         &[actor],
     )

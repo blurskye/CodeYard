@@ -52,8 +52,8 @@ pub fn protection_write_error(
 /// The status of a refused native OIDC settings save: a denial is 403, any other typed refusal
 /// is 422, and an untyped failure is 503.
 pub fn oidc_settings_status(error: &anyhow::Error) -> StatusCode {
-    match error.downcast_ref::<codeyard_db_core::queries::oidc::Refusal>() {
-        Some(codeyard_db_core::queries::oidc::Refusal::Denied) => StatusCode::FORBIDDEN,
+    match error.downcast_ref::<codeyard_database::queries::oidc::Refusal>() {
+        Some(codeyard_database::queries::oidc::Refusal::Denied) => StatusCode::FORBIDDEN,
         Some(_) => StatusCode::UNPROCESSABLE_ENTITY,
         None => StatusCode::SERVICE_UNAVAILABLE,
     }
@@ -118,7 +118,7 @@ pub fn repository_settings_error(
             "validation_error",
             "Invalid squash merge commit title or message",
         ),
-        None if matches!(error.downcast_ref::<codeyard_db_core::queries::secrets::SecretsError>(), Some(codeyard_db_core::queries::secrets::SecretsError::TotalTooLarge | codeyard_db_core::queries::secrets::SecretsError::TooManySecrets)) => (
+        None if matches!(error.downcast_ref::<codeyard_database::queries::secrets::SecretsError>(), Some(codeyard_database::queries::secrets::SecretsError::TotalTooLarge | codeyard_database::queries::secrets::SecretsError::TooManySecrets)) => (
             StatusCode::BAD_REQUEST,
             "validation_error",
             "Delivered Actions secrets exceed the CI delivery budget",
@@ -209,7 +209,7 @@ mod tests {
 }
 
 pub fn discussion_write_error(error: anyhow::Error) -> (StatusCode, Json<ApiError>) {
-    use codeyard_db_core::queries::discussions::DiscussionWriteRefusal;
+    use codeyard_database::queries::discussions::DiscussionWriteRefusal;
     let (status, code, message) = match error.downcast_ref::<DiscussionWriteRefusal>() {
         Some(DiscussionWriteRefusal::Denied) => (
             StatusCode::FORBIDDEN,
@@ -283,7 +283,7 @@ mod discussion_errors {
 
     #[test]
     fn typed_refusals_survive_context_and_driver_details_are_never_disclosed() {
-        use codeyard_db_core::queries::discussions::DiscussionWriteRefusal;
+        use codeyard_database::queries::discussions::DiscussionWriteRefusal;
         for (refusal, status, code, message) in [
             (
                 DiscussionWriteRefusal::Denied,

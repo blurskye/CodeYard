@@ -20,8 +20,8 @@ use codeyard_api_http::shared::repos::chrome::store_error;
 use codeyard_api_http::shared::repos::chrome::Loaded;
 use codeyard_app::app::AppState;
 use codeyard_git::TreeEntry;
-use codeyard_repos_core::repositories::store::repo_store;
-use codeyard_repos_core::repositories::store::RepoStore;
+use codeyard_git_storage::repositories::store::repo_store;
+use codeyard_git_storage::repositories::store::RepoStore;
 use codeyard_webui::components::languages::LanguageShare;
 use codeyard_webui::pages::repos as view;
 use serde::Serialize;
@@ -145,12 +145,12 @@ async fn tree_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
         .and_then(|import| (import.state() != "complete").then(|| import.state().to_owned())),
         http_clone: format!(
             "{}/{}/{}.git",
-            codeyard_model::http_config::http_clone_base().trim_end_matches('/'),
+            codeyard_types::http_config::http_clone_base().trim_end_matches('/'),
             loaded.chrome.owner,
             loaded.chrome.name
         ),
         ssh_clone: {
-            let base = codeyard_model::http_config::ssh_clone_base();
+            let base = codeyard_types::http_config::ssh_clone_base();
             if base.is_empty() {
                 String::new()
             } else {
@@ -228,7 +228,7 @@ async fn tree_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
         page.entries = listing;
         page.permalink = format!(
             "{}{}",
-            codeyard_model::http_config::public_origin(),
+            codeyard_types::http_config::public_origin(),
             codeyard_types::ref_path::file_url(
                 &loaded.chrome.base(),
                 "tree",
@@ -299,7 +299,7 @@ async fn about_languages(
     store: &RepoStore,
     branch: &str,
 ) -> Vec<LanguageShare> {
-    let languages = match codeyard_repos_core::repositories::languages::compute_and_store(
+    let languages = match codeyard_git_storage::repositories::languages::compute_and_store(
         &state.pool,
         store,
         &loaded.repository,

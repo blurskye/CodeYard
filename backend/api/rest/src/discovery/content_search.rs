@@ -8,10 +8,10 @@ use crate::discovery::DiscoveryReadError;
 use codeyard_app::app::AppState;
 use codeyard_git::error::RepoError;
 use codeyard_git::CommitFilter;
+use codeyard_git_storage::repositories::store::repo_store;
+use codeyard_git_storage::repositories::store::RepoStore;
+use codeyard_git_storage::store_types::MAX_COMMIT_OFFSET;
 use codeyard_identity::repository_access::AccessError;
-use codeyard_repos_core::repositories::store::repo_store;
-use codeyard_repos_core::repositories::store::RepoStore;
-use codeyard_repos_core::store_types::MAX_COMMIT_OFFSET;
 use codeyard_webui::pages::discovery::CodeHit;
 use codeyard_webui::pages::discovery::CommitHit;
 use codeyard_webui::pages::discovery::SearchScan;
@@ -115,7 +115,7 @@ fn split_scope(text: &str) -> (String, Scope) {
 async fn page_hits(
     store: &RepoStore,
     owner: &str,
-    repo: &codeyard_db_core::models::Repository,
+    repo: &codeyard_database::models::Repository,
     query: &Query<'_>,
     offset: usize,
     limit: usize,
@@ -499,13 +499,13 @@ mod tests {
 
     #[tokio::test]
     async fn search_candidates_are_reauthorized_after_visibility_changes() {
-        let pool = codeyard_db_core::init_db("sqlite::memory:").await.unwrap();
-        codeyard_db_core::run_migrations(&pool).await.unwrap();
+        let pool = codeyard_database::init_db("sqlite::memory:").await.unwrap();
+        codeyard_database::run_migrations(&pool).await.unwrap();
         let root = tempfile::tempdir().unwrap();
         let user = codeyard_db_identity::users::accounts::create_user(&pool, "alice", None)
             .await
             .unwrap();
-        let candidate = codeyard_repos_core::repositories::lifecycle::provision(
+        let candidate = codeyard_git_storage::repositories::lifecycle::provision(
             (&pool, None),
             root.path(),
             codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(user.id),

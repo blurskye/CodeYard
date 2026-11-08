@@ -2,9 +2,9 @@
 use crate::issues::OperationError;
 use crate::services::RepositoryServices;
 use codeyard_git::error::ErrorKind;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_git_storage::repositories::store::repo_store;
 
-pub fn default_name(issue: &codeyard_db_core::models::Issue) -> String {
+pub fn default_name(issue: &codeyard_database::models::Issue) -> String {
     let title = issue
         .title
         .chars()
@@ -34,9 +34,9 @@ pub fn default_name(issue: &codeyard_db_core::models::Issue) -> String {
 
 pub async fn create(
     state: &dyn RepositoryServices,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
-    issue: &codeyard_db_core::models::Issue,
-    target: &codeyard_db_core::models::Repository,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
+    issue: &codeyard_database::models::Issue,
+    target: &codeyard_database::models::Repository,
     name: &str,
     oid: &str,
 ) -> Result<codeyard_db_repos::issues::management::LinkedBranch, OperationError> {
@@ -77,23 +77,23 @@ pub async fn create(
     match created {
         // The branch exists; only refreshing open pull requests after it failed, so the
         // issue still gets its link.
-        Ok(_) | Err(codeyard_repos_core::ref_errors::RefError::AppliedFollowupFailed) => {}
+        Ok(_) | Err(codeyard_git_storage::ref_errors::RefError::AppliedFollowupFailed) => {}
         Err(
-            codeyard_repos_core::ref_errors::RefError::Invalid(message)
-            | codeyard_repos_core::ref_errors::RefError::Protected(message),
+            codeyard_git_storage::ref_errors::RefError::Invalid(message)
+            | codeyard_git_storage::ref_errors::RefError::Protected(message),
         ) => {
             return Err(OperationError::Invalid {
                 code: "invalid_branch",
                 message: message.into(),
             })
         }
-        Err(codeyard_repos_core::ref_errors::RefError::Access(_)) => {
+        Err(codeyard_git_storage::ref_errors::RefError::Access(_)) => {
             return Err(OperationError::Denied {
                 code: "forbidden",
                 message: "Write access is required".into(),
             })
         }
-        Err(codeyard_repos_core::ref_errors::RefError::Git(error)) => match error.kind {
+        Err(codeyard_git_storage::ref_errors::RefError::Git(error)) => match error.kind {
             ErrorKind::Invalid | ErrorKind::NotFound | ErrorKind::MissingPath => {
                 return Err(OperationError::Invalid {
                     code: "invalid_branch",
@@ -117,7 +117,7 @@ pub async fn create(
             }
             ErrorKind::Unavailable => return Err(unconfirmed()),
         },
-        Err(codeyard_repos_core::ref_errors::RefError::Unavailable) => return Err(unconfirmed()),
+        Err(codeyard_git_storage::ref_errors::RefError::Unavailable) => return Err(unconfirmed()),
     }
     codeyard_db_repos::issues::management::link_branch(
         state.pool(),

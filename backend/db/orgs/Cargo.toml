@@ -7,9 +7,8 @@ license = "LGPL-3.0-or-later"
 [dependencies]
 anyhow.workspace = true
 chrono.workspace = true
-codeyard-actions.workspace = true
-codeyard-db-core.workspace = true
-codeyard-model.workspace = true
+codeyard-runner.workspace = true
+codeyard-database.workspace = true
 codeyard-support.workspace = true
 crypto_box.workspace = true
 lettre.workspace = true

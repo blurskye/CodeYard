@@ -1,8 +1,8 @@
 use anyhow::Result;
-use codeyard_db_core::models::SignupRequest;
-use codeyard_db_core::models::User;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::SignupRequest;
+use codeyard_database::models::User;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 
 #[derive(Debug)]
 pub enum ReviewError {

@@ -16,8 +16,8 @@ use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
 use codeyard_db_repos::events::EventScope;
 use codeyard_db_repos::events::EventViewer;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde_json::Value;
 use sha2::Digest;
 use sha2::Sha256;
@@ -176,7 +176,7 @@ async fn list(
                         )
                         .await
                         .map_err(Error::unavailable)?,
-                        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(_)
+                        codeyard_database::queries::organizations::OrganizationOutcome::Applied(_)
                     ) {
                         return Err(Error::missing());
                     }

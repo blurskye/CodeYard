@@ -6,12 +6,12 @@
 //! blocked force pushes stay blocked for them too, unless the rule lists them: they are easy
 //! mistakes.
 use anyhow::Result;
-use codeyard_db_core::models::BranchProtectionRule;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::models::User;
+use codeyard_database::models::BranchProtectionRule;
+use codeyard_database::models::Repository;
+use codeyard_database::models::User;
 use codeyard_git as git;
 use codeyard_git::error::MERGE_COMMIT_BLOCKED;
-use codeyard_model::workflow_glob::WorkflowMatchBudget;
+use codeyard_types::workflow_glob::WorkflowMatchBudget;
 use std::path::Path;
 
 pub const PULL_REQUEST_REQUIRED: &str =
@@ -73,7 +73,7 @@ impl History<'_> {
     /// The editor's own commits are unsigned.
     async fn has_unverified_commits(
         &self,
-        pool: &codeyard_db_core::DbPool,
+        pool: &codeyard_database::DbPool,
         old: Option<&str>,
         new: &str,
     ) -> Result<bool> {
@@ -154,7 +154,7 @@ pub enum Refusal {
 /// The branch protection rules of `repository`. A push reads them once and judges each of its
 /// branches against that one read.
 pub async fn load_rules(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     repository: &Repository,
 ) -> Result<Vec<BranchProtectionRule>> {
     codeyard_db_repos::repositories::protection::list_branch_protection_rules(pool, repository.id)
@@ -163,7 +163,7 @@ pub async fn load_rules(
 
 /// The rules of `repository` that match `branch`.
 pub async fn matching_rules(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     repository: &Repository,
     branch: &str,
 ) -> Result<Vec<BranchProtectionRule>> {
@@ -183,7 +183,7 @@ fn rules_for_branch<'a>(
     let mut matching = Vec::new();
     for rule in rules {
         let matches =
-            codeyard_model::workflow_glob::branch_pattern_matches(&rule.pattern, branch, budget)
+            codeyard_types::workflow_glob::branch_pattern_matches(&rule.pattern, branch, budget)
                 .map_err(|_| Refusal::Unavailable)?;
         if matches {
             matching.push(rule);
@@ -205,7 +205,7 @@ pub fn branch_is_protected(
 /// the rules the actor is still held to, so the merge policy can apply its own gates to
 /// exactly those.
 pub async fn check_branch_write(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     repository: &Repository,
     actor: &User,
     write: &BranchWrite<'_>,
@@ -221,7 +221,7 @@ pub async fn check_branch_write(
 /// `check_branch_write` against rules that the caller read once for several writes. Writes
 /// that share one `budget` share its matching work.
 pub async fn check_branch_write_with(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     rules: &[BranchProtectionRule],
     repository: &Repository,
     actor: &User,
@@ -338,7 +338,7 @@ pub async fn check_branch_write_with(
 }
 
 async fn app_allows_actor(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     repo: i64,
     actor: i64,
     ids: &[i64],
@@ -384,7 +384,7 @@ fn needs_pull_request(rule: &BranchProtectionRule) -> bool {
 /// each user, team and app as an object with its `id`. A team or app counts only while the actor
 /// still belongs to it.
 async fn bypass_allows(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     repo: i64,
     actor: i64,
     document: Option<&serde_json::Value>,

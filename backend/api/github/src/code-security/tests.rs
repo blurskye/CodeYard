@@ -1,7 +1,7 @@
 use super::*;
 use crate::code_security::failure;
 use axum::response::IntoResponse;
-use codeyard_db_core::queries::code_security as records;
+use codeyard_database::queries::code_security as records;
 
 #[tokio::test]
 async fn code_scanning_security_configuration_errors_use_string_details() {

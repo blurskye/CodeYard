@@ -3,7 +3,7 @@ use crate::action_objects::BlobPart;
 use crate::action_objects::NewObject;
 use crate::action_objects::RuntimeRun;
 use anyhow::Result;
-use codeyard_db_core::pool::SqlitePool;
+use codeyard_database::pool::SqlitePool;
 
 pub async fn issue_token(
     pool: &SqlitePool,
@@ -402,7 +402,7 @@ pub async fn artifact_for_reader(
     run: i64,
     id: i64,
 ) -> Result<Option<ActionObject>> {
-    let access = codeyard_db_core::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
+    let access = codeyard_database::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
     Ok(sqlx::query_as(&format!("SELECT o.* FROM actions_objects o JOIN repositories r ON r.id=o.repo_id JOIN ci_runs c ON c.id=o.run_id AND c.repo_id=r.id JOIN users u ON u.id=?1 JOIN sessions s ON s.user_id=u.id AND s.id=?2 WHERE r.id=?3 AND c.id=?4 AND o.id=?5 AND o.kind='artifact' AND o.finalized AND o.expires_at>?6 AND s.expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now') AND NOT u.is_banned AND NOT u.must_change_password AND ((r.owner_kind='user' AND u.is_admin) OR ({access})>0)"))
         .bind(actor).bind(session).bind(repo).bind(run).bind(id).bind(chrono::Utc::now().timestamp()).fetch_optional(pool).await?)
 }
@@ -417,7 +417,7 @@ pub async fn delete_artifact(
     id: i64,
     run_id: i64,
     actor: Option<i64>,
-    credential: Option<&codeyard_db_core::queries::ci::CiCredential>,
+    credential: Option<&codeyard_database::queries::ci::CiCredential>,
 ) -> Result<bool> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     if let Some(actor) = actor {
@@ -426,7 +426,7 @@ pub async fn delete_artifact(
             .fetch_optional(&mut *tx)
             .await?;
         let Some(repo) = repo else { return Ok(false) };
-        if !codeyard_db_core::queries::sqlite::discussions::lock_write_authority(
+        if !codeyard_database::queries::sqlite::discussions::lock_write_authority(
             &mut tx, actor, repo,
         )
         .await?
@@ -555,7 +555,7 @@ pub async fn delete_caches(
         "a cache id or key is required"
     );
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    if !codeyard_db_core::queries::sqlite::discussions::lock_write_authority(&mut tx, actor, repo)
+    if !codeyard_database::queries::sqlite::discussions::lock_write_authority(&mut tx, actor, repo)
         .await?
     {
         return Ok(None);
@@ -572,19 +572,19 @@ pub async fn cache_usage(pool: &SqlitePool, repo: i64) -> Result<(i64, i64)> {
 
 pub async fn grant_artifact_download(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo: i64,
     id: i64,
     hash: &str,
 ) -> Result<bool> {
     let actor = actor.into();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let readable: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=$1 WHERE r.id=$2 AND NOT u.is_banned AND NOT u.must_change_password AND {})", codeyard_db_core::queries::sqlite::repositories::access::readable_condition()))
+    let readable: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=$1 WHERE r.id=$2 AND NOT u.is_banned AND NOT u.must_change_password AND {})", codeyard_database::queries::sqlite::repositories::access::readable_condition()))
         .bind(actor.user_id).bind(repo).fetch_one(&mut *tx).await?;
     if !readable {
         return Ok(false);
     }
-    if !codeyard_db_core::queries::sqlite::credentials::repository(
+    if !codeyard_database::queries::sqlite::credentials::repository(
         &mut tx, &actor, repo, "actions", false,
     )
     .await?
@@ -607,6 +607,6 @@ pub async fn expire_objects(pool: &SqlitePool) -> Result<()> {
     Ok(())
 }
 
-use codeyard_db_core::queries::sqlite::action_objects::enforce_cache_limit;
+use codeyard_database::queries::sqlite::action_objects::enforce_cache_limit;
 
-use codeyard_db_core::queries::sqlite::action_objects::cache_policy;
+use codeyard_database::queries::sqlite::action_objects::cache_policy;

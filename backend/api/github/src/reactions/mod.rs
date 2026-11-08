@@ -18,8 +18,8 @@ use codeyard_db_repos::reactions::Reaction;
 use codeyard_db_repos::reactions::ReactionRefusal;
 use codeyard_db_repos::reactions::Subject;
 use codeyard_db_repos::reactions::Target;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -28,7 +28,7 @@ use std::sync::Arc;
 type Params = HashMap<String, String>;
 
 async fn target(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     repo_id: i64,
     p: &Params,
     route: &str,
@@ -132,7 +132,7 @@ pub fn write_error(error: anyhow::Error) -> Error {
         return Error::missing();
     }
     if error
-        .downcast_ref::<codeyard_db_core::queries::discussions::DiscussionWriteRefusal>()
+        .downcast_ref::<codeyard_database::queries::discussions::DiscussionWriteRefusal>()
         .is_some()
     {
         return Error::new(StatusCode::FORBIDDEN, "Reaction mutation denied");
@@ -140,7 +140,7 @@ pub fn write_error(error: anyhow::Error) -> Error {
     Error::unavailable(error)
 }
 
-async fn document(pool: &codeyard_db_core::DbPool, reaction: &Reaction) -> Result<Value> {
+async fn document(pool: &codeyard_database::DbPool, reaction: &Reaction) -> Result<Value> {
     let user = codeyard_db_identity::users::accounts::get_user_by_id(pool, reaction.user_id)
         .await
         .map_err(Error::unavailable)?;

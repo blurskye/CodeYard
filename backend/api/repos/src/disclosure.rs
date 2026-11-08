@@ -89,30 +89,30 @@ fn failure(error: &anyhow::Error) -> (StatusCode, &str) {
             "A live unrestricted credential is required.",
         );
     }
-    if let Some(refusal) = error.downcast_ref::<codeyard_model::advisories::Refusal>() {
+    if let Some(refusal) = error.downcast_ref::<codeyard_types::advisories::Refusal>() {
         let status = match refusal {
-            codeyard_model::advisories::Refusal::Missing
-            | codeyard_model::advisories::Refusal::Denied => StatusCode::NOT_FOUND,
-            codeyard_model::advisories::Refusal::Invalid
-            | codeyard_model::advisories::Refusal::Conflict => StatusCode::UNPROCESSABLE_ENTITY,
+            codeyard_types::advisories::Refusal::Missing
+            | codeyard_types::advisories::Refusal::Denied => StatusCode::NOT_FOUND,
+            codeyard_types::advisories::Refusal::Invalid
+            | codeyard_types::advisories::Refusal::Conflict => StatusCode::UNPROCESSABLE_ENTITY,
         };
         return (
             status,
             codeyard_api_http::shared::repos::chrome::safe_error(status),
         );
     }
-    match error.downcast_ref::<codeyard_model::security_reports::Refusal>() {
+    match error.downcast_ref::<codeyard_types::security_reports::Refusal>() {
         Some(
-            codeyard_model::security_reports::Refusal::Missing
-            | codeyard_model::security_reports::Refusal::Denied,
+            codeyard_types::security_reports::Refusal::Missing
+            | codeyard_types::security_reports::Refusal::Denied,
         ) => (
             StatusCode::NOT_FOUND,
             "Security report not found or not available to this account.",
         ),
-        Some(codeyard_model::security_reports::Refusal::Invalid(message)) => {
+        Some(codeyard_types::security_reports::Refusal::Invalid(message)) => {
             (StatusCode::UNPROCESSABLE_ENTITY, message)
         }
-        Some(codeyard_model::security_reports::Refusal::Limit) => (
+        Some(codeyard_types::security_reports::Refusal::Limit) => (
             StatusCode::TOO_MANY_REQUESTS,
             "Security reporting limit reached. Try again later.",
         ),
@@ -353,7 +353,7 @@ async fn create(
     }
     let title = field(&form, "title");
     let body = field(&form, "body");
-    let result = match codeyard_model::security_reports::NewReport::new(&title, &body) {
+    let result = match codeyard_types::security_reports::NewReport::new(&title, &body) {
         Ok(_) => codeyard_db_security::advisories::create(
             &ctx.state.pool,
             ctx.database_actor(actor),

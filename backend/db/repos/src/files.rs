@@ -1,10 +1,10 @@
-use codeyard_db_core::models::File;
-use codeyard_db_core::models::FileReason;
-use codeyard_db_core::models::FileReasonLimit;
-use codeyard_db_core::models::FileVisibility;
-use codeyard_db_core::models::UserFileStats;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::File;
+use codeyard_database::models::FileReason;
+use codeyard_database::models::FileReasonLimit;
+use codeyard_database::models::FileVisibility;
+use codeyard_database::models::UserFileStats;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 use std::net::IpAddr;
 use uuid::Uuid;
 

@@ -6,9 +6,9 @@ use axum::http::StatusCode;
 use axum::Json;
 use codeyard_app::app::AppState;
 use codeyard_db_identity::github_apps::App;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
 use codeyard_support::token_hash::token_hash;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use codeyard_webhooks::settings::HookError;
 use codeyard_webhooks::settings::HookForm;
 use serde_json::json;
@@ -92,7 +92,7 @@ pub(super) async fn convert(
         public_key: public,
         permissions: manifest.permissions.to_string(),
         events: manifest.events,
-        access_level: if codeyard_model::github_apps::allows(
+        access_level: if codeyard_types::github_apps::allows(
             &manifest.permissions,
             "administration",
             true,

@@ -1,10 +1,10 @@
 //! README and license predicates use pinned Git snapshots, bounded like live code search.
 use anyhow::Result;
-use codeyard_db_core::models::Repository;
+use codeyard_database::models::Repository;
 use codeyard_db_repos::catalog_search::Options;
 use codeyard_db_repos::catalog_search::Search;
-use codeyard_repos_core::context::NodeContext;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_git_storage::context::NodeContext;
+use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_storage::range::ByteRange as BlobRange;
 use serde::Serialize;
 use std::time::Duration;
@@ -82,7 +82,7 @@ pub async fn git_facts(
 }
 
 pub async fn prepare(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     cluster: Option<&NodeContext>,
     viewer: Option<i64>,
     query: Search,

@@ -7,14 +7,14 @@ use anyhow::Context;
 use anyhow::ensure;
 
 use anyhow::Result;
-use codeyard_db_core::models::AccessLevel;
-use codeyard_db_core::models::DeployKey;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::models::User;
+use codeyard_database::models::AccessLevel;
+use codeyard_database::models::DeployKey;
+use codeyard_database::models::Repository;
+use codeyard_database::models::User;
 use codeyard_db_identity::deploy_keys::NewDeployKey;
 use codeyard_identity::repository_access::can_admin;
-use codeyard_model::identity::SshKeyWriteRefusal;
-use codeyard_model::repositories::DeployKeyError;
+use codeyard_types::identity::SshKeyWriteRefusal;
+use codeyard_types::repositories::DeployKeyError;
 use codeyard_webui::components::deploy_keys::DeployKeyPanel;
 use codeyard_webui::components::deploy_keys::DeployKeyRow;
 use ssh_key::HashAlg;
@@ -35,7 +35,7 @@ fn refusal(error: anyhow::Error) -> DeployKeyError {
 }
 
 async fn require_admin(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     actor: &User,
     repo: &Repository,
 ) -> Result<(), DeployKeyError> {
@@ -47,10 +47,10 @@ async fn require_admin(
 }
 
 pub async fn list_keys(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     actor: &User,
     repo: &Repository,
-    credential: impl Into<codeyard_db_core::queries::users::accounts::OwnedAccountCredential>,
+    credential: impl Into<codeyard_database::queries::users::accounts::OwnedAccountCredential>,
 ) -> Result<Vec<DeployKey>, DeployKeyError> {
     require_admin(pool, actor, repo).await?;
     codeyard_db_identity::deploy_keys::list_deploy_keys(
@@ -68,9 +68,9 @@ pub async fn list_keys(
 /// Adds a key. The public key is validated by the same parser as account keys, and its
 /// fingerprint must not already belong to an account key or a deploy key.
 pub async fn add_key(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     actor: &User,
-    credential: impl Into<codeyard_db_core::queries::users::accounts::OwnedAccountCredential>,
+    credential: impl Into<codeyard_database::queries::users::accounts::OwnedAccountCredential>,
     repo: &Repository,
     title: &str,
     public_key: &str,
@@ -96,9 +96,9 @@ pub async fn add_key(
 }
 
 pub async fn remove_key(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     actor: &User,
-    credential: impl Into<codeyard_db_core::queries::users::accounts::OwnedAccountCredential>,
+    credential: impl Into<codeyard_database::queries::users::accounts::OwnedAccountCredential>,
     repo: &Repository,
     key_id: i64,
 ) -> Result<(), DeployKeyError> {
@@ -122,13 +122,13 @@ pub struct Place<'a> {
     /// The repository form endpoint, `/owner/repo/_forms`.
     pub action: &'a str,
     pub csrf_token: &'a str,
-    pub credential: codeyard_db_core::queries::users::accounts::OwnedAccountCredential,
+    pub credential: codeyard_database::queries::users::accounts::OwnedAccountCredential,
 }
 
 /// The section for the settings page. `notice` is the query's `notice` value, which names a
 /// finished action.
 pub async fn settings_panel(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     actor: &User,
     repo: &Repository,
     place: Place<'_>,
@@ -194,7 +194,7 @@ fn row(key: DeployKey) -> DeployKeyRow {
 /// write needs a write key. It returns the account the session is attributed to, and the access
 /// that account grants, capped at write so a key is never an admin.
 pub async fn authorize(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     key_id: i64,
     repo: &Repository,
     write: bool,
@@ -234,7 +234,7 @@ pub async fn authorize(
 }
 
 /// Records that a key authenticated. A failure is logged and does not refuse the session.
-pub async fn record_use(pool: &codeyard_db_core::DbPool, key_id: i64) {
+pub async fn record_use(pool: &codeyard_database::DbPool, key_id: i64) {
     if let Err(error) = codeyard_db_identity::deploy_keys::touch_deploy_key(pool, key_id).await {
         warn!(key_id, error = %error, "could not record deploy key use");
     }

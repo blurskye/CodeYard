@@ -4,13 +4,13 @@ use crate::repositories::discovery::NewForkedRepository;
 use crate::repositories::discovery::RepositorySearch;
 use crate::repositories::records::RepositorySort;
 use anyhow::Result;
-use codeyard_db_core::models::Issue;
-use codeyard_db_core::models::PullRequest;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::models::User;
-use codeyard_db_core::pool::PgPool;
-use codeyard_db_core::queries::discussions::contains_pattern;
-use codeyard_db_core::queries::postgres::repositories::access::readable_condition;
+use codeyard_database::models::Issue;
+use codeyard_database::models::PullRequest;
+use codeyard_database::models::Repository;
+use codeyard_database::models::User;
+use codeyard_database::pool::PgPool;
+use codeyard_database::queries::discussions::contains_pattern;
+use codeyard_database::queries::postgres::repositories::access::readable_condition;
 
 pub async fn create_forked_repository(
     pool: &PgPool,
@@ -23,7 +23,7 @@ pub async fn create_forked_repository(
         SELECT {cell_home},'user', $1, $2, $3, ($4 OR source.is_private OR source.visibility_locked), $5, true, $6, $7, $1
         FROM repositories source WHERE source.id=$6 AND NOT source.is_gist
         RETURNING *
-        "#, cell_home = codeyard_db_core::cells::LOCAL_HOME_SQL),
+        "#, cell_home = codeyard_database::cells::LOCAL_HOME_SQL),
     )
     .bind(input.owner_id)
     .bind(input.name)
@@ -35,7 +35,7 @@ pub async fn create_forked_repository(
     .fetch_one(&mut *tx)
     .await?;
 
-    codeyard_db_core::cells::directory::postgres::repository(pool, &mut tx, &result).await?;
+    codeyard_database::cells::directory::postgres::repository(pool, &mut tx, &result).await?;
     tx.commit().await?;
     Ok(result)
 }

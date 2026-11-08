@@ -1,15 +1,15 @@
 use crate::postgres::organizations::authority::cancel_actor;
 use crate::postgres::organizations::authority::credential;
 use anyhow::Result;
-use codeyard_db_core::models::OrgRole;
-use codeyard_db_core::models::User;
-use codeyard_db_core::pool::PgPool;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_db_core::queries::postgres::organizations::authority::active;
-use codeyard_db_core::queries::postgres::organizations::authority::begin;
-use codeyard_db_core::queries::postgres::organizations::authority::begin_read;
-use codeyard_db_core::queries::postgres::organizations::authority::membership_role;
-use codeyard_db_core::require_read_org_postgres;
+use codeyard_database::models::OrgRole;
+use codeyard_database::models::User;
+use codeyard_database::pool::PgPool;
+use codeyard_database::queries::organizations::OrganizationOutcome;
+use codeyard_database::queries::postgres::organizations::authority::active;
+use codeyard_database::queries::postgres::organizations::authority::begin;
+use codeyard_database::queries::postgres::organizations::authority::begin_read;
+use codeyard_database::queries::postgres::organizations::authority::membership_role;
+use codeyard_database::require_read_org_postgres;
 use OrganizationOutcome::Applied;
 use OrganizationOutcome::Conflict;
 use OrganizationOutcome::Denied;
@@ -37,14 +37,14 @@ pub async fn list(
 }
 pub async fn remove(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     org: i64,
     target: i64,
 ) -> Result<OrganizationOutcome<()>> {
     let grant = actor.into();
     let actor = grant.user_id;
     let mut tx = begin(pool).await?;
-    codeyard_db_core::queries::postgres::users::transitions::lock_accounts_shared(
+    codeyard_database::queries::postgres::users::transitions::lock_accounts_shared(
         &mut tx,
         &[actor, target],
     )

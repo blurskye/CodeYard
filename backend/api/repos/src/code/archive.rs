@@ -14,7 +14,7 @@ use codeyard_app::app::AppState;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
 use codeyard_git::ArchiveFormat;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_git_storage::repositories::store::repo_store;
 use serde::Deserialize;
 use std::sync::Arc;
 

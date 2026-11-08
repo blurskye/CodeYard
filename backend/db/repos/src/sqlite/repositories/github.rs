@@ -2,8 +2,8 @@ use crate::repositories::github::count_sql;
 use crate::repositories::github::list_sql;
 use crate::repositories::github::RepositoryListQuery;
 use anyhow::Result;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::pool::SqlitePool;
+use codeyard_database::models::Repository;
+use codeyard_database::pool::SqlitePool;
 
 pub async fn repository_teams(
     pool: &SqlitePool,
@@ -13,7 +13,7 @@ pub async fn repository_teams(
     offset: i64,
 ) -> Result<Option<Vec<crate::repositories::github::RepositoryTeam>>> {
     use crate::repositories::github::REPOSITORY_TEAMS_SQL;
-    use codeyard_db_core::queries::organizations::OrganizationOutcome;
+    use codeyard_database::queries::organizations::OrganizationOutcome;
 
     anyhow::ensure!(
         (1..=101).contains(&limit) && offset >= 0,
@@ -21,7 +21,7 @@ pub async fn repository_teams(
     );
     let mut tx = pool.begin().await?;
     // Anyone who can read the repository may list the teams of its organization they can see.
-    if !codeyard_db_core::queries::sqlite::repositories::access::user_repo_access_in_transaction(
+    if !codeyard_database::queries::sqlite::repositories::access::user_repo_access_in_transaction(
         &mut tx, actor, repo_id,
     )
     .await?
@@ -39,7 +39,7 @@ pub async fn repository_teams(
         return Ok(Some(vec![]));
     };
     let OrganizationOutcome::Applied(role) =
-        codeyard_db_core::queries::sqlite::organizations::authority::read_authority(
+        codeyard_database::queries::sqlite::organizations::authority::read_authority(
             &mut tx, actor, org,
         )
         .await?
@@ -48,7 +48,7 @@ pub async fn repository_teams(
     };
     let privileged = matches!(
         role,
-        codeyard_db_core::models::OrgRole::Owner | codeyard_db_core::models::OrgRole::Admin
+        codeyard_database::models::OrgRole::Owner | codeyard_database::models::OrgRole::Admin
     );
     let mut teams: Vec<crate::repositories::github::RepositoryTeam> =
         sqlx::query_as(REPOSITORY_TEAMS_SQL)
@@ -65,7 +65,7 @@ pub async fn repository_teams(
         .filter(|row| row.team.privacy == "visible")
         .filter_map(|row| row.team.parent_team_id)
         .collect();
-    let parents: Vec<codeyard_db_core::models::Team> = sqlx::query_as("SELECT * FROM teams WHERE id IN (SELECT value FROM json_each(?1)) AND org_id=?2 AND privacy='visible'").bind(serde_json::to_string(&parents)?).bind(org).fetch_all(&mut *tx).await?;
+    let parents: Vec<codeyard_database::models::Team> = sqlx::query_as("SELECT * FROM teams WHERE id IN (SELECT value FROM json_each(?1)) AND org_id=?2 AND privacy='visible'").bind(serde_json::to_string(&parents)?).bind(org).fetch_all(&mut *tx).await?;
     let parents: std::collections::HashMap<_, _> =
         parents.into_iter().map(|team| (team.id, team)).collect();
     for row in &mut teams {
@@ -94,8 +94,8 @@ pub async fn list_repositories(
 ) -> Result<Vec<Repository>> {
     let sql = list_sql(
         &query,
-        codeyard_db_core::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL,
-        &codeyard_db_core::queries::sqlite::repositories::access::readable_condition(),
+        codeyard_database::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL,
+        &codeyard_database::queries::sqlite::repositories::access::readable_condition(),
     )
     .replace('$', "?");
     Ok(sqlx::query_as(&sql)
@@ -113,8 +113,8 @@ pub async fn list_repositories(
 pub async fn count_repositories(pool: &SqlitePool, query: RepositoryListQuery<'_>) -> Result<i64> {
     let sql = count_sql(
         &query,
-        codeyard_db_core::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL,
-        &codeyard_db_core::queries::sqlite::repositories::access::readable_condition(),
+        codeyard_database::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL,
+        &codeyard_database::queries::sqlite::repositories::access::readable_condition(),
     )
     .replace('$', "?");
     Ok(sqlx::query_scalar(&sql)

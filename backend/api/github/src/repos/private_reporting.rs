@@ -11,21 +11,21 @@ use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use std::sync::Arc;
 
 fn failure(error: anyhow::Error) -> Error {
-    match error.downcast_ref::<codeyard_model::security_reports::Refusal>() {
-        Some(codeyard_model::security_reports::Refusal::Denied) => Error::new(
+    match error.downcast_ref::<codeyard_types::security_reports::Refusal>() {
+        Some(codeyard_types::security_reports::Refusal::Denied) => Error::new(
             StatusCode::FORBIDDEN,
             "Private vulnerability reporting mutation denied",
         ),
-        Some(codeyard_model::security_reports::Refusal::Missing) => Error::missing(),
-        Some(codeyard_model::security_reports::Refusal::Invalid(message)) => {
+        Some(codeyard_types::security_reports::Refusal::Missing) => Error::missing(),
+        Some(codeyard_types::security_reports::Refusal::Invalid(message)) => {
             Error::invalid(*message)
         }
-        Some(codeyard_model::security_reports::Refusal::Limit) => Error::new(
+        Some(codeyard_types::security_reports::Refusal::Limit) => Error::new(
             StatusCode::TOO_MANY_REQUESTS,
             "Security reporting limit reached",
         ),

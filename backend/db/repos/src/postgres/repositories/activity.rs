@@ -3,7 +3,7 @@ use crate::repositories::activity::Filter;
 use crate::repositories::activity::Kind;
 use crate::repositories::activity::RefActivity;
 use anyhow::Result;
-use codeyard_db_core::pool::PgPool;
+use codeyard_database::pool::PgPool;
 use uuid::Uuid;
 
 pub async fn record(
@@ -47,7 +47,7 @@ pub async fn list(
         sqlx::query_as::<_, Activity>(&crate::repositories::activity::list_sql(
             true,
             filter,
-            &codeyard_db_core::queries::postgres::repositories::access::readable_condition(),
+            &codeyard_database::queries::postgres::repositories::access::readable_condition(),
         ))
         .bind(repo)
         .bind(filter.boundary)

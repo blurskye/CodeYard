@@ -3,7 +3,7 @@ use crate::services::RepositoryServices;
 use anyhow::ensure;
 use anyhow::Context;
 use anyhow::Result;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_support::secret_detection::scan_with_patterns;
 use codeyard_support::secret_detection::MAX_BLOB_BYTES;
 use serde_json::json;
@@ -29,7 +29,7 @@ pub async fn document(
 
 /// Page enrichment has one bounded database read per related record kind.
 pub struct Documents {
-    users: HashMap<i64, codeyard_db_core::models::User>,
+    users: HashMap<i64, codeyard_database::models::User>,
     bypasses: HashMap<(i64, String), codeyard_db_security::secret_scanning::Bypass>,
 }
 impl Documents {
@@ -110,7 +110,7 @@ impl Documents {
 
 pub async fn emit_alert(
     state: &dyn RepositoryServices,
-    repo: &codeyard_db_core::models::Repository,
+    repo: &codeyard_database::models::Repository,
     alert: &codeyard_db_security::secret_scanning::Alert,
     action: &'static str,
     actor: impl Into<Option<i64>>,
@@ -122,7 +122,7 @@ pub async fn emit_alert(
             .context("Repository owner unavailable")?;
     let document = document(state, alert, &owner, &repo.name, true).await?;
     let repository = codeyard_webhooks::payloads::repository(repo, &owner);
-    codeyard_repos_core::webhooks::emit(
+    codeyard_git_storage::webhooks::emit(
         state.pool(),
         repo,
         "secret_scanning_alert",
@@ -134,7 +134,7 @@ pub async fn emit_alert(
 }
 
 async fn commit_target(
-    store: &codeyard_repos_core::repositories::store::RepoStore,
+    store: &codeyard_git_storage::repositories::store::RepoStore,
     sha: &str,
 ) -> Result<Option<String>> {
     let mut object = sha.to_owned();
@@ -339,7 +339,7 @@ async fn scan_job(
                         let location = codeyard_webhooks::payloads::secret_scanning_location(
                             &location, &owner, &repo.name,
                         );
-                        codeyard_repos_core::webhooks::emit(state.pool(), &repo, "secret_scanning_alert_location", actor.into_iter().collect(), move |_, people| json!({"action":"created","alert":document,"location":location,"repository":repository,"sender":actor.map(|actor| codeyard_webhooks::payloads::person(&people.get(actor))).unwrap_or(Value::Null)})).await;
+                        codeyard_git_storage::webhooks::emit(state.pool(), &repo, "secret_scanning_alert_location", actor.into_iter().collect(), move |_, people| json!({"action":"created","alert":document,"location":location,"repository":repository,"sender":actor.map(|actor| codeyard_webhooks::payloads::person(&people.get(actor))).unwrap_or(Value::Null)})).await;
                     }
                 }
             }

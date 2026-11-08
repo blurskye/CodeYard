@@ -2,31 +2,31 @@ use crate::repositories::autolinks::Autolink;
 use crate::repositories::autolinks::NewAutolink;
 use crate::repositories::autolinks::Refusal;
 use anyhow::Result;
-use codeyard_db_core::pool::PgPool;
+use codeyard_database::pool::PgPool;
 use sqlx::Postgres;
 use sqlx::Transaction;
 
 async fn admin(
     tx: &mut Transaction<'_, Postgres>,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo: i64,
     write: bool,
 ) -> Result<()> {
     let credential = actor.into();
     let actor = credential.user_id;
     let allowed = if write {
-        codeyard_db_core::queries::postgres::discussions::lock_repository_mutation_authority(
+        codeyard_database::queries::postgres::discussions::lock_repository_mutation_authority(
             tx, actor, repo,
         )
         .await?
     } else {
-        codeyard_db_core::queries::postgres::discussions::lock_archive_authority(tx, actor, repo)
+        codeyard_database::queries::postgres::discussions::lock_archive_authority(tx, actor, repo)
             .await?
     };
     anyhow::ensure!(allowed, Refusal::Denied);
     if write {
         anyhow::ensure!(
-            codeyard_db_core::queries::postgres::credentials::writes(
+            codeyard_database::queries::postgres::credentials::writes(
                 tx,
                 &credential,
                 Some(repo),
@@ -41,7 +41,7 @@ async fn admin(
 }
 pub async fn create(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo: i64,
     input: &NewAutolink,
 ) -> Result<Autolink> {
@@ -95,7 +95,7 @@ pub async fn get(pool: &PgPool, actor: i64, repo: i64, id: i64) -> Result<Autoli
 }
 pub async fn remove(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo: i64,
     id: i64,
 ) -> Result<()> {

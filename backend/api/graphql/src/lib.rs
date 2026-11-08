@@ -18,7 +18,7 @@ use axum::Json;
 use axum::Router;
 use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_app::app::AppState;
-use codeyard_model::graphql_error::error;
+use codeyard_types::graphql_error::error;
 use serde_json::json;
 use serde_json::Value;
 use std::sync::atomic::AtomicUsize;
@@ -62,7 +62,7 @@ struct RequestContext {
     headers: HeaderMap,
     state: Arc<AppState>,
     auth: codeyard_identity::github_auth::Authentication,
-    actor: codeyard_db_core::queries::credentials::Actor,
+    actor: codeyard_database::queries::credentials::Actor,
     /// Scopes granted to an OAuth token; other credentials have none.
     oauth_scopes: Option<String>,
     /// Admission distinguishes personal tokens from integrations, which GraphQL does not accept.
@@ -158,7 +158,7 @@ impl RequestContext {
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(missing)?;
-            if !codeyard_model::github_apps::allows(&permissions, &scope.replace('-', "_"), write) {
+            if !codeyard_types::github_apps::allows(&permissions, &scope.replace('-', "_"), write) {
                 return Err(token_denied());
             }
         } else if self.auth.is_job() {
@@ -192,7 +192,7 @@ impl RequestContext {
             && self
                 .oauth_scopes
                 .as_ref()
-                .is_some_and(|scopes| !codeyard_model::oauth_apps::has_scope(scopes, "repo"))
+                .is_some_and(|scopes| !codeyard_types::oauth_apps::has_scope(scopes, "repo"))
         {
             if codeyard_db_repos::repositories::access::readable_repository_ids(pool, None, &[repo])
                 .await
@@ -214,9 +214,9 @@ impl RequestContext {
             return match scope {
                 "repo" => Ok(()),
                 "workflow"
-                    if codeyard_model::github_apps::allows(
+                    if codeyard_types::github_apps::allows(
                         &Value::Object(
-                            grant.group(codeyard_model::fine_grained::Group::Repository),
+                            grant.group(codeyard_types::fine_grained::Group::Repository),
                         ),
                         "workflows",
                         true,
@@ -228,7 +228,7 @@ impl RequestContext {
             };
         }
         match &self.oauth_scopes {
-            Some(scopes) if !codeyard_model::oauth_apps::has_scope(scopes, scope) => {
+            Some(scopes) if !codeyard_types::oauth_apps::has_scope(scopes, scope) => {
                 Err(token_denied())
             }
             _ => Ok(()),
@@ -242,7 +242,7 @@ impl RequestContext {
         if self
             .oauth_scopes
             .as_ref()
-            .is_some_and(|scopes| !codeyard_model::oauth_apps::has_scope(scopes, "repo"))
+            .is_some_and(|scopes| !codeyard_types::oauth_apps::has_scope(scopes, "repo"))
         {
             return Ok(None);
         }
@@ -263,8 +263,8 @@ impl RequestContext {
                 .reaches(&self.state.pool, &row)
                 .await
                 .map_err(unavailable)?
-                || !codeyard_model::fine_grained::allows(
-                    &grant.group(codeyard_model::fine_grained::Group::Repository),
+                || !codeyard_types::fine_grained::allows(
+                    &grant.group(codeyard_types::fine_grained::Group::Repository),
                     &scope.replace('-', "_"),
                     false,
                 )
@@ -373,7 +373,7 @@ fn unavailable<E>(_: E) -> Error {
 }
 
 fn url(path: &str) -> String {
-    format!("{}{path}", codeyard_model::http_config::link_origin())
+    format!("{}{path}", codeyard_types::http_config::link_origin())
 }
 
 fn arg(ctx: &Arguments, name: &str) -> Result<String> {
@@ -381,8 +381,8 @@ fn arg(ctx: &Arguments, name: &str) -> Result<String> {
 }
 
 async fn validate_node_root(id: &str, request: &RequestContext) -> Result<()> {
-    if let Some(expected) = codeyard_model::node_id::scoped_root(id) {
-        let row = codeyard_model::node_id::routed(id).ok_or_else(missing)?;
+    if let Some(expected) = codeyard_types::node_id::scoped_root(id) {
+        let row = codeyard_types::node_id::routed(id).ok_or_else(missing)?;
         if !codeyard_db_repos::graphql::node_root_matches(
             &request.state.pool,
             row.kind,
@@ -413,7 +413,7 @@ async fn node(id: &str, request: &RequestContext) -> Result<Value> {
         return crate::gists::node(id, request).await;
     }
     // Numeric team IDs and content-addressed tree IDs share T but have disjoint byte shapes.
-    if codeyard_model::node_id::decode(id).is_none()
+    if codeyard_types::node_id::decode(id).is_none()
         && id.split_once('_').is_some_and(|(kind, _)| {
             matches!(
                 kind,
@@ -423,7 +423,7 @@ async fn node(id: &str, request: &RequestContext) -> Result<Value> {
     {
         return crate::git_objects::node(id, request).await;
     }
-    let (mut kind, mut id) = codeyard_model::node_id::decode(id).ok_or_else(missing)?;
+    let (mut kind, mut id) = codeyard_types::node_id::decode(id).ok_or_else(missing)?;
     if kind == "IC" {
         kind = if id % 2 == 0 { "IC" } else { "PC" };
         id /= 2;

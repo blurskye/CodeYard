@@ -21,7 +21,7 @@ use codeyard_api_http::shared::repos::forms::authorize_post;
 use codeyard_api_http::shared::repos::forms::field;
 use codeyard_app::app::AppState;
 use codeyard_ci_engine::pull_requests::branches::refresh_open_pull_request;
-use codeyard_repos_core::store_types::MergeMethod;
+use codeyard_git_storage::store_types::MergeMethod;
 use codeyard_repos_pulls::repositories::pull_requests::merge::MergeRequest;
 use codeyard_repos_pulls::repositories::pull_requests::merge::MergeResponse;
 use codeyard_webui::pages::repos::issues::DetailDraft;
@@ -38,7 +38,7 @@ pub async fn merge_pull_request(
     let actor = get_current_user(&state.pool, &headers).await?;
     codeyard_repos_pulls::repositories::pull_requests::merge::merge_pull_request(
         &state,
-        codeyard_db_core::queries::credentials::Actor::from((
+        codeyard_database::queries::credentials::Actor::from((
             actor.id,
             codeyard_api_http::session::extract_session_id(&headers).unwrap_or_default(),
         )),
@@ -77,7 +77,7 @@ pub(crate) async fn native_merge(
             &ctx.state.ci_runs,
             ctx.require_user()?.id,
             pull.id,
-            Some(codeyard_db_core::models::AccessLevel::Owner),
+            Some(codeyard_database::models::AccessLevel::Owner),
         )
         .await;
     }

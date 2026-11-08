@@ -1,14 +1,14 @@
 use crate::pull_requests::auto_merge::AutoMerge;
 use crate::pull_requests::auto_merge::AutoMergeRequest;
 use anyhow::Result;
-use codeyard_db_core::pool::SqlitePool;
+use codeyard_database::pool::SqlitePool;
 
 pub async fn enable(
     pool: &SqlitePool,
     request: &AutoMergeRequest,
     expected_head: Option<&str>,
 ) -> Result<()> {
-    use codeyard_db_core::queries::discussions::DiscussionWriteRefusal as Refusal;
+    use codeyard_database::queries::discussions::DiscussionWriteRefusal as Refusal;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let repo: i64 = sqlx::query_scalar("SELECT repo_id FROM pull_requests WHERE id=$1")
         .bind(request.pull_request_id)
@@ -16,7 +16,7 @@ pub async fn enable(
         .await?
         .ok_or(Refusal::Denied)?;
     anyhow::ensure!(
-        codeyard_db_core::queries::sqlite::discussions::lock_write_authority(
+        codeyard_database::queries::sqlite::discussions::lock_write_authority(
             &mut tx,
             request.enabled_by,
             repo

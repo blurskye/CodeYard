@@ -7,8 +7,8 @@ use crate::deployments::Refusal;
 use crate::deployments::Status;
 use anyhow::ensure;
 use anyhow::Result;
-use codeyard_db_core::pool::PgPool;
-use codeyard_db_core::queries::credentials::Actor;
+use codeyard_database::pool::PgPool;
+use codeyard_database::queries::credentials::Actor;
 use sqlx::Postgres;
 use sqlx::Transaction;
 
@@ -25,7 +25,7 @@ async fn write<'p>(
             repo
         )
         .await?
-            && codeyard_db_core::queries::postgres::credentials::repository(
+            && codeyard_database::queries::postgres::credentials::repository(
                 &mut tx,
                 actor,
                 repo,
@@ -64,7 +64,7 @@ pub async fn get(
     repo: i64,
     id: i64,
 ) -> Result<Option<Deployment>> {
-    Ok(sqlx::query_as(&format!("SELECT d.* FROM repository_deployments d JOIN repositories r ON r.id=d.repo_id LEFT JOIN users u ON u.id=$3 WHERE d.repo_id=$1 AND d.id=$2 AND {}", codeyard_db_core::queries::postgres::repositories::access::readable_condition()))
+    Ok(sqlx::query_as(&format!("SELECT d.* FROM repository_deployments d JOIN repositories r ON r.id=d.repo_id LEFT JOIN users u ON u.id=$3 WHERE d.repo_id=$1 AND d.id=$2 AND {}", codeyard_database::queries::postgres::repositories::access::readable_condition()))
         .bind(repo).bind(id).bind(viewer).fetch_optional(pool).await?)
 }
 
@@ -76,7 +76,7 @@ pub async fn list(
     offset: i64,
     limit: i64,
 ) -> Result<Vec<Deployment>> {
-    Ok(sqlx::query_as(&format!("SELECT d.* FROM repository_deployments d JOIN repositories r ON r.id=d.repo_id LEFT JOIN users u ON u.id=$8 WHERE d.repo_id=$1 AND (CAST($2 AS TEXT) IS NULL OR d.sha=$2) AND (CAST($3 AS TEXT) IS NULL OR d.reference=$3) AND (CAST($4 AS TEXT) IS NULL OR d.task=$4) AND (CAST($5 AS TEXT) IS NULL OR d.environment_key=$5) AND {} ORDER BY d.id DESC LIMIT $6 OFFSET $7", codeyard_db_core::queries::postgres::repositories::access::readable_condition()))
+    Ok(sqlx::query_as(&format!("SELECT d.* FROM repository_deployments d JOIN repositories r ON r.id=d.repo_id LEFT JOIN users u ON u.id=$8 WHERE d.repo_id=$1 AND (CAST($2 AS TEXT) IS NULL OR d.sha=$2) AND (CAST($3 AS TEXT) IS NULL OR d.reference=$3) AND (CAST($4 AS TEXT) IS NULL OR d.task=$4) AND (CAST($5 AS TEXT) IS NULL OR d.environment_key=$5) AND {} ORDER BY d.id DESC LIMIT $6 OFFSET $7", codeyard_database::queries::postgres::repositories::access::readable_condition()))
         .bind(repo).bind(&filter.sha).bind(&filter.reference).bind(&filter.task).bind(filter.environment.as_ref().map(|name| name.to_lowercase())).bind(limit).bind(offset).bind(viewer).fetch_all(pool).await?)
 }
 
@@ -173,7 +173,7 @@ pub async fn get_status(
     deployment: i64,
     id: i64,
 ) -> Result<Option<Status>> {
-    Ok(sqlx::query_as(&format!("SELECT s.* FROM deployment_statuses s JOIN repository_deployments d ON d.id=s.deployment_id JOIN repositories r ON r.id=d.repo_id LEFT JOIN users u ON u.id=$3 WHERE s.deployment_id=$1 AND s.id=$2 AND {}", codeyard_db_core::queries::postgres::repositories::access::readable_condition()))
+    Ok(sqlx::query_as(&format!("SELECT s.* FROM deployment_statuses s JOIN repository_deployments d ON d.id=s.deployment_id JOIN repositories r ON r.id=d.repo_id LEFT JOIN users u ON u.id=$3 WHERE s.deployment_id=$1 AND s.id=$2 AND {}", codeyard_database::queries::postgres::repositories::access::readable_condition()))
         .bind(deployment).bind(id).bind(viewer).fetch_optional(pool).await?)
 }
 
@@ -184,6 +184,6 @@ pub async fn statuses(
     offset: i64,
     limit: i64,
 ) -> Result<Vec<Status>> {
-    Ok(sqlx::query_as(&format!("SELECT s.* FROM deployment_statuses s JOIN repository_deployments d ON d.id=s.deployment_id JOIN repositories r ON r.id=d.repo_id LEFT JOIN users u ON u.id=$4 WHERE s.deployment_id=$1 AND {} ORDER BY s.id DESC LIMIT $2 OFFSET $3", codeyard_db_core::queries::postgres::repositories::access::readable_condition()))
+    Ok(sqlx::query_as(&format!("SELECT s.* FROM deployment_statuses s JOIN repository_deployments d ON d.id=s.deployment_id JOIN repositories r ON r.id=d.repo_id LEFT JOIN users u ON u.id=$4 WHERE s.deployment_id=$1 AND {} ORDER BY s.id DESC LIMIT $2 OFFSET $3", codeyard_database::queries::postgres::repositories::access::readable_condition()))
         .bind(deployment).bind(limit).bind(offset).bind(viewer).fetch_all(pool).await?)
 }

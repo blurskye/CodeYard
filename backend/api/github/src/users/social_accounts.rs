@@ -12,10 +12,10 @@ use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::app::AppState;
-use codeyard_db_core::queries::users::accounts::AccountCredential;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_database::queries::users::accounts::AccountCredential;
 use codeyard_types::credentials::AccountRestricted;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde::Deserialize;
 use serde_json::json;
 use std::sync::Arc;
@@ -104,7 +104,7 @@ async fn change(
         .await?
         .ok_or_else(codeyard_identity::github_auth::required)?;
     actor.require_write()?;
-    let Json(input) = input.map_err(codeyard_model::github_error::json_error)?;
+    let Json(input) = input.map_err(codeyard_types::github_error::json_error)?;
     if input.account_urls.is_empty() || input.account_urls.len() > 4 {
         return Err(Error::validation(
             "SocialAccount",

@@ -1,18 +1,18 @@
 use crate::support::native_database::NativeDatabase;
 use crate::support::native_database::PostgresDatabase;
 
-use codeyard_cluster_core::pairing::InviteOptions;
-use codeyard_cluster_core::settings::Settings;
-use codeyard_cluster_core::transport::NodeAddress;
+use codeyard_nodes::pairing::InviteOptions;
+use codeyard_nodes::settings::Settings;
+use codeyard_nodes::transport::NodeAddress;
 use codeyard_support::node_identity::NodeKey;
 
-use codeyard_db_core::DbPool;
+use codeyard_database::DbPool;
 use std::time::Duration;
 
 #[tokio::test]
 async fn oversized_invites_are_refused_before_persisting_tokens() {
     let db = NativeDatabase::new().await;
-    let result = codeyard_cluster_core::pairing::create_invite(
+    let result = codeyard_nodes::pairing::create_invite(
         &db.pool,
         NodeKey::generate().public_key(),
         NodeAddress {
@@ -36,7 +36,7 @@ async fn oversized_invites_are_refused_before_persisting_tokens() {
         .unwrap_err()
         .to_string()
         .contains("too many advertised addresses"));
-    assert!(codeyard_db_cluster::cluster::list_join_tokens(&db.pool)
+    assert!(codeyard_db_placement::cluster::list_join_tokens(&db.pool)
         .await
         .unwrap()
         .is_empty());
@@ -50,7 +50,7 @@ async fn service_startup_refuses_roles_outside_existing_enrollment() {
         .unwrap();
     let root = tempfile::tempdir().unwrap();
     let key = codeyard_support::node_identity::load_or_create(root.path()).unwrap();
-    codeyard_db_cluster::cluster::register_own_node(
+    codeyard_db_placement::cluster::register_own_node(
         &db.pool,
         &key.public_hex(),
         "storage",
@@ -66,7 +66,7 @@ async fn service_startup_refuses_roles_outside_existing_enrollment() {
     })
     .unwrap()
     .unwrap();
-    let error = codeyard_cluster::start(
+    let error = codeyard_placement::start(
         &db.pool,
         root.path(),
         root.path(),
@@ -83,7 +83,7 @@ async fn adoption_and_index(pool: &DbPool) {
     let owner = codeyard_db_identity::users::accounts::create_user(pool, "adopter", None)
         .await
         .unwrap();
-    let node = codeyard_db_cluster::cluster::register_own_node(
+    let node = codeyard_db_placement::cluster::register_own_node(
         pool,
         &NodeKey::generate().public_hex(),
         "storage",
@@ -134,7 +134,7 @@ async fn adoption_and_index(pool: &DbPool) {
         }
     }
     // A fork absent from the directory snapshot must prevent adoption of its source.
-    assert!(codeyard_db_cluster::cluster::place_fork_family(
+    assert!(codeyard_db_placement::cluster::place_fork_family(
         pool,
         source.id,
         node.id,
@@ -152,7 +152,7 @@ async fn adoption_and_index(pool: &DbPool) {
         None
     );
     assert_eq!(
-        codeyard_db_cluster::cluster::place_fork_family(
+        codeyard_db_placement::cluster::place_fork_family(
             pool,
             source.id,
             node.id,
@@ -182,7 +182,7 @@ async fn adoption_refreshes_forks_committed_while_it_waits_for_the_source() {
         .unwrap();
     let raw = &db.raw;
     let root = tempfile::tempdir().unwrap();
-    let node = codeyard_db_cluster::cluster::register_own_node(
+    let node = codeyard_db_placement::cluster::register_own_node(
         &db.pool,
         &NodeKey::generate().public_hex(),
         "storage",
@@ -219,7 +219,7 @@ async fn adoption_refreshes_forks_committed_while_it_waits_for_the_source() {
     let pool = db.pool.clone();
     let directory = root.path().to_owned();
     let adopting = tokio::spawn(async move {
-        codeyard_cluster::adopt_repositories(&pool, node.id, &directory).await
+        codeyard_placement::adopt_repositories(&pool, node.id, &directory).await
     });
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert!(!adopting.is_finished());

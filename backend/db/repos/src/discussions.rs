@@ -1,8 +1,8 @@
 use anyhow::Result;
 use chrono::DateTime;
 use chrono::Utc;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 
 /// A comment form's content revision, shared by display and transactional mutation.
 pub fn comment_revision(body: &str) -> String {
@@ -42,7 +42,7 @@ pub(crate) fn valid_lock_reason(reason: Option<&str>) -> bool {
 
 native_operation!(crate::postgres::discussions::set_lock,
     crate::sqlite::discussions::set_lock,
-    fn set_lock(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo_id: i64, item: crate::assignees::AssignedItem, locked: bool, reason: Option<&str>) -> Result<()>);
+    fn set_lock(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, repo_id: i64, item: crate::assignees::AssignedItem, locked: bool, reason: Option<&str>) -> Result<()>);
 
 pub struct DiscussionEdit<'a> {
     pub actor_id: i64,

@@ -1,11 +1,11 @@
 //! Home answers travel over node-key TLS; directory enrollment grants no resource authority.
 use crate::support::native_database::PostgresDatabase;
-use codeyard_cells_router::{accounts, directory, rpc};
-use codeyard_db_core::cells::authorization::{self, Home, Proof};
+use codeyard_database::cells::authorization::{self, Home, Proof};
 use codeyard_db_directory::Directory;
-use codeyard_model::cells::{Cell, Key, KeyKind, Object, ObjectKind, State};
+use codeyard_router::{accounts, directory, rpc};
 use codeyard_support::{node_identity::NodeKey, token_hash::token_hash};
-use codeyard_types::cells::Prefix;
+use codeyard_types::cell_ids::Prefix;
+use codeyard_types::cells::{Cell, Key, KeyKind, Object, ObjectKind, State};
 use std::sync::Arc;
 
 struct InterruptedCopy {
@@ -22,7 +22,7 @@ impl Home for InterruptedCopy {
     fn user<'a>(
         &'a self,
         name: &'a str,
-    ) -> futures_util::future::BoxFuture<'a, anyhow::Result<Option<codeyard_db_core::models::User>>>
+    ) -> futures_util::future::BoxFuture<'a, anyhow::Result<Option<codeyard_database::models::User>>>
     {
         self.inner.user(name)
     }
@@ -33,17 +33,17 @@ impl Home for InterruptedCopy {
         proof: &'a Proof,
     ) -> futures_util::future::BoxFuture<
         'a,
-        anyhow::Result<Option<codeyard_db_core::cells::repositories::Source>>,
+        anyhow::Result<Option<codeyard_database::cells::repositories::Source>>,
     > {
         self.inner.repository_source(owner, name, proof)
     }
     fn snapshot<'a>(
         &'a self,
-        request: &'a codeyard_db_core::cells::repositories::SnapshotRequest,
+        request: &'a codeyard_database::cells::repositories::SnapshotRequest,
         output: &'a mut (dyn tokio::io::AsyncWrite + Unpin + Send),
     ) -> futures_util::future::BoxFuture<
         'a,
-        anyhow::Result<codeyard_db_core::cells::repositories::Snapshot>,
+        anyhow::Result<codeyard_database::cells::repositories::Snapshot>,
     > {
         Box::pin(async move {
             let snapshot = self.inner.snapshot(request, output).await?;
@@ -85,7 +85,7 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
     directory.migrate().await.unwrap();
     let mut zero = PostgresDatabase::new().await;
     let mut one = PostgresDatabase::new().await;
-    codeyard_db_core::cells::initialize(&one.pool, Prefix::new(1))
+    codeyard_database::cells::initialize(&one.pool, Prefix::new(1))
         .await
         .unwrap();
     let user = codeyard_db_identity::users::accounts::create_user(&one.pool, "bob", None)
@@ -211,7 +211,7 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
     zero.pool.set_foreign_authorization(Arc::new(
         accounts::Remote::new(zero_key.clone(), directory_client(zero_key.clone())).unwrap(),
     ));
-    codeyard_db_cluster::node_config::upsert_node_configuration(&zero.pool, "public", true)
+    codeyard_db_placement::node_config::upsert_node_configuration(&zero.pool, "public", true)
         .await
         .unwrap();
     let alice = codeyard_db_identity::users::accounts::create_user(&zero.pool, "alice", None)
@@ -244,7 +244,7 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
     .unwrap()
     .unwrap();
     let root = tempfile::tempdir().unwrap();
-    let repository = codeyard_repos_core::repositories::lifecycle::provision(
+    let repository = codeyard_git_storage::repositories::lifecycle::provision(
         (&zero.pool, None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice.id),
@@ -267,7 +267,7 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
     )
     .await
     .unwrap();
-    let codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(organization) =
+    let codeyard_database::queries::organizations::OrganizationOutcome::Applied(organization) =
         organization
     else {
         panic!("native organization creation refused");
@@ -333,7 +333,7 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
     zero.pool
         .set_directory(Arc::new(directory_client(zero_key.clone())))
         .unwrap();
-    codeyard_db_cluster::node_config::upsert_node_configuration(&one.pool, "public", true)
+    codeyard_db_placement::node_config::upsert_node_configuration(&one.pool, "public", true)
         .await
         .unwrap();
     let mut bob_http = super::cells_frontend::Server::start(
@@ -377,7 +377,7 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
     let mut zero_record = cell(Prefix::ZERO, &zero_key, vec![zero_home.address.to_string()]);
     zero_record.web_urls = vec![http.url()];
     directory.register_cell(zero_record).await.unwrap();
-    let native_repository = codeyard_repos_core::repositories::lifecycle::provision(
+    let native_repository = codeyard_git_storage::repositories::lifecycle::provision(
         (&one.pool, None),
         bob_root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(user.id),
@@ -399,7 +399,7 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
             .fetch_one(&zero.raw)
             .await
             .unwrap();
-    assert!(codeyard_db_core::cells::outbox::deliver_one(&zero.pool)
+    assert!(codeyard_database::cells::outbox::deliver_one(&zero.pool)
         .await
         .unwrap());
     assert_eq!(
@@ -506,7 +506,7 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         .unwrap();
     assert_eq!(response.status(), 422);
     for _ in 0..8 {
-        if !codeyard_db_core::cells::outbox::deliver_one(&zero.pool)
+        if !codeyard_database::cells::outbox::deliver_one(&zero.pool)
             .await
             .unwrap()
         {
@@ -539,7 +539,7 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
     let status = response.status();
     let body = response.text().await.unwrap();
     assert_eq!(status, 200, "{body}");
-    assert!(codeyard_db_core::cells::outbox::deliver_one(&zero.pool)
+    assert!(codeyard_database::cells::outbox::deliver_one(&zero.pool)
         .await
         .unwrap());
     let response = client
@@ -643,7 +643,7 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         .await
         .unwrap();
     assert_eq!(response.status(), 204);
-    assert!(codeyard_db_core::cells::outbox::deliver_one(&zero.pool)
+    assert!(codeyard_database::cells::outbox::deliver_one(&zero.pool)
         .await
         .unwrap());
     let orgs: serde_json::Value = client
@@ -733,7 +733,7 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
     let status = response.status();
     let document: serde_json::Value = response.json().await.unwrap();
     assert_eq!(status, 201, "{document}");
-    let snapshot_request = codeyard_db_core::cells::repositories::SnapshotRequest {
+    let snapshot_request = codeyard_database::cells::repositories::SnapshotRequest {
         repository_id: repository.id,
         reader_id: user.id,
         owner: "alice".into(),
@@ -753,7 +753,7 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
     let pack = root.path().join("test-fork.pack");
     tokio::fs::write(&pack, &bytes).await.unwrap();
     let copy_path = root.path().join("test-fork.git");
-    let copy = codeyard_repos_core::repositories::store::RepoStore::from_disk_path(
+    let copy = codeyard_git_storage::repositories::store::RepoStore::from_disk_path(
         copy_path.to_str().unwrap(),
     );
     copy.initialize(None, &snapshot.default_branch)
@@ -801,9 +801,9 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
     // The created token row carries no hash, so the proof uses the one the token was made with.
     let bob_hash = token_hash(&value);
     let credential =
-        codeyard_db_core::queries::users::accounts::AccountCredential::Token(token.id, &bob_hash);
-    let authority = codeyard_db_core::queries::credentials::Actor::from((user.id, &credential));
-    let admission = codeyard_db_core::cells::repositories::Admission::new(
+        codeyard_database::queries::users::accounts::AccountCredential::Token(token.id, &bob_hash);
+    let authority = codeyard_database::queries::credentials::Actor::from((user.id, &credential));
+    let admission = codeyard_database::cells::repositories::Admission::new(
         source.clone(),
         authority.clone(),
         value.clone(),
@@ -817,7 +817,7 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         .is_none());
     let mut forged_admission = admission.clone();
     forged_admission.actor.credential = Some(
-        codeyard_db_core::queries::users::accounts::OwnedAccountCredential::Token(
+        codeyard_database::queries::users::accounts::OwnedAccountCredential::Token(
             token.id + 1,
             bob_hash.clone(),
         ),
@@ -826,12 +826,12 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
     assert!(forged_admission.check(&one.pool).await.is_err());
     assert_eq!(source.credential_id, Some(token.id));
     let operations = [
-        codeyard_repos_core::wire::Operation::CompareForeignPullHead {
+        codeyard_git_storage::wire::Operation::CompareForeignPullHead {
             admission: Box::new(admission.clone()),
             base: "a".repeat(40),
             branch: "topic".into(),
         },
-        codeyard_repos_core::wire::Operation::FetchForeignPullHead {
+        codeyard_git_storage::wire::Operation::FetchForeignPullHead {
             admission: Box::new(admission.clone()),
             number: 1,
             branch: "topic".into(),
@@ -853,7 +853,7 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
             );
         }
     }
-    let operation = codeyard_repos_core::wire::Operation::InitializeForeignCopy {
+    let operation = codeyard_git_storage::wire::Operation::InitializeForeignCopy {
         admission: Box::new(admission.clone()),
         default_branch: "main".into(),
         default_branch_only: false,
@@ -871,13 +871,13 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         );
     }
     let native_store =
-        codeyard_repos_core::repositories::store::repo_store(&native_repository, None);
+        codeyard_git_storage::repositories::store::repo_store(&native_repository, None);
     assert!(native_store
         .initialize_foreign_copy(
             &one.pool,
             native_repository.id,
             &admission,
-            &codeyard_repos_core::repositories::store::CopyOptions {
+            &codeyard_git_storage::repositories::store::CopyOptions {
                 default_branch: "main".into(),
                 template: false,
                 default_branch_only: false
@@ -892,7 +892,7 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
     });
     one.pool.set_foreign_authorization(interrupted.clone());
     let notifications = codeyard_notifications::broadcast::NotificationBroadcaster::new(&one.pool);
-    let fork_options = || codeyard_repos_core::repositories::lifecycle::ForkOptions {
+    let fork_options = || codeyard_git_storage::repositories::lifecycle::ForkOptions {
         owner: codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(
             user.id,
         ),
@@ -902,7 +902,7 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         authority: Some(&authority),
         foreign_source: Some(&admission),
     };
-    assert!(codeyard_repos_core::repositories::lifecycle::fork_into(
+    assert!(codeyard_git_storage::repositories::lifecycle::fork_into(
         &one.pool,
         None,
         bob_root.path(),
@@ -923,7 +923,7 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
     interrupted
         .fail
         .store(false, std::sync::atomic::Ordering::SeqCst);
-    let forked = codeyard_repos_core::repositories::lifecycle::fork_into(
+    let forked = codeyard_git_storage::repositories::lifecycle::fork_into(
         &one.pool,
         None,
         bob_root.path(),
@@ -954,7 +954,7 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         tokio::fs::read(clone_path.join("copy.txt")).await.unwrap(),
         b"copy bytes\n"
     );
-    codeyard_repos_core::repositories::lifecycle::delete(
+    codeyard_git_storage::repositories::lifecycle::delete(
         &one.pool,
         None,
         authority.clone(),
@@ -1063,7 +1063,7 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
     assert_eq!(created_pull["head"]["sha"], foreign_tip);
     let number = created_pull["number"].as_i64().unwrap() as i32;
     assert_eq!(
-        codeyard_repos_core::repositories::store::repo_store(&repository, None)
+        codeyard_git_storage::repositories::store::repo_store(&repository, None)
             .commit(&format!("refs/pull/{number}/head"))
             .await
             .unwrap()
@@ -1096,7 +1096,7 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
     let graphql_pull = client.post(format!("{}/api/graphql", http.url())).bearer_auth(&value)
         .json(&serde_json::json!({
             "query":r#"mutation($base:ID!,$head:ID!){createPullRequest(input:{repositoryId:$base,headRepositoryId:$head,headRefName:"graphql-topic",baseRefName:"main",title:"Foreign GraphQL pull"}){pullRequest{number headRefOid}}}"#,
-            "variables":{"base":codeyard_model::node_id::encode("R",repository.id),"head":codeyard_model::node_id::encode("R",fork_id)}
+            "variables":{"base":codeyard_types::node_id::encode("R",repository.id),"head":codeyard_types::node_id::encode("R",fork_id)}
         })).send().await.unwrap().json::<serde_json::Value>().await.unwrap();
     assert!(graphql_pull.get("errors").is_none(), "{graphql_pull}");
     assert_eq!(
@@ -1136,12 +1136,12 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
             None,
         ),
     };
-    let drain = |pool: &codeyard_db_core::DbPool| {
+    let drain = |pool: &codeyard_database::DbPool| {
         let pool = pool.clone();
         let refreshes = &refreshes;
         async move {
             for _ in 0..50 {
-                if !codeyard_db_core::cells::outbox::deliver_with(&pool, refreshes)
+                if !codeyard_database::cells::outbox::deliver_with(&pool, refreshes)
                     .await
                     .unwrap()
                 {
@@ -1191,7 +1191,7 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
     let followed = |number: i32| {
         let repository = repository.clone();
         async move {
-            codeyard_repos_core::repositories::store::repo_store(&repository, None)
+            codeyard_git_storage::repositories::store::repo_store(&repository, None)
                 .commit(&format!("refs/pull/{number}/head"))
                 .await
                 .unwrap()
@@ -1232,7 +1232,7 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
     one.pool
         .foreign_authorization()
         .unwrap()
-        .send_push(&codeyard_db_core::cells::pulls::Event {
+        .send_push(&codeyard_database::cells::pulls::Event {
             id: push_event,
             change: serde_json::from_value(pushed_event).unwrap(),
         })
@@ -1248,7 +1248,7 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         0
     );
     // The head cell streams the branch only to the recorded publisher of a live binding.
-    let binding = codeyard_db_core::cells::pulls::Binding {
+    let binding = codeyard_database::cells::pulls::Binding {
         base_repo_id: repository.id,
         number,
         head_repo_id: fork_id,
@@ -1257,21 +1257,21 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
     for (binding, publisher_id) in [
         (binding.clone(), alice.id),
         (
-            codeyard_db_core::cells::pulls::Binding {
+            codeyard_database::cells::pulls::Binding {
                 number: number + 1000,
                 ..binding.clone()
             },
             user.id,
         ),
         (
-            codeyard_db_core::cells::pulls::Binding {
+            codeyard_database::cells::pulls::Binding {
                 head_branch: "main".into(),
                 ..binding.clone()
             },
             user.id,
         ),
     ] {
-        let request = codeyard_db_core::cells::pulls::HeadRequest {
+        let request = codeyard_database::cells::pulls::HeadRequest {
             binding,
             publisher_id,
             maximum_bytes: 1 << 26,
@@ -1288,14 +1288,14 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         assert!(sink.is_empty(), "{request:?}");
     }
     // A push that the base already holds leaves the pull request where it is.
-    let unchanged = codeyard_db_core::cells::outbox::deliver_with(&zero.pool, &refreshes)
+    let unchanged = codeyard_database::cells::outbox::deliver_with(&zero.pool, &refreshes)
         .await
         .unwrap();
     assert!(!unchanged);
     assert_eq!(followed(number).await, followed_tip);
     // The base owner in cell zero may push this pull head in cell one, and nothing else.
     let maintainer =
-        codeyard_repos_core::repositories::git_sessions::ReceiveCredential::ForeignToken {
+        codeyard_git_storage::repositories::git_sessions::ReceiveCredential::ForeignToken {
             id: alice_pat.id,
             hash: hex::decode(token_hash(&alice_token))
                 .unwrap()
@@ -1386,7 +1386,7 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
     assert_eq!(status, 200, "{merged}");
     assert_eq!(merged["merged"], true);
     assert_eq!(
-        codeyard_repos_core::repositories::store::repo_store(&repository, None)
+        codeyard_git_storage::repositories::store::repo_store(&repository, None)
             .commit("refs/heads/main")
             .await
             .unwrap()
@@ -1430,7 +1430,7 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         .execute(&one.raw)
         .await
         .unwrap();
-    let open = codeyard_repos_core::repositories::lifecycle::provision(
+    let open = codeyard_git_storage::repositories::lifecycle::provision(
         (&zero.pool, None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice.id),
@@ -1510,7 +1510,7 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
     };
     assert_eq!(delivered().await, (1, 1));
     // A repeated delivery of the same event stores nothing and sends no second email.
-    let replay = codeyard_db_core::cells::notices::Event {
+    let replay = codeyard_database::cells::notices::Event {
         id: notices[0].0,
         notice: serde_json::from_str(&notices[0].2).unwrap(),
         withdrawn: false,
@@ -1533,7 +1533,7 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         &zero.pool,
         user.id,
         open.id,
-        codeyard_db_core::models::AccessLevel::Write,
+        codeyard_database::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -1637,7 +1637,7 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
     drain(&zero.pool).await;
     assert!(inbox().await.is_empty());
     assert_eq!(delivered().await, (1, 1));
-    let deleted = codeyard_repos_core::repositories::lifecycle::provision(
+    let deleted = codeyard_git_storage::repositories::lifecycle::provision(
         (&zero.pool, None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice.id),
@@ -1700,7 +1700,7 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         parent["data"]["repository"]["parent"]["defaultBranchRef"]["name"],
         "main"
     );
-    codeyard_repos_core::repositories::lifecycle::delete(
+    codeyard_git_storage::repositories::lifecycle::delete(
         &one.pool,
         None,
         authority.clone(),
@@ -1749,7 +1749,7 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
             .await
             .unwrap()
             .unwrap();
-    codeyard_repos_core::repositories::lifecycle::delete(
+    codeyard_git_storage::repositories::lifecycle::delete(
         &one.pool,
         None,
         authority.clone(),
@@ -1786,13 +1786,13 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
     assert_eq!(response.status(), 204);
     let star_event: i64 = sqlx::query_scalar("SELECT id FROM cell_outbox WHERE topic='pointer' AND payload::jsonb->>'kind'='star' ORDER BY id DESC LIMIT 1")
         .fetch_one(&zero.raw).await.unwrap();
-    assert!(codeyard_db_core::cells::outbox::deliver_one(&zero.pool)
+    assert!(codeyard_database::cells::outbox::deliver_one(&zero.pool)
         .await
         .unwrap());
-    let star_replay = codeyard_db_core::cells::pointers::Event {
+    let star_replay = codeyard_database::cells::pointers::Event {
         id: star_event,
-        change: codeyard_db_core::cells::pointers::Change {
-            kind: codeyard_db_core::cells::pointers::Kind::Star,
+        change: codeyard_database::cells::pointers::Change {
+            kind: codeyard_database::cells::pointers::Kind::Star,
             user_id: user.id,
             object: Object {
                 kind: ObjectKind::Repository,
@@ -1952,16 +1952,16 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         .await
         .unwrap();
     assert_eq!(response.status(), 204);
-    assert!(codeyard_db_core::cells::outbox::deliver_one(&zero.pool)
+    assert!(codeyard_database::cells::outbox::deliver_one(&zero.pool)
         .await
         .unwrap());
     sender.send_pointer(&star_replay).await.unwrap();
     assert_eq!(sqlx::query_scalar::<_,i64>("SELECT COUNT(*) FROM remote_pointers WHERE user_id=$1 AND resource_id=$2 AND kind='star' AND active")
         .bind(user.id).bind(repository.id).fetch_one(&one.raw).await.unwrap(),0);
-    let mut replay = codeyard_db_core::cells::pointers::Event {
+    let mut replay = codeyard_database::cells::pointers::Event {
         id: pointer_event,
-        change: codeyard_db_core::cells::pointers::Change {
-            kind: codeyard_db_core::cells::pointers::Kind::Membership,
+        change: codeyard_database::cells::pointers::Change {
+            kind: codeyard_database::cells::pointers::Kind::Membership,
             user_id: user.id,
             object: Object {
                 kind: ObjectKind::Repository,
@@ -2138,7 +2138,7 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
             .all(|repo| repo["id"] != repository.id),
         "{listed}"
     );
-    assert!(codeyard_db_core::cells::outbox::deliver_one(&zero.pool)
+    assert!(codeyard_database::cells::outbox::deliver_one(&zero.pool)
         .await
         .unwrap());
     zero.pool
@@ -2162,7 +2162,7 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         &zero.pool,
         user.id,
         repository.id,
-        codeyard_db_core::models::AccessLevel::Write,
+        codeyard_database::models::AccessLevel::Write,
     )
     .await
     .unwrap();

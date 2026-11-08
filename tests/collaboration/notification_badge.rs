@@ -8,7 +8,7 @@ use crate::support::fake_webui_bundle as bundle;
 use crate::support::http_client as pulls;
 use axum::{http::StatusCode, Router};
 
-use codeyard_db_core::models::repositories::AccessLevel;
+use codeyard_database::models::repositories::AccessLevel;
 use database::Database;
 use pulls::Client;
 use serde_json::json;
@@ -33,7 +33,7 @@ async fn setup(pg: bool) -> World {
     let root = tempfile::tempdir().unwrap();
     let mut vault = 0;
     for (name, private) in [("proj", false), ("vault", true)] {
-        let repo = codeyard_repos_core::repositories::lifecycle::provision(
+        let repo = codeyard_git_storage::repositories::lifecycle::provision(
             (database.pool(), None),
             root.path(),
             codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
@@ -63,7 +63,7 @@ async fn setup(pg: bool) -> World {
 async fn notify(database: &Database, user: i64, repo: Option<i64>, title: &str) -> i64 {
     codeyard_db_repos::notifications::records::create_notification(
         database.pool(),
-        codeyard_db_core::queries::notifications::records::NewNotification {
+        codeyard_database::queries::notifications::records::NewNotification {
             user_id: user,
             actor_id: None,
             repo_id: repo,

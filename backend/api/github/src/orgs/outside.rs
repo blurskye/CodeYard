@@ -14,9 +14,9 @@ use axum::routing::put;
 use axum::routing::MethodRouter;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::app::AppState;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_database::queries::organizations::OrganizationOutcome;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde::Deserialize;
 use std::sync::Arc;
 
@@ -89,7 +89,7 @@ async fn convert(
     let input: Conversion = if body.is_empty() {
         Default::default()
     } else {
-        serde_json::from_slice(&body).map_err(codeyard_model::github_error::json_parse_error)?
+        serde_json::from_slice(&body).map_err(codeyard_types::github_error::json_parse_error)?
     };
     let org = target(&state, &name).await?;
     let user = codeyard_db_identity::users::accounts::get_user_by_username(&state.pool, &username)

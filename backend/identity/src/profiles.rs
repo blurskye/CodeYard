@@ -1,8 +1,8 @@
 //! Shared profile updates; account records never double as public response models.
 
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::models::User;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::Repository;
+use codeyard_database::models::User;
+use codeyard_database::DbPool;
 
 pub fn social_account(
     input: &str,
@@ -150,7 +150,7 @@ pub async fn repository_count_on_profile(
 pub async fn save(
     pool: &DbPool,
     actor: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     input: &codeyard_db_identity::users::profiles::ProfilePatch<'_>,
 ) -> Result<User, ProfileError> {
     validate(&ProfileUpdate {

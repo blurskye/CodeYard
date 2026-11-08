@@ -1,5 +1,5 @@
 //! Helpers for the outcomes of organization changes.
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
+use codeyard_database::queries::organizations::OrganizationOutcome;
 
 /// The value of an organization change that has to apply; any refusal fails the test.
 pub fn applied<T: std::fmt::Debug>(outcome: OrganizationOutcome<T>) -> T {

@@ -2,9 +2,9 @@ use crate::users::signup_requests::ReviewError;
 use crate::users::signup_requests::SignupSummary;
 use crate::users::transitions::AdministratorActor;
 use anyhow::Result;
-use codeyard_db_core::models::SignupRequest;
-use codeyard_db_core::models::User;
-use codeyard_db_core::pool::SqlitePool;
+use codeyard_database::models::SignupRequest;
+use codeyard_database::models::User;
+use codeyard_database::pool::SqlitePool;
 
 pub async fn create_signup_request(
     pool: &SqlitePool,
@@ -156,7 +156,7 @@ pub async fn approve_signup_request(
         VALUES ({cell_home},?1, ?2, ?3, FALSE, FALSE)
         RETURNING *
         "#,
-        cell_home = codeyard_db_core::cells::LOCAL_HOME_SQL
+        cell_home = codeyard_database::cells::LOCAL_HOME_SQL
     ))
     .bind(&signup_request.username)
     .bind(signup_request.email.as_deref())
@@ -180,7 +180,7 @@ pub async fn approve_signup_request(
     queue_decision_email(&mut tx, user.email.as_deref(), &user.username, true).await?;
 
     anyhow::ensure!(
-        codeyard_db_core::cells::directory::sqlite::user(pool, &mut tx, &user).await?,
+        codeyard_database::cells::directory::sqlite::user(pool, &mut tx, &user).await?,
         ReviewError::Conflict
     );
     require_reviewer(&mut tx, &reviewer).await?;
@@ -225,7 +225,7 @@ async fn queue_decision_email(
     let Some(to) = email.map(str::trim).filter(|email| !email.is_empty()) else {
         return Ok(());
     };
-    let mail = codeyard_model::mail::signup_decision(username, approved);
+    let mail = codeyard_types::mail::signup_decision(username, approved);
     crate::sqlite::email::queue_email(tx, to, &mail.subject, &mail.body, None).await
 }
 

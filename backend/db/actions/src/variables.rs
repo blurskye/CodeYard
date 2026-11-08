@@ -1,8 +1,8 @@
 use chrono::DateTime;
 use chrono::Utc;
-use codeyard_actions::values::MAX_VARIABLE_BYTES;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
+use codeyard_runner::values::MAX_VARIABLE_BYTES;
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
 pub struct Variable {
@@ -33,8 +33,8 @@ pub enum VariableError {
 }
 
 pub fn validate(name: &str, value: &str) -> Result<(), VariableError> {
-    use codeyard_actions::values::InvalidValue;
-    codeyard_actions::values::validate(name, value).map_err(|error| match error {
+    use codeyard_runner::values::InvalidValue;
+    codeyard_runner::values::validate(name, value).map_err(|error| match error {
         InvalidValue::Name | InvalidValue::ReservedName => VariableError::InvalidName,
         InvalidValue::Nul | InvalidValue::TooLarge => VariableError::InvalidValue,
     })
@@ -78,15 +78,15 @@ pub(crate) fn ensure_room(
 
 native_operation!(crate::postgres::variables::list,
     crate::sqlite::variables::list,
-    fn list(pool: &DbPool, actor: i64, credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>, repo: i64) -> Result<Vec<Variable>, VariableError>);
+    fn list(pool: &DbPool, actor: i64, credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>, repo: i64) -> Result<Vec<Variable>, VariableError>);
 
 native_operation!(crate::postgres::variables::save,
     crate::sqlite::variables::save,
-    fn save(pool: &DbPool, actor: i64, credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>, repo: i64, previous: Option<&str>, name: &str, value: Option<&str>) -> Result<(), VariableError>);
+    fn save(pool: &DbPool, actor: i64, credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>, repo: i64, previous: Option<&str>, name: &str, value: Option<&str>) -> Result<(), VariableError>);
 
 native_operation!(crate::postgres::variables::delete,
     crate::sqlite::variables::delete,
-    fn delete(pool: &DbPool, actor: i64, credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>, repo: i64, name: &str) -> Result<(), VariableError>);
+    fn delete(pool: &DbPool, actor: i64, credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>, repo: i64, name: &str) -> Result<(), VariableError>);
 
 native_operation!(crate::postgres::variables::for_run,
     crate::sqlite::variables::for_run,

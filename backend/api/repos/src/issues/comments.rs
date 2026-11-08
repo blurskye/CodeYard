@@ -43,7 +43,7 @@ pub async fn create_issue_comment(
         &state.pool,
         &state.notification_broadcaster,
         current_actor.id,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session),
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(&session),
         owner,
         repo,
         number,
@@ -73,7 +73,7 @@ pub struct CommentResponse {
 }
 
 impl CommentResponse {
-    fn new(comment: codeyard_db_core::models::IssueComment, author: UserResponse) -> Self {
+    fn new(comment: codeyard_database::models::IssueComment, author: UserResponse) -> Self {
         Self {
             id: comment.id,
             issue_id: comment.issue_id,
@@ -169,7 +169,7 @@ pub(crate) async fn native_comment(
         )
         .await;
     }
-    if let Err(message) = codeyard_model::issue_input::validate_body(&draft.comment, true) {
+    if let Err(message) = codeyard_types::issue_input::validate_body(&draft.comment, true) {
         return render_detail(
             &ctx,
             &repo,
@@ -188,7 +188,7 @@ pub(crate) async fn native_comment(
         &ctx.state.pool,
         &ctx.state.notification_broadcaster,
         ctx.require_user()?.id,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &codeyard_api_http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
         ),
         owner,
@@ -262,7 +262,7 @@ pub(crate) async fn native_edit_comment(
         &ctx.state.pool,
         &ctx.state.notification_broadcaster,
         ctx.require_user()?.id,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &codeyard_api_http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
         ),
         codeyard_repos_pulls::issues::comments::CommentTarget {
@@ -318,7 +318,7 @@ pub(crate) async fn native_delete_comment(
     let result = codeyard_repos_pulls::issues::comments::delete_issue_comment(
         &ctx.state.pool,
         ctx.require_user()?.id,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &codeyard_api_http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
         ),
         codeyard_repos_pulls::issues::comments::CommentTarget {

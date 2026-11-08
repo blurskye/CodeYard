@@ -10,9 +10,9 @@ use codeyard_ci_engine::workers::CiWorkers;
 use codeyard_db_actions::environment_values as values;
 use codeyard_db_actions::environment_values::Save;
 use codeyard_db_orgs::organization_values::Kind;
+use codeyard_git_storage::receive_ci::CiRunRequest;
+use codeyard_git_storage::repositories::lifecycle;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
-use codeyard_repos_core::receive_ci::CiRunRequest;
-use codeyard_repos_core::repositories::lifecycle;
 use codeyard_storage::ObjectStore;
 use codeyard_support::secrets::SecretEncryptor;
 use std::{collections::BTreeSet, sync::Arc, time::Duration};
@@ -142,7 +142,7 @@ async fn real_engines(pg: bool) {
             "TOKEN",
             "repository-private-marker",
             Some(actor),
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+            &codeyard_database::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(f.pool(), actor).await,
             ),
         )
@@ -151,7 +151,7 @@ async fn real_engines(pg: bool) {
         codeyard_db_actions::variables::save(
             f.pool(),
             actor,
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+            &codeyard_database::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(f.pool(), actor).await,
             ),
             repo.id,
@@ -281,8 +281,8 @@ async fn fork_claims(pg: bool) {
     codeyard_db_actions::action_settings::settings(
         f.pool(),
         actor,
-        &codeyard_db_core::queries::action_settings::Scope::Repository(repo.id),
-        codeyard_db_core::queries::action_settings::Setting::ForkWorkflows,
+        &codeyard_database::queries::action_settings::Scope::Repository(repo.id),
+        codeyard_database::queries::action_settings::Setting::ForkWorkflows,
         Some(&serde_json::json!({"run_workflows_from_fork_pull_requests": true})),
     )
     .await
@@ -316,7 +316,7 @@ async fn fork_claims(pg: bool) {
         "TOKEN",
         "repository-private-claim-marker",
         Some(actor),
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), actor).await,
         ),
     )
@@ -325,7 +325,7 @@ async fn fork_claims(pg: bool) {
     codeyard_db_actions::variables::save(
         f.pool(),
         actor,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), actor).await,
         ),
         repo.id,
@@ -403,7 +403,7 @@ async fn fork_claims(pg: bool) {
                 actor,
                 repo.id,
                 "TOKEN",
-                &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+                &codeyard_database::queries::users::accounts::AccountCredential::Session(
                     &crate::support::live_session(f.pool(), actor).await,
                 ),
             )

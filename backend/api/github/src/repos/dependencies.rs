@@ -13,11 +13,11 @@ use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
 use codeyard_db_repos::repositories::dependencies::Feature;
 use codeyard_git::error::ErrorKind;
+use codeyard_git_storage::repositories::dependencies::DependencyError;
+use codeyard_git_storage::repositories::dependencies::Status;
 use codeyard_identity::repository_access::AccessError;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
-use codeyard_repos_core::repositories::dependencies::DependencyError;
-use codeyard_repos_core::repositories::dependencies::Status;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use std::sync::Arc;
 
 fn failure(error: DependencyError) -> Error {
@@ -47,7 +47,7 @@ async fn status(
 ) -> Result<Status> {
     let (repo, actor) = repository(state, headers, owner, name, false).await?;
     let actor = actor.ok_or_else(codeyard_identity::github_auth::required)?;
-    codeyard_repos_core::repositories::dependencies::status(
+    codeyard_git_storage::repositories::dependencies::status(
         &state.pool,
         actor.user.id,
         repo.id,
@@ -66,7 +66,7 @@ async fn change(
 ) -> Result<StatusCode> {
     let (repo, actor) = repository(state, headers, owner, name, true).await?;
     let actor = actor.ok_or_else(codeyard_identity::github_auth::required)?;
-    codeyard_repos_core::repositories::dependencies::set_enabled(
+    codeyard_git_storage::repositories::dependencies::set_enabled(
         &state.pool,
         state.cluster.as_ref(),
         actor.user.id,

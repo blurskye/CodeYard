@@ -12,11 +12,11 @@ use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
 use codeyard_ci::config::CiConfig;
 
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
+use codeyard_database::queries::organizations::OrganizationOutcome;
 use codeyard_db_orgs::organizations::profiles::NewOrganization;
 use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
 
-use codeyard_db_core::models::OrgRole;
+use codeyard_database::models::OrgRole;
 use codeyard_storage::ObjectStore;
 use database::Database;
 use pulls::Client;
@@ -79,14 +79,14 @@ async fn upload(client: &Client, reason: &str, bytes: &[u8], confirm: bool) -> S
 }
 
 async fn set_avatar(
-    pool: &codeyard_db_core::DbPool,
-    user: &codeyard_db_core::models::User,
+    pool: &codeyard_database::DbPool,
+    user: &codeyard_database::models::User,
     file_id: &str,
 ) -> Result<(), codeyard_api_rest::avatar_ops::AvatarError> {
     codeyard_api_rest::avatar_ops::set_user_avatar(
         pool,
         user,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(pool, user.id).await,
         ),
         file_id.parse().unwrap(),
@@ -135,7 +135,7 @@ fn take_io_slots(storage: &ObjectStore) -> Vec<tokio::sync::OwnedSemaphorePermit
     permits
 }
 
-async fn organization(pool: &codeyard_db_core::DbPool, owner: i64, slug: &str) -> i64 {
+async fn organization(pool: &codeyard_database::DbPool, owner: i64, slug: &str) -> i64 {
     let profile = OrganizationProfile::new(None, None).unwrap();
     match codeyard_db_orgs::organizations::profiles::create_organization(
         pool,
@@ -464,7 +464,7 @@ async fn contract(pg: bool) {
                 &pool,
                 &storage,
                 &user,
-                &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+                &codeyard_database::queries::users::accounts::AccountCredential::Session(
                     &crate::support::live_session(&pool, user.id).await,
                 ),
                 PNG.to_vec(),
@@ -482,7 +482,7 @@ async fn contract(pg: bool) {
                 &pool,
                 &storage,
                 &user,
-                &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+                &codeyard_database::queries::users::accounts::AccountCredential::Session(
                     &crate::support::live_session(&pool, user.id).await,
                 ),
                 bytes,
@@ -867,7 +867,7 @@ async fn contract(pg: bool) {
     .await
     .unwrap();
     let deletion_credential =
-        codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        codeyard_database::queries::users::accounts::AccountCredential::Session(
             &deletion_session.id,
         );
     // Deleting an organization removes its selected picture and queues the bytes.
@@ -903,12 +903,12 @@ async fn contract(pg: bool) {
     );
     let sql = "SELECT EXISTS(SELECT 1 FROM pending_object_deletions WHERE object_key=$1)";
     let queued: bool = match f.pool() {
-        codeyard_db_core::DbPool::Postgres(pool) => sqlx::query_scalar(sql)
+        codeyard_database::DbPool::Postgres(pool) => sqlx::query_scalar(sql)
             .bind(&file.object_key)
             .fetch_one(pool)
             .await
             .unwrap(),
-        codeyard_db_core::DbPool::Sqlite(pool) => sqlx::query_scalar(sql)
+        codeyard_database::DbPool::Sqlite(pool) => sqlx::query_scalar(sql)
             .bind(&file.object_key)
             .fetch_one(pool)
             .await
@@ -1025,9 +1025,9 @@ async fn pending_picture_contract(pg: bool) {
     let storage = ObjectStore::open(root.path(), None).await.unwrap();
     let checksum = hex::encode(Sha256::digest(PNG));
     for (reason, table) in [
-        (codeyard_db_core::models::FileReason::Avatar, "users"),
+        (codeyard_database::models::FileReason::Avatar, "users"),
         (
-            codeyard_db_core::models::FileReason::OrgAvatar,
+            codeyard_database::models::FileReason::OrgAvatar,
             "organizations",
         ),
     ] {
@@ -1041,7 +1041,7 @@ async fn pending_picture_contract(pg: bool) {
                     content_type: "image/png",
                     file_size: PNG.len() as i64,
                     reason,
-                    visibility: codeyard_db_core::models::FileVisibility::Public,
+                    visibility: codeyard_database::models::FileVisibility::Public,
                     sha256_hex: &checksum,
                 },
                 PNG.to_vec(),
@@ -1065,11 +1065,11 @@ async fn pending_picture_contract(pg: bool) {
         }
         let pool = f.pool();
         let assign = |id| async move {
-            if reason == codeyard_db_core::models::FileReason::Avatar {
+            if reason == codeyard_database::models::FileReason::Avatar {
                 codeyard_db_identity::users::accounts::set_user_avatar(
                     pool,
                     actor,
-                    &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+                    &codeyard_database::queries::users::accounts::AccountCredential::Session(
                         &crate::support::live_session(pool, actor).await,
                     ),
                     Some(id),
@@ -1134,12 +1134,12 @@ async fn pending_picture_contract(pg: bool) {
             &[],
         )
         .await;
-        if reason == codeyard_db_core::models::FileReason::Avatar {
+        if reason == codeyard_database::models::FileReason::Avatar {
             assert_eq!(
                 codeyard_db_identity::users::accounts::set_user_avatar(
                     f.pool(),
                     actor,
-                    &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+                    &codeyard_database::queries::users::accounts::AccountCredential::Session(
                         &crate::support::live_session(f.pool(), actor).await
                     ),
                     Some(interrupted)
@@ -1198,8 +1198,8 @@ async fn postgres_organization_picture_swaps_lock_files_in_uuid_order() {
                 filename: "picture.png",
                 content_type: "image/png",
                 file_size: PNG.len() as i64,
-                reason: codeyard_db_core::models::FileReason::OrgAvatar,
-                visibility: codeyard_db_core::models::FileVisibility::Public,
+                reason: codeyard_database::models::FileReason::OrgAvatar,
+                visibility: codeyard_database::models::FileVisibility::Public,
                 sha256_hex: &hex::encode(Sha256::digest(PNG)),
             },
         )

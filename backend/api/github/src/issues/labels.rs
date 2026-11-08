@@ -17,8 +17,8 @@ use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -43,10 +43,10 @@ pub fn write_error(error: anyhow::Error) -> Error {
 }
 
 async fn find(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     repo_id: i64,
     name: &str,
-) -> Result<codeyard_db_core::models::Label> {
+) -> Result<codeyard_database::models::Label> {
     codeyard_db_repos::labels::list_repo_labels(pool, repo_id)
         .await
         .map_err(Error::unavailable)?
@@ -81,7 +81,7 @@ async fn create(
     let actor = auth
         .ok_or_else(codeyard_identity::github_auth::required)?
         .database_actor();
-    codeyard_model::issue_input::validate_label(&input.name, input.description.as_deref())
+    codeyard_types::issue_input::validate_label(&input.name, input.description.as_deref())
         .map_err(Error::invalid)?;
     let color = color(input.color.as_deref().unwrap_or("ededed"))?;
     let label = codeyard_db_repos::labels::create_label(
@@ -171,7 +171,7 @@ async fn update(
         .ok_or_else(codeyard_identity::github_auth::required)?
         .database_actor();
     let existing = find(&state.pool, repo.id, &p["name"]).await?;
-    codeyard_model::issue_input::validate_label(
+    codeyard_types::issue_input::validate_label(
         input.new_name.as_deref().unwrap_or(&existing.name),
         input.description.as_ref().and_then(Option::as_deref),
     )
@@ -212,10 +212,10 @@ async fn remove(
 }
 
 async fn assigned(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     repo_id: i64,
     item: codeyard_db_repos::assignees::AssignedItem,
-) -> Result<Vec<codeyard_db_core::models::Label>> {
+) -> Result<Vec<codeyard_database::models::Label>> {
     match item {
         codeyard_db_repos::assignees::AssignedItem::Issue(id) => {
             codeyard_db_repos::labels::get_issue_labels(pool, repo_id, id).await
@@ -304,13 +304,13 @@ async fn change(
 }
 
 pub async fn save_labels(
-    pool: &codeyard_db_core::DbPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    pool: &codeyard_database::DbPool,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     item: codeyard_db_repos::assignees::AssignedItem,
     ids: &[i64],
     replace: bool,
-) -> Result<Vec<codeyard_db_core::models::Label>> {
+) -> Result<Vec<codeyard_database::models::Label>> {
     match (item, replace) {
         (codeyard_db_repos::assignees::AssignedItem::Issue(id), true) => {
             codeyard_db_repos::labels::set_issue_labels(pool, actor, repo_id, id, ids).await

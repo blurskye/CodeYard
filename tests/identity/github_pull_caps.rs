@@ -7,13 +7,13 @@ use axum::http::StatusCode;
 use codeyard_db_repos::pull_caps::PullCapReached;
 use codeyard_db_repos::pull_requests::records::NewPullRequest;
 
-use codeyard_db_core::models::AccessLevel;
-use codeyard_db_core::models::PullRequest;
+use codeyard_database::models::AccessLevel;
+use codeyard_database::models::PullRequest;
 use codeyard_identity::tokens::TokenInput;
 use serde_json::json;
 
 async fn open(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     repo: i64,
     author: i64,
     branch: &str,
@@ -39,7 +39,7 @@ async fn open(
     .await
 }
 async fn state(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     pr: &PullRequest,
     actor: i64,
     state: &str,
@@ -531,7 +531,7 @@ async fn contract(pg: bool) {
     .await
     .unwrap()
     {
-        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(org) => org,
+        codeyard_database::queries::organizations::OrganizationOutcome::Applied(org) => org,
         _ => panic!("organization refused"),
     };
     f.execute(

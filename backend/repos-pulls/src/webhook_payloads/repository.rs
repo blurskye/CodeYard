@@ -1,5 +1,5 @@
-use codeyard_model::http_config::link_origin;
-use codeyard_model::node_id;
+use codeyard_types::http_config::link_origin;
+use codeyard_types::node_id;
 use serde_json::{json, Value};
 pub fn community_file(file: Option<&crate::repositories::community::File>) -> Value {
     let Some(file) = file else {
@@ -12,11 +12,11 @@ pub fn community_file(file: Option<&crate::repositories::community::File>) -> Va
         encode(&file.owner),
         encode(&file.repository)
     );
-    json!({"url":codeyard_model::urls::api_url(&format!("{base}/contents/{path}?ref={}",file.reference)),"html_url":format!("{}{}",link_origin(),codeyard_types::ref_path::file_url(&format!("/{}/{}",encode(&file.owner),encode(&file.repository)),"blob",&file.reference,&file.path))})
+    json!({"url":codeyard_types::urls::api_url(&format!("{base}/contents/{path}?ref={}",file.reference)),"html_url":format!("{}{}",link_origin(),codeyard_types::ref_path::file_url(&format!("/{}/{}",encode(&file.owner),encode(&file.repository)),"blob",&file.reference,&file.path))})
 }
 
 pub fn community_profile(profile: &crate::repositories::community::Profile) -> Value {
-    use codeyard_model::urls::api_url;
+    use codeyard_types::urls::api_url;
 
     let conduct = community_file(profile.conduct.as_ref());
     let license = match (profile.license_info, profile.license.as_ref()) {

@@ -9,8 +9,8 @@ use codeyard_api_http::context::PageContext;
 use codeyard_api_http::shared::repos::forms::authorize_post;
 use codeyard_api_http::shared::repos::forms::field;
 use codeyard_app::app::AppState;
+use codeyard_git_storage::repositories::releases::ReleaseError;
 use codeyard_identity::repository_access::AccessError;
-use codeyard_repos_core::repositories::releases::ReleaseError;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -53,7 +53,7 @@ pub(crate) async fn react(
     codeyard_db_repos::reactions::toggle_reaction(
         &ctx.state.pool,
         user.id,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &codeyard_api_http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
         ),
         detail.repository.id,
@@ -66,7 +66,7 @@ pub(crate) async fn react(
     .map_err(|error| {
         if error.is::<codeyard_db_repos::reactions::ReactionRefusal>() {
             ctx.error(StatusCode::NOT_FOUND, "Release not found.")
-        } else if error.is::<codeyard_db_core::queries::discussions::DiscussionWriteRefusal>() {
+        } else if error.is::<codeyard_database::queries::discussions::DiscussionWriteRefusal>() {
             ctx.error(StatusCode::FORBIDDEN, "Reaction mutation denied.")
         } else {
             ctx.error(

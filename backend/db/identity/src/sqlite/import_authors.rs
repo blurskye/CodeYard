@@ -1,7 +1,7 @@
 use crate::import_authors::Author;
 use anyhow::Result;
-use codeyard_db_core::pool::SqlitePool;
-use codeyard_db_core::queries::source_imports::ImportRefusal;
+use codeyard_database::pool::SqlitePool;
+use codeyard_database::queries::source_imports::ImportRefusal;
 
 pub async fn record(
     pool: &SqlitePool,
@@ -11,7 +11,7 @@ pub async fn record(
 ) -> Result<Vec<Author>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::sqlite::discussions::lock_admin_authority(&mut tx, actor, repo)
+        codeyard_database::queries::sqlite::discussions::lock_admin_authority(&mut tx, actor, repo)
             .await?,
         ImportRefusal::Denied
     );
@@ -45,7 +45,7 @@ pub async fn map(
 ) -> Result<Option<Author>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::sqlite::discussions::lock_admin_authority(&mut tx, actor, repo)
+        codeyard_database::queries::sqlite::discussions::lock_admin_authority(&mut tx, actor, repo)
             .await?,
         ImportRefusal::Denied
     );

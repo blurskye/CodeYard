@@ -1,0 +1,36 @@
+[package]
+name = "codeyard-nodes"
+version.workspace = true
+edition.workspace = true
+license = "LGPL-3.0-or-later"
+
+[dependencies]
+anyhow.workspace = true
+base64.workspace = true
+bytes.workspace = true
+codeyard-db-placement.workspace = true
+codeyard-database.workspace = true
+codeyard-db-repos.workspace = true
+codeyard-types.workspace = true
+codeyard-support.workspace = true
+futures-util.workspace = true
+hex.workspace = true
+iroh.workspace = true
+rand.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+socket2.workspace = true
+sqlx.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-rustls.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies.tokio]
+workspace = true
+features = ["test-util"]

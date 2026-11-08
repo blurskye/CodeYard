@@ -4,25 +4,25 @@ use anyhow::Context;
 use anyhow::Result;
 use codeyard_ci::config::CiConfig;
 use codeyard_ci_engine::runs::CiRuns;
-use codeyard_cluster_core::link::write_frame;
-use codeyard_cluster_core::link::Link;
-use codeyard_db_core::limits::MAX_JSON;
+use codeyard_database::limits::MAX_JSON;
 use codeyard_git::error::RepoError;
 use codeyard_git::repository::process as git_process;
-use codeyard_repos_core::repositories::store::RepoStore;
-use codeyard_repos_core::store_types::GitService;
-use codeyard_repos_core::store_types::GitStreams;
-use codeyard_repos_core::wire::unavailable;
-use codeyard_repos_core::wire::GitExit;
-use codeyard_repos_core::wire::Operation;
-use codeyard_repos_core::wire::Reply;
-use codeyard_repos_core::wire::Request;
-use codeyard_repos_core::wire::TIMEOUT;
+use codeyard_git_storage::repositories::store::RepoStore;
+use codeyard_git_storage::store_types::GitService;
+use codeyard_git_storage::store_types::GitStreams;
+use codeyard_git_storage::wire::unavailable;
+use codeyard_git_storage::wire::GitExit;
+use codeyard_git_storage::wire::Operation;
+use codeyard_git_storage::wire::Reply;
+use codeyard_git_storage::wire::Request;
+use codeyard_git_storage::wire::TIMEOUT;
+use codeyard_nodes::link::write_frame;
+use codeyard_nodes::link::Link;
 use serde_json::Value;
 use std::sync::Arc;
 use tokio::io::AsyncReadExt;
 
-use codeyard_repos_core::git_transport::{
+use codeyard_git_storage::git_transport::{
     apply_refs, create_preparation, prepared_before, retain_write, voter_tips, write_targets,
     LimitedWriter, WriteLimits,
 };
@@ -53,7 +53,7 @@ impl RpcHandler {
             )
             .await?
             .context("repository disappeared")?;
-            let repository = codeyard_repos_core::wire::repository_uuid(&repo.disk_path)?;
+            let repository = codeyard_git_storage::wire::repository_uuid(&repo.disk_path)?;
             let have = voter_tips(path, limits).await?;
             let mut output = LimitedWriter::new(&mut pack, limits.pack_bytes);
             let (_, status) = self
@@ -101,7 +101,7 @@ impl RpcHandler {
                     .await;
             }
             ensure!(write.decision == "commit", "write is not committed");
-            let view = codeyard_db_cluster::cluster::writes::recovery_view(
+            let view = codeyard_db_placement::cluster::writes::recovery_view(
                 self.context.database()?,
                 write.repository_id,
             )
@@ -190,9 +190,9 @@ impl RpcHandler {
                 // refs, so a copy never points a ref at objects it does not have.
                 Operation::WritePack { id, have } => {
                     if have.len() > codeyard_git::repository::MAX_MIRROR_REFS || have.iter().any(|tip| !codeyard_git::is_full_commit_id(tip)) {
-                        return Err(codeyard_repos_core::wire::invalid("invalid write pack tips"));
+                        return Err(codeyard_git_storage::wire::invalid("invalid write pack tips"));
                     }
-                    let write = codeyard_db_cluster::cluster::writes::load_write(self.context.database()?, id).await.map_err(RepoError::from)?.ok_or_else(unavailable)?;
+                    let write = codeyard_db_placement::cluster::writes::load_write(self.context.database()?, id).await.map_err(RepoError::from)?.ok_or_else(unavailable)?;
                     (Value::Null, write_targets(&write).map_err(RepoError::from)?)
                 }
                 Operation::ForkPack { authority, default_branch_only, branch, publisher } => {
@@ -208,7 +208,7 @@ impl RpcHandler {
                 }
                 Operation::ReplicaPack { want,.. } => {
                     if want.len()>codeyard_git::repository::MAX_MIRROR_REFS || want.iter().any(|id|!codeyard_git::is_full_commit_id(id)) {
-                        return Err(codeyard_repos_core::wire::invalid("invalid snapshot revisions"));
+                        return Err(codeyard_git_storage::wire::invalid("invalid snapshot revisions"));
                     }
                     let (refs, head) = store.replica_listing().await?;
                     let mut targets: Vec<String> = refs.values().cloned().collect();
@@ -225,7 +225,7 @@ impl RpcHandler {
                 }
                 _ => (Value::Null, Vec::new()),
             };
-            let receive: Option<(codeyard_db_core::DbPool, Arc<dyn codeyard_repos_core::receive_ci::ReceiveCi>)> = if matches!(&request.operation, Operation::GitSession(session) if session.service == GitService::ReceivePack) {
+            let receive: Option<(codeyard_database::DbPool, Arc<dyn codeyard_git_storage::receive_ci::ReceiveCi>)> = if matches!(&request.operation, Operation::GitSession(session) if session.service == GitService::ReceivePack) {
                 let pool = self.context.database()?.clone();
                 let ci = Arc::new(CiRuns::new(
                     pool.clone(),
@@ -284,7 +284,7 @@ impl RpcHandler {
                     async {
                         let mut bounded = LimitedWriter::new(
                             streams.output,
-                            codeyard_repos_core::repositories::store::fork_pack_bytes()?,
+                            codeyard_git_storage::repositories::store::fork_pack_bytes()?,
                         );
                         store
                             .replica_pack(

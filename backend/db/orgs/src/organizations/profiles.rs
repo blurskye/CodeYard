@@ -1,17 +1,17 @@
 use crate::organizations::OrganizationInputError;
 use crate::organizations::OrganizationPage;
 use anyhow::Result;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_db_core::DbPool;
+use codeyard_database::native_operation;
+use codeyard_database::queries::organizations::OrganizationOutcome;
+use codeyard_database::DbPool;
 use serde::Serialize;
 use sqlx::FromRow;
 use uuid::Uuid;
 
 native_operation!(crate::postgres::organizations::profiles::create_organization, crate::sqlite::organizations::profiles::create_organization,
-    fn create_organization(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, input: &NewOrganization) -> Result<OrganizationOutcome<OrganizationMetadata>>);
+    fn create_organization(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, input: &NewOrganization) -> Result<OrganizationOutcome<OrganizationMetadata>>);
 native_operation!(crate::postgres::organizations::profiles::update_organization_profile, crate::sqlite::organizations::profiles::update_organization_profile,
-    fn update_organization_profile(pool: &DbPool, actor: i64, credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>, org: i64, input: &OrganizationProfile) -> Result<OrganizationOutcome<OrganizationMetadata>>);
+    fn update_organization_profile(pool: &DbPool, actor: i64, credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>, org: i64, input: &OrganizationProfile) -> Result<OrganizationOutcome<OrganizationMetadata>>);
 // The picture is a file id. Setting one needs an owner or admin, and the file has to
 // be the actor's own confirmed `org_avatar` upload (`Conflict` otherwise); `None`
 // removes the picture. The answer is the picture it replaced, if any.
@@ -21,9 +21,9 @@ native_operation!(crate::postgres::organizations::profiles::get_organization_ava
     fn get_organization_avatar(pool: &DbPool, actor: i64, org: i64) -> Result<OrganizationOutcome<Option<Uuid>>>);
 // Public pages need no actor. A missing or governance-suspended organization is `None`.
 native_operation!(crate::postgres::organizations::profiles::get_public_organization, crate::sqlite::organizations::profiles::get_public_organization,
-    fn get_public_organization(pool: &DbPool, name: &str) -> Result<Option<codeyard_db_core::models::Organization>>);
+    fn get_public_organization(pool: &DbPool, name: &str) -> Result<Option<codeyard_database::models::Organization>>);
 native_operation!(crate::postgres::organizations::profiles::get_public_organization_by_id, crate::sqlite::organizations::profiles::get_public_organization_by_id,
-    fn get_public_organization_by_id(pool: &DbPool, id: i64) -> Result<Option<codeyard_db_core::models::Organization>>);
+    fn get_public_organization_by_id(pool: &DbPool, id: i64) -> Result<Option<codeyard_database::models::Organization>>);
 native_operation!(crate::postgres::organizations::profiles::get_organization_metadata, crate::sqlite::organizations::profiles::get_organization_metadata,
     fn get_organization_metadata(pool: &DbPool, actor: i64, org: i64) -> Result<OrganizationOutcome<OrganizationMetadata>>);
 native_operation!(crate::postgres::organizations::profiles::list_actor_organizations, crate::sqlite::organizations::profiles::list_actor_organizations,
@@ -35,7 +35,7 @@ native_operation!(crate::postgres::organizations::profiles::list_repository_crea
 // Exact, case-sensitive namespace, matching the equality and UNIQUE rules of users.username.
 // Do not lowercase identities or conflate routing namespaces.
 pub(super) fn validate_slug(value: &str) -> std::result::Result<(), OrganizationInputError> {
-    codeyard_model::account_input::validate_namespace(value, 3)
+    codeyard_types::account_input::validate_namespace(value, 3)
         .map_err(|_| OrganizationInputError::Slug)
 }
 pub(super) fn validate_name(value: &str) -> std::result::Result<(), OrganizationInputError> {

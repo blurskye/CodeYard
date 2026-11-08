@@ -17,12 +17,12 @@ use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::app::AppState;
-use codeyard_db_core::models::Organization;
-use codeyard_db_core::models::User;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
-use codeyard_model::urls::api_url;
+use codeyard_database::models::Organization;
+use codeyard_database::models::User;
+use codeyard_database::queries::organizations::OrganizationOutcome;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
+use codeyard_types::urls::api_url;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -157,7 +157,7 @@ async fn owner_actor(
         .await
         .map_err(Error::unavailable)?,
     )?;
-    if role != codeyard_db_core::models::OrgRole::Owner {
+    if role != codeyard_database::models::OrgRole::Owner {
         return Err(Error::new(
             StatusCode::FORBIDDEN,
             "Must be an organization owner",
@@ -220,7 +220,7 @@ async fn delete_org(
         .await
         .map_err(|error| {
             if let Some(error) =
-                error.downcast_ref::<codeyard_repos_core::repositories::lifecycle::StorageError>()
+                error.downcast_ref::<codeyard_git_storage::repositories::lifecycle::StorageError>()
             {
                 Error::new(StatusCode::CONFLICT, error.message)
             } else {
@@ -326,7 +326,7 @@ async fn own_orgs(
         &state.pool,
         &actor,
         &headers,
-        codeyard_db_core::cells::pointers::List::Organizations,
+        codeyard_database::cells::pointers::List::Organizations,
         Vec::new(),
         offset.saturating_add(limit).saturating_add(1),
     )
@@ -705,7 +705,7 @@ async fn accept(
         .await?
         .ok_or_else(codeyard_identity::github_auth::required)?;
     actor.require_write()?;
-    let Json(input) = input.map_err(codeyard_model::github_error::json_error)?;
+    let Json(input) = input.map_err(codeyard_types::github_error::json_error)?;
     if input.state != "active" {
         return Err(Error::validation("Membership", "state", "invalid"));
     }

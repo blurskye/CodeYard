@@ -4,11 +4,11 @@
 use super::{Directory, Refusal};
 use anyhow::{ensure, Result};
 use chrono::{DateTime, Utc};
-use codeyard_db_core::cells::search::{
+use codeyard_database::cells::search::{
     Batch, Code, Filter, Fragment, Hit, Indexed, Kind, Query, Results, Version, MAXIMUM_CODE_BYTES,
     MAXIMUM_FILES,
 };
-use codeyard_model::cells::{Object, ObjectKind};
+use codeyard_types::cells::{Object, ObjectKind};
 use serde_json::Value;
 use sqlx::{Postgres, QueryBuilder};
 

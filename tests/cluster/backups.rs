@@ -150,7 +150,7 @@ async fn sqlite_backup_and_restore_cli_keep_repository_and_account_data() {
         )
         .await,
     );
-    let restored = codeyard_db_core::init_db(&url).await.unwrap();
+    let restored = codeyard_database::init_db(&url).await.unwrap();
     let row =
         codeyard_db_repos::repositories::records::get_repository_by_id(&restored, repository.id)
             .await
@@ -173,8 +173,8 @@ async fn sqlite_backup_and_restore_cli_keep_repository_and_account_data() {
 
 #[tokio::test]
 async fn cluster_backup_cli_restores_into_an_empty_cluster_and_resumes_an_interrupted_node() {
-    use codeyard_cluster_core::transport::{IrohDialer, Relay};
-    use codeyard_repos_core::context::NodeContext;
+    use codeyard_git_storage::context::NodeContext;
+    use codeyard_nodes::transport::{IrohDialer, Relay};
     use codeyard_storage::{ObjectStore, Upload};
     use sha2::Digest;
     use std::sync::Arc;
@@ -186,7 +186,7 @@ async fn cluster_backup_cli_restores_into_an_empty_cluster_and_resumes_an_interr
         .max_connections(1)
         .connect(&admin_url)
         .await
-        .map(codeyard_db_core::pool::Pool::from)
+        .map(codeyard_database::pool::Pool::from)
         .unwrap();
     let mut urls = Vec::new();
     let mut names = Vec::new();
@@ -202,8 +202,8 @@ async fn cluster_backup_cli_restores_into_an_empty_cluster_and_resumes_an_interr
         names.push(name);
         urls.push(url.to_string());
     }
-    let source = codeyard_db_core::init_db(&urls[0]).await.unwrap();
-    codeyard_db_core::run_migrations(&source).await.unwrap();
+    let source = codeyard_database::init_db(&urls[0]).await.unwrap();
+    codeyard_database::run_migrations(&source).await.unwrap();
     let stores = super::quorum::Stores::new(&source).await;
     let (pushed, output, errors) = stores.push(&source).await;
     assert!(pushed.unwrap().success(), "{output:?} {errors:?}");
@@ -214,7 +214,7 @@ async fn cluster_backup_cli_restores_into_an_empty_cluster_and_resumes_an_interr
     .await
     .unwrap()
     .unwrap();
-    let expected = codeyard_db_cluster::cluster::writes::recovery_view(&source, record.id)
+    let expected = codeyard_db_placement::cluster::writes::recovery_view(&source, record.id)
         .await
         .unwrap()
         .refs
@@ -225,7 +225,7 @@ async fn cluster_backup_cli_restores_into_an_empty_cluster_and_resumes_an_interr
     let root = tempfile::tempdir().unwrap();
     std::fs::write(root.path().join(".env"), "").unwrap();
     let key = NodeKey::generate();
-    let member = codeyard_db_cluster::cluster::register_own_node(
+    let member = codeyard_db_placement::cluster::register_own_node(
         &source,
         &key.public_hex(),
         "backup-web",
@@ -247,7 +247,7 @@ async fn cluster_backup_cli_restores_into_an_empty_cluster_and_resumes_an_interr
         ci_replicas: Default::default(),
     };
     for node in &stores.contexts {
-        let codeyard_db_core::DbPool::Postgres(raw) = &source else {
+        let codeyard_database::DbPool::Postgres(raw) = &source else {
             unreachable!()
         };
         sqlx::query("UPDATE nodes SET disk_free=900000 WHERE id=$1")
@@ -255,7 +255,7 @@ async fn cluster_backup_cli_restores_into_an_empty_cluster_and_resumes_an_interr
             .execute(raw)
             .await
             .unwrap();
-        codeyard_db_cluster::drain::record_capacity(&source, &node.key.public_hex(), 1_000_000)
+        codeyard_db_placement::drain::record_capacity(&source, &node.key.public_hex(), 1_000_000)
             .await
             .unwrap();
     }
@@ -263,7 +263,7 @@ async fn cluster_backup_cli_restores_into_an_empty_cluster_and_resumes_an_interr
     let digest = hex::encode(sha2::Sha256::digest(bytes));
     let objects = ObjectStore::on_nodes(
         &root.path().join("source-state"),
-        codeyard_repos_core::objects::Store::new(context.clone()),
+        codeyard_git_storage::objects::Store::new(context.clone()),
     )
     .await
     .unwrap();
@@ -315,8 +315,8 @@ async fn cluster_backup_cli_restores_into_an_empty_cluster_and_resumes_an_interr
     assert!(!output.status.success());
     let error = String::from_utf8_lossy(&output.stderr);
     assert!(error.contains("pg_restore"), "{error}");
-    let empty = codeyard_db_core::init_db(&urls[1]).await.unwrap();
-    assert!(codeyard_db_cluster::backups::is_empty(&empty)
+    let empty = codeyard_database::init_db(&urls[1]).await.unwrap();
+    assert!(codeyard_db_placement::backups::is_empty(&empty)
         .await
         .unwrap());
     empty.close().await;
@@ -324,7 +324,7 @@ async fn cluster_backup_cli_restores_into_an_empty_cluster_and_resumes_an_interr
     std::fs::rename(held_archive, archive).unwrap();
     let missing = backup.join("repositories").join(format!(
         "{}.git",
-        codeyard_repos_core::wire::repository_uuid(&record.disk_path).unwrap()
+        codeyard_git_storage::wire::repository_uuid(&record.disk_path).unwrap()
     ));
     let held = missing.with_extension("held");
     std::fs::rename(&missing, &held).unwrap();
@@ -345,10 +345,12 @@ async fn cluster_backup_cli_restores_into_an_empty_cluster_and_resumes_an_interr
     );
     // The fence below distinguishes a file-stage interruption from a rolled-back
     // database import. The OS may report the missing Git directory as ENOENT.
-    let interrupted = codeyard_db_core::init_db(&urls[1]).await.unwrap();
-    assert!(codeyard_db_cluster::backups::restore_pending(&interrupted)
-        .await
-        .unwrap());
+    let interrupted = codeyard_database::init_db(&urls[1]).await.unwrap();
+    assert!(
+        codeyard_db_placement::backups::restore_pending(&interrupted)
+            .await
+            .unwrap()
+    );
     let unrelated = root.path().join("unrelated-repos");
     std::fs::create_dir(&unrelated).unwrap();
     std::fs::write(unrelated.join("keep"), b"preserve").unwrap();
@@ -379,8 +381,8 @@ async fn cluster_backup_cli_restores_into_an_empty_cluster_and_resumes_an_interr
         )
         .await,
     );
-    let restored = codeyard_db_core::init_db(&urls[1]).await.unwrap();
-    assert!(codeyard_db_cluster::backups::restore_pending(&restored)
+    let restored = codeyard_database::init_db(&urls[1]).await.unwrap();
+    assert!(codeyard_db_placement::backups::restore_pending(&restored)
         .await
         .unwrap());
     let premature = cli(
@@ -413,7 +415,7 @@ async fn cluster_backup_cli_restores_into_an_empty_cluster_and_resumes_an_interr
             .success());
             let source = backup.join("repositories").join(format!(
                 "{}.git",
-                codeyard_repos_core::wire::repository_uuid(&record.disk_path).unwrap()
+                codeyard_git_storage::wire::repository_uuid(&record.disk_path).unwrap()
             ));
             let held = source.with_extension("held");
             std::fs::rename(&source, &held).unwrap();
@@ -429,7 +431,7 @@ async fn cluster_backup_cli_restores_into_an_empty_cluster_and_resumes_an_interr
             .await
             .status
             .success());
-            assert!(codeyard_db_cluster::backups::restore_pending(&restored)
+            assert!(codeyard_db_placement::backups::restore_pending(&restored)
                 .await
                 .unwrap());
             std::fs::rename(held, source).unwrap();
@@ -459,16 +461,16 @@ async fn cluster_backup_cli_restores_into_an_empty_cluster_and_resumes_an_interr
         )
         .await,
     );
-    assert!(!codeyard_db_cluster::backups::restore_pending(&restored)
+    assert!(!codeyard_db_placement::backups::restore_pending(&restored)
         .await
         .unwrap());
-    let uuid = codeyard_repos_core::wire::repository_uuid(&record.disk_path).unwrap();
-    let view = codeyard_db_cluster::cluster::writes::recovery_view(&restored, record.id)
+    let uuid = codeyard_git_storage::wire::repository_uuid(&record.disk_path).unwrap();
+    let view = codeyard_db_placement::cluster::writes::recovery_view(&restored, record.id)
         .await
         .unwrap();
     for (index, node) in stores.contexts.iter().enumerate() {
         let repos = root.path().join(format!("restored-store-{index}"));
-        let path = codeyard_repos_core::context::term_path(&repos, uuid, view.term);
+        let path = codeyard_git_storage::context::term_path(&repos, uuid, view.term);
         assert_eq!(
             git2::Repository::open_bare(path)
                 .unwrap()
@@ -490,7 +492,7 @@ async fn cluster_backup_cli_restores_into_an_empty_cluster_and_resumes_an_interr
             bytes
         );
         assert_eq!(
-            codeyard_db_cluster::objects::copies(&restored, &declaration.key)
+            codeyard_db_placement::objects::copies(&restored, &declaration.key)
                 .await
                 .unwrap()
                 .iter()
@@ -520,7 +522,7 @@ async fn cluster_backup_cli_restores_into_an_empty_cluster_and_resumes_an_interr
         contexts.push(context);
     }
     for context in &contexts {
-        codeyard_cluster::replicas::promote::recover_family(
+        codeyard_placement::replicas::promote::recover_family(
             &restored,
             record.id,
             context.node_id,
@@ -545,22 +547,22 @@ async fn cluster_backup_cli_restores_into_an_empty_cluster_and_resumes_an_interr
     let request = format!("{:04x}{want}00000009done\n", want.len() + 4);
     let mut pack = Vec::new();
     let mut bounded =
-        codeyard_repos_core::git_transport::LimitedWriter::new(&mut pack, 1024 * 1024);
+        codeyard_git_storage::git_transport::LimitedWriter::new(&mut pack, 1024 * 1024);
     let (_, status) = web
         .git_session(
             record.storage_node_id.unwrap(),
-            codeyard_repos_core::wire::Request {
+            codeyard_git_storage::wire::Request {
                 repository: uuid,
-                operation: codeyard_repos_core::wire::Operation::GitSession(
-                    codeyard_repos_core::store_types::GitSession::new(
-                        codeyard_repos_core::store_types::GitService::UploadPack,
+                operation: codeyard_git_storage::wire::Operation::GitSession(
+                    codeyard_git_storage::store_types::GitSession::new(
+                        codeyard_git_storage::store_types::GitService::UploadPack,
                         true,
                     ),
                 ),
                 actor: None,
                 ci_run: None,
             },
-            codeyard_repos_core::store_types::GitStreams {
+            codeyard_git_storage::store_types::GitStreams {
                 input: &mut request.as_bytes(),
                 output: &mut bounded,
                 errors: &mut tokio::io::sink(),
@@ -571,7 +573,7 @@ async fn cluster_backup_cli_restores_into_an_empty_cluster_and_resumes_an_interr
     assert!(status.success());
     assert!(pack.windows(4).any(|bytes| bytes == b"PACK"));
     use codeyard_storage::nodes::NodeStore;
-    let (_, downloaded) = codeyard_repos_core::objects::Store::new(web.clone())
+    let (_, downloaded) = codeyard_git_storage::objects::Store::new(web.clone())
         .get("uploads/restore-fixture", 0, None)
         .await
         .unwrap();
@@ -598,18 +600,18 @@ async fn cluster_backup_cli_restores_into_an_empty_cluster_and_resumes_an_interr
 async fn offline_maintenance_and_serving_leases_exclude_each_other_on_both_engines() {
     for pg in [false, true] {
         let mut db = crate::support::database::Database::new(pg).await;
-        let serving = codeyard_db_cluster::cluster::serving_lock(db.pool(), "restore-lease")
+        let serving = codeyard_db_placement::cluster::serving_lock(db.pool(), "restore-lease")
             .await
             .unwrap();
-        assert!(codeyard_db_cluster::cluster::maintenance_lock(db.pool())
+        assert!(codeyard_db_placement::cluster::maintenance_lock(db.pool())
             .await
             .is_err());
         serving.release().await;
-        let maintenance = codeyard_db_cluster::cluster::maintenance_lock(db.pool())
+        let maintenance = codeyard_db_placement::cluster::maintenance_lock(db.pool())
             .await
             .unwrap();
         assert!(
-            codeyard_db_cluster::cluster::serving_lock(db.pool(), "another-core")
+            codeyard_db_placement::cluster::serving_lock(db.pool(), "another-core")
                 .await
                 .is_err()
         );

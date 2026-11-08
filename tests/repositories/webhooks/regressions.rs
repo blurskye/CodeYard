@@ -1,7 +1,7 @@
 use super::*;
 use codeyard_webhooks::delivery;
 
-async fn insert_hook(database: &Database, url: &str) -> codeyard_db_core::models::Webhook {
+async fn insert_hook(database: &Database, url: &str) -> codeyard_database::models::Webhook {
     let (owner, id) = try_insert_hook(database, url).await;
     codeyard_db_repos::webhooks::get_webhook(database.pool(), owner, id.unwrap().unwrap())
         .await
@@ -23,7 +23,7 @@ async fn try_insert_hook(
         database.pool(),
         owner,
         repo.owner_user_id.unwrap(),
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(database.pool(), repo.owner_user_id.unwrap()).await,
         ),
         &WebhookFields {
@@ -68,7 +68,7 @@ async fn webhook_settings_batch_statuses_and_paginate(pg: bool) {
         .await
         .unwrap();
     assert_eq!(hooks.len(), 32);
-    let mut record = codeyard_db_core::queries::webhooks::NewDelivery {
+    let mut record = codeyard_database::queries::webhooks::NewDelivery {
         redelivery: false,
         guid: uuid::Uuid::new_v4().to_string(),
         event: "push".into(),
@@ -104,7 +104,7 @@ async fn webhook_settings_batch_statuses_and_paginate(pg: bool) {
     .unwrap();
     let session = crate::support::live_session(database.pool(), actor.id).await;
     let credential =
-        codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session);
+        codeyard_database::queries::users::accounts::AccountCredential::Session(&session);
     let place = codeyard_webhooks::panel::Place {
         owner: HookOwner::Repository(hooks[0].repo_id.unwrap()),
         base: "/alice/proj/settings?tab=webhooks",

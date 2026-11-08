@@ -143,7 +143,7 @@ pub(crate) fn account_permission(
 pub(crate) fn require_account(
     ctx: &PageContext,
     admin: bool,
-) -> Result<&codeyard_db_core::models::User, Response> {
+) -> Result<&codeyard_database::models::User, Response> {
     let user = ctx.require_user()?;
     account_permission(true, user.is_banned, user.is_admin, admin).map_err(|status| {
         let message = if admin {

@@ -17,9 +17,9 @@ async fn metadata_contract(pg: bool) {
     let alice_session = crate::support::live_session(f.pool(), alice).await;
     let bob_session = crate::support::live_session(f.pool(), bob).await;
     let alice_credential =
-        codeyard_db_core::queries::users::accounts::AccountCredential::Session(&alice_session);
+        codeyard_database::queries::users::accounts::AccountCredential::Session(&alice_session);
     let bob_credential =
-        codeyard_db_core::queries::users::accounts::AccountCredential::Session(&bob_session);
+        codeyard_database::queries::users::accounts::AccountCredential::Session(&bob_session);
     let org = applied(
         codeyard_db_orgs::organizations::profiles::create_organization(
             f.pool(),
@@ -36,7 +36,7 @@ async fn metadata_contract(pg: bool) {
     );
     let root = tempfile::tempdir().unwrap();
     // Alice can read Bob's content without having write access to its repository.
-    let repo = codeyard_repos_core::repositories::lifecycle::provision(
+    let repo = codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(bob),
@@ -94,7 +94,7 @@ async fn metadata_contract(pg: bool) {
         f.pool(),
         alice,
         repo.id,
-        codeyard_db_core::models::AccessLevel::Admin,
+        codeyard_database::models::AccessLevel::Admin,
     )
     .await
     .unwrap();
@@ -198,7 +198,7 @@ async fn metadata_contract(pg: bool) {
             .chain(std::iter::once(&unlinked))
             .find(|project| project.id == id)
             .unwrap();
-        codeyard_model::node_id::scoped("PVT", project.owner_id, id).unwrap()
+        codeyard_types::node_id::scoped("PVT", project.owner_id, id).unwrap()
     };
     for (text, key, owner, expected) in [
         (
@@ -334,10 +334,10 @@ async fn metadata_contract(pg: bool) {
     .await
     .unwrap();
     let inputs = json!({
-        "input_000":{"projectId":codeyard_model::node_id::encode("PVT",projects[0].id),"contentId":codeyard_model::node_id::encode("I",issue.id)},
-        "input_001":{"projectId":codeyard_model::node_id::encode("PVT",projects[4].id),"contentId":codeyard_model::node_id::encode("PR",pull.id)},
-        "input_002":{"projectId":codeyard_model::node_id::encode("PVT",projects[1].id),"itemId":codeyard_model::node_id::encode("PVTI",old_issue.id)},
-        "input_003":{"projectId":codeyard_model::node_id::encode("PVT",projects[5].id),"itemId":codeyard_model::node_id::encode("PVTI",old_pull.id)},
+        "input_000":{"projectId":codeyard_types::node_id::encode("PVT",projects[0].id),"contentId":codeyard_types::node_id::encode("I",issue.id)},
+        "input_001":{"projectId":codeyard_types::node_id::encode("PVT",projects[4].id),"contentId":codeyard_types::node_id::encode("PR",pull.id)},
+        "input_002":{"projectId":codeyard_types::node_id::encode("PVT",projects[1].id),"itemId":codeyard_types::node_id::encode("PVTI",old_issue.id)},
+        "input_003":{"projectId":codeyard_types::node_id::encode("PVT",projects[5].id),"itemId":codeyard_types::node_id::encode("PVTI",old_pull.id)},
     });
     let updated = send(
         &router,
@@ -370,7 +370,7 @@ async fn metadata_contract(pg: bool) {
         let item = &items[0];
         assert_eq!(
             updated[alias]["item"]["id"],
-            codeyard_model::node_id::scoped("PVTI", item.owner_id, item.id).unwrap()
+            codeyard_types::node_id::scoped("PVTI", item.owner_id, item.id).unwrap()
         );
         assert!(match content {
             store::Content::Issue(id) => item.issue_id == Some(id),
@@ -423,7 +423,7 @@ async fn metadata_contract(pg: bool) {
         assert_eq!(items["totalCount"], 1);
         assert_eq!(
             items["nodes"][0]["id"],
-            codeyard_model::node_id::scoped(
+            codeyard_types::node_id::scoped(
                 "PVTI",
                 if index == 0 { alice } else { org.id },
                 new_items[index].0
@@ -467,12 +467,12 @@ async fn metadata_contract(pg: bool) {
             .unwrap()
             .iter()
             .any(|n| n["id"]
-                == codeyard_model::node_id::scoped("PVTI", unset.owner_id, unset.id).unwrap()
+                == codeyard_types::node_id::scoped("PVTI", unset.owner_id, unset.id).unwrap()
                 && n["status"].is_null()));
     }
     let mut denied_inputs = inputs;
-    denied_inputs["input_002"] = json!({"projectId":codeyard_model::node_id::encode("PVT",projects[0].id),"itemId":codeyard_model::node_id::encode("PVTI",new_items[0].0)});
-    denied_inputs["input_003"] = json!({"projectId":codeyard_model::node_id::encode("PVT",projects[4].id),"itemId":codeyard_model::node_id::encode("PVTI",new_items[1].0)});
+    denied_inputs["input_002"] = json!({"projectId":codeyard_types::node_id::encode("PVT",projects[0].id),"itemId":codeyard_types::node_id::encode("PVTI",new_items[0].0)});
+    denied_inputs["input_003"] = json!({"projectId":codeyard_types::node_id::encode("PVT",projects[4].id),"itemId":codeyard_types::node_id::encode("PVTI",new_items[1].0)});
     for credential in [&credentials[1], &credentials[2]] {
         let (_, body) = call(
             &router,

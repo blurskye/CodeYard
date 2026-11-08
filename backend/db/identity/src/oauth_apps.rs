@@ -1,10 +1,10 @@
 use anyhow::Result;
 use chrono::DateTime;
 use chrono::Utc;
-use codeyard_db_core::models::PersonalAccessToken;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::queries::oauth_apps::Token;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::PersonalAccessToken;
+use codeyard_database::native_operation;
+use codeyard_database::queries::oauth_apps::Token;
+use codeyard_database::DbPool;
 
 #[derive(Clone, Debug, sqlx::FromRow)]
 pub struct Application {
@@ -63,7 +63,7 @@ native_operation!(crate::postgres::oauth_apps::application,
     fn application(pool: &DbPool, client_id: &str) -> Result<Option<Application>>);
 native_operation!(crate::postgres::oauth_apps::applications,
     crate::sqlite::oauth_apps::applications,
-    fn applications(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, offset: i64, limit: i64) -> Result<Option<Vec<ApplicationSummary>>>);
+    fn applications(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, offset: i64, limit: i64) -> Result<Option<Vec<ApplicationSummary>>>);
 native_operation!(crate::postgres::oauth_apps::save_grant,
     crate::sqlite::oauth_apps::save_grant,
     fn save_grant(pool: &DbPool, grant: &Grant) -> Result<()>);
@@ -79,16 +79,16 @@ native_operation!(crate::postgres::oauth_apps::exchange,
 pub async fn token(pool: &DbPool, id: i64) -> Result<Option<Token>> {
     let native = match pool {
         DbPool::Postgres(pool) => {
-            codeyard_db_core::queries::postgres::oauth_apps::token(pool, id).await?
+            codeyard_database::queries::postgres::oauth_apps::token(pool, id).await?
         }
         DbPool::Sqlite(pool) => crate::sqlite::oauth_apps::token(pool, id).await?,
     };
     if native.is_some() {
         return Ok(native);
     }
-    let cached = codeyard_db_core::cells::authorization::lookup(
+    let cached = codeyard_database::cells::authorization::lookup(
         pool,
-        &codeyard_db_core::cells::authorization::Query {
+        &codeyard_database::cells::authorization::Query {
             kind: "token",
             id: Some(id),
             hash: None,
@@ -97,7 +97,7 @@ pub async fn token(pool: &DbPool, id: i64) -> Result<Option<Token>> {
     )
     .await?;
     Ok(cached.and_then(|cached| match cached.answer.authority {
-        codeyard_db_core::cells::authorization::Authority::OAuth { client_id, scopes } => {
+        codeyard_database::cells::authorization::Authority::OAuth { client_id, scopes } => {
             Some(Token {
                 token_id: id,
                 client_id,

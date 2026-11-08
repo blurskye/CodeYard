@@ -123,12 +123,12 @@ async fn administration(pg: bool) {
     let sql =
         "SELECT action,target_id FROM audit_log WHERE actor_id=$1 AND org_id IS NULL ORDER BY id";
     let rows: Vec<(String, i64)> = match f.pool() {
-        codeyard_db_core::DbPool::Postgres(pool) => sqlx::query_as(sql)
+        codeyard_database::DbPool::Postgres(pool) => sqlx::query_as(sql)
             .bind(actor)
             .fetch_all(pool)
             .await
             .unwrap(),
-        codeyard_db_core::DbPool::Sqlite(pool) => sqlx::query_as(sql)
+        codeyard_database::DbPool::Sqlite(pool) => sqlx::query_as(sql)
             .bind(actor)
             .fetch_all(pool)
             .await
@@ -390,7 +390,7 @@ async fn postgres_privileged_writes_observe_a_waited_for_demotion() {
                 .await
                 .is_err());
             } else {
-                assert!(!codeyard_db_cluster::node_config::set_ai_crawlers(
+                assert!(!codeyard_db_placement::node_config::set_ai_crawlers(
                     &pool, actor, &original, "allow"
                 )
                 .await
@@ -402,7 +402,7 @@ async fn postgres_privileged_writes_observe_a_waited_for_demotion() {
         mutation.await.unwrap();
     }
     assert_eq!(
-        codeyard_db_cluster::node_config::get_node_configuration(f.pool())
+        codeyard_db_placement::node_config::get_node_configuration(f.pool())
             .await
             .unwrap()
             .unwrap()

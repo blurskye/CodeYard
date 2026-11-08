@@ -177,14 +177,16 @@ fn full_filesystem_refuses_a_push_and_recovers_after_freeing_space() {
                     other => panic!("unexpected filler write: {other:?}"),
                 }
             }
-            assert_eq!(codeyard_cluster::disk_free(&root).unwrap(), 0);
+            assert_eq!(codeyard_placement::disk_free(&root).unwrap(), 0);
             for context in &stores.contexts {
-                let node =
-                    codeyard_db_cluster::cluster::get_node_by_id(database.pool(), context.node_id)
-                        .await
-                        .unwrap()
-                        .unwrap();
-                codeyard_db_cluster::cluster::record_node_heartbeat(
+                let node = codeyard_db_placement::cluster::get_node_by_id(
+                    database.pool(),
+                    context.node_id,
+                )
+                .await
+                .unwrap()
+                .unwrap();
+                codeyard_db_placement::cluster::record_node_heartbeat(
                     database.pool(),
                     &context.key.public_hex(),
                     "test",
@@ -195,7 +197,7 @@ fn full_filesystem_refuses_a_push_and_recovers_after_freeing_space() {
                 .unwrap();
             }
             assert!(
-                codeyard_repos_core::cluster::placement::storage_node(
+                codeyard_git_storage::cluster::placement::storage_node(
                     Some(&stores.contexts[0]),
                     None,
                 )
@@ -208,7 +210,7 @@ fn full_filesystem_refuses_a_push_and_recovers_after_freeing_space() {
             assert!(!String::from_utf8_lossy(&output).contains("ok refs/heads/main"));
             assert_eq!(stores.refs().await, before);
             assert_eq!(
-                codeyard_db_cluster::cluster::writes::recovery_view(
+                codeyard_db_placement::cluster::writes::recovery_view(
                     database.pool(),
                     stores.fixture.repo
                 )
@@ -220,15 +222,17 @@ fn full_filesystem_refuses_a_push_and_recovers_after_freeing_space() {
             filler.set_len(0).unwrap();
             drop(filler);
             std::fs::remove_file(root.join("owned-filler")).unwrap();
-            let free = codeyard_cluster::disk_free(&root).unwrap();
+            let free = codeyard_placement::disk_free(&root).unwrap();
             assert!(free > 0);
             for context in &stores.contexts {
-                let node =
-                    codeyard_db_cluster::cluster::get_node_by_id(database.pool(), context.node_id)
-                        .await
-                        .unwrap()
-                        .unwrap();
-                codeyard_db_cluster::cluster::record_node_heartbeat(
+                let node = codeyard_db_placement::cluster::get_node_by_id(
+                    database.pool(),
+                    context.node_id,
+                )
+                .await
+                .unwrap()
+                .unwrap();
+                codeyard_db_placement::cluster::record_node_heartbeat(
                     database.pool(),
                     &context.key.public_hex(),
                     "test",

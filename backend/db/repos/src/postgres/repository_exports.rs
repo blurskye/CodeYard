@@ -2,22 +2,22 @@ use crate::repository_exports::ExportOptions;
 use crate::repository_exports::ExportRefusal;
 use crate::repository_exports::RepositoryExport;
 use anyhow::Result;
-use codeyard_db_core::models::OrgRole;
-use codeyard_db_core::pool::PgPool;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
+use codeyard_database::models::OrgRole;
+use codeyard_database::pool::PgPool;
+use codeyard_database::queries::organizations::OrganizationOutcome;
 use sqlx::PgConnection;
 
 async fn authority(connection: &mut PgConnection, actor: i64, org: Option<i64>) -> Result<bool> {
     if let Some(org) = org {
         return Ok(matches!(
-            codeyard_db_core::queries::postgres::organizations::authority::authority(
+            codeyard_database::queries::postgres::organizations::authority::authority(
                 connection, actor, org
             )
             .await?,
             OrganizationOutcome::Applied(OrgRole::Owner)
         ));
     }
-    codeyard_db_core::queries::postgres::users::transitions::lock_accounts_shared(
+    codeyard_database::queries::postgres::users::transitions::lock_accounts_shared(
         connection,
         &[actor],
     )

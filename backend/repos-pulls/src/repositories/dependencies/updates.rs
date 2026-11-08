@@ -16,14 +16,14 @@ use codeyard_db_repos::repositories::dependencies::Job;
 use codeyard_db_repos::repositories::dependencies::Publication;
 use codeyard_db_repos::repositories::dependencies::Refusal;
 use codeyard_db_repos::repositories::dependencies::Update;
+use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_repos::editor::UploadFile;
 use codeyard_repos::editor::UploadWrite;
-use codeyard_repos_core::repositories::store::repo_store;
 use sha2::Sha256;
 
 /// The owner name of a repository, as push events and pull requests name it.
-async fn owner_name(pool: &codeyard_db_core::DbPool, repository: i64) -> Result<String> {
+async fn owner_name(pool: &codeyard_database::DbPool, repository: i64) -> Result<String> {
     codeyard_db_repos::repositories::records::repository_owner_names(pool, &[repository])
         .await?
         .get(&repository)
@@ -32,7 +32,7 @@ async fn owner_name(pool: &codeyard_db_core::DbPool, repository: i64) -> Result<
 }
 
 async fn open(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     ci: &CiRuns,
     broadcaster: &NotificationBroadcaster,
     job: &Job,
@@ -99,7 +99,7 @@ async fn open(
         .await
         {
             Ok(pull) => pull,
-            Err(codeyard_repos_core::repositories::pull_requests::OperationError::Opened {
+            Err(codeyard_git_storage::repositories::pull_requests::OperationError::Opened {
                 number,
             }) => codeyard_db_repos::pull_requests::records::get_pull_request(
                 pool,
@@ -148,7 +148,7 @@ async fn open(
 }
 
 pub(crate) async fn propose(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     ci: &CiRuns,
     broadcaster: &NotificationBroadcaster,
     client: &Client,
@@ -274,7 +274,7 @@ pub(crate) async fn propose(
             {
                 continue;
             }
-            let candidate_package = codeyard_model::repositories::Package {
+            let candidate_package = codeyard_types::repositories::Package {
                 manifest: "package-lock.json".into(),
                 ecosystem: "npm".into(),
                 name: package.name.clone(),
@@ -298,7 +298,7 @@ pub(crate) async fn propose(
                         .any(|v| {
                             v["package"]["ecosystem"] == "npm"
                                 && v["package"]["name"] == package.name
-                                && codeyard_db_core::queries::dependabot_alerts::affected(
+                                && codeyard_database::queries::dependabot_alerts::affected(
                                     &version.to_string(),
                                     v["vulnerable_version_range"].as_str().unwrap_or(""),
                                 )

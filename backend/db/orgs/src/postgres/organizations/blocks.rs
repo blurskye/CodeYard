@@ -1,13 +1,13 @@
 use crate::postgres::organizations::authority::cancel_actor;
 use anyhow::Result;
-use codeyard_db_core::models::OrgRole;
-use codeyard_db_core::models::User;
-use codeyard_db_core::pool::PgPool;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_db_core::queries::postgres::organizations::authority::begin;
-use codeyard_db_core::queries::postgres::organizations::authority::begin_read;
-use codeyard_db_core::queries::postgres::organizations::authority::membership_role;
-use codeyard_db_core::require_read_org_postgres;
+use codeyard_database::models::OrgRole;
+use codeyard_database::models::User;
+use codeyard_database::pool::PgPool;
+use codeyard_database::queries::organizations::OrganizationOutcome;
+use codeyard_database::queries::postgres::organizations::authority::begin;
+use codeyard_database::queries::postgres::organizations::authority::begin_read;
+use codeyard_database::queries::postgres::organizations::authority::membership_role;
+use codeyard_database::require_read_org_postgres;
 use sqlx::PgConnection;
 use OrganizationOutcome::Applied;
 use OrganizationOutcome::Conflict;
@@ -65,7 +65,7 @@ pub async fn check(
 }
 pub async fn change(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     org: i64,
     target: i64,
     blocked: bool,
@@ -78,7 +78,7 @@ pub async fn change(
     if require_org!(tx, actor, org) != OrgRole::Owner {
         return Ok(Denied);
     }
-    if !codeyard_db_core::queries::postgres::credentials::live(&mut tx, &grant, true).await? {
+    if !codeyard_database::queries::postgres::credentials::live(&mut tx, &grant, true).await? {
         return Ok(Denied);
     }
     let exists: Option<i64> = sqlx::query_scalar("SELECT id FROM users WHERE id=$1 FOR UPDATE")

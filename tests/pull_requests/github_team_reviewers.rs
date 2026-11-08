@@ -68,13 +68,13 @@ async fn contract(pg: bool) {
             alice,
             org.id,
             bob,
-            codeyard_db_core::models::OrgRole::Member,
+            codeyard_database::models::OrgRole::Member,
         )
         .await
         .unwrap(),
     );
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard_repos_core::repositories::lifecycle::provision(
+    let repo = codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner {
@@ -94,7 +94,7 @@ async fn contract(pg: bool) {
         f.pool(),
         eve,
         repo.id,
-        codeyard_db_core::models::AccessLevel::Read,
+        codeyard_database::models::AccessLevel::Read,
     )
     .await
     .unwrap();
@@ -212,12 +212,12 @@ async fn contract(pg: bool) {
         "review-org"
     );
     let request_node = requests["nodes"][0]["id"].as_str().unwrap().to_owned();
-    let request_identity = codeyard_model::node_id::routed(&request_node).unwrap();
+    let request_identity = codeyard_types::node_id::routed(&request_node).unwrap();
     assert_eq!(request_identity.kind, "RRT");
-    let repository_root = codeyard_model::node_id::routed(&pull_node).unwrap().root;
+    let repository_root = codeyard_types::node_id::routed(&pull_node).unwrap().root;
     assert_eq!(request_identity.root, repository_root);
     let forged =
-        codeyard_model::node_id::scoped("RRT", repository_root + 10000, request_identity.id)
+        codeyard_types::node_id::scoped("RRT", repository_root + 10000, request_identity.id)
             .unwrap();
     let refused = graphql(
         &router,
@@ -321,7 +321,7 @@ async fn contract(pg: bool) {
         .page(&format!("/review-org/proj/pulls/{number}"))
         .await;
     assert!(!html.contains("Private team draft"));
-    let pull_identity = codeyard_model::node_id::routed(&pull_node).unwrap();
+    let pull_identity = codeyard_types::node_id::routed(&pull_node).unwrap();
     for (field, input_type) in [
         ("requestReviews", "RequestReviewsInput"),
         ("rerequestReviews", "RerequestReviewsInput"),
@@ -332,7 +332,7 @@ async fn contract(pg: bool) {
             &router,
             &auth[0],
             &mutation,
-            json!({"input":{"pullRequestId":codeyard_model::node_id::scoped("PR",repo.id + 10000,pull_identity.id).unwrap(),"teamIds":[parent["node_id"]]}}),
+            json!({"input":{"pullRequestId":codeyard_types::node_id::scoped("PR",repo.id + 10000,pull_identity.id).unwrap(),"teamIds":[parent["node_id"]]}}),
         )
         .await;
         assert_eq!(refused["errors"][0]["type"], "NOT_FOUND", "{refused}");

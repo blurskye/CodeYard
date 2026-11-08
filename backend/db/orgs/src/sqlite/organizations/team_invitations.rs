@@ -8,21 +8,21 @@ use crate::sqlite::organizations::authority::team_visible;
 use crate::sqlite::organizations::invitations::LIVE;
 use crate::sqlite::organizations::invitations::RECIPIENT;
 use anyhow::Result;
-use codeyard_db_core::models::OrgInvitation;
-use codeyard_db_core::models::OrgRole;
-use codeyard_db_core::pool::SqlitePool;
-use codeyard_db_core::queries::organizations::administers;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_db_core::queries::sqlite::organizations::authority::begin_read;
-use codeyard_db_core::queries::sqlite::organizations::authority::read_authority;
-use codeyard_db_core::require_read_org_sqlite;
+use codeyard_database::models::OrgInvitation;
+use codeyard_database::models::OrgRole;
+use codeyard_database::pool::SqlitePool;
+use codeyard_database::queries::organizations::administers;
+use codeyard_database::queries::organizations::OrganizationOutcome;
+use codeyard_database::queries::sqlite::organizations::authority::begin_read;
+use codeyard_database::queries::sqlite::organizations::authority::read_authority;
+use codeyard_database::require_read_org_sqlite;
 use OrganizationOutcome::Applied;
 use OrganizationOutcome::Denied;
 use OrganizationOutcome::Missing;
 
 pub async fn invite_team_member(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     org: i64,
     team: i64,
     target: i64,

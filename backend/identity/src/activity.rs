@@ -1,7 +1,7 @@
 //! A user's public activity, filtered to the repositories the viewer may read.
 
 use anyhow::Result;
-use codeyard_db_core::DbPool;
+use codeyard_database::DbPool;
 use codeyard_db_repos::activity::ActivityRow;
 use codeyard_db_repos::activity::ActivityViewer;
 use codeyard_db_repos::activity::SCAN_ROWS;

@@ -13,8 +13,8 @@ use axum::Json;
 use codeyard_app::app::AppState;
 use codeyard_db_repos::issue_attributes::Definition;
 use codeyard_db_repos::issue_attributes::FieldChanges;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde::Deserialize;
 use serde::Deserializer;
 use serde_json::Value;
@@ -124,7 +124,7 @@ async fn create(
     actor.require_write()?;
     let org = target(&state, &name).await?;
     let Json(input) =
-        input.map_err(|error| codeyard_model::github_error::json_error(error).simple())?;
+        input.map_err(|error| codeyard_types::github_error::json_error(error).simple())?;
     if matches!(input.data_type.as_str(), "single_select" | "multi_select")
         && input.options.is_none()
     {
@@ -173,7 +173,7 @@ async fn update(
         .parse()
         .map_err(|_| Error::missing())?;
     let Json(input) =
-        input.map_err(|error| codeyard_model::github_error::json_error(error).simple())?;
+        input.map_err(|error| codeyard_types::github_error::json_error(error).simple())?;
     let field = codeyard_db_repos::issue_attributes::patch_organization_field(
         &state.pool,
         org.id,

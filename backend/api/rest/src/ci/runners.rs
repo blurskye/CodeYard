@@ -19,13 +19,13 @@ use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_api_http::context::PageContext;
 use codeyard_api_http::shared::user::responses::field;
 use codeyard_app::app::AppState;
+use codeyard_database::queries::runners::Refusal;
+use codeyard_database::queries::runners::Scope;
 use codeyard_db_actions::runners as native;
 use codeyard_db_actions::runners::GroupInput;
 use codeyard_db_actions::runners::Labels;
 use codeyard_db_actions::runners::Registration;
 use codeyard_db_actions::runners::Selection;
-use codeyard_db_core::queries::runners::Refusal;
-use codeyard_db_core::queries::runners::Scope;
 use codeyard_webui::app::Page;
 use codeyard_webui::pages::runners as view;
 use serde::Deserialize;
@@ -157,7 +157,7 @@ async fn render(
         &ctx.state.pool,
         actor,
         scope,
-        &codeyard_db_core::queries::runners::RunnerQuery {
+        &codeyard_database::queries::runners::RunnerQuery {
             page: runner_window,
             ..Default::default()
         },
@@ -303,7 +303,7 @@ fn page_window(
     ctx: &PageContext,
     key: &str,
     limit: i64,
-) -> Result<codeyard_db_core::queries::runners::Window, Response> {
+) -> Result<codeyard_database::queries::runners::Window, Response> {
     let page = ctx
         .query
         .get(key)
@@ -313,12 +313,12 @@ fn page_window(
         .and_then(|page| (page - 1).checked_mul(limit))
         .filter(|offset| *offset <= 1_000_000)
         .ok_or_else(|| ctx.error(StatusCode::BAD_REQUEST, "Invalid runner settings page."))?;
-    Ok(codeyard_db_core::queries::runners::Window { offset, limit })
+    Ok(codeyard_database::queries::runners::Window { offset, limit })
 }
 fn page_destination(
     scope: Scope,
-    groups: codeyard_db_core::queries::runners::Window,
-    runners: codeyard_db_core::queries::runners::Window,
+    groups: codeyard_database::queries::runners::Window,
+    runners: codeyard_database::queries::runners::Window,
 ) -> String {
     format!(
         "{}&group_page={}&runner_page={}",
@@ -329,8 +329,8 @@ fn page_destination(
 }
 fn navigation(
     scope: Scope,
-    groups: codeyard_db_core::queries::runners::Window,
-    runners: codeyard_db_core::queries::runners::Window,
+    groups: codeyard_database::queries::runners::Window,
+    runners: codeyard_database::queries::runners::Window,
     total: i64,
     group: bool,
 ) -> Vec<(String, String)> {
@@ -347,7 +347,7 @@ fn navigation(
         ),
     ] {
         if let Some(offset) = offset {
-            let page = codeyard_db_core::queries::runners::Window { offset, ..current };
+            let page = codeyard_database::queries::runners::Window { offset, ..current };
             links.push((
                 label.into(),
                 if group {

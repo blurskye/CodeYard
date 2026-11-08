@@ -3,8 +3,8 @@ use axum::extract::Path;
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::Json;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde_json::Value;
 use std::sync::Arc;
 pub async fn repository(
@@ -14,7 +14,7 @@ pub async fn repository(
     name: &str,
     write: bool,
 ) -> Result<(
-    codeyard_db_core::models::Repository,
+    codeyard_database::models::Repository,
     Option<codeyard_identity::github_auth::Authentication>,
 )> {
     let auth = codeyard_identity::github_auth::authenticate(state, headers, write).await?;

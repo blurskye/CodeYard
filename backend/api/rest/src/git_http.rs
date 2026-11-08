@@ -16,14 +16,14 @@ use axum::response::IntoResponse;
 use axum::response::Response;
 use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_app::app::AppState;
-use codeyard_db_core::models::Repository;
+use codeyard_database::models::Repository;
 use codeyard_git::error::RepoError;
 use codeyard_git::repository::process as git_process;
-use codeyard_repos_core::repositories::git_sessions::ReceiveCredential;
-use codeyard_repos_core::repositories::store::repo_store;
-use codeyard_repos_core::store_types::GitService;
-use codeyard_repos_core::store_types::GitSession;
-use codeyard_repos_core::store_types::GitStreams;
+use codeyard_git_storage::repositories::git_sessions::ReceiveCredential;
+use codeyard_git_storage::repositories::store::repo_store;
+use codeyard_git_storage::store_types::GitService;
+use codeyard_git_storage::store_types::GitSession;
+use codeyard_git_storage::store_types::GitStreams;
 use codeyard_support::token_hash::token_hash;
 use serde::Deserialize;
 use std::sync::Arc;
@@ -69,8 +69,8 @@ async fn authenticate(
     headers: &HeaderMap,
 ) -> Result<
     Option<(
-        codeyard_db_core::models::PersonalAccessToken,
-        codeyard_db_core::models::User,
+        codeyard_database::models::PersonalAccessToken,
+        codeyard_database::models::User,
     )>,
     Response,
 > {
@@ -150,7 +150,7 @@ async fn authorize_repository(
     headers: &HeaderMap,
     write: bool,
 ) -> Result<AuthorizedRepository, Response> {
-    let config = codeyard_db_cluster::node_config::get_node_configuration(&state.pool)
+    let config = codeyard_db_placement::node_config::get_node_configuration(&state.pool)
         .await
         .map_err(|_| unavailable())?
         .filter(|config| config.setup_completed)
@@ -184,7 +184,7 @@ async fn authorize_repository(
 }
 
 fn credential_refusal(error: anyhow::Error) -> Response {
-    use codeyard_repos_core::repositories::git_sessions::CredentialRefusal;
+    use codeyard_git_storage::repositories::git_sessions::CredentialRefusal;
     let message = match error.downcast_ref::<CredentialRefusal>() {
         Some(CredentialRefusal::Credential) => return challenge(),
         Some(CredentialRefusal::Missing) => return StatusCode::NOT_FOUND.into_response(),
@@ -423,7 +423,7 @@ async fn rpc(
                     (
                         state.pool.clone(),
                         state.ci_runs.clone()
-                            as Arc<dyn codeyard_repos_core::receive_ci::ReceiveCi>,
+                            as Arc<dyn codeyard_git_storage::receive_ci::ReceiveCi>,
                     )
                 }),
                 GitStreams {

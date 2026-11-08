@@ -9,22 +9,22 @@ use crate::postgres::organizations::authority::team_visible;
 use crate::postgres::organizations::invitations::LIVE;
 use crate::postgres::organizations::invitations::RECIPIENT;
 use anyhow::Result;
-use codeyard_db_core::models::OrgInvitation;
-use codeyard_db_core::models::OrgRole;
-use codeyard_db_core::pool::PgPool;
-use codeyard_db_core::queries::organizations::administers;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_db_core::queries::postgres::organizations::authority::begin;
-use codeyard_db_core::queries::postgres::organizations::authority::begin_read;
-use codeyard_db_core::queries::postgres::organizations::authority::read_authority;
-use codeyard_db_core::require_read_org_postgres;
+use codeyard_database::models::OrgInvitation;
+use codeyard_database::models::OrgRole;
+use codeyard_database::pool::PgPool;
+use codeyard_database::queries::organizations::administers;
+use codeyard_database::queries::organizations::OrganizationOutcome;
+use codeyard_database::queries::postgres::organizations::authority::begin;
+use codeyard_database::queries::postgres::organizations::authority::begin_read;
+use codeyard_database::queries::postgres::organizations::authority::read_authority;
+use codeyard_database::require_read_org_postgres;
 use OrganizationOutcome::Applied;
 use OrganizationOutcome::Denied;
 use OrganizationOutcome::Missing;
 
 pub async fn invite_team_member(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     org: i64,
     team: i64,
     target: i64,
@@ -33,7 +33,7 @@ pub async fn invite_team_member(
     let grant = actor.into();
     let actor = grant.user_id;
     let mut tx = begin(pool).await?;
-    codeyard_db_core::queries::postgres::users::transitions::lock_accounts_shared(
+    codeyard_database::queries::postgres::users::transitions::lock_accounts_shared(
         &mut tx,
         &[actor, target],
     )

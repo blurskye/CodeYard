@@ -17,7 +17,7 @@ pub(crate) async fn form(
     let name = field(form, "name").to_ascii_uppercase();
     let session = codeyard_api_http::session::extract_session_id(&ctx.headers).unwrap_or_default();
     let credential =
-        codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session);
+        codeyard_database::queries::users::accounts::AccountCredential::Session(&session);
     let result = if action == "variable-save" {
         let previous = field(form, "previous").to_ascii_uppercase();
         codeyard_db_actions::variables::save(

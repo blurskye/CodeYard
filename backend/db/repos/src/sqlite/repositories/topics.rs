@@ -1,6 +1,6 @@
 use crate::repositories::records::RepositorySettingsRefusal as Refusal;
 use anyhow::Result;
-use codeyard_db_core::pool::SqlitePool;
+use codeyard_database::pool::SqlitePool;
 use sqlx::Sqlite;
 use sqlx::Transaction;
 use std::collections::BTreeMap;
@@ -15,7 +15,7 @@ pub async fn update_about(
 ) -> Result<()> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::sqlite::discussions::lock_write_authority(
+        codeyard_database::queries::sqlite::discussions::lock_write_authority(
             &mut tx, actor_id, repo_id
         )
         .await?,
@@ -65,7 +65,7 @@ pub async fn replace_topics(
 ) -> Result<()> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::sqlite::discussions::lock_write_authority(
+        codeyard_database::queries::sqlite::discussions::lock_write_authority(
             &mut tx, actor_id, repo_id
         )
         .await?,

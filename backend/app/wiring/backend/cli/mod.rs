@@ -177,7 +177,7 @@ pub fn run() -> Result<()> {
         // Receive hooks are started with the server's state directory, where their socket
         // path checks stop. Without a usable one the checks walk up to `/`.
         #[cfg(target_os = "linux")]
-        codeyard_repos_core::repositories::git_sessions::private_files::trust_state_dir(
+        codeyard_git_storage::repositories::git_sessions::private_files::trust_state_dir(
             &early_cli.state_dir,
         )
         .ok();
@@ -251,7 +251,7 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
         if roles.router_only() {
             anyhow::ensure!(!cluster, "A router has no cell cluster or database");
             anyhow::ensure!(
-                *ssh_mode != codeyard_support::ssh_mode::SshMode::Openssh,
+                *ssh_mode != codeyard_types::ssh_mode::SshMode::Openssh,
                 "The router terminates SSH itself; use builtin, auto or disabled"
             );
             let directory = crate::backend::node::router::DirectorySettings::from_options(
@@ -267,7 +267,7 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
                 state: cli.state_dir.clone(),
                 host_key: host_key.clone(),
                 http: *http_addr,
-                ssh: (*ssh_mode != codeyard_support::ssh_mode::SshMode::Disabled)
+                ssh: (*ssh_mode != codeyard_types::ssh_mode::SshMode::Disabled)
                     .then_some(*ssh_addr),
             })
             .await;
@@ -291,7 +291,7 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
             return crate::backend::node::runtime::serve_worker(&cli.state_dir).await;
         }
         if configured_database_url.is_none() {
-            anyhow::ensure!(roles.single_node() && codeyard_cluster_core::settings::Settings::from_env()?.is_none(),
+            anyhow::ensure!(roles.single_node() && codeyard_nodes::settings::Settings::from_env()?.is_none(),
                 "a server and the cluster roles require DATABASE_URL (PostgreSQL for a cluster, sqlite://... for a single node); only a runner can run without a database");
         }
     }
@@ -316,7 +316,7 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
         pool.close().await;
         return Ok(());
     }
-    let pool = codeyard_db_core::open_migrated(&database_url).await?;
+    let pool = codeyard_database::open_migrated(&database_url).await?;
     if matches!(
         &cli.command,
         Commands::User {
@@ -359,8 +359,9 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
                     state_dir: &cli.state_dir,
                     repos_path: &cli.repos_path,
                 };
-                let context = if codeyard_db_cluster::cluster::cluster_enabled(&pool).await? {
-                    codeyard_cluster::client_context(&pool, &cli.state_dir, &cli.repos_path).await?
+                let context = if codeyard_db_placement::cluster::cluster_enabled(&pool).await? {
+                    codeyard_placement::client_context(&pool, &cli.state_dir, &cli.repos_path)
+                        .await?
                 } else {
                     None
                 };
@@ -395,8 +396,8 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
                 host_key,
             } => {
                 if cluster {
-                    codeyard_cluster_core::settings::require_postgres(&pool)?;
-                    if codeyard_db_cluster::cluster::enable_cluster(&pool).await? {
+                    codeyard_nodes::settings::require_postgres(&pool)?;
+                    if codeyard_db_placement::cluster::enable_cluster(&pool).await? {
                         info!("cluster mode is on");
                     }
                 }
@@ -536,7 +537,8 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
                     .await?;
                 }
                 RepoAction::Verify { repair } => {
-                    let problems = if codeyard_db_cluster::cluster::cluster_enabled(&pool).await? {
+                    let problems = if codeyard_db_placement::cluster::cluster_enabled(&pool).await?
+                    {
                         codeyard_app::backups::repair::verify_cluster(
                             &pool,
                             &cli.repos_path,

@@ -1,8 +1,8 @@
 use anyhow::Result;
 use chrono::DateTime;
 use chrono::Utc;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 
 #[derive(sqlx::FromRow)]
 pub struct Database {
@@ -23,7 +23,7 @@ pub struct NewDatabase<'a> {
     /// The retained quota charge, confirmed in the publication transaction.
     pub charge: uuid::Uuid,
     pub repo: i64,
-    pub actor: codeyard_db_core::queries::credentials::Actor,
+    pub actor: codeyard_database::queries::credentials::Actor,
     pub language: &'a str,
     pub name: &'a str,
     pub key: &'a str,
@@ -31,12 +31,12 @@ pub struct NewDatabase<'a> {
 }
 
 native_operation!(crate::postgres::codeql::list, crate::sqlite::codeql::list,
-    fn list(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo: i64) -> Result<Vec<Database>>);
+    fn list(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, repo: i64) -> Result<Vec<Database>>);
 native_operation!(crate::postgres::codeql::get, crate::sqlite::codeql::get,
-    fn get(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo: i64, language: &str) -> Result<Option<Database>>);
+    fn get(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, repo: i64, language: &str) -> Result<Option<Database>>);
 native_operation!(crate::postgres::codeql::stage, crate::sqlite::codeql::stage,
-    fn stage(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo: i64, key: &str) -> Result<()>);
+    fn stage(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, repo: i64, key: &str) -> Result<()>);
 native_operation!(crate::postgres::codeql::publish, crate::sqlite::codeql::publish,
     fn publish(pool: &DbPool, input: &NewDatabase<'_>) -> Result<Database>);
 native_operation!(crate::postgres::codeql::delete, crate::sqlite::codeql::delete,
-    fn delete(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo: i64, language: &str) -> Result<()>);
+    fn delete(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, repo: i64, language: &str) -> Result<()>);

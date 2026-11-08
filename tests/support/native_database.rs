@@ -9,8 +9,8 @@ use std::{str::FromStr, time::Duration};
 use uuid::Uuid;
 
 pub struct NativeDatabase {
-    pub pool: codeyard_db_core::DbPool,
-    pub raw: codeyard_db_core::pool::SqlitePool,
+    pub pool: codeyard_database::DbPool,
+    pub raw: codeyard_database::pool::SqlitePool,
     pub url: String,
     _directory: tempfile::TempDir,
     _log_objects: std::sync::Arc<codeyard_storage::ObjectStore>,
@@ -22,7 +22,7 @@ impl NativeDatabase {
     }
     pub async fn new() -> Self {
         let fixture = Self::unmigrated().await;
-        codeyard_db_core::run_migrations(&fixture.pool)
+        codeyard_database::run_migrations(&fixture.pool)
             .await
             .expect("native SQLite migration");
         fixture
@@ -34,7 +34,7 @@ impl NativeDatabase {
             "sqlite://{}",
             directory.path().join("application.sqlite").display()
         );
-        let pool = codeyard_db_core::init_db(&url)
+        let pool = codeyard_database::init_db(&url)
             .await
             .expect("native SQLite open");
         let log_objects = std::sync::Arc::new(
@@ -54,7 +54,7 @@ impl NativeDatabase {
             .max_connections(4)
             .connect_with(options)
             .await
-            .map(codeyard_db_core::pool::Pool::from)
+            .map(codeyard_database::pool::Pool::from)
             .unwrap();
         Self {
             pool,
@@ -65,8 +65,8 @@ impl NativeDatabase {
         }
     }
 
-    pub async fn second_handle(&self) -> codeyard_db_core::DbPool {
-        let pool = codeyard_db_core::init_db(&self.url)
+    pub async fn second_handle(&self) -> codeyard_database::DbPool {
+        let pool = codeyard_database::init_db(&self.url)
             .await
             .expect("independent selected database handle");
         pool.set_log_objects(self.pool.log_objects().unwrap());
@@ -77,11 +77,11 @@ impl NativeDatabase {
         let objects = self.pool.log_objects().unwrap();
         self.pool.close().await;
         self.raw.close().await;
-        self.pool = codeyard_db_core::init_db(&self.url)
+        self.pool = codeyard_database::init_db(&self.url)
             .await
             .expect("reopen persistent application database");
         self.pool.set_log_objects(objects);
-        codeyard_db_core::run_migrations(&self.pool)
+        codeyard_database::run_migrations(&self.pool)
             .await
             .expect("verify independent SQLite history");
         self.raw = SqlitePoolOptions::new()
@@ -94,7 +94,7 @@ impl NativeDatabase {
                     .busy_timeout(Duration::from_secs(3)),
             )
             .await
-            .map(codeyard_db_core::pool::Pool::from)
+            .map(codeyard_database::pool::Pool::from)
             .unwrap();
     }
 
@@ -105,8 +105,8 @@ impl NativeDatabase {
 }
 
 pub struct PostgresDatabase {
-    pub pool: codeyard_db_core::DbPool,
-    pub raw: codeyard_db_core::pool::PgPool,
+    pub pool: codeyard_database::DbPool,
+    pub raw: codeyard_database::pool::PgPool,
     pub url: String,
     pub schema: String,
     removed: bool,
@@ -127,7 +127,7 @@ impl PostgresDatabase {
 
     pub async fn new() -> Self {
         let fixture = Self::unmigrated().await;
-        codeyard_db_core::run_migrations(&fixture.pool)
+        codeyard_database::run_migrations(&fixture.pool)
             .await
             .expect("native PostgreSQL migration");
         fixture
@@ -148,7 +148,7 @@ impl PostgresDatabase {
             .max_connections(1)
             .connect(&url)
             .await
-            .map(codeyard_db_core::pool::Pool::from)
+            .map(codeyard_database::pool::Pool::from)
             .expect("required PostgreSQL fixture");
         let schema = format!("test_{}", Uuid::new_v4().simple());
         sqlx::query(&format!("CREATE SCHEMA \"{schema}\""))
@@ -180,7 +180,7 @@ impl PostgresDatabase {
         fixture.raw = PgPoolOptions::new()
             .connect_with(options)
             .await
-            .map(codeyard_db_core::pool::Pool::from)
+            .map(codeyard_database::pool::Pool::from)
             .unwrap();
         fixture.pool = fixture.raw.clone().into();
         fixture.pool.set_log_objects(log_objects);
@@ -203,7 +203,7 @@ impl PostgresDatabase {
 /// Ends the sessions the test left open (a killed server's last queries, a pool held by a
 /// spawned task), which would block the DROP, and then drops the schema.
 async fn drop_schema(
-    raw: &codeyard_db_core::pool::PgPool,
+    raw: &codeyard_database::pool::PgPool,
     url: &str,
     schema: &str,
 ) -> Result<(), sqlx::Error> {
@@ -214,7 +214,7 @@ async fn drop_schema(
         .max_connections(1)
         .connect_with(options)
         .await
-        .map(codeyard_db_core::pool::Pool::from)?;
+        .map(codeyard_database::pool::Pool::from)?;
     sqlx::query(
         "SELECT pg_terminate_backend(pid) FROM pg_stat_activity \
          WHERE application_name = $1 AND pid <> pg_backend_pid()",
@@ -274,6 +274,6 @@ pub fn token() -> String {
 
 /// The preexisting replica fixtures exercise the legacy asynchronous policy explicitly.
 /// Quorum fixtures already supply their own setting and keep it through this transition.
-pub async fn enable_cluster(pool: &codeyard_db_core::DbPool) -> anyhow::Result<bool> {
-    codeyard_db_cluster::cluster::enable_cluster_with_quorum(pool, "1").await
+pub async fn enable_cluster(pool: &codeyard_database::DbPool) -> anyhow::Result<bool> {
+    codeyard_db_placement::cluster::enable_cluster_with_quorum(pool, "1").await
 }

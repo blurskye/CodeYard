@@ -2,8 +2,8 @@ use anyhow::ensure;
 use anyhow::Result;
 use chrono::DateTime;
 use chrono::Utc;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 use serde::Deserialize;
 use serde::Serialize;
 use sqlx::types::Json;
@@ -420,7 +420,7 @@ native_operation!(crate::postgres::checks::run, crate::sqlite::checks::run,
 native_operation!(crate::postgres::checks::automatic_suites, crate::sqlite::checks::automatic_suites,
     /// Newly requested suites for at most 100 active installed Apps. The cursor advances over
     /// eligible Apps even when their suite already exists; a repeated push never requests it twice.
-    fn automatic_suites(pool: &DbPool, repo: &codeyard_db_core::models::Repository, sha: &str, branch: &str, after: i64) -> Result<AutomaticSuites>);
+    fn automatic_suites(pool: &DbPool, repo: &codeyard_database::models::Repository, sha: &str, branch: &str, after: i64) -> Result<AutomaticSuites>);
 native_operation!(crate::postgres::checks::create_suite, crate::sqlite::checks::create_suite,
     fn create_suite(pool: &DbPool, credential: Credential<'_>, repo: i64, sha: &str, branch: Option<&str>) -> Result<(Suite, bool)>);
 native_operation!(crate::postgres::checks::create_run, crate::sqlite::checks::create_run,

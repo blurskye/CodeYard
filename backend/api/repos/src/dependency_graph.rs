@@ -87,7 +87,7 @@ async fn respond(
             return ctx.error(status, "Repository not found.");
         }
         let mut document =
-            codeyard_model::dependency_graph::sbom(&format!("{owner}/{name}"), &snapshots);
+            codeyard_types::dependency_graph::sbom(&format!("{owner}/{name}"), &snapshots);
         return Json(document["sbom"].take()).into_response();
     }
     let (sha, packages) = match codeyard_repos_pulls::repositories::dependency_graph::inventory(
@@ -153,13 +153,13 @@ async fn respond(
 /// provides, from the shared index. Without one, or while it fails, the section is hidden.
 async fn used_by(
     ctx: &PageContext,
-    repository: &codeyard_db_core::models::Repository,
+    repository: &codeyard_database::models::Repository,
 ) -> Option<UsedBy> {
     if repository.is_private {
         return None;
     }
     let filter =
-        codeyard_db_core::cells::search::Filter::Term("uses".into(), repository.id.to_string());
+        codeyard_database::cells::search::Filter::Term("uses".into(), repository.id.to_string());
     match codeyard_api_github::search::global::public_repositories(
         &ctx.state,
         filter,

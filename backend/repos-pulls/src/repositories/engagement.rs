@@ -31,8 +31,8 @@ pub enum Engagement {
 /// Saves how the actor watches a repository. `level` is `participating` (the default, no row),
 /// `watching`, `custom` or `ignoring`; `events` lists the kinds a `custom` watch wants.
 pub async fn set_level(
-    pool: &codeyard_db_core::DbPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    pool: &codeyard_database::DbPool,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     level: &str,
     events: &[&str],
@@ -75,9 +75,9 @@ pub async fn set_level(
 
 /// A REST subscription keeps an explicit participating preference and its creation time.
 pub async fn set_subscription(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     broadcaster: &NotificationBroadcaster,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     subscribed: bool,
     ignored: bool,
@@ -112,9 +112,9 @@ pub async fn set_subscription(
 }
 
 pub async fn change(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     broadcaster: &NotificationBroadcaster,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     kind: Engagement,
     enabled: bool,
@@ -161,10 +161,10 @@ pub async fn change(
     if changed && matches!(kind, Engagement::Star) {
         let action = if enabled { "created" } else { "deleted" };
         let repository_for_hook = updated.clone();
-        codeyard_repos_core::webhooks::emit(
+        codeyard_git_storage::webhooks::emit(
             pool,
             &updated,
-            codeyard_model::webhook_events::STAR,
+            codeyard_types::webhook_events::STAR,
             vec![actor],
             move |owner, people| {
                 let starrer = people.get(actor);

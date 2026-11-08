@@ -7,7 +7,7 @@ use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
 use codeyard_git::CommitInfo;
 use codeyard_git::DiffFileInfo;
-use codeyard_repos_core::repositories::store::RepoStore;
+use codeyard_git_storage::repositories::store::RepoStore;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Media {

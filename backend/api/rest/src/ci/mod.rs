@@ -47,7 +47,7 @@ mod tests {
     use axum::http::StatusCode;
     use axum::Json;
     use codeyard_api_http::shared::ci::admission_error;
-    use codeyard_db_core::ci_admission::AdmissionError;
+    use codeyard_database::ci_admission::AdmissionError;
     #[test]
     fn typed_refusals_keep_http_categories() {
         assert_eq!(
@@ -65,7 +65,7 @@ mod tests {
     }
     #[test]
     fn database_refusals_keep_public_http_categories() {
-        use codeyard_db_core::ci_policy::CiAdmissionRefusal;
+        use codeyard_database::ci_policy::CiAdmissionRefusal;
         for (refusal, expected) in [
             (
                 CiAdmissionRefusal::Missing("Run not found"),

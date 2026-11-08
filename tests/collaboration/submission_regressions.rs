@@ -94,7 +94,7 @@ async fn stale_comment_and_milestone_forms(pg: bool) {
             &[repo.id],
         )
         .await;
-    let replacement = codeyard_repos_core::repositories::lifecycle::provision(
+    let replacement = codeyard_git_storage::repositories::lifecycle::provision(
         (pool, None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(
@@ -196,7 +196,7 @@ async fn stale_issue_forms(pg: bool) {
         pool,
         reader.id,
         repo.id,
-        codeyard_db_core::models::AccessLevel::Read,
+        codeyard_database::models::AccessLevel::Read,
     )
     .await
     .unwrap();
@@ -214,7 +214,7 @@ async fn stale_issue_forms(pg: bool) {
             &[repo.id],
         )
         .await;
-    let replacement = codeyard_repos_core::repositories::lifecycle::provision(
+    let replacement = codeyard_git_storage::repositories::lifecycle::provision(
         (pool, None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(
@@ -537,7 +537,7 @@ async fn later_page_edit_and_deleted_notifications(pg: bool) {
                 issue["id"].as_i64().unwrap(),
                 author.id,
                 "Existing comment",
-                &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+                &codeyard_database::queries::users::accounts::AccountCredential::Session(
                     &crate::support::live_session(database.pool(), author.id).await,
                 ),
             )
@@ -593,7 +593,7 @@ async fn later_page_edit_and_deleted_notifications(pg: bool) {
     for kind in ["issue_comment", "mention"] {
         let delayed = codeyard_db_repos::notifications::records::create_notification(
             database.pool(),
-            codeyard_db_core::queries::notifications::records::NewNotification {
+            codeyard_database::queries::notifications::records::NewNotification {
                 user_id: repo.owner_user_id.unwrap(),
                 actor_id: Some(author.id),
                 repo_id: Some(repo.id),

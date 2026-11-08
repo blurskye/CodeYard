@@ -3,7 +3,7 @@ use super::{
     profile::html,
 };
 use axum::http::StatusCode;
-use codeyard_db_core::models::OrgRole;
+use codeyard_database::models::OrgRole;
 use codeyard_db_orgs::organizations::membership::add_organization_member;
 use codeyard_db_orgs::organizations::profiles::create_organization;
 use codeyard_db_orgs::organizations::profiles::NewOrganization;

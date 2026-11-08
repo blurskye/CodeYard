@@ -7,7 +7,7 @@ use crate::support::database::Database;
 use crate::support::fake_webui_bundle;
 use axum::http::StatusCode;
 
-use codeyard_repos_core::repositories::lifecycle;
+use codeyard_git_storage::repositories::lifecycle;
 use serde_json::{json, Value};
 
 async fn contract(pg: bool) {

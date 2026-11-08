@@ -2,13 +2,13 @@ use crate::organizations::profiles::OrganizationMetadata;
 use crate::organizations::OrganizationPage;
 use crate::postgres::organizations::authority::site_administrator;
 use anyhow::Result;
-use codeyard_db_core::models::OrgMembership;
-use codeyard_db_core::pool::PgPool;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_db_core::queries::postgres::organizations::authority::begin;
-use codeyard_db_core::queries::postgres::organizations::authority::begin_read;
-use codeyard_db_core::queries::postgres::organizations::authority::membership_role;
-use codeyard_db_core::queries::postgres::organizations::authority::remaining_active_owner;
+use codeyard_database::models::OrgMembership;
+use codeyard_database::pool::PgPool;
+use codeyard_database::queries::organizations::OrganizationOutcome;
+use codeyard_database::queries::postgres::organizations::authority::begin;
+use codeyard_database::queries::postgres::organizations::authority::begin_read;
+use codeyard_database::queries::postgres::organizations::authority::membership_role;
+use codeyard_database::queries::postgres::organizations::authority::remaining_active_owner;
 use OrganizationOutcome::Applied;
 use OrganizationOutcome::Conflict;
 use OrganizationOutcome::Denied;
@@ -22,7 +22,7 @@ pub async fn recover_suspended_organization_owner(
 ) -> Result<OrganizationOutcome<OrgMembership>> {
     let actor = actor.into();
     let mut tx = begin(pool).await?;
-    codeyard_db_core::queries::postgres::users::transitions::lock_accounts_shared(
+    codeyard_database::queries::postgres::users::transitions::lock_accounts_shared(
         &mut tx,
         &[actor.user_id, target],
     )

@@ -15,13 +15,13 @@ use codeyard_ci::config::CiConfig;
 use codeyard_ci::config::CiExecutionMode;
 use codeyard_ci_engine::runner_credentials::JitConfig;
 
-use codeyard_cluster_core::transport::Listen;
-use codeyard_cluster_core::transport::NodeAddress;
-use codeyard_cluster_core::transport::Relay;
-use codeyard_repos_core::context::NodeContext;
+use codeyard_git_storage::context::NodeContext;
+use codeyard_nodes::transport::Listen;
+use codeyard_nodes::transport::NodeAddress;
+use codeyard_nodes::transport::Relay;
 use codeyard_support::node_identity::NodeKey;
 
-use codeyard_db_core::models::OrgRole;
+use codeyard_database::models::OrgRole;
 use codeyard_identity::tokens::TokenInput;
 use codeyard_storage::ObjectStore;
 use serde_json::{json, Value};
@@ -71,7 +71,7 @@ async fn call(
 }
 async fn token(
     router: &Router,
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     actor: i64,
     scope: &str,
 ) -> String {
@@ -94,8 +94,8 @@ async fn token(
     )
 }
 async fn pair(ticket: &str, key: &NodeKey, name: &str) {
-    let ticket = codeyard_cluster_core::pairing::JoinTicket::decode(ticket).unwrap();
-    let joined = codeyard_cluster_core::pairing::join(&ticket, key, &Relay::Off, name, None)
+    let ticket = codeyard_nodes::pairing::JoinTicket::decode(ticket).unwrap();
+    let joined = codeyard_nodes::pairing::join(&ticket, key, &Relay::Off, name, None)
         .await
         .unwrap();
     assert!(joined.newly_joined);
@@ -134,7 +134,7 @@ async fn contract(pg: bool) {
     );
     let root = tempfile::tempdir().unwrap();
     let key = NodeKey::generate();
-    let endpoint = codeyard_cluster_core::transport::bind(
+    let endpoint = codeyard_nodes::transport::bind(
         &Listen {
             bind: "127.0.0.1:0".parse().unwrap(),
             relay: Relay::Off,
@@ -145,14 +145,14 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    let core = codeyard_cluster_core::transport::router(
+    let core = codeyard_nodes::transport::router(
         endpoint,
-        codeyard_cluster_core::pairing::PairingHandler::new(f.pool().clone()),
+        codeyard_nodes::pairing::PairingHandler::new(f.pool().clone()),
     )
     .spawn();
-    codeyard_cluster::wait_for_address(core.endpoint()).await;
+    codeyard_placement::wait_for_address(core.endpoint()).await;
     let address = NodeAddress::of(&core.endpoint().addr());
-    let node = codeyard_db_cluster::cluster::register_own_node(
+    let node = codeyard_db_placement::cluster::register_own_node(
         f.pool(),
         &key.public_hex(),
         "runner-core",
@@ -161,7 +161,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    codeyard_db_cluster::cluster::record_node_heartbeat(
+    codeyard_db_placement::cluster::record_node_heartbeat(
         f.pool(),
         &key.public_hex(),
         env!("CARGO_PKG_VERSION"),
@@ -173,7 +173,7 @@ async fn contract(pg: bool) {
     let context = NodeContext {
         pool: Some(f.pool().clone()),
         rpc: std::sync::Arc::new(codeyard_repos_rpc::RpcFactory),
-        iroh: codeyard_cluster_core::transport::IrohDialer::new(Relay::Off, key.clone()),
+        iroh: codeyard_nodes::transport::IrohDialer::new(Relay::Off, key.clone()),
         key,
         node_id: node.id,
         repos_path: root.path().to_owned(),
@@ -481,7 +481,7 @@ async fn contract(pg: bool) {
         let token = registration["token"].as_str().unwrap().to_owned();
         pair(&token, key, name).await;
         registration_tokens.push(token);
-        codeyard_db_cluster::cluster::touch_node(f.pool(), &key.public_hex())
+        codeyard_db_placement::cluster::touch_node(f.pool(), &key.public_hex())
             .await
             .unwrap();
         let rows = call(
@@ -841,7 +841,7 @@ async fn contract(pg: bool) {
             ("users/get-authenticated", 200)
         )
         .await["login"],
-        codeyard_db_core::queries::ci_tokens::BOT
+        codeyard_database::queries::ci_tokens::BOT
     );
     let repo_runners = "/api/v3/repos/runner-org/one/actions/runners";
     for (suffix, operation, body) in [
@@ -874,7 +874,7 @@ async fn contract(pg: bool) {
     assert!(codeyard_db_actions::runners::list_runners(
         f.pool(),
         alice,
-        codeyard_db_core::queries::runners::Scope::Repository(repo),
+        codeyard_database::queries::runners::Scope::Repository(repo),
         &Default::default()
     )
     .await
@@ -997,14 +997,15 @@ async fn contract(pg: bool) {
                 codeyard_ci_engine::runner_credentials::work_root(&state).unwrap(),
                 state.join("runner-workspaces/jit-work")
             );
-            let node = codeyard_db_cluster::cluster::get_node_by_name(f.pool(), &config.node_name)
-                .await
-                .unwrap()
-                .unwrap();
+            let node =
+                codeyard_db_placement::cluster::get_node_by_name(f.pool(), &config.node_name)
+                    .await
+                    .unwrap()
+                    .unwrap();
             let runner = codeyard_db_actions::runners::list_runners(
                 f.pool(),
                 alice,
-                codeyard_db_core::queries::runners::Scope::Repository(personal),
+                codeyard_database::queries::runners::Scope::Repository(personal),
                 &Default::default(),
             )
             .await
@@ -1020,8 +1021,8 @@ async fn contract(pg: bool) {
             pair(&config.ticket, &jit_key, &config.node_name).await;
         }
         let retry_key = NodeKey::generate();
-        assert!(codeyard_cluster_core::pairing::join(
-            &codeyard_cluster_core::pairing::JoinTicket::decode(&config.ticket).unwrap(),
+        assert!(codeyard_nodes::pairing::join(
+            &codeyard_nodes::pairing::JoinTicket::decode(&config.ticket).unwrap(),
             &retry_key,
             &Relay::Off,
             "second-use",
@@ -1061,11 +1062,12 @@ async fn contract(pg: bool) {
             codeyard_db_actions::ci::finish_ci_run(f.pool(), run.id, &jit_worker, "success", None)
                 .await
                 .unwrap();
-            assert!(
-                !codeyard_db_cluster::cluster::is_active_node(f.pool(), &jit_key.public_hex())
-                    .await
-                    .unwrap()
-            );
+            assert!(!codeyard_db_placement::cluster::is_active_node(
+                f.pool(),
+                &jit_key.public_hex()
+            )
+            .await
+            .unwrap());
         }
     }
     // Remove tokens are scoped and redeem against the same registered workers.
@@ -1087,7 +1089,7 @@ async fn contract(pg: bool) {
     let removable = codeyard_db_actions::runners::list_runners(
         f.pool(),
         alice,
-        codeyard_db_core::queries::runners::Scope::Organization(org.id),
+        codeyard_database::queries::runners::Scope::Organization(org.id),
         &Default::default(),
     )
     .await
@@ -1110,7 +1112,7 @@ async fn contract(pg: bool) {
         .unwrap();
     assert_eq!(removed.status(), StatusCode::NO_CONTENT);
     assert!(
-        !codeyard_db_cluster::cluster::is_active_node(f.pool(), &removable_key.public_hex())
+        !codeyard_db_placement::cluster::is_active_node(f.pool(), &removable_key.public_hex())
             .await
             .unwrap()
     );
@@ -1148,8 +1150,8 @@ async fn contract(pg: bool) {
     )
     .await;
     let expired_key = NodeKey::generate();
-    assert!(codeyard_cluster_core::pairing::join(
-        &codeyard_cluster_core::pairing::JoinTicket::decode(&registration_tokens[0]).unwrap(),
+    assert!(codeyard_nodes::pairing::join(
+        &codeyard_nodes::pairing::JoinTicket::decode(&registration_tokens[0]).unwrap(),
         &expired_key,
         &Relay::Off,
         "expired",

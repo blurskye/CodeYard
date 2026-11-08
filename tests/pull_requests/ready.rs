@@ -58,7 +58,7 @@ async fn contract(pg: bool) {
     let dave_id = f.actor("dave").await;
     let root = tempfile::tempdir().unwrap();
     // A public repository: carol and dave can read it, alice owns it.
-    let repository = codeyard_repos_core::repositories::lifecycle::provision(
+    let repository = codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
@@ -317,7 +317,7 @@ async fn cookie_bound_mutations(pg: bool) {
     .await
     .unwrap();
     let root = tempfile::tempdir().unwrap();
-    codeyard_repos_core::repositories::lifecycle::provision(
+    codeyard_git_storage::repositories::lifecycle::provision(
         (fixture.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),

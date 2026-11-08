@@ -3,7 +3,7 @@
 //! returned. Each list is capped at `LIST_LIMIT`; the counts are not.
 
 use anyhow::Result;
-use codeyard_db_core::DbPool;
+use codeyard_database::DbPool;
 use codeyard_db_repos::discussions::StateCounts;
 use codeyard_db_repos::issues::IssueRelation;
 use codeyard_db_repos::issues::ViewerIssueEntry;

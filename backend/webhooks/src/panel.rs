@@ -4,10 +4,10 @@
 use crate::settings::HookError;
 use crate::settings::HookForm;
 use crate::settings::JSON_CONTENT_TYPE;
-use codeyard_db_core::models::User;
-use codeyard_db_core::models::Webhook;
-use codeyard_db_core::models::WebhookDelivery;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::User;
+use codeyard_database::models::Webhook;
+use codeyard_database::models::WebhookDelivery;
+use codeyard_database::DbPool;
 use codeyard_db_repos::webhooks as hooks;
 use codeyard_db_repos::webhooks::HookOwner;
 use codeyard_support::secrets::SecretEncryptor;
@@ -37,7 +37,7 @@ pub struct Place<'a> {
 pub async fn build(
     pool: &DbPool,
     actor: &User,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     place: &Place<'_>,
     query: &HashMap<String, String>,
 ) -> Result<WebhookPanel, HookError> {
@@ -93,7 +93,7 @@ pub async fn build(
                 expected_updated: String::new(),
                 payload_url: String::new(),
                 content_type: JSON_CONTENT_TYPE.to_owned(),
-                events: vec![codeyard_model::webhook_events::PUSH.to_owned()],
+                events: vec![codeyard_types::webhook_events::PUSH.to_owned()],
                 active: true,
                 ssl_verify: true,
                 has_secret: false,
@@ -137,8 +137,8 @@ fn draft_of(hook: &Webhook) -> HookDraft {
         expected_updated: hook.updated_at.to_rfc3339(),
         payload_url: hook.payload_url.clone(),
         content_type: hook.content_type.clone(),
-        events: if hook.events == codeyard_model::webhook_events::EVERYTHING {
-            vec![codeyard_model::webhook_events::EVERYTHING.to_owned()]
+        events: if hook.events == codeyard_types::webhook_events::EVERYTHING {
+            vec![codeyard_types::webhook_events::EVERYTHING.to_owned()]
         } else {
             hook.events.split(',').map(str::to_owned).collect()
         },
@@ -172,7 +172,7 @@ fn hook_row(place: &Place<'_>, hook: &hooks::WebhookSummary) -> HookRow {
 }
 
 fn events_label(stored: &str) -> String {
-    if stored == codeyard_model::webhook_events::EVERYTHING {
+    if stored == codeyard_types::webhook_events::EVERYTHING {
         "Everything".to_owned()
     } else {
         stored.replace(',', ", ")
@@ -235,7 +235,7 @@ async fn with_saved_credentials(
     pool: &DbPool,
     owner: HookOwner,
     actor: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     mut draft: HookDraft,
 ) -> HookDraft {
     let Some(id) = draft.id else {
@@ -317,7 +317,7 @@ pub async fn apply(
     pool: &DbPool,
     encryptor: Option<&SecretEncryptor>,
     actor: &User,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     owner: HookOwner,
     action: &str,
     form: &HashMap<String, String>,

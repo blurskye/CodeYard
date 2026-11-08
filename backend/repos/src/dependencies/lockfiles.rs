@@ -4,7 +4,7 @@ use anyhow::ensure;
 use anyhow::Context;
 use anyhow::Result;
 use codeyard_db_repos::repositories::dependencies::MAX_PACKAGES;
-use codeyard_model::repositories::Package;
+use codeyard_types::repositories::Package;
 use serde_json::Value;
 
 pub const FILES: &[&str] = &[
@@ -33,7 +33,7 @@ fn add(
     version: &str,
 ) -> Result<()> {
     let name = if ecosystem == "pypi" {
-        codeyard_model::vulnerabilities::python_name(name)
+        codeyard_types::vulnerabilities::python_name(name)
     } else if ecosystem == "nuget" {
         name.to_ascii_lowercase()
     } else {
@@ -42,7 +42,7 @@ fn add(
     ensure!(
         !name.is_empty()
             && name.len() <= 512
-            && version.len() <= codeyard_model::dependency_inventory::MAX_VERSION_BYTES
+            && version.len() <= codeyard_types::dependency_inventory::MAX_VERSION_BYTES
             && !version.is_empty(),
         "Invalid locked dependency"
     );

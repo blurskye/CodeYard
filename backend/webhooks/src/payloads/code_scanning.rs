@@ -1,7 +1,7 @@
 use codeyard_db_security::code_scanning::Alert;
 use codeyard_db_security::code_scanning::Instance;
-use codeyard_model::http_config::link_origin;
-use codeyard_model::urls::repo_url;
+use codeyard_types::http_config::link_origin;
+use codeyard_types::urls::repo_url;
 use serde_json::json;
 use serde_json::Value;
 

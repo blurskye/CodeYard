@@ -21,8 +21,8 @@ async fn readable_run(
     run_id: &str,
 ) -> Result<
     (
-        codeyard_db_core::models::Repository,
-        codeyard_db_core::models::CiRun,
+        codeyard_database::models::Repository,
+        codeyard_database::models::CiRun,
     ),
     Response,
 > {
@@ -124,7 +124,7 @@ pub(crate) async fn delete_artifact(
     }
     let actor = ctx.user.as_ref().expect("readable run").id;
     let credential = crate::session::extract_session_id(&ctx.headers)
-        .map(codeyard_db_core::queries::ci::CiCredential::Session);
+        .map(codeyard_database::queries::ci::CiCredential::Session);
     match codeyard_db_actions::action_objects::delete_artifact(
         &ctx.state.pool,
         artifact,
@@ -180,7 +180,7 @@ pub(crate) async fn cancel_run(
             run.run_id,
             actor,
             crate::session::extract_session_id(&ctx.headers)
-                .map(codeyard_db_core::queries::ci::CiCredential::Session),
+                .map(codeyard_database::queries::ci::CiCredential::Session),
         )
         .await
     {
@@ -224,7 +224,7 @@ pub(crate) async fn rerun_run(
             run.run_id,
             actor,
             crate::session::extract_session_id(&ctx.headers)
-                .map(codeyard_db_core::queries::ci::CiCredential::Session),
+                .map(codeyard_database::queries::ci::CiCredential::Session),
         )
         .await
     {

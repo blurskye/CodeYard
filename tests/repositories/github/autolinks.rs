@@ -26,7 +26,7 @@ async fn autolinks_contract(pg: bool) {
         f.pool(),
         bob,
         repo.id,
-        codeyard_db_core::models::AccessLevel::Read,
+        codeyard_database::models::AccessLevel::Read,
     )
     .await
     .unwrap();

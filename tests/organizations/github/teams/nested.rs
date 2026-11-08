@@ -2,13 +2,13 @@ use super::{call, Client};
 use crate::support::organizations::applied;
 use axum::{http::StatusCode, Router};
 
-use codeyard_db_core::models::AccessLevel;
+use codeyard_database::models::AccessLevel;
 use serde_json::{json, Value};
 
 pub(super) async fn run(
     router: &Router,
     session: &Client,
-    scope: (&codeyard_db_core::DbPool, i64, i64, i64, i64),
+    scope: (&codeyard_database::DbPool, i64, i64, i64, i64),
     tokens: (&str, &str, &str),
 ) {
     let (pool, org, alice, charlie, repo) = scope;
@@ -290,7 +290,7 @@ pub(super) async fn run(
             pool,
             (
                 alice,
-                &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+                &codeyard_database::queries::users::accounts::AccountCredential::Session(
                     &deletion_session.id,
                 ),
             ),

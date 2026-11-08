@@ -1,8 +1,8 @@
 use crate::repositories::protection::ProtectionWriteRefusal;
 use anyhow::Result;
-use codeyard_db_core::models::Team;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::Team;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 
 pub(crate) fn validate_count(len: usize) -> Result<()> {
     anyhow::ensure!(
@@ -28,7 +28,7 @@ pub async fn resolve_names(pool: &DbPool, repo: i64, names: &[String]) -> Result
     anyhow::ensure!(
         names
             .iter()
-            .all(|name| codeyard_model::account_input::validate_namespace(name, 1).is_ok()),
+            .all(|name| codeyard_types::account_input::validate_namespace(name, 1).is_ok()),
         ProtectionWriteRefusal::InvalidPushTeams
     );
     names.sort_unstable();

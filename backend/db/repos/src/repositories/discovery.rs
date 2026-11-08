@@ -1,11 +1,11 @@
 use crate::repositories::records::RepositorySort;
 use anyhow::Result;
-use codeyard_db_core::models::Issue;
-use codeyard_db_core::models::PullRequest;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::models::User;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::Issue;
+use codeyard_database::models::PullRequest;
+use codeyard_database::models::Repository;
+use codeyard_database::models::User;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 
 pub struct NewForkedRepository<'a> {
     pub owner_id: i64,
@@ -205,7 +205,7 @@ native_operation!(crate::postgres::repositories::discovery::count_users,
 /// Native fork discovery shares owner lookup and the id-based fork query.
 pub async fn named_owner_fork(pool: &DbPool, name: &str, base: i64) -> Result<Option<Repository>> {
     use crate::repositories::creation::RepositoryTarget;
-    codeyard_model::cells::Key::new(codeyard_model::cells::KeyKind::Name, name)?;
+    codeyard_types::cells::Key::new(codeyard_types::cells::KeyKind::Name, name)?;
     let owner = if let Some(user) =
         codeyard_db_identity::users::accounts::get_user_by_username(pool, name)
             .await?

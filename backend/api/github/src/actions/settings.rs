@@ -18,14 +18,14 @@ use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
+use codeyard_database::queries::action_settings::Refusal;
+use codeyard_database::queries::action_settings::Scope;
+use codeyard_database::queries::action_settings::Setting;
 use codeyard_db_actions::action_settings::Policy;
-use codeyard_db_core::queries::action_settings::Refusal;
-use codeyard_db_core::queries::action_settings::Scope;
-use codeyard_db_core::queries::action_settings::Setting;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
-use codeyard_model::urls::api_url;
-use codeyard_model::urls::repo_url;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
+use codeyard_types::urls::api_url;
+use codeyard_types::urls::repo_url;
 use serde_json::json;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -218,7 +218,7 @@ async fn organization_repositories(
     let (scope, auth) = scope(&state, &headers, &params, write).await?;
     let actor = auth.database_actor();
     let setting = switch(&uri);
-    use codeyard_db_core::queries::action_settings::SelectionChange;
+    use codeyard_database::queries::action_settings::SelectionChange;
     let change = if !write {
         None
     } else if params.contains_key("repository_id") {
@@ -292,7 +292,7 @@ fn document(policy: &Policy, params: &Params, organization: Option<&str>) -> Res
             )
         };
     value["id"] = json!(policy.id);
-    value["node_id"] = json!(codeyard_model::node_id::scoped(
+    value["node_id"] = json!(codeyard_types::node_id::scoped(
         "AP",
         policy.owner_id,
         policy.id

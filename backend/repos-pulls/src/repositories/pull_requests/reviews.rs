@@ -1,16 +1,16 @@
 use codeyard_git::error::ErrorKind;
+use codeyard_git_storage::context::NodeContext;
+use codeyard_git_storage::repositories::pull_requests::database_error;
+use codeyard_git_storage::repositories::pull_requests::reviewers::{
+    emit_reviewer_event, notify_review_request,
+};
+use codeyard_git_storage::repositories::pull_requests::OperationError;
+use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_notifications::create::create_and_broadcast_notification;
 use codeyard_notifications::create::NotificationRequest;
 use codeyard_notifications::mentions::notify_mentions;
 use codeyard_notifications::mentions::MentionSource;
-use codeyard_repos_core::context::NodeContext;
-use codeyard_repos_core::repositories::pull_requests::database_error;
-use codeyard_repos_core::repositories::pull_requests::reviewers::{
-    emit_reviewer_event, notify_review_request,
-};
-use codeyard_repos_core::repositories::pull_requests::OperationError;
-use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_webhooks::payloads::Scope;
 use serde::Deserialize;
 use serde_json::json;
@@ -50,16 +50,16 @@ pub struct RequestReviewerResult {
 /// Edit a review through the same author check, native transaction and edited webhook as REST.
 /// Names that the edit adds to a published review are notified.
 pub async fn edit_review(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     broadcaster: &NotificationBroadcaster,
     actor_id: i64,
-    repo: &codeyard_db_core::models::Repository,
-    pull: &codeyard_db_core::models::PullRequest,
+    repo: &codeyard_database::models::Repository,
+    pull: &codeyard_database::models::PullRequest,
     id: i64,
     body: &str,
-) -> Result<codeyard_db_core::models::PullRequestReview, OperationError> {
-    let actor = codeyard_repos_core::repositories::pull_requests::actor(pool, actor_id).await?;
-    codeyard_repos_core::repositories::pull_requests::require_read(pool, &actor, repo).await?;
+) -> Result<codeyard_database::models::PullRequestReview, OperationError> {
+    let actor = codeyard_git_storage::repositories::pull_requests::actor(pool, actor_id).await?;
+    codeyard_git_storage::repositories::pull_requests::require_read(pool, &actor, repo).await?;
     if pull.repo_id != repo.id {
         return Err(OperationError::Missing {
             code: "not_found",
@@ -93,7 +93,7 @@ pub async fn edit_review(
         pool, pull.id, actor.id, id, body,
     )
     .await
-    .map_err(codeyard_repos_core::repositories::pull_requests::write_error)?
+    .map_err(codeyard_git_storage::repositories::pull_requests::write_error)?
     .ok_or_else(|| OperationError::Missing {
         code: "not_found",
         message: "Review not found".into(),
@@ -133,20 +133,20 @@ pub async fn edit_review(
 
 /// Sends one `pull_request_review` webhook about `review`.
 async fn emit_review_webhook(
-    pool: &codeyard_db_core::DbPool,
-    repository: &codeyard_db_core::models::Repository,
-    pull: &codeyard_db_core::models::PullRequest,
-    review: &codeyard_db_core::models::PullRequestReview,
+    pool: &codeyard_database::DbPool,
+    repository: &codeyard_database::models::Repository,
+    pull: &codeyard_database::models::PullRequest,
+    review: &codeyard_database::models::PullRequestReview,
     action: &'static str,
     sender_id: i64,
 ) {
     let (review_for_hook, pull_for_hook, repository_for_hook) =
         (review.clone(), pull.clone(), repository.clone());
     let (pull_author_id, reviewer_id) = (pull.author_id, review.author_id);
-    codeyard_repos_core::webhooks::emit(
+    codeyard_git_storage::webhooks::emit(
         pool,
         repository,
-        codeyard_model::webhook_events::PULL_REQUEST_REVIEW,
+        codeyard_types::webhook_events::PULL_REQUEST_REVIEW,
         vec![pull_author_id, reviewer_id, sender_id],
         move |owner, people| {
             codeyard_webhooks::payloads::pull_request_review(
@@ -169,14 +169,14 @@ async fn emit_review_webhook(
 #[derive(serde::Serialize)]
 #[serde(untagged)]
 pub enum ReviewerTarget {
-    User(codeyard_db_core::models::User),
-    Team(codeyard_db_core::models::Team),
+    User(codeyard_database::models::User),
+    Team(codeyard_database::models::Team),
 }
 
 /// Review bodies and dismissal reasons use the discussion text limit. Leaving one
 /// out, or sending an empty one, is fine.
 fn check_optional_text(text: Option<&str>) -> Result<(), OperationError> {
-    codeyard_model::issue_input::validate_body(text.unwrap_or(""), false).map_err(|message| {
+    codeyard_types::issue_input::validate_body(text.unwrap_or(""), false).map_err(|message| {
         OperationError::Invalid {
             code: "validation_error",
             message: message.to_owned(),
@@ -204,14 +204,14 @@ impl From<(String, String, i32)> for ReviewTarget {
 }
 
 pub async fn create_pull_request_review(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     cluster: Option<&NodeContext>,
     broadcaster: &NotificationBroadcaster,
     actor_id: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     target: impl Into<ReviewTarget>,
     req: CreatePullRequestReviewRequest,
-) -> Result<codeyard_db_core::models::PullRequestReview, OperationError> {
+) -> Result<codeyard_database::models::PullRequestReview, OperationError> {
     create_review(
         pool,
         cluster,
@@ -226,14 +226,14 @@ pub async fn create_pull_request_review(
 }
 
 pub async fn create_pull_request_review_batch(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     cluster: Option<&NodeContext>,
     broadcaster: &NotificationBroadcaster,
     actor_id: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     target: impl Into<ReviewTarget>,
     batch: CreatePullRequestReviewBatchRequest,
-) -> Result<codeyard_db_core::models::PullRequestReview, OperationError> {
+) -> Result<codeyard_database::models::PullRequestReview, OperationError> {
     create_review(
         pool,
         cluster,
@@ -252,24 +252,24 @@ pub async fn create_pull_request_review_batch(
     reason = "Explicit actor and resources keep operations HTTP-free."
 )]
 async fn create_review(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     cluster: Option<&NodeContext>,
     broadcaster: &NotificationBroadcaster,
     actor_id: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     target: ReviewTarget,
     req: CreatePullRequestReviewRequest,
     batch: Option<
         Vec<crate::repositories::pull_requests::comments::CreatePullRequestCommentRequest>,
     >,
-) -> Result<codeyard_db_core::models::PullRequestReview, OperationError> {
+) -> Result<codeyard_database::models::PullRequestReview, OperationError> {
     let ReviewTarget {
         owner,
         name: repo,
         number,
         expected,
     } = target;
-    let user = codeyard_repos_core::repositories::pull_requests::actor(pool, actor_id).await?;
+    let user = codeyard_git_storage::repositories::pull_requests::actor(pool, actor_id).await?;
 
     let repository = codeyard_db_repos::repositories::records::get_repository(pool, &owner, &repo)
         .await
@@ -287,7 +287,7 @@ async fn create_review(
 
     // As on GitHub, anyone who can read the repository may review; only writers' approvals
     // count toward the merge rules (see `eligible_reviews`).
-    codeyard_repos_core::repositories::pull_requests::require_read(pool, &user, &repository)
+    codeyard_git_storage::repositories::pull_requests::require_read(pool, &user, &repository)
         .await?;
 
     let pull_request =
@@ -458,7 +458,7 @@ async fn create_review(
         },
     )
     .await
-    .map_err(codeyard_repos_core::repositories::pull_requests::write_error)?;
+    .map_err(codeyard_git_storage::repositories::pull_requests::write_error)?;
     if review.state == "pending" {
         return Ok(review);
     }
@@ -578,15 +578,15 @@ async fn create_review(
 }
 
 pub async fn dismiss_pull_request_review(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     actor_id: i64,
     owner: String,
     repo: String,
     number: i32,
     review_id: i64,
     req: DismissPullRequestReviewRequest,
-) -> Result<codeyard_db_core::models::PullRequestReview, OperationError> {
-    let actor = codeyard_repos_core::repositories::pull_requests::actor(pool, actor_id).await?;
+) -> Result<codeyard_database::models::PullRequestReview, OperationError> {
+    let actor = codeyard_git_storage::repositories::pull_requests::actor(pool, actor_id).await?;
 
     let repository = codeyard_db_repos::repositories::records::get_repository(pool, &owner, &repo)
         .await
@@ -596,10 +596,10 @@ pub async fn dismiss_pull_request_review(
             message: "Repository not found".to_owned(),
         })?;
 
-    codeyard_repos_core::repositories::pull_requests::require_read(pool, &actor, &repository)
+    codeyard_git_storage::repositories::pull_requests::require_read(pool, &actor, &repository)
         .await?;
 
-    codeyard_repos_core::repositories::pull_requests::require_admin(pool, &actor, &repository)
+    codeyard_git_storage::repositories::pull_requests::require_admin(pool, &actor, &repository)
         .await?;
     if repository.owner_kind == "user" && !actor.is_admin && !repository.is_personal_owner(actor.id)
     {
@@ -649,7 +649,7 @@ pub async fn dismiss_pull_request_review(
         req.reason.as_deref(),
     )
     .await
-    .map_err(codeyard_repos_core::repositories::pull_requests::write_error)?;
+    .map_err(codeyard_git_storage::repositories::pull_requests::write_error)?;
 
     emit_review_webhook(
         pool,
@@ -665,7 +665,7 @@ pub async fn dismiss_pull_request_review(
 }
 
 pub async fn request_reviewer(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     broadcaster: &NotificationBroadcaster,
     actor_id: i64,
     owner: String,
@@ -685,7 +685,7 @@ pub async fn request_reviewer(
 }
 
 pub async fn request_reviewer_bound(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     broadcaster: &NotificationBroadcaster,
     actor_id: i64,
     (owner, repo, number): (String, String, i32),
@@ -701,8 +701,9 @@ pub async fn request_reviewer_bound(
         })?;
 
     check_repository_binding(expected_repository, repository.id)?;
-    let requester = codeyard_repos_core::repositories::pull_requests::actor(pool, actor_id).await?;
-    codeyard_repos_core::repositories::pull_requests::require_write(pool, &requester, &repository)
+    let requester =
+        codeyard_git_storage::repositories::pull_requests::actor(pool, actor_id).await?;
+    codeyard_git_storage::repositories::pull_requests::require_write(pool, &requester, &repository)
         .await?;
     let pull_request =
         codeyard_db_repos::pull_requests::records::get_pull_request(pool, repository.id, number)
@@ -739,7 +740,7 @@ pub async fn request_reviewer_bound(
             code: "invalid_review_team",
             message: "Review team not found or lacks write access".to_owned(),
         })?;
-        let changed = codeyard_repos_core::repositories::pull_requests::team_reviewers::change(
+        let changed = codeyard_git_storage::repositories::pull_requests::team_reviewers::change(
             pool,
             broadcaster,
             &requester,
@@ -789,13 +790,13 @@ pub async fn request_reviewer_bound(
 /// Records that `target` is asked to review `pull`, and tells them unless they asked themselves.
 /// Returns whether the request is new. Manually chosen reviewers require writer authority.
 pub(super) async fn add_review_request(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     broadcaster: &NotificationBroadcaster,
-    requester: &codeyard_db_core::models::User,
+    requester: &codeyard_database::models::User,
     owner: &str,
-    repository: &codeyard_db_core::models::Repository,
-    pull_request: &codeyard_db_core::models::PullRequest,
-    target: &codeyard_db_core::models::User,
+    repository: &codeyard_database::models::Repository,
+    pull_request: &codeyard_database::models::PullRequest,
+    target: &codeyard_database::models::User,
 ) -> Result<bool, OperationError> {
     let created = codeyard_db_repos::pull_requests::reviews::request_pull_request_reviewer(
         pool,
@@ -804,7 +805,7 @@ pub(super) async fn add_review_request(
         target.id,
     )
     .await
-    .map_err(codeyard_repos_core::repositories::pull_requests::write_error)?;
+    .map_err(codeyard_git_storage::repositories::pull_requests::write_error)?;
 
     if created {
         notify_review_request(
@@ -842,7 +843,7 @@ fn check_repository_binding(expected: Option<i64>, actual: i64) -> Result<(), Op
 }
 
 pub async fn remove_requested_reviewer(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     actor_id: i64,
     owner: String,
     repo: String,
@@ -853,7 +854,7 @@ pub async fn remove_requested_reviewer(
 }
 
 pub async fn remove_requested_reviewer_bound(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     actor_id: i64,
     (owner, repo, number): (String, String, i32),
     username: String,
@@ -868,8 +869,8 @@ pub async fn remove_requested_reviewer_bound(
         })?;
 
     check_repository_binding(expected_repository, repository.id)?;
-    let actor = codeyard_repos_core::repositories::pull_requests::actor(pool, actor_id).await?;
-    codeyard_repos_core::repositories::pull_requests::require_write(pool, &actor, &repository)
+    let actor = codeyard_git_storage::repositories::pull_requests::actor(pool, actor_id).await?;
+    codeyard_git_storage::repositories::pull_requests::require_write(pool, &actor, &repository)
         .await?;
     let pull_request =
         codeyard_db_repos::pull_requests::records::get_pull_request(pool, repository.id, number)
@@ -899,8 +900,8 @@ pub async fn remove_requested_reviewer_bound(
             None,
         )
         .await
-        .map_err(codeyard_repos_core::repositories::pull_requests::team_reviewers::error)?;
-        codeyard_repos_core::repositories::pull_requests::team_reviewers::emit_events(
+        .map_err(codeyard_git_storage::repositories::pull_requests::team_reviewers::error)?;
+        codeyard_git_storage::repositories::pull_requests::team_reviewers::emit_events(
             pool,
             None,
             &repository,
@@ -927,7 +928,7 @@ pub async fn remove_requested_reviewer_bound(
         target.id,
     )
     .await
-    .map_err(codeyard_repos_core::repositories::pull_requests::write_error)?;
+    .map_err(codeyard_git_storage::repositories::pull_requests::write_error)?;
 
     if removed {
         emit_reviewer_event(
@@ -952,7 +953,7 @@ pub async fn remove_requested_reviewer_bound(
 /// Deletes the viewer's pending review and the comments it holds. Nobody else has seen them.
 /// Discards the actor's pending review; with `review`, only when that is still the pending one.
 pub async fn discard_pending_review(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     actor_id: i64,
     owner: String,
     repo: String,
@@ -967,9 +968,9 @@ pub async fn discard_pending_review(
             message: "Repository not found".to_owned(),
         })?;
 
-    codeyard_repos_core::repositories::pull_requests::require_read(
+    codeyard_git_storage::repositories::pull_requests::require_read(
         pool,
-        &codeyard_repos_core::repositories::pull_requests::actor(pool, actor_id).await?,
+        &codeyard_git_storage::repositories::pull_requests::actor(pool, actor_id).await?,
         &repository,
     )
     .await?;
@@ -990,7 +991,7 @@ pub async fn discard_pending_review(
             review,
         )
         .await
-        .map_err(codeyard_repos_core::repositories::pull_requests::write_error)?
+        .map_err(codeyard_git_storage::repositories::pull_requests::write_error)?
         .is_some(),
         None => codeyard_db_repos::pull_requests::reviews::discard_pending_review(
             pool,
@@ -998,7 +999,7 @@ pub async fn discard_pending_review(
             actor_id,
         )
         .await
-        .map_err(codeyard_repos_core::repositories::pull_requests::write_error)?,
+        .map_err(codeyard_git_storage::repositories::pull_requests::write_error)?,
     };
     if discarded {
         Ok(())

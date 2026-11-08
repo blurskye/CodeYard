@@ -14,8 +14,8 @@ use codeyard_db_repos::discussion_search::Collection;
 use codeyard_db_repos::discussion_search::Relation;
 use codeyard_db_repos::discussion_search::Search;
 use codeyard_db_repos::discussion_search::Sort;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 

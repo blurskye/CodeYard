@@ -10,7 +10,7 @@ async fn contract(pg: bool) {
     f.complete_setup().await;
     let alice = f.actor("metadata-alice").await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard_repos_core::repositories::lifecycle::provision(
+    let repo = codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
@@ -105,7 +105,7 @@ async fn contract(pg: bool) {
     let project = codeyard_db_repos::projects::create(
         f.pool(),
         alice,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session.session),
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(&session.session),
         codeyard_db_repos::projects::Owner::User(alice),
         "Roadmap",
         None,
@@ -116,7 +116,7 @@ async fn contract(pg: bool) {
     codeyard_db_repos::projects::link_repository(
         f.pool(),
         alice,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session.session),
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(&session.session),
         project.id,
         repo.id,
         true,

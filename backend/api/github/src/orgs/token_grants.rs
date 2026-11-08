@@ -21,18 +21,18 @@ use chrono::DateTime;
 use chrono::Utc;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::app::AppState;
-use codeyard_db_core::models::OrgRole;
-use codeyard_db_core::models::Organization;
-use codeyard_db_core::models::User;
-use codeyard_db_core::queries::fine_grained_tokens::Token;
+use codeyard_database::models::OrgRole;
+use codeyard_database::models::Organization;
+use codeyard_database::models::User;
+use codeyard_database::queries::fine_grained_tokens::Token;
 use codeyard_db_identity::fine_grained_tokens::TokenFilter;
 use codeyard_db_orgs::organizations::OrganizationPage;
 use codeyard_identity::fine_grained::Access;
-use codeyard_model::fine_grained::catalog;
-use codeyard_model::fine_grained::Group;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
-use codeyard_model::urls::api_url;
+use codeyard_types::fine_grained::catalog;
+use codeyard_types::fine_grained::Group;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
+use codeyard_types::urls::api_url;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Map;
@@ -442,7 +442,7 @@ async fn review(
 ) -> Result<u64> {
     let (reviewer, org) = context(state, headers, name, true).await?;
     let invalid = |field: &str| Error::validation("PersonalAccessTokenRequest", field, "invalid");
-    let Json(body) = body.map_err(codeyard_model::github_error::json_error)?;
+    let Json(body) = body.map_err(codeyard_types::github_error::json_error)?;
     let status = match body.action.as_str() {
         "approve" => "approved",
         "deny" => "denied",
@@ -521,7 +521,7 @@ async fn revoke(
 ) -> Result<u64> {
     let (reviewer, org) = context(state, headers, name, true).await?;
     let invalid = |field: &str| Error::validation("PersonalAccessToken", field, "invalid");
-    let Json(body) = body.map_err(codeyard_model::github_error::json_error)?;
+    let Json(body) = body.map_err(codeyard_types::github_error::json_error)?;
     if body.action != "revoke" {
         return Err(invalid("action"));
     }

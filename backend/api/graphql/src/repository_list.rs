@@ -20,8 +20,9 @@ pub(super) async fn organizations(
     request.require_oauth_scope("read:org")?;
     crate::connection::validate(ctx)?;
     let id = parent["databaseId"].as_i64().ok_or_else(missing)?;
-    let config = codeyard_db_core::cells::pointers::Config::default();
-    let mut budget = codeyard_db_core::cells::pointers::Budget::new(config).map_err(unavailable)?;
+    let config = codeyard_database::cells::pointers::Config::default();
+    let mut budget =
+        codeyard_database::cells::pointers::Budget::new(config).map_err(unavailable)?;
     let mut nodes = Vec::new();
     let mut after = 0;
     loop {
@@ -52,7 +53,7 @@ pub(super) async fn organizations(
             &request.state.pool,
             &request.auth,
             &request.headers,
-            codeyard_db_core::cells::pointers::List::GraphqlOrganizations,
+            codeyard_database::cells::pointers::List::GraphqlOrganizations,
             Vec::new(),
             config.maximum_scan,
         )
@@ -62,7 +63,7 @@ pub(super) async fn organizations(
             for mut node in remote {
                 let (_, id) = node["id"]
                     .as_str()
-                    .and_then(codeyard_model::node_id::decode)
+                    .and_then(codeyard_types::node_id::decode)
                     .ok_or_else(missing)?;
                 node["databaseId"] = json!(id);
                 node["_membership"] = json!(true);

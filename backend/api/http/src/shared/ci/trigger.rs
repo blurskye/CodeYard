@@ -97,19 +97,19 @@ fn input_lines(text: &str) -> Result<BTreeMap<String, serde_json::Value>, &'stat
 /// once the repository chrome has loaded, which checked that the viewer may read the repository.
 pub async fn refusal_workflows(
     ctx: &PageContext,
-    repository: &codeyard_db_core::models::Repository,
+    repository: &codeyard_database::models::Repository,
     branch: &str,
 ) -> anyhow::Result<Vec<view_actions::Workflow>> {
     anyhow::ensure!(
-        codeyard_repos_core::workflows::is_safe_ref(branch),
+        codeyard_git_storage::workflows::is_safe_ref(branch),
         "unsafe ref"
     );
-    let store = codeyard_repos_core::repositories::store::repo_store(
+    let store = codeyard_git_storage::repositories::store::repo_store(
         repository,
         ctx.state.cluster.as_ref(),
     );
     let definitions =
-        codeyard_repos_core::workflows::list_workflows_for_ref(&store, branch).await?;
+        codeyard_git_storage::workflows::list_workflows_for_ref(&store, branch).await?;
     let user = ctx
         .user
         .as_ref()
@@ -197,9 +197,9 @@ pub async fn dispatch(
         .unwrap_or_else(|| "/ci".into());
     ctx.return_to = Some(base_path.clone());
     // Allow every individually valid input, including name=value and CRLF overhead.
-    use codeyard_actions::workflow::dispatch_inputs::MAX_INPUTS;
-    use codeyard_actions::workflow::dispatch_inputs::MAX_NAME_BYTES;
-    use codeyard_actions::workflow::dispatch_inputs::MAX_VALUE_BYTES;
+    use codeyard_runner::workflow::dispatch_inputs::MAX_INPUTS;
+    use codeyard_runner::workflow::dispatch_inputs::MAX_NAME_BYTES;
+    use codeyard_runner::workflow::dispatch_inputs::MAX_VALUE_BYTES;
     const MAX_INPUT_LINES_BYTES: usize = MAX_INPUTS * (MAX_NAME_BYTES + 1 + MAX_VALUE_BYTES + 2);
     if form.iter().any(|(key, value)| {
         value.len()
@@ -294,7 +294,7 @@ pub async fn dispatch(
             actor_id,
             request,
             crate::session::extract_session_id(&ctx.headers)
-                .map(codeyard_db_core::queries::ci::CiCredential::Session),
+                .map(codeyard_database::queries::ci::CiCredential::Session),
         )
         .await
         .map_err(crate::shared::ci::admission_error)

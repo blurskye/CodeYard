@@ -14,7 +14,7 @@ use codeyard_api_http::context::PageContext;
 use codeyard_api_http::shared::repos::chrome::Loaded;
 use codeyard_api_http::shared::repos::code::contributors::contributor_accounts;
 use codeyard_app::app::AppState;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_webui::app::Page;
 use codeyard_webui::components::charts::normalize_days;
 use codeyard_webui::components::charts::DailyActivity;
@@ -227,7 +227,7 @@ async fn dependencies(
         .unwrap_or(1)
         .clamp(1, 10_000);
     let revision = revision.or_else(|| snapshots.first().map(|snapshot| snapshot.sha.clone()));
-    let packages = codeyard_model::dependency_graph::packages(&snapshots);
+    let packages = codeyard_types::dependency_graph::packages(&snapshots);
     let offset = (page as usize - 1) * 30;
     let has_more = offset + 30 < packages.len();
     let rows = packages

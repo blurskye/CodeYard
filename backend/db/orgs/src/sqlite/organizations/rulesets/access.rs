@@ -1,16 +1,16 @@
 use super::*;
 use crate::sqlite::organizations::authority::site_administrator;
 use crate::sqlite::organizations::rulesets::view;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::queries::organizations::properties::PropertyValue;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_db_core::queries::rulesets::matching::RepositoryContext;
-use codeyard_db_core::queries::rulesets::records::ListFilter;
-use codeyard_db_core::queries::rulesets::records::Owner;
-use codeyard_db_core::queries::sqlite::organizations::authority::active;
-use codeyard_db_core::queries::sqlite::organizations::authority::authority;
-use codeyard_db_core::queries::sqlite::organizations::authority::read_authority;
-use codeyard_model::workflow_glob::WorkflowMatchBudget;
+use codeyard_database::models::Repository;
+use codeyard_database::queries::organizations::properties::PropertyValue;
+use codeyard_database::queries::organizations::OrganizationOutcome;
+use codeyard_database::queries::rulesets::matching::RepositoryContext;
+use codeyard_database::queries::rulesets::records::ListFilter;
+use codeyard_database::queries::rulesets::records::Owner;
+use codeyard_database::queries::sqlite::organizations::authority::active;
+use codeyard_database::queries::sqlite::organizations::authority::authority;
+use codeyard_database::queries::sqlite::organizations::authority::read_authority;
+use codeyard_types::workflow_glob::WorkflowMatchBudget;
 use sqlx::Sqlite;
 use sqlx::Transaction;
 use std::collections::HashMap;
@@ -39,7 +39,7 @@ pub(super) async fn authorize(
                     return Ok(Denied);
                 };
                 return Ok(Applied(
-                    codeyard_db_core::queries::sqlite::discussions::lock_admin_authority(
+                    codeyard_database::queries::sqlite::discussions::lock_admin_authority(
                         tx, actor, repo,
                     )
                     .await?,
@@ -64,7 +64,7 @@ pub(super) async fn authorize(
                 return Ok(Denied);
             }
             let level =
-                codeyard_db_core::queries::sqlite::repositories::access::user_repo_access_in_transaction(
+                codeyard_database::queries::sqlite::repositories::access::user_repo_access_in_transaction(
                     tx, actor, repo,
                 )
                 .await?;
@@ -130,7 +130,7 @@ pub async fn rows(
                 let values = if needs_properties {
                     let definitions =
                         crate::sqlite::organizations::properties::definitions_on(tx, org).await?;
-                    codeyard_db_core::queries::sqlite::organizations::properties::values_on(
+                    codeyard_database::queries::sqlite::organizations::properties::values_on(
                         tx,
                         repo,
                         &definitions,

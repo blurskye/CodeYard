@@ -5,7 +5,7 @@ use axum::extract::FromRequest;
 use axum::extract::Request;
 use axum::response::IntoResponse;
 use axum::response::Response;
-use codeyard_model::github_error::json_parse_error;
+use codeyard_types::github_error::json_parse_error;
 use serde::de::DeserializeOwned;
 
 /// `None` for an empty body or JSON `null`. Any other body must parse, whatever its content
@@ -14,7 +14,7 @@ pub(super) struct OptionalJson<T>(pub Option<T>);
 
 pub(super) fn decode<T: DeserializeOwned>(
     bytes: &[u8],
-) -> codeyard_model::github_error::Result<Option<T>> {
+) -> codeyard_types::github_error::Result<Option<T>> {
     if bytes.iter().all(u8::is_ascii_whitespace) {
         return Ok(None);
     }

@@ -4,7 +4,7 @@ use anyhow::Context;
 use anyhow::Result;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
-use codeyard_db_core::DbPool;
+use codeyard_database::DbPool;
 use codeyard_db_security::code_scanning::Finding;
 use codeyard_db_security::code_scanning::Run;
 use codeyard_db_security::code_scanning::Upload;
@@ -725,7 +725,7 @@ async fn notify(
     let dismissed = alert.dismissed_by;
     let mut people = vec![actor];
     people.extend(dismissed);
-    codeyard_repos_core::webhooks::emit(pool, &repo, "code_scanning_alert", people, move |owner, people| {
+    codeyard_git_storage::webhooks::emit(pool, &repo, "code_scanning_alert", people, move |owner, people| {
         let dismissed = dismissed.map(|id|codeyard_webhooks::payloads::person(&people.get(id)));
         let document = codeyard_webhooks::payloads::code_scanning::code_scanning_alert(&alert, std::slice::from_ref(&instance), owner, &snapshot.name, dismissed).expect("stored alert documents are valid JSON");
         let instance = &document["most_recent_instance"];
@@ -737,7 +737,7 @@ async fn notify(
 
 pub async fn dismiss(
     pool: &DbPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo: i64,
     number: i64,
     input: &codeyard_db_security::code_scanning::Dismissal<'_>,

@@ -1,7 +1,7 @@
 use anyhow::Result;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::Repository;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RepositoryTarget {
@@ -34,10 +34,10 @@ pub enum RepositoryStorageRefusal {
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct CreationAdmission<'a> {
-    pub authority: Option<&'a codeyard_db_core::queries::credentials::Actor>,
+    pub authority: Option<&'a codeyard_database::queries::credentials::Actor>,
     /// Only draft advisory remediation may have multiple forks per personal owner.
     pub advisory: Option<&'a str>,
-    pub foreign_source: Option<&'a codeyard_db_core::cells::repositories::Admission>,
+    pub foreign_source: Option<&'a codeyard_database::cells::repositories::Admission>,
 }
 
 pub struct NewRepository<'a> {
@@ -60,10 +60,10 @@ native_operation!(crate::postgres::repositories::creation::insert_repository,
 
 native_operation!(crate::postgres::repositories::creation::insert_repository_with_properties,
     crate::sqlite::repositories::creation::insert_repository_with_properties,
-    fn insert_repository_with_properties(pool: &DbPool, input: NewRepository<'_>, properties: &[codeyard_db_core::queries::organizations::properties::ValueInput]) -> Result<Option<Repository>>);
+    fn insert_repository_with_properties(pool: &DbPool, input: NewRepository<'_>, properties: &[codeyard_database::queries::organizations::properties::ValueInput]) -> Result<Option<Repository>>);
 native_operation!(crate::postgres::repositories::creation::insert_repository_with_admission,
     crate::sqlite::repositories::creation::insert_repository_with_admission,
-    fn insert_repository_with_admission(pool: &DbPool, input: NewRepository<'_>, properties: &[codeyard_db_core::queries::organizations::properties::ValueInput], admission: CreationAdmission<'_>) -> Result<Option<Repository>>);
+    fn insert_repository_with_admission(pool: &DbPool, input: NewRepository<'_>, properties: &[codeyard_database::queries::organizations::properties::ValueInput], admission: CreationAdmission<'_>) -> Result<Option<Repository>>);
 native_operation!(crate::postgres::repositories::creation::insert_gist_repository,crate::sqlite::repositories::creation::insert_gist_repository,
     fn insert_gist_repository(pool: &DbPool,input: NewRepository<'_>) -> Result<Option<Repository>>);
 
@@ -73,8 +73,8 @@ native_operation!(crate::postgres::repositories::creation::repository_visibility
 
 native_operation!(crate::postgres::repositories::creation::read_fork_source,
     crate::sqlite::repositories::creation::read_fork_source,
-    fn read_fork_source(pool: &DbPool, actor: &codeyard_db_core::queries::credentials::Actor, id: i64) -> Result<Option<Repository>>);
+    fn read_fork_source(pool: &DbPool, actor: &codeyard_database::queries::credentials::Actor, id: i64) -> Result<Option<Repository>>);
 
 native_operation!(crate::postgres::repositories::creation::read_repository_source,
     crate::sqlite::repositories::creation::read_repository_source,
-    fn read_repository_source(pool: &DbPool, actor: &codeyard_db_core::queries::credentials::Actor, id: i64) -> Result<Option<Repository>>);
+    fn read_repository_source(pool: &DbPool, actor: &codeyard_database::queries::credentials::Actor, id: i64) -> Result<Option<Repository>>);

@@ -26,10 +26,10 @@ async fn notice(
     user: i64,
     repo: i64,
     kind: &str,
-) -> anyhow::Result<codeyard_db_core::models::Notification> {
+) -> anyhow::Result<codeyard_database::models::Notification> {
     codeyard_db_repos::notifications::records::create_notification(
         f.pool(),
-        codeyard_db_core::queries::notifications::records::NewNotification {
+        codeyard_database::queries::notifications::records::NewNotification {
             user_id: user,
             actor_id: None,
             repo_id: Some(repo),
@@ -142,7 +142,7 @@ async fn contract(pg: bool) {
     assert!(notice(&f, user, repo, "test_notice")
         .await
         .unwrap_err()
-        .is::<codeyard_db_core::queries::notifications::records::NotificationSuppressed>());
+        .is::<codeyard_database::queries::notifications::records::NotificationSuppressed>());
     assert!(codeyard_db_repos::notifications::threads::subscribers(
         f.pool(),
         repo,

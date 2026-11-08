@@ -1,6 +1,6 @@
 use anyhow::Result;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 use codeyard_db_identity::github_apps::App;
 
 #[derive(Debug, thiserror::Error)]
@@ -63,7 +63,7 @@ pub(crate) fn deployment_ref(branch: &str) -> (&'static str, &str) {
 
 pub fn provider(app: &App) -> bool {
     serde_json::from_str::<serde_json::Value>(&app.permissions).is_ok_and(|permissions| {
-        codeyard_model::github_apps::allows(&permissions, "deployments", true)
+        codeyard_types::github_apps::allows(&permissions, "deployments", true)
     })
 }
 
@@ -72,9 +72,9 @@ native_operation!(crate::postgres::deployment_protection::rules, crate::sqlite::
 native_operation!(crate::postgres::deployment_protection::integrations, crate::sqlite::deployment_protection::integrations,
     fn integrations(pool: &DbPool, repo: i64) -> Result<Vec<App>>);
 native_operation!(crate::postgres::deployment_protection::create, crate::sqlite::deployment_protection::create,
-    fn create(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo: i64, environment: i64, app: i64) -> Result<Rule>);
+    fn create(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, repo: i64, environment: i64, app: i64) -> Result<Rule>);
 native_operation!(crate::postgres::deployment_protection::disable, crate::sqlite::deployment_protection::disable,
-    fn disable(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo: i64, environment: i64, rule: i64) -> Result<()>);
+    fn disable(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, repo: i64, environment: i64, rule: i64) -> Result<()>);
 native_operation!(crate::postgres::deployment_protection::gates, crate::sqlite::deployment_protection::gates,
     fn gates(pool: &DbPool, run: i64) -> Result<Vec<Gate>>);
 

@@ -12,7 +12,7 @@ use codeyard_identity as identity;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_notifications::NotificationEvent;
 
-async fn session(pool: &codeyard_db_core::DbPool, user: i64) -> String {
+async fn session(pool: &codeyard_database::DbPool, user: i64) -> String {
     let id = token();
     codeyard_db_identity::users::sessions::create_session(
         pool,
@@ -208,7 +208,7 @@ async fn profile_and_follow(pg: bool) {
             f.pool(),
             actor,
             other,
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+            &codeyard_database::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(f.pool(), actor).await
             )
         )
@@ -230,7 +230,7 @@ async fn profile_and_follow(pg: bool) {
         f.pool(),
         actor,
         other,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), actor).await
         )
     )
@@ -464,12 +464,15 @@ async fn audit_changes(pg: bool) {
         panic!("managed user")
     };
     assert!(user.is_admin);
-    assert!(
-        codeyard_db_cluster::node_config::set_ai_crawlers(f.pool(), actor, &session, "allow")
-            .await
-            .unwrap()
-    );
-    let node = codeyard_db_cluster::cluster::register_own_node(
+    assert!(codeyard_db_placement::node_config::set_ai_crawlers(
+        f.pool(),
+        actor,
+        &session,
+        "allow"
+    )
+    .await
+    .unwrap());
+    let node = codeyard_db_placement::cluster::register_own_node(
         f.pool(),
         &"a1".repeat(32),
         "audit_node",
@@ -479,9 +482,9 @@ async fn audit_changes(pg: bool) {
     .await
     .unwrap();
     for status in ["revoked", "active"] {
-        codeyard_db_cluster::cluster::set_node_status(
+        codeyard_db_placement::cluster::set_node_status(
             f.pool(),
-            codeyard_db_cluster::cluster::Authority::Administrator {
+            codeyard_db_placement::cluster::Authority::Administrator {
                 user_id: actor,
                 session: &session,
             },
@@ -493,12 +496,12 @@ async fn audit_changes(pg: bool) {
     }
     let query = "SELECT action,target_id FROM audit_log WHERE actor_id=$1 ORDER BY id";
     let rows: Vec<(String, i64)> = match f.pool() {
-        codeyard_db_core::DbPool::Postgres(raw) => sqlx::query_as(query)
+        codeyard_database::DbPool::Postgres(raw) => sqlx::query_as(query)
             .bind(actor)
             .fetch_all(raw)
             .await
             .unwrap(),
-        codeyard_db_core::DbPool::Sqlite(raw) => sqlx::query_as(query)
+        codeyard_database::DbPool::Sqlite(raw) => sqlx::query_as(query)
             .bind(actor)
             .fetch_all(raw)
             .await
@@ -595,7 +598,7 @@ async fn postgres_activity_reports_raw_exhaustion_not_authorized_row_count() {
 #[tokio::test]
 async fn sqlite_activity_and_cleanup_queries_seek_their_indexes() {
     let mut f = Database::new(false).await;
-    let codeyard_db_core::DbPool::Sqlite(raw) = f.pool() else {
+    let codeyard_database::DbPool::Sqlite(raw) = f.pool() else {
         unreachable!()
     };
     for (query,index) in [

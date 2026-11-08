@@ -10,10 +10,10 @@ use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
-use codeyard_repos_core::api_shared::github::contents::store_error;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_git_storage::api_shared::github::contents::store_error;
+use codeyard_git_storage::repositories::store::repo_store;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -44,7 +44,7 @@ async fn rename(
         Some(&[&branch, &input.new_name]),
         &state.ci_runs,
         actor,
-        codeyard_db_core::models::AccessLevel::Owner,
+        codeyard_database::models::AccessLevel::Owner,
     )
     .await
     .map_err(|_| {
@@ -124,8 +124,8 @@ async fn upstream(
 
 async fn complete_upstream(
     state: Arc<AppState>,
-    repo: codeyard_db_core::models::Repository,
-    parent: codeyard_db_core::models::Repository,
+    repo: codeyard_database::models::Repository,
+    parent: codeyard_database::models::Repository,
     input: Upstream,
     owner: String,
     base_branch: String,
@@ -144,7 +144,7 @@ async fn complete_upstream(
         )
         .await
         .map_err(store_error)?;
-    if merged.merge_type != codeyard_repos_core::store_types::UpstreamMergeType::None {
+    if merged.merge_type != codeyard_git_storage::store_types::UpstreamMergeType::None {
         // The branch moved, so its push workflows run as they do after any other push.
         state
             .ci_runs
@@ -152,7 +152,7 @@ async fn complete_upstream(
                 &repo,
                 &owner,
                 actor.id,
-                codeyard_repos_core::push_workflows::RefUpdate {
+                codeyard_git_storage::push_workflows::RefUpdate {
                     reference: format!("refs/heads/{}", input.branch),
                     old: Some(merged.old.clone()),
                     new: merged.sha.clone(),
@@ -167,7 +167,7 @@ async fn complete_upstream(
         Some(&[&input.branch]),
         &state.ci_runs,
         actor.id,
-        codeyard_db_core::models::AccessLevel::Owner,
+        codeyard_database::models::AccessLevel::Owner,
     )
     .await
     .map_err(|_| {
@@ -176,7 +176,7 @@ async fn complete_upstream(
             "Branch synchronized but pull request refresh failed",
         )
     })?;
-    use codeyard_repos_core::store_types::UpstreamMergeType;
+    use codeyard_git_storage::store_types::UpstreamMergeType;
     let message = match merged.merge_type {
         UpstreamMergeType::None => format!("Already up to date with upstream {base_branch}"),
         UpstreamMergeType::FastForward => {

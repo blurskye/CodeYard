@@ -53,7 +53,7 @@ async fn readiness_times_out_the_complete_database_ping() {
         .acquire_timeout(std::time::Duration::from_secs(60))
         .connect("sqlite::memory:")
         .await
-        .map(codeyard_db_core::pool::Pool::from)
+        .map(codeyard_database::pool::Pool::from)
         .unwrap();
     let held = raw.acquire().await.unwrap();
     let mut state = closed_state().await;
@@ -84,7 +84,7 @@ async fn shutdown_keeps_git_task_admission_open_while_http_handlers_drain() {
         .max_connections(1)
         .connect("sqlite::memory:")
         .await
-        .map(codeyard_db_core::pool::Pool::from)
+        .map(codeyard_database::pool::Pool::from)
         .unwrap();
     let held = raw.acquire().await.unwrap();
     let mut state = closed_state().await;
@@ -243,9 +243,9 @@ async fn incomplete_native_forms_are_bounded_and_expire_before_extraction() {
 
 #[tokio::test]
 async fn anonymous_slow_posts_cannot_block_authenticated_mutations() {
-    let pool = codeyard_db_core::init_db("sqlite::memory:").await.unwrap();
-    codeyard_db_core::run_migrations(&pool).await.unwrap();
-    codeyard_db_cluster::node_config::upsert_node_configuration(&pool, "public", true)
+    let pool = codeyard_database::init_db("sqlite::memory:").await.unwrap();
+    codeyard_database::run_migrations(&pool).await.unwrap();
+    codeyard_db_placement::node_config::upsert_node_configuration(&pool, "public", true)
         .await
         .unwrap();
     let user = codeyard_db_identity::users::accounts::create_user(&pool, "alice", None)
@@ -576,4 +576,4 @@ async fn a_get_at_a_form_url_goes_to_the_page_the_form_belongs_to() {
     }
 }
 
-use codeyard_test_support::closed_state;
+use codeyard_testing::closed_state;

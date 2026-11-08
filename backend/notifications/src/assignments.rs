@@ -9,8 +9,8 @@ use serde_json::json;
 
 /// The issue or pull request that users were assigned to.
 pub struct Assignment<'a> {
-    pub actor: &'a codeyard_db_core::models::User,
-    pub repository: &'a codeyard_db_core::models::Repository,
+    pub actor: &'a codeyard_database::models::User,
+    pub repository: &'a codeyard_database::models::Repository,
     pub owner: &'a str,
     pub repo: &'a str,
     pub number: i32,
@@ -23,7 +23,7 @@ pub struct Assignment<'a> {
 /// been saved, so a failure here never fails the request: a failed lookup is logged and the
 /// notification is dropped.
 pub async fn notify_assignees(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     broadcaster: &NotificationBroadcaster,
     assignment: &Assignment<'_>,
     assignees: &[i64],

@@ -2,7 +2,7 @@ use crate::variables::ensure_room;
 use crate::variables::validate;
 use crate::variables::Variable;
 use crate::variables::VariableError;
-use codeyard_db_core::pool::SqlitePool;
+use codeyard_database::pool::SqlitePool;
 
 /// Collaborator access, leaving out the read access a public repository gives everyone: as on
 /// GitHub, only collaborators read Actions variables.
@@ -11,7 +11,7 @@ pub(crate) async fn is_collaborator(
     actor: i64,
     repo: i64,
 ) -> sqlx::Result<bool> {
-    sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM (SELECT id,owner_kind,owner_user_id,owner_org_id,is_gist,is_stub,TRUE AS is_private FROM repositories WHERE id=?2) r JOIN users u ON u.id=?1 WHERE NOT r.is_stub AND NOT u.is_banned AND NOT u.must_change_password AND ((r.owner_kind='user' AND u.is_admin) OR ({})>=1))", codeyard_db_core::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL))
+    sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM (SELECT id,owner_kind,owner_user_id,owner_org_id,is_gist,is_stub,TRUE AS is_private FROM repositories WHERE id=?2) r JOIN users u ON u.id=?1 WHERE NOT r.is_stub AND NOT u.is_banned AND NOT u.must_change_password AND ((r.owner_kind='user' AND u.is_admin) OR ({})>=1))", codeyard_database::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL))
         .bind(actor)
         .bind(repo)
         .fetch_one(&mut **tx)
@@ -21,14 +21,14 @@ pub(crate) async fn is_collaborator(
 async fn credential_authority(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     actor: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     repo: i64,
     write: bool,
 ) -> Result<(), VariableError> {
     use codeyard_db_repos::repositories::credentials::repository_condition;
     use codeyard_db_repos::repositories::credentials::Access;
     use codeyard_db_repos::repositories::credentials::Reader;
-    if !codeyard_db_core::queries::sqlite::users::transitions::credential_live(
+    if !codeyard_database::queries::sqlite::users::transitions::credential_live(
         tx, actor, credential, write,
     )
     .await
@@ -53,7 +53,7 @@ async fn credential_authority(
 pub async fn list(
     pool: &SqlitePool,
     actor: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     repo: i64,
 ) -> Result<Vec<Variable>, VariableError> {
     let mut tx = pool.begin().await?;
@@ -71,7 +71,7 @@ pub async fn list(
 pub async fn save(
     pool: &SqlitePool,
     actor: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     repo: i64,
     previous: Option<&str>,
     name: &str,
@@ -79,7 +79,7 @@ pub async fn save(
 ) -> Result<(), VariableError> {
     validate(name, value.unwrap_or_default())?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    if !codeyard_db_core::queries::sqlite::discussions::lock_write_authority(&mut tx, actor, repo)
+    if !codeyard_database::queries::sqlite::discussions::lock_write_authority(&mut tx, actor, repo)
         .await
         .map_err(VariableError::Authority)?
     {
@@ -132,12 +132,12 @@ pub async fn save(
 pub async fn delete(
     pool: &SqlitePool,
     actor: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     repo: i64,
     name: &str,
 ) -> Result<(), VariableError> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    if !codeyard_db_core::queries::sqlite::discussions::lock_write_authority(&mut tx, actor, repo)
+    if !codeyard_database::queries::sqlite::discussions::lock_write_authority(&mut tx, actor, repo)
         .await
         .map_err(VariableError::Authority)?
     {

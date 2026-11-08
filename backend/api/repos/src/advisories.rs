@@ -15,8 +15,8 @@ use codeyard_api_http::context::PageContext;
 use codeyard_app::app::AppState;
 use codeyard_db_security::advisories::Listing;
 use codeyard_db_security::advisories::Scope;
-use codeyard_model::advisories::Advisory;
-use codeyard_model::advisories::Data;
+use codeyard_types::advisories::Advisory;
+use codeyard_types::advisories::Data;
 use codeyard_webui::app::Page;
 use codeyard_webui::pages::repos::advisories::Detail;
 use codeyard_webui::pages::repos::advisories::Draft;
@@ -100,7 +100,7 @@ async fn render(
                 ghsa,
             )
             .await?
-            .ok_or(codeyard_model::advisories::Refusal::Missing)?;
+            .ok_or(codeyard_types::advisories::Refusal::Missing)?;
             let data = Data::from_row(&advisory)?;
             page.draft = draft(&data);
             let fork_url = if let Some(id) = advisory.private_fork_id {
@@ -162,11 +162,11 @@ async fn render(
                 .get("page")
                 .map(|v| v.parse::<usize>())
                 .transpose()
-                .map_err(|_| codeyard_model::advisories::Refusal::Invalid)?
+                .map_err(|_| codeyard_types::advisories::Refusal::Invalid)?
                 .unwrap_or(1);
             anyhow::ensure!(
                 (1..=5000).contains(&number),
-                codeyard_model::advisories::Refusal::Invalid
+                codeyard_types::advisories::Refusal::Invalid
             );
             page.page = number;
             let mut rows = codeyard_db_security::advisories::list(
@@ -190,11 +190,11 @@ async fn render(
     }
     .await;
     if let Err(error) = data {
-        return match error.downcast_ref::<codeyard_model::advisories::Refusal>() {
-            Some(codeyard_model::advisories::Refusal::Missing) => {
+        return match error.downcast_ref::<codeyard_types::advisories::Refusal>() {
+            Some(codeyard_types::advisories::Refusal::Missing) => {
                 ctx.error(StatusCode::NOT_FOUND, "Advisory not found.")
             }
-            Some(codeyard_model::advisories::Refusal::Invalid) => {
+            Some(codeyard_types::advisories::Refusal::Invalid) => {
                 ctx.error(StatusCode::BAD_REQUEST, "Invalid advisory page.")
             }
             _ => codeyard_api_http::shared::repos::chrome::unavailable(ctx),
@@ -310,7 +310,7 @@ async fn submit(
             value["vulnerabilities"]=if draft.package.is_empty(){json!([])}else{json!([{"package":{"ecosystem":draft.ecosystem,"name":draft.package},"vulnerable_version_range":draft.range}])};
         }
         if op == "save" && form.contains_key("vulnerabilities_json") {
-            value["vulnerabilities"] = serde_json::from_str::<serde_json::Value>(&draft.vulnerabilities_json).map_err(|_| codeyard_model::advisories::Refusal::Invalid)?;
+            value["vulnerabilities"] = serde_json::from_str::<serde_json::Value>(&draft.vulnerabilities_json).map_err(|_| codeyard_types::advisories::Refusal::Invalid)?;
         }
         match op.as_str() {
             "create"=>{
@@ -320,7 +320,7 @@ async fn submit(
             "publish"|"close"|"draft"=>{let state=match op.as_str(){"publish"=>"published","close"=>"closed",_=>"draft"};codeyard_db_security::advisories::update(&ctx.state.pool,authority.clone(),loaded.repository.id,&ghsa,&json!({"state":state})).await?;}
             "cve"=>codeyard_db_security::advisories::request_cve(&ctx.state.pool,authority.clone(),loaded.repository.id,&ghsa).await?,
             "fork"=>{codeyard_repos_pulls::repositories::advisories::private_fork(&ctx.state,authority.clone(),&loaded.repository,&ghsa).await?;}
-            _=>anyhow::bail!(codeyard_model::advisories::Refusal::Invalid),
+            _=>anyhow::bail!(codeyard_types::advisories::Refusal::Invalid),
         }
         Ok::<_,anyhow::Error>(ghsa.clone())
     }.await;
@@ -334,9 +334,9 @@ async fn submit(
             let status = if error.is::<codeyard_types::credentials::AccountRestricted>() {
                 StatusCode::FORBIDDEN
             } else {
-                match error.downcast_ref::<codeyard_model::advisories::Refusal>() {
-                    Some(codeyard_model::advisories::Refusal::Denied) => StatusCode::FORBIDDEN,
-                    Some(codeyard_model::advisories::Refusal::Missing) => StatusCode::NOT_FOUND,
+                match error.downcast_ref::<codeyard_types::advisories::Refusal>() {
+                    Some(codeyard_types::advisories::Refusal::Denied) => StatusCode::FORBIDDEN,
+                    Some(codeyard_types::advisories::Refusal::Missing) => StatusCode::NOT_FOUND,
                     Some(_) => StatusCode::UNPROCESSABLE_ENTITY,
                     None => StatusCode::SERVICE_UNAVAILABLE,
                 }

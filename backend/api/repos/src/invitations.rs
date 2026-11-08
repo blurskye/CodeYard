@@ -56,7 +56,7 @@ async fn load(ctx: &PageContext, actor: i64, page: usize) -> Result<view::Page, 
             owner: row.owner,
             repository: row.repository,
             inviter: row.inviter,
-            access: codeyard_db_core::models::AccessLevel::from(row.invitation.permission)
+            access: codeyard_database::models::AccessLevel::from(row.invitation.permission)
                 .as_str()
                 .into(),
             created: row.invitation.created_at.to_rfc3339(),

@@ -5,7 +5,7 @@ use axum::{
     body::{to_bytes, Body},
     http::{header, Request, StatusCode},
 };
-use codeyard_db_core::models::OrgRole;
+use codeyard_database::models::OrgRole;
 use codeyard_db_orgs::organizations::membership::add_organization_member;
 use codeyard_db_orgs::organizations::teams::add_organization_team_member;
 use codeyard_db_orgs::organizations::teams::grant_organization_team_repository;

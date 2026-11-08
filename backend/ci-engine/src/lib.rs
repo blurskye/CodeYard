@@ -21,7 +21,7 @@ pub mod refs;
 #[cfg(test)]
 mod tests {
 
-    use codeyard_db_core::ci_messages::visible_run_error;
+    use codeyard_database::ci_messages::visible_run_error;
 
     #[test]
     fn a_runners_error_text_is_replaced_and_the_servers_own_messages_pass() {

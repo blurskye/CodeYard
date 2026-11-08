@@ -41,7 +41,7 @@ impl World {
         let dave_id = database.actor("dave").await;
         let erin_id = database.actor("erin").await;
         let root = tempfile::tempdir().unwrap();
-        let repository = codeyard_repos_core::repositories::lifecycle::provision(
+        let repository = codeyard_git_storage::repositories::lifecycle::provision(
             (database.pool(), None),
             root.path(),
             codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
@@ -53,9 +53,9 @@ impl World {
         .await
         .unwrap();
         for (user, level) in [
-            (bob_id, codeyard_db_core::models::AccessLevel::Write),
-            (carol_id, codeyard_db_core::models::AccessLevel::Write),
-            (dave_id, codeyard_db_core::models::AccessLevel::Read),
+            (bob_id, codeyard_database::models::AccessLevel::Write),
+            (carol_id, codeyard_database::models::AccessLevel::Write),
+            (dave_id, codeyard_database::models::AccessLevel::Read),
         ] {
             codeyard_db_repos::repositories::access::grant_repo_access(
                 database.pool(),
@@ -973,9 +973,9 @@ async fn postgres_author_and_summary_rules_for_submitted_reviews() {
 /// The refusal a database write failed with, if it was one.
 fn refusal(
     error: &anyhow::Error,
-) -> Option<codeyard_db_core::queries::discussions::DiscussionWriteRefusal> {
+) -> Option<codeyard_database::queries::discussions::DiscussionWriteRefusal> {
     error
-        .downcast_ref::<codeyard_db_core::queries::discussions::DiscussionWriteRefusal>()
+        .downcast_ref::<codeyard_database::queries::discussions::DiscussionWriteRefusal>()
         .copied()
 }
 
@@ -1086,7 +1086,7 @@ async fn pending_review_holds_at_most_200_comments(pg: bool) {
     assert!(
         matches!(
             refusal(&error),
-            Some(codeyard_db_core::queries::discussions::DiscussionWriteRefusal::ReviewFull)
+            Some(codeyard_database::queries::discussions::DiscussionWriteRefusal::ReviewFull)
         ),
         "{error:#}"
     );
@@ -1126,7 +1126,7 @@ async fn writes_recheck_the_pull_request_and_the_pending_review(pg: bool) {
     assert!(
         matches!(
             refusal(&error),
-            Some(codeyard_db_core::queries::discussions::DiscussionWriteRefusal::InvalidReview)
+            Some(codeyard_database::queries::discussions::DiscussionWriteRefusal::InvalidReview)
         ),
         "{error:#}"
     );
@@ -1163,7 +1163,7 @@ async fn writes_recheck_the_pull_request_and_the_pending_review(pg: bool) {
         pool,
         pr_id,
         world.bob_id,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(pool, world.bob_id).await,
         ),
         "commented",
@@ -1175,7 +1175,7 @@ async fn writes_recheck_the_pull_request_and_the_pending_review(pg: bool) {
     assert!(
         matches!(
             refusal(&error),
-            Some(codeyard_db_core::queries::discussions::DiscussionWriteRefusal::EmptyReview)
+            Some(codeyard_database::queries::discussions::DiscussionWriteRefusal::EmptyReview)
         ),
         "{error:#}"
     );
@@ -1184,7 +1184,7 @@ async fn writes_recheck_the_pull_request_and_the_pending_review(pg: bool) {
         pool,
         pr_id,
         world.bob_id,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(pool, world.bob_id).await,
         ),
         "commented",
@@ -1316,7 +1316,7 @@ async fn reviews_past_the_old_limit_stay_on_the_conversation(pg: bool) {
             pool,
             pr_id,
             world.bob_id,
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+            &codeyard_database::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(pool, world.bob_id).await,
             ),
             "commented",

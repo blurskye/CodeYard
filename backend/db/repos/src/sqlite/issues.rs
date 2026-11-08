@@ -8,10 +8,10 @@ use crate::issues::IssueRelation;
 use crate::issues::ViewerIssueEntry;
 use crate::labels::LabelTarget;
 use anyhow::Result;
-use codeyard_db_core::models::Issue;
-use codeyard_db_core::models::IssueComment;
-use codeyard_db_core::pool::SqlitePool;
-use codeyard_db_core::queries::discussions::DiscussionWriteRefusal;
+use codeyard_database::models::Issue;
+use codeyard_database::models::IssueComment;
+use codeyard_database::pool::SqlitePool;
+use codeyard_database::queries::discussions::DiscussionWriteRefusal;
 use codeyard_db_identity::relationships::Kind;
 use codeyard_db_identity::relationships::Mutation;
 use sqlx::Sqlite;
@@ -33,7 +33,7 @@ pub async fn issue_repositories(pool: &SqlitePool, ids: &[i64]) -> Result<Vec<(i
 pub async fn create_issue_with_metadata(
     pool: &SqlitePool,
     repo_id: i64,
-    author_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    author_id: impl Into<codeyard_database::queries::credentials::Actor>,
     title: &str,
     body: &str,
     metadata: IssueMetadata<'_>,
@@ -49,7 +49,7 @@ pub async fn create_issue_with_metadata(
     crate::sqlite::discussions::require_contribution_authority(&mut tx, author_id, repo_id).await?;
     if !metadata.labels.is_empty() || !metadata.assignees.is_empty() {
         anyhow::ensure!(
-            codeyard_db_core::queries::sqlite::discussions::lock_triage_authority(
+            codeyard_database::queries::sqlite::discussions::lock_triage_authority(
                 &mut tx, author_id, repo_id
             )
             .await?,
@@ -58,7 +58,7 @@ pub async fn create_issue_with_metadata(
     }
     if metadata.milestone.is_some() || metadata.issue_type.is_some() {
         anyhow::ensure!(
-            codeyard_db_core::queries::sqlite::discussions::lock_write_authority(
+            codeyard_database::queries::sqlite::discussions::lock_write_authority(
                 &mut tx, author_id, repo_id
             )
             .await?,
@@ -66,7 +66,7 @@ pub async fn create_issue_with_metadata(
         );
     }
     anyhow::ensure!(
-        codeyard_db_core::queries::sqlite::credentials::repository(
+        codeyard_database::queries::sqlite::credentials::repository(
             &mut tx, &authority, repo_id, "issues", true
         )
         .await?,
@@ -211,7 +211,7 @@ pub async fn issue_ids_by_numbers(
     numbers: &[i32],
 ) -> Result<Vec<(i64, i32)>> {
     anyhow::ensure!(numbers.len() <= 500, "Too many issue numbers");
-    Ok(sqlx::query_as(&format!("SELECT i.id,i.number FROM issues i JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id=?3 WHERE i.repo_id=?1 AND i.number IN (SELECT value FROM json_each(?2)) AND {} ORDER BY i.number,i.id", codeyard_db_core::queries::sqlite::repositories::access::readable_condition())).bind(repo).bind(serde_json::to_string(numbers)?).bind(viewer).fetch_all(pool).await?)
+    Ok(sqlx::query_as(&format!("SELECT i.id,i.number FROM issues i JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id=?3 WHERE i.repo_id=?1 AND i.number IN (SELECT value FROM json_each(?2)) AND {} ORDER BY i.number,i.id", codeyard_database::queries::sqlite::repositories::access::readable_condition())).bind(repo).bind(serde_json::to_string(numbers)?).bind(viewer).fetch_all(pool).await?)
 }
 
 pub async fn get_issues_by_ids(pool: &SqlitePool, repo_id: i64, ids: &[i64]) -> Result<Vec<Issue>> {
@@ -264,7 +264,7 @@ pub async fn list_repo_issues(
     ))
     .bind(repo_id)
     .bind(filter.state)
-    .bind(filter.search.map(codeyard_db_core::queries::sqlite::search::contains))
+    .bind(filter.search.map(codeyard_database::queries::sqlite::search::contains))
     .bind(limit)
     .bind(filter.author_id)
     .bind(assignee_mode)
@@ -364,7 +364,7 @@ pub async fn count_repo_issues(
         GROUP BY i.state",
     )
     .bind(repo_id)
-    .bind(filter.search.map(codeyard_db_core::queries::sqlite::search::contains))
+    .bind(filter.search.map(codeyard_database::queries::sqlite::search::contains))
     .bind(filter.author_id)
     .bind(assignee_mode)
     .bind(assignee_id)
@@ -401,7 +401,7 @@ pub async fn update_issue_with_reason(
     let Some(repo) = repo else {
         return Ok(None);
     };
-    if !codeyard_db_core::queries::sqlite::discussions::lock_write_authority(
+    if !codeyard_database::queries::sqlite::discussions::lock_write_authority(
         &mut tx,
         edit.actor_id,
         repo,
@@ -446,11 +446,11 @@ pub(crate) async fn update_issue_in_transaction(
     let Some((state, stored_revision, old_title)) = stored else {
         return Ok(None);
     };
-    let previous = codeyard_db_core::queries::sqlite::time::decode(&stored_revision)?;
+    let previous = codeyard_database::queries::sqlite::time::decode(&stored_revision)?;
     if state != edit.expected_state || previous != edit.expected_updated {
         return Ok(None);
     }
-    let next = codeyard_db_core::queries::sqlite::time::next_revision(previous)?;
+    let next = codeyard_database::queries::sqlite::time::next_revision(previous)?;
     anyhow::ensure!(
         crate::issues::valid_state_reason(edit.state.unwrap_or(edit.expected_state), state_reason),
         "Invalid state reason"
@@ -495,13 +495,13 @@ pub async fn add_issue_comment(
     issue_id: i64,
     author_id: i64,
     body: &str,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
 ) -> Result<IssueComment> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     crate::sqlite::discussions::lock_issue_contribution(&mut tx, author_id, repo_id, issue_id)
         .await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::sqlite::users::transitions::credential_live(
+        codeyard_database::queries::sqlite::users::transitions::credential_live(
             &mut tx, author_id, credential, true
         )
         .await?,
@@ -511,8 +511,8 @@ pub async fn add_issue_comment(
         .bind(issue_id)
         .fetch_one(&mut *tx)
         .await?;
-    let next = codeyard_db_core::queries::sqlite::time::next_revision(
-        codeyard_db_core::queries::sqlite::time::decode(&revision)?,
+    let next = codeyard_database::queries::sqlite::time::next_revision(
+        codeyard_database::queries::sqlite::time::decode(&revision)?,
     )?;
     let comment = sqlx::query_as::<_, IssueComment>(
         r#"
@@ -620,7 +620,7 @@ pub async fn list_viewer_issues(
         (0..=500).contains(&limit),
         "Result limit must be between 0 and 500"
     );
-    let access = codeyard_db_core::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
+    let access = codeyard_database::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
     let relation_sql = viewer_issue_sql(relation);
     // One snapshot for the rows, their comment counts and their labels: an issue transferred
     // between the reads cannot bring its new repository's labels or comments to this list.
@@ -647,7 +647,7 @@ pub async fn list_viewer_issues(
     let ids = issues.iter().map(|issue| issue.id).collect::<Vec<_>>();
     if !ids.is_empty() {
         let mut labels =
-            std::collections::BTreeMap::<i64, Vec<codeyard_db_core::models::Label>>::new();
+            std::collections::BTreeMap::<i64, Vec<codeyard_database::models::Label>>::new();
         for row in
             crate::sqlite::labels::get_items_labels(&mut tx, LabelTarget::Issue, None, &ids).await?
         {
@@ -667,7 +667,7 @@ pub async fn count_viewer_issues(
     viewer_id: i64,
     relation: IssueRelation,
 ) -> Result<StateCounts> {
-    let access = codeyard_db_core::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
+    let access = codeyard_database::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
     let relation_sql = viewer_issue_sql(relation);
     let rows = sqlx::query_as::<_, (String, i64)>(&format!(
         r"SELECT CASE WHEN i.state = 'open' THEN 'open' ELSE 'closed' END AS bucket, COUNT(*)
@@ -715,20 +715,20 @@ pub async fn edit_issue_comment(
     comment_id: i64,
     body: &str,
     expected_body: &str,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
 ) -> Result<Option<IssueComment>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     if !crate::sqlite::discussions::lock_contribution_authority(&mut tx, actor_id, repo_id).await? {
         return Ok(None);
     }
     anyhow::ensure!(
-        codeyard_db_core::queries::sqlite::users::transitions::credential_live(
+        codeyard_database::queries::sqlite::users::transitions::credential_live(
             &mut tx, actor_id, credential, true
         )
         .await?,
         codeyard_types::credentials::AccountRestricted
     );
-    let writer = codeyard_db_core::queries::sqlite::discussions::lock_write_authority(
+    let writer = codeyard_database::queries::sqlite::discussions::lock_write_authority(
         &mut tx, actor_id, repo_id,
     )
     .await?;
@@ -757,7 +757,7 @@ pub async fn edit_issue_comment(
     .bind(comment_id)
     .bind(body)
     .bind(expected_body)
-    .bind(codeyard_db_core::queries::sqlite::time::next_revision(
+    .bind(codeyard_database::queries::sqlite::time::next_revision(
         previous,
     )?)
     .fetch_optional(&mut *tx)
@@ -778,20 +778,20 @@ pub async fn delete_issue_comment(
     repo_id: i64,
     issue_id: i64,
     comment_id: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
 ) -> Result<Option<IssueComment>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     if !crate::sqlite::discussions::lock_contribution_authority(&mut tx, actor_id, repo_id).await? {
         return Ok(None);
     }
     anyhow::ensure!(
-        codeyard_db_core::queries::sqlite::users::transitions::credential_live(
+        codeyard_database::queries::sqlite::users::transitions::credential_live(
             &mut tx, actor_id, credential, true
         )
         .await?,
         codeyard_types::credentials::AccountRestricted
     );
-    let writer = codeyard_db_core::queries::sqlite::discussions::lock_write_authority(
+    let writer = codeyard_database::queries::sqlite::discussions::lock_write_authority(
         &mut tx, actor_id, repo_id,
     )
     .await?;

@@ -19,12 +19,12 @@ use chrono::{Duration as ChronoDuration, Utc};
 use codeyard_db_identity::users::tokens;
 use codeyard_db_repos::repositories::protection::BranchProtectionRuleUpsert;
 use codeyard_git::error::RepoError;
-use codeyard_repos_core::repositories::git_sessions::ReceiveCredential;
-use codeyard_repos_core::store_types::GitService;
-use codeyard_repos_core::store_types::GitSession;
-use codeyard_repos_core::store_types::GitStreams;
-use codeyard_repos_core::wire::Operation;
-use codeyard_repos_core::wire::Request;
+use codeyard_git_storage::repositories::git_sessions::ReceiveCredential;
+use codeyard_git_storage::store_types::GitService;
+use codeyard_git_storage::store_types::GitSession;
+use codeyard_git_storage::store_types::GitStreams;
+use codeyard_git_storage::wire::Operation;
+use codeyard_git_storage::wire::Request;
 use reqwest::{Client, StatusCode};
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -38,7 +38,7 @@ use crate::support::git_remote::tool;
 use crate::support::git_remote::Server;
 
 async fn refused_receive(
-    context: &codeyard_repos_core::context::NodeContext,
+    context: &codeyard_git_storage::context::NodeContext,
     node: i64,
     repository: uuid::Uuid,
     credential: ReceiveCredential,
@@ -75,7 +75,7 @@ async fn remote_http_and_builtin_ssh_push_clone_fetch_and_receive_hooks() {
     crate::support::native_database::enable_cluster(&database.pool)
         .await
         .unwrap();
-    codeyard_db_cluster::node_config::upsert_node_configuration(&database.pool, "public", true)
+    codeyard_db_placement::node_config::upsert_node_configuration(&database.pool, "public", true)
         .await
         .unwrap();
     let owner =
@@ -181,7 +181,7 @@ async fn remote_http_and_builtin_ssh_push_clone_fetch_and_receive_hooks() {
     .unwrap();
     assert_eq!(repository.storage_node_id, Some(storage.node_id));
     assert!(!Path::new(&repository.disk_path).exists());
-    let uuid = codeyard_repos_core::wire::repository_uuid(&repository.disk_path).unwrap();
+    let uuid = codeyard_git_storage::wire::repository_uuid(&repository.disk_path).unwrap();
     let storage_path = root
         .path()
         .join("storage/repos")
@@ -517,12 +517,12 @@ async fn remote_http_and_builtin_ssh_push_clone_fetch_and_receive_hooks() {
 
     // Bypass ingress to verify storage-side role, placement and credential checks.
     let caller_disk = root.path().join("rpc-caller");
-    let caller = codeyard_cluster::start(
+    let caller = codeyard_placement::start(
         &database.pool,
         &caller_disk.join("state"),
         &caller_disk,
         &"web".parse().unwrap(),
-        codeyard_cluster_core::settings::Settings::from_lookup(&|name| match name {
+        codeyard_nodes::settings::Settings::from_lookup(&|name| match name {
             "IROH_BIND" => Some("127.0.0.1:0".into()),
             "NODE_NAME" => Some("git-caller".into()),
             _ => None,
@@ -585,7 +585,7 @@ async fn remote_http_and_builtin_ssh_push_clone_fetch_and_receive_hooks() {
     let error = refused_receive(
         &caller.context,
         storage.node_id,
-        codeyard_repos_core::wire::repository_uuid(&elsewhere.disk_path).unwrap(),
+        codeyard_git_storage::wire::repository_uuid(&elsewhere.disk_path).unwrap(),
         ReceiveCredential::Token(*write_id),
         &owner.username,
     )

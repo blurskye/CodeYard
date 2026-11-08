@@ -11,7 +11,7 @@ use anyhow::Result;
 use axum::response::IntoResponse;
 use codeyard_api_http::context::PageContext;
 use codeyard_app::app::AppState;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_git_storage::repositories::store::repo_store;
 
 /// Listed metadata is reused; storage still owns placement checks and pending-write recovery.
 async fn cards(
@@ -241,7 +241,7 @@ pub(super) async fn detail_model(ctx: &PageContext, id: &str) -> Result<view::De
     let history_more = history.len() > PAGE_SIZE;
     history.truncate(PAGE_SIZE);
     let mut revisions = Vec::new();
-    let authors = codeyard_repos_core::repositories::reads::commit_authors(
+    let authors = codeyard_git_storage::repositories::reads::commit_authors(
         &ctx.state.pool,
         &history
             .iter()
@@ -328,7 +328,7 @@ pub(super) async fn detail_model(ctx: &PageContext, id: &str) -> Result<view::De
         parent,
         git_url: format!(
             "{}/gists/{id}.git",
-            codeyard_model::http_config::http_clone_base().trim_end_matches('/')
+            codeyard_types::http_config::http_clone_base().trim_end_matches('/')
         ),
         files,
         revisions,

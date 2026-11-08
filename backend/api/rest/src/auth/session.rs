@@ -14,9 +14,9 @@ pub(crate) struct LoginSessionRequest {
 
 impl LoginSessionRequest {
     pub(crate) fn from_headers(
-        pool: &codeyard_db_core::DbPool,
+        pool: &codeyard_database::DbPool,
         headers: &HeaderMap,
-    ) -> Result<Self, codeyard_types::cells::Invalid> {
+    ) -> Result<Self, codeyard_types::cell_ids::Invalid> {
         let old = extract_session_id(headers);
         let invalid_initiator =
             old.is_none() && codeyard_api_http::session::has_session_cookie(headers);

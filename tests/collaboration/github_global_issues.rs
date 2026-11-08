@@ -27,7 +27,7 @@ async fn lists(pg: bool) {
     .await
     .unwrap()
     {
-        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(org) => org,
+        codeyard_database::queries::organizations::OrganizationOutcome::Applied(org) => org,
         _ => panic!("organization creation"),
     };
     let root = tempfile::tempdir().unwrap();
@@ -46,7 +46,7 @@ async fn lists(pg: bool) {
         ),
     ] {
         repos.push(
-            codeyard_repos_core::repositories::lifecycle::provision(
+            codeyard_git_storage::repositories::lifecycle::provision(
                 (f.pool(), None),
                 root.path(),
                 owner,
@@ -75,7 +75,7 @@ async fn lists(pg: bool) {
         f.pool(),
         alice,
         repos[1].id,
-        codeyard_db_core::models::AccessLevel::Read,
+        codeyard_database::models::AccessLevel::Read,
     )
     .await
     .unwrap();

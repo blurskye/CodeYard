@@ -14,16 +14,16 @@ use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
 
 pub(crate) fn operation_error(
-    error: codeyard_repos_core::repositories::pull_requests::OperationError,
+    error: codeyard_git_storage::repositories::pull_requests::OperationError,
 ) -> Error {
-    use codeyard_repos_core::repositories::pull_requests::OperationError::*;
+    use codeyard_git_storage::repositories::pull_requests::OperationError::*;
     match error {
         Missing { .. } => Error::missing(),
         Unauthenticated { .. } => codeyard_identity::github_auth::required(),
@@ -73,7 +73,7 @@ async fn create_value(
     let viewer = viewer.ok_or_else(codeyard_identity::github_auth::required)?;
     let actor = viewer.user.clone();
     let input: Create =
-        serde_json::from_slice(&body).map_err(codeyard_model::github_error::json_parse_error)?;
+        serde_json::from_slice(&body).map_err(codeyard_types::github_error::json_parse_error)?;
     let source = match input.issue {
         Some(number) => {
             codeyard_repos_pulls::repositories::pull_requests::mutations::PullRequestSource::Issue {
@@ -118,7 +118,7 @@ async fn create_value(
         &state.pool,
         &state.ci_runs,
         &state.notification_broadcaster,
-        codeyard_repos_core::store_types::PullHeadActor {
+        codeyard_git_storage::store_types::PullHeadActor {
             user: actor.id,
             token: Some(viewer.token.id),
         },
@@ -196,7 +196,7 @@ async fn update_value(
     let input: Update = if body.is_empty() {
         Update::default()
     } else {
-        serde_json::from_slice(&body).map_err(codeyard_model::github_error::json_parse_error)?
+        serde_json::from_slice(&body).map_err(codeyard_types::github_error::json_parse_error)?
     };
     let pull = codeyard_repos_pulls::repositories::pull_requests::mutations::update_pull_request_latest(
         &state.pool,

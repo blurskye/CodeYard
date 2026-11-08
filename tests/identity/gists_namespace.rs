@@ -7,11 +7,11 @@ use codeyard_app::app::AppState;
 use codeyard_app::gists;
 use codeyard_app::gists::CreateGist;
 use codeyard_ci::config::CiConfig;
-use codeyard_db_core::queries::users::accounts::AccountCredential;
+use codeyard_database::queries::users::accounts::AccountCredential;
 use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
 use codeyard_db_repos::repositories::creation::RepositoryTarget;
+use codeyard_git_storage::repositories::lifecycle;
 use codeyard_repos::gists::GistCredential;
-use codeyard_repos_core::repositories::lifecycle;
 use codeyard_storage::ObjectStore;
 use std::{collections::BTreeMap, sync::Arc};
 
@@ -87,7 +87,7 @@ async fn namespace(pg: bool) {
         .to_string()
     };
     assert!(
-        codeyard_db_cluster::cluster::bump_write_version(f.pool(), repo.id, None)
+        codeyard_db_placement::cluster::bump_write_version(f.pool(), repo.id, None)
             .await
             .unwrap()
     );
@@ -387,7 +387,7 @@ async fn namespace(pg: bool) {
     .await
     .unwrap()
     {
-        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(org) => org,
+        codeyard_database::queries::organizations::OrganizationOutcome::Applied(org) => org,
         _ => panic!("organization refused"),
     };
     f.execute(

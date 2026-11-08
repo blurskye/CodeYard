@@ -18,9 +18,9 @@ use codeyard_db_repos::repository_exports as exports;
 use codeyard_db_repos::repository_exports::ExportOptions;
 use codeyard_db_repos::repository_exports::ExportRefusal;
 use codeyard_db_repos::repository_exports::RepositoryExport;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
 use codeyard_storage::Download;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -190,23 +190,23 @@ async fn document(
             site_admin: false,
         });
         owner["type"] = json!("Organization");
-        owner["node_id"] = json!(codeyard_model::node_id::encode("O", id));
+        owner["node_id"] = json!(codeyard_types::node_id::encode("O", id));
         owner
     } else {
         codeyard_webhooks::payloads::user(&actor.user)
     };
     let mut value = json!({
-        "id": row.id, "node_id": row.owner_org_id.or(row.owner_user_id).and_then(|root| codeyard_model::node_id::scoped("MIG",root,row.id)), "owner": owner, "guid": row.guid, "state": if expired { "failed" } else { &row.state },
+        "id": row.id, "node_id": row.owner_org_id.or(row.owner_user_id).and_then(|root| codeyard_types::node_id::scoped("MIG",root,row.id)), "owner": owner, "guid": row.guid, "state": if expired { "failed" } else { &row.state },
         "lock_repositories": options.lock_repositories, "exclude_metadata": options.exclude_metadata,
         "exclude_git_data": options.exclude_git_data, "exclude_attachments": options.exclude_attachments,
         "exclude_releases": options.exclude_releases, "exclude_owner_projects": options.exclude_owner_projects,
         "org_metadata_only": options.org_metadata_only,
-        "url": codeyard_model::urls::api_url(&path), "created_at": time(row.created_at), "updated_at": time(row.updated_at),
+        "url": codeyard_types::urls::api_url(&path), "created_at": time(row.created_at), "updated_at": time(row.updated_at),
         "repositories": if exclude { Vec::new() } else { selected(state, actor, row).await? },
         "exclude": if exclude { vec!["repositories"] } else { Vec::<&str>::new() }
     });
     if row.state == "exported" && !row.archive_deleted {
-        value["archive_url"] = json!(codeyard_model::urls::api_url(&format!("{path}/archive")));
+        value["archive_url"] = json!(codeyard_types::urls::api_url(&format!("{path}/archive")));
     }
     Ok(value)
 }
@@ -392,7 +392,7 @@ async fn download(
         StatusCode::FOUND,
         [(
             header::LOCATION,
-            codeyard_model::urls::api_url(&format!("/migration-archives/{}", row.guid)),
+            codeyard_types::urls::api_url(&format!("/migration-archives/{}", row.guid)),
         )],
     )
         .into_response())

@@ -25,8 +25,8 @@ impl std::fmt::Debug for ImportCredential {
 impl ImportCredential {
     pub async fn user(
         &self,
-        pool: &codeyard_db_core::DbPool,
-    ) -> anyhow::Result<Option<codeyard_db_core::models::User>> {
+        pool: &codeyard_database::DbPool,
+    ) -> anyhow::Result<Option<codeyard_database::models::User>> {
         match self {
             Self::Token(id) => {
                 codeyard_db_identity::users::tokens::token_user(pool, *id, true).await

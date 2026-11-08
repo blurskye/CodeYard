@@ -99,7 +99,7 @@ jobs:
       - name: Build the test helpers
         # The OpenSSH tests run this CLI as a separate process, and the engine tests run the
         # in-house workflow runner.
-        run: cargo build --locked -p codeyard -p codeyard-actions --bin codeyard --bin codeyard-actions
+        run: cargo build --locked -p codeyard -p codeyard-runner --bin codeyard --bin codeyard-actions
       - name: Build the pinned patched act
         # The engine tests need the pinned act version, with the patch that scopes
         # environment values to each job. The tarball must match the pinned SHA-256 digest.

@@ -8,11 +8,11 @@ use crate::issues::IssueRelation;
 use crate::issues::ViewerIssueEntry;
 use crate::labels::LabelTarget;
 use anyhow::Result;
-use codeyard_db_core::models::Issue;
-use codeyard_db_core::models::IssueComment;
-use codeyard_db_core::pool::PgPool;
-use codeyard_db_core::queries::discussions::contains_pattern;
-use codeyard_db_core::queries::discussions::DiscussionWriteRefusal;
+use codeyard_database::models::Issue;
+use codeyard_database::models::IssueComment;
+use codeyard_database::pool::PgPool;
+use codeyard_database::queries::discussions::contains_pattern;
+use codeyard_database::queries::discussions::DiscussionWriteRefusal;
 use codeyard_db_identity::relationships::Kind;
 use codeyard_db_identity::relationships::Mutation;
 use sqlx::Postgres;
@@ -32,7 +32,7 @@ pub async fn issue_repositories(pool: &PgPool, ids: &[i64]) -> Result<Vec<(i64, 
 pub async fn create_issue_with_metadata(
     pool: &PgPool,
     repo_id: i64,
-    author_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    author_id: impl Into<codeyard_database::queries::credentials::Actor>,
     title: &str,
     body: &str,
     metadata: IssueMetadata<'_>,
@@ -44,7 +44,7 @@ pub async fn create_issue_with_metadata(
         assignees: &assignees,
         ..metadata
     };
-    codeyard_db_core::queries::postgres::retry_on_conflict(|| async {
+    codeyard_database::queries::postgres::retry_on_conflict(|| async {
         let mut tx = pool.begin().await?;
         // A milestone write locks the repository row exclusively, so that lock comes first
         // rather than as an upgrade of the shared lock the other checks take.
@@ -61,7 +61,7 @@ pub async fn create_issue_with_metadata(
             .await?;
         if !metadata.labels.is_empty() || !metadata.assignees.is_empty() {
             anyhow::ensure!(
-                codeyard_db_core::queries::postgres::discussions::lock_triage_authority(
+                codeyard_database::queries::postgres::discussions::lock_triage_authority(
                     &mut tx, author_id, repo_id
                 )
                 .await?,
@@ -70,7 +70,7 @@ pub async fn create_issue_with_metadata(
         }
         if metadata.issue_type.is_some() {
             anyhow::ensure!(
-                codeyard_db_core::queries::postgres::discussions::lock_write_authority(
+                codeyard_database::queries::postgres::discussions::lock_write_authority(
                     &mut tx, author_id, repo_id
                 )
                 .await?,
@@ -80,7 +80,7 @@ pub async fn create_issue_with_metadata(
             crate::postgres::issue_attributes::lock_metadata(&mut tx).await?;
         }
         anyhow::ensure!(
-            codeyard_db_core::queries::postgres::credentials::repository(
+            codeyard_database::queries::postgres::credentials::repository(
                 &mut tx, &authority, repo_id, "issues", true
             )
             .await?,
@@ -224,7 +224,7 @@ pub async fn issue_ids_by_numbers(
     numbers: &[i32],
 ) -> Result<Vec<(i64, i32)>> {
     anyhow::ensure!(numbers.len() <= 500, "Too many issue numbers");
-    Ok(sqlx::query_as(&format!("SELECT i.id,i.number FROM issues i JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id=$3 WHERE i.repo_id=$1 AND i.number=ANY($2) AND {} ORDER BY i.number,i.id", codeyard_db_core::queries::postgres::repositories::access::readable_condition())).bind(repo).bind(numbers).bind(viewer).fetch_all(pool).await?)
+    Ok(sqlx::query_as(&format!("SELECT i.id,i.number FROM issues i JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id=$3 WHERE i.repo_id=$1 AND i.number=ANY($2) AND {} ORDER BY i.number,i.id", codeyard_database::queries::postgres::repositories::access::readable_condition())).bind(repo).bind(numbers).bind(viewer).fetch_all(pool).await?)
 }
 
 pub async fn get_issues_by_ids(pool: &PgPool, repo_id: i64, ids: &[i64]) -> Result<Vec<Issue>> {
@@ -417,7 +417,7 @@ pub async fn update_issue_with_reason(
     let Some(repo) = repo else {
         return Ok(None);
     };
-    if !codeyard_db_core::queries::postgres::discussions::lock_write_authority(
+    if !codeyard_database::queries::postgres::discussions::lock_write_authority(
         &mut tx,
         edit.actor_id,
         repo,
@@ -504,13 +504,13 @@ pub async fn add_issue_comment(
     issue_id: i64,
     author_id: i64,
     body: &str,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
 ) -> Result<IssueComment> {
     let mut tx = pool.begin().await?;
     crate::postgres::discussions::lock_issue_contribution(&mut tx, author_id, repo_id, issue_id)
         .await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::postgres::users::transitions::credential_live(
+        codeyard_database::queries::postgres::users::transitions::credential_live(
             &mut tx, author_id, credential, true
         )
         .await?,
@@ -618,7 +618,7 @@ pub async fn list_viewer_issues(
         (0..=500).contains(&limit),
         "Result limit must be between 0 and 500"
     );
-    let access = codeyard_db_core::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL;
+    let access = codeyard_database::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL;
     let relation_sql = viewer_issue_sql(relation);
     // One snapshot for the rows, their comment counts and their labels: an issue transferred
     // between the reads cannot bring its new repository's labels or comments to this list.
@@ -648,7 +648,7 @@ pub async fn list_viewer_issues(
     let ids = issues.iter().map(|issue| issue.id).collect::<Vec<_>>();
     if !ids.is_empty() {
         let mut labels =
-            std::collections::BTreeMap::<i64, Vec<codeyard_db_core::models::Label>>::new();
+            std::collections::BTreeMap::<i64, Vec<codeyard_database::models::Label>>::new();
         for row in
             crate::postgres::labels::get_items_labels(&mut tx, LabelTarget::Issue, None, &ids)
                 .await?
@@ -669,7 +669,7 @@ pub async fn count_viewer_issues(
     viewer_id: i64,
     relation: IssueRelation,
 ) -> Result<StateCounts> {
-    let access = codeyard_db_core::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL;
+    let access = codeyard_database::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL;
     let relation_sql = viewer_issue_sql(relation);
     let rows = sqlx::query_as::<_, (String, i64)>(&format!(
         r"SELECT CASE WHEN i.state = 'open' THEN 'open' ELSE 'closed' END AS bucket, COUNT(*)
@@ -717,7 +717,7 @@ pub async fn edit_issue_comment(
     comment_id: i64,
     body: &str,
     expected_body: &str,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
 ) -> Result<Option<IssueComment>> {
     let mut tx = pool.begin().await?;
     // Repository authority precedes the issue and comment rows.
@@ -727,13 +727,13 @@ pub async fn edit_issue_comment(
         return Ok(None);
     }
     anyhow::ensure!(
-        codeyard_db_core::queries::postgres::users::transitions::credential_live(
+        codeyard_database::queries::postgres::users::transitions::credential_live(
             &mut tx, actor_id, credential, true
         )
         .await?,
         codeyard_types::credentials::AccountRestricted
     );
-    let writer = codeyard_db_core::queries::postgres::discussions::lock_write_authority(
+    let writer = codeyard_database::queries::postgres::discussions::lock_write_authority(
         &mut tx, actor_id, repo_id,
     )
     .await?;
@@ -775,7 +775,7 @@ pub async fn delete_issue_comment(
     repo_id: i64,
     issue_id: i64,
     comment_id: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
 ) -> Result<Option<IssueComment>> {
     let mut tx = pool.begin().await?;
     if !crate::postgres::discussions::lock_contribution_authority(&mut tx, actor_id, repo_id)
@@ -784,13 +784,13 @@ pub async fn delete_issue_comment(
         return Ok(None);
     }
     anyhow::ensure!(
-        codeyard_db_core::queries::postgres::users::transitions::credential_live(
+        codeyard_database::queries::postgres::users::transitions::credential_live(
             &mut tx, actor_id, credential, true
         )
         .await?,
         codeyard_types::credentials::AccountRestricted
     );
-    let writer = codeyard_db_core::queries::postgres::discussions::lock_write_authority(
+    let writer = codeyard_database::queries::postgres::discussions::lock_write_authority(
         &mut tx, actor_id, repo_id,
     )
     .await?;

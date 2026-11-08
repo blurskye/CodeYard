@@ -220,7 +220,7 @@ async fn metrics_aggregate_storage_replicas_queue_and_node_states() {
         let mut database = Database::new(pg).await;
         let pool = database.pool();
         let storage = vec!["storage".to_owned()];
-        let primary = codeyard_db_cluster::cluster::register_own_node(
+        let primary = codeyard_db_placement::cluster::register_own_node(
             pool,
             &"a".repeat(64),
             "primary",
@@ -229,7 +229,7 @@ async fn metrics_aggregate_storage_replicas_queue_and_node_states() {
         )
         .await
         .unwrap();
-        let replica = codeyard_db_cluster::cluster::register_own_node(
+        let replica = codeyard_db_placement::cluster::register_own_node(
             pool,
             &"b".repeat(64),
             "replica",
@@ -238,7 +238,7 @@ async fn metrics_aggregate_storage_replicas_queue_and_node_states() {
         )
         .await
         .unwrap();
-        let web = codeyard_db_cluster::cluster::register_own_node(
+        let web = codeyard_db_placement::cluster::register_own_node(
             pool,
             &"c".repeat(64),
             "web",
@@ -278,7 +278,9 @@ async fn metrics_aggregate_storage_replicas_queue_and_node_states() {
             "INSERT INTO ci_runs(run_id,repo_id,mode,event,branch,workflow_path,created_at) VALUES(X'00000000000000000000000000000001',$1,'local','push','main','ci.yml',strftime('%Y-%m-%dT%H:%M:%f000Z','now','-120 seconds'))"
         };
         database.execute(insert, &[repo.id]).await;
-        let queue = codeyard_db_cluster::metrics::ci_queue(pool).await.unwrap();
+        let queue = codeyard_db_placement::metrics::ci_queue(pool)
+            .await
+            .unwrap();
         assert_eq!(queue.queued, 1);
         assert!(
             (119..=125).contains(&queue.oldest_seconds),
@@ -336,7 +338,9 @@ async fn metrics_aggregate_storage_replicas_queue_and_node_states() {
                 &[repo.id],
             )
             .await;
-        let queue = codeyard_db_cluster::metrics::ci_queue(pool).await.unwrap();
+        let queue = codeyard_db_placement::metrics::ci_queue(pool)
+            .await
+            .unwrap();
         assert_eq!((queue.queued, queue.oldest_seconds), (0, 0));
         database
             .execute(
@@ -345,7 +349,7 @@ async fn metrics_aggregate_storage_replicas_queue_and_node_states() {
             )
             .await;
         assert_eq!(
-            codeyard_db_cluster::metrics::replica_lag(pool)
+            codeyard_db_placement::metrics::replica_lag(pool)
                 .await
                 .unwrap(),
             0
@@ -363,7 +367,7 @@ async fn metrics_include_drain_progress_and_quorum_refusals() {
         let mut state = state(&database, root.path()).await;
         state.metrics_token_hash = Some(token_hash("drain-scrape"));
         let key = codeyard_support::node_identity::NodeKey::generate();
-        let node = codeyard_db_cluster::cluster::register_own_node(
+        let node = codeyard_db_placement::cluster::register_own_node(
             database.pool(),
             &key.public_hex(),
             "draining",
@@ -378,8 +382,8 @@ async fn metrics_include_drain_progress_and_quorum_refusals() {
                 &[node.id],
             )
             .await;
-        let before = codeyard_cluster_core::writes::quorum_failures();
-        assert!(codeyard_cluster_core::writes::begin(
+        let before = codeyard_nodes::writes::quorum_failures();
+        assert!(codeyard_nodes::writes::begin(
             database.pool(),
             -1,
             -1,
@@ -389,7 +393,7 @@ async fn metrics_include_drain_progress_and_quorum_refusals() {
         )
         .await
         .is_err());
-        assert!(codeyard_cluster_core::writes::quorum_failures() > before);
+        assert!(codeyard_nodes::writes::quorum_failures() > before);
         let (_, _, body) = get(
             &create_router(state),
             "/metrics",
@@ -447,7 +451,7 @@ async fn pool_waiter_scrapes_show_pending_acquisition_and_clear_after_completion
                     .into()
             }};
         }
-        let observed: codeyard_db_core::DbPool = if pg {
+        let observed: codeyard_database::DbPool = if pg {
             pool!(sqlx::postgres::PgPoolOptions::new())
         } else {
             pool!(sqlx::sqlite::SqlitePoolOptions::new())

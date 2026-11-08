@@ -76,7 +76,7 @@ pub(super) async fn build(
     let oidc = codeyard_db_actions::oidc::settings(
         &ctx.state.pool,
         actor,
-        codeyard_db_core::queries::oidc::Scope::Organization(org),
+        codeyard_database::queries::oidc::Scope::Organization(org),
     )
     .await
     .map_err(ValueError::Authority)?;
@@ -155,13 +155,13 @@ async fn change(
             "Organization does not match this form.",
         );
     }
-    let credential = codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+    let credential = codeyard_database::queries::users::accounts::AccountCredential::Session(
         ctx.session_id.as_deref().unwrap_or(""),
     );
     if action.starts_with("oidc-") {
         let result = match action.as_str() {
             "oidc-save" => {
-                let mut settings = codeyard_db_core::queries::oidc::Settings::from_keys(
+                let mut settings = codeyard_database::queries::oidc::Settings::from_keys(
                     false,
                     field(&form, "include_claim_keys"),
                 );
@@ -171,7 +171,7 @@ async fn change(
                 codeyard_db_actions::oidc::save_settings(
                     &ctx.state.pool,
                     (actor, &credential),
-                    codeyard_db_core::queries::oidc::Scope::Organization(org),
+                    codeyard_database::queries::oidc::Scope::Organization(org),
                     &settings,
                 )
                 .await

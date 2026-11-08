@@ -6,7 +6,7 @@ use crate::notifications::threads::ThreadInbox;
 use crate::notifications::threads::ThreadSubscription;
 use crate::notifications::threads::ThreadSummary;
 use crate::notifications::threads::ThreadView;
-use codeyard_db_core::models::Repository;
+use codeyard_database::models::Repository;
 
 pub(crate) async fn subscribers(
     pool: &PgPool,

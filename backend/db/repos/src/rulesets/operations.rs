@@ -1,16 +1,16 @@
 use anyhow::Result;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_db_core::queries::rulesets::records::ListFilter;
-use codeyard_db_core::queries::rulesets::records::Owner;
-use codeyard_db_core::queries::rulesets::records::Page;
-use codeyard_db_core::queries::rulesets::records::Ruleset;
-use codeyard_db_core::queries::rulesets::records::Suite;
-use codeyard_db_core::queries::rulesets::records::SuiteFilter;
-use codeyard_db_core::queries::rulesets::records::Version;
-use codeyard_db_core::queries::rulesets::records::View;
-use codeyard_db_core::queries::rulesets::Definition;
-use codeyard_db_core::DbPool;
+use codeyard_database::native_operation;
+use codeyard_database::queries::organizations::OrganizationOutcome;
+use codeyard_database::queries::rulesets::records::ListFilter;
+use codeyard_database::queries::rulesets::records::Owner;
+use codeyard_database::queries::rulesets::records::Page;
+use codeyard_database::queries::rulesets::records::Ruleset;
+use codeyard_database::queries::rulesets::records::Suite;
+use codeyard_database::queries::rulesets::records::SuiteFilter;
+use codeyard_database::queries::rulesets::records::Version;
+use codeyard_database::queries::rulesets::records::View;
+use codeyard_database::queries::rulesets::Definition;
+use codeyard_database::DbPool;
 use serde_json::Value;
 
 native_operation!(codeyard_db_orgs::postgres::organizations::rulesets::list,codeyard_db_orgs::sqlite::organizations::rulesets::list,

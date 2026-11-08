@@ -10,14 +10,14 @@ use axum::routing::MethodRouter;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_db_core::models::PullRequest;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::models::User;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
-use codeyard_repos_core::api_shared::github::contents::store_error;
+use codeyard_database::models::PullRequest;
+use codeyard_database::models::Repository;
+use codeyard_database::models::User;
+use codeyard_git_storage::api_shared::github::contents::store_error;
 use codeyard_repos_pulls::repositories::commit_pulls::AssociationError;
 use codeyard_repos_pulls::repositories::commit_pulls::CommitPullQuery;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde_json::json;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -73,7 +73,7 @@ async fn repository_document(
             .ok_or_else(Error::missing)?;
         value["owner"] = user(&owner);
     } else {
-        value["owner"]["url"] = json!(codeyard_model::urls::api_url(&format!(
+        value["owner"]["url"] = json!(codeyard_types::urls::api_url(&format!(
             "/orgs/{}",
             codeyard_types::paths::encode_component(owner)
         )));

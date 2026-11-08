@@ -3,8 +3,8 @@ use crate::support::database::wait_until_blocked;
 use crate::support::database::Database;
 use crate::support::http_client::Client;
 
-use codeyard_db_core::models::AccessLevel;
-use codeyard_db_core::queries::users::accounts::AccountCredential;
+use codeyard_database::models::AccessLevel;
+use codeyard_database::queries::users::accounts::AccountCredential;
 use codeyard_db_identity::interactions::InteractionExpiry;
 use codeyard_db_identity::interactions::InteractionGroup;
 use codeyard_db_identity::interactions::InteractionRefusal;
@@ -417,7 +417,7 @@ async fn contract(pg: bool) {
     .await
     .unwrap()
     {
-        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(org) => org,
+        codeyard_database::queries::organizations::OrganizationOutcome::Applied(org) => org,
         _ => panic!("organization creation refused"),
     };
     session

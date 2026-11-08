@@ -139,7 +139,7 @@ async fn contract(pg: bool) {
     let alice = f.actor("gh-issues-alice").await;
     let bob = f.actor("gh-issues-bob").await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard_repos_core::repositories::lifecycle::provision(
+    let repo = codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
@@ -1114,7 +1114,7 @@ async fn contract(pg: bool) {
             "{body}"
         );
     }
-    let target = codeyard_repos_core::repositories::lifecycle::provision(
+    let target = codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
@@ -1152,7 +1152,7 @@ async fn contract(pg: bool) {
         f.pool(),
         bob,
         repo.id,
-        codeyard_db_core::models::AccessLevel::Write,
+        codeyard_database::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -1210,7 +1210,7 @@ async fn contract(pg: bool) {
         assert!(denied["data"]["node"].is_null(), "{denied}");
         assert!(!denied.to_string().contains("Moves with its issue"));
     }
-    let forged = codeyard_model::node_id::scoped("I", target.id + 10000, moved.id).unwrap();
+    let forged = codeyard_types::node_id::scoped("I", target.id + 10000, moved.id).unwrap();
     let (_, denied) = call(
         &router,
         Some(token),

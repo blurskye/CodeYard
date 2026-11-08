@@ -1,7 +1,7 @@
 use super::*;
 use codeyard_ci_engine::runs::CiRuns;
+use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
-use codeyard_repos_core::repositories::store::repo_store;
 
 const WORKFLOW: &str = "on: [pull_request, push]\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo ok\n";
 
@@ -17,7 +17,7 @@ fn ci(w: &World) -> CiRuns {
     )
 }
 
-async fn row(w: &World, number: i32) -> codeyard_db_core::models::PullRequest {
+async fn row(w: &World, number: i32) -> codeyard_database::models::PullRequest {
     codeyard_db_repos::pull_requests::records::get_pull_request(
         w.database.pool(),
         w.repository.id,
@@ -115,10 +115,10 @@ async fn inline_revision(pg: bool) {
             assert!(matches!(
                 result
                     .unwrap_err()
-                    .downcast_ref::<codeyard_db_core::queries::discussions::DiscussionWriteRefusal>(
+                    .downcast_ref::<codeyard_database::queries::discussions::DiscussionWriteRefusal>(
                     ),
                 Some(
-                    codeyard_db_core::queries::discussions::DiscussionWriteRefusal::RevisionChanged
+                    codeyard_database::queries::discussions::DiscussionWriteRefusal::RevisionChanged
                 )
             ));
         }
@@ -181,7 +181,7 @@ async fn deleted_comment_notifications(pg: bool) {
         ] {
             let result = codeyard_db_repos::notifications::records::create_notification(
                 w.database.pool(),
-                codeyard_db_core::queries::notifications::records::NewNotification {
+                codeyard_database::queries::notifications::records::NewNotification {
                     user_id: w.bob_id,
                     actor_id: Some(w.alice_id),
                     repo_id: Some(w.repository.id),
@@ -196,7 +196,7 @@ async fn deleted_comment_notifications(pg: bool) {
             if deleted {
                 assert!(result
                     .unwrap_err()
-                    .is::<codeyard_db_core::queries::notifications::records::NotificationSuppressed>());
+                    .is::<codeyard_database::queries::notifications::records::NotificationSuppressed>());
             } else {
                 result.unwrap();
             }
@@ -397,7 +397,7 @@ async fn stack_target(pg: bool) {
         &row(&w, new.number).await,
         w.alice_id,
         false,
-        codeyard_db_core::models::AccessLevel::Owner,
+        codeyard_database::models::AccessLevel::Owner,
     )
     .await
     .unwrap();
@@ -586,7 +586,7 @@ async fn target_specific_checks(pg: bool) {
         &row(&w, 1).await,
         w.alice_id,
         false,
-        codeyard_db_core::models::AccessLevel::Owner,
+        codeyard_database::models::AccessLevel::Owner,
     )
     .await
     .unwrap();
@@ -758,7 +758,7 @@ async fn path_failure_keeps_unfiltered(pg: bool) {
         &ci,
         w.alice_id,
         w.pull.id,
-        Some(codeyard_db_core::models::AccessLevel::Owner),
+        Some(codeyard_database::models::AccessLevel::Owner),
     )
     .await
     .unwrap();
@@ -781,7 +781,7 @@ async fn path_failure_keeps_unfiltered(pg: bool) {
             &row(&w, 1).await,
             w.alice_id,
             true,
-            codeyard_db_core::models::AccessLevel::Owner,
+            codeyard_database::models::AccessLevel::Owner,
         )
         .await
         .is_err(),
@@ -944,7 +944,7 @@ async fn deleted_head_takes_the_pull_ref(pg: bool) {
             &ci,
             w.alice_id,
             w.pull.id,
-            Some(codeyard_db_core::models::AccessLevel::Owner),
+            Some(codeyard_database::models::AccessLevel::Owner),
         )
         .await
         .unwrap();

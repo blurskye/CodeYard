@@ -1,10 +1,10 @@
 //! Public HTTP selection against native cells and an authenticated directory.
 use crate::support::native_database::PostgresDatabase;
-use codeyard_cells_router::{directory, frontend, http::Transport, routes::Routes};
 use codeyard_db_directory::Directory;
-use codeyard_model::cells::{Cell, Key, KeyKind, Object, ObjectKind, State};
+use codeyard_router::{directory, frontend, http::Transport, routes::Routes};
 use codeyard_support::node_identity::NodeKey;
-use codeyard_types::cells::Prefix;
+use codeyard_types::cell_ids::Prefix;
+use codeyard_types::cells::{Cell, Key, KeyKind, Object, ObjectKind, State};
 use serde_json::{json, Value};
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
@@ -52,7 +52,7 @@ impl Server {
     }
 }
 pub(super) async fn native(database: &PostgresDatabase, name: &str) -> (Server, i64, String) {
-    codeyard_db_cluster::node_config::upsert_node_configuration(&database.pool, "public", true)
+    codeyard_db_placement::node_config::upsert_node_configuration(&database.pool, "public", true)
         .await
         .unwrap();
     let user = codeyard_db_identity::users::accounts::create_user(&database.pool, name, None)
@@ -125,7 +125,7 @@ async fn native_http_cells_route_by_owner_and_keep_working_when_another_cell_sto
     directory.migrate().await.unwrap();
     let mut zero = PostgresDatabase::new().await;
     let mut one = PostgresDatabase::new().await;
-    codeyard_db_core::cells::initialize(&one.pool, Prefix::new(1))
+    codeyard_database::cells::initialize(&one.pool, Prefix::new(1))
         .await
         .unwrap();
     let (mut alice, alice_id, alice_token) = native(&zero, "alice").await;
@@ -195,7 +195,7 @@ async fn native_http_cells_route_by_owner_and_keep_working_when_another_cell_sto
             Default::default(),
         )
         .unwrap();
-        let home = codeyard_cells_router::accounts::listen(
+        let home = codeyard_router::accounts::listen(
             client.clone(),
             Arc::new(codeyard_identity::cells::Local {
                 pool: database.pool.clone(),
@@ -224,7 +224,7 @@ async fn native_http_cells_route_by_owner_and_keep_working_when_another_cell_sto
             .await
             .unwrap();
         database.pool.set_foreign_authorization(Arc::new(
-            codeyard_cells_router::accounts::Remote::new(key.clone(), client).unwrap(),
+            codeyard_router::accounts::Remote::new(key.clone(), client).unwrap(),
         ));
         homes.push(home);
     }
@@ -272,7 +272,7 @@ async fn native_http_cells_route_by_owner_and_keep_working_when_another_cell_sto
     assert_eq!(compressed.headers()["content-encoding"], "gzip");
     let compressed = axum::body::to_bytes(
         axum::body::Body::from_stream(compressed.bytes_stream()),
-        codeyard_cells_router::graphql_dispatch::Config::default().maximum_bytes,
+        codeyard_router::graphql_dispatch::Config::default().maximum_bytes,
     )
     .await
     .unwrap();
@@ -305,7 +305,7 @@ async fn native_http_cells_route_by_owner_and_keep_working_when_another_cell_sto
             let content_type = response.headers().get("content-type").cloned();
             let body = axum::body::to_bytes(
                 axum::body::Body::from_stream(response.bytes_stream()),
-                codeyard_cells_router::graphql_dispatch::Config::default().maximum_bytes,
+                codeyard_router::graphql_dispatch::Config::default().maximum_bytes,
             )
             .await
             .unwrap();
@@ -361,8 +361,8 @@ async fn native_http_cells_route_by_owner_and_keep_working_when_another_cell_sto
         .await
         .unwrap();
     assert_eq!(response.status(), 401);
-    let alice_node = codeyard_model::node_id::encode("U", alice_id);
-    let bob_node = codeyard_model::node_id::encode("U", bob_id);
+    let alice_node = codeyard_types::node_id::encode("U", alice_id);
+    let bob_node = codeyard_types::node_id::encode("U", bob_id);
     let query = json!({"query": r#"query($a:ID!,$b:ID!){left:repository(owner:"alice",name:"repo"){id name databaseId fullDatabaseId} right:repository(owner:"bob",name:"repo"){id name databaseId fullDatabaseId} a:node(id:$a){id ... on User{login databaseId}} b:node(id:$b){id ... on User{login databaseId}}}"#,
         "variables":{"a":alice_node,"b":bob_node}});
     let response = client

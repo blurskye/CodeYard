@@ -3,12 +3,12 @@
 use anyhow::ensure;
 
 use anyhow::Result;
-use codeyard_actions::workflow::PERMISSION_SCOPES as SCOPES;
+use codeyard_database::models::CiRun;
+use codeyard_database::DbPool;
 use codeyard_db_actions::ci_tokens::NewJobToken;
-use codeyard_db_core::models::CiRun;
-use codeyard_db_core::DbPool;
-use codeyard_model::ci::MAX_EXPANDED_JOBS;
-use codeyard_model::permissions::Permissions;
+use codeyard_types::ci::MAX_EXPANDED_JOBS;
+use codeyard_types::permissions::Permissions;
+use codeyard_types::permissions::PERMISSION_SCOPES as SCOPES;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_yaml::Value;
@@ -40,13 +40,13 @@ pub async fn issue_selected(
     run: &CiRun,
     definitions: &BTreeMap<String, Vec<u8>>,
     permissive: bool,
-    replay: Option<&codeyard_actions::progress::Replay>,
+    replay: Option<&codeyard_runner::progress::Replay>,
 ) -> Result<GithubTokens> {
     anyhow::ensure!(
         replay.is_none() || run.engine.as_deref() == Some("codeyard-actions"),
         "Partial re-runs require a native workflow"
     );
-    let parsed = codeyard_model::workflow_yaml::parse_definitions(definitions).await?;
+    let parsed = codeyard_types::workflow_yaml::parse_definitions(definitions).await?;
     fn policies_for(
         definitions: &BTreeMap<String, Value>,
         path: &str,
@@ -62,7 +62,7 @@ pub async fn issue_selected(
                 .map_or(prefix, |(_, job)| job)
                 .matches('/')
                 .count()
-                < codeyard_actions::workflow::MAX_REUSABLE_LEVELS,
+                < codeyard_runner::workflow::MAX_REUSABLE_LEVELS,
             "called workflow nesting exceeds limit"
         );
         let yaml = definitions

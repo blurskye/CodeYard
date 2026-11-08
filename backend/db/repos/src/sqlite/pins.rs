@@ -4,7 +4,7 @@ use crate::pins::ItemPin;
 use crate::pins::Pin;
 use crate::pins::PinRefusal;
 use anyhow::Result;
-use codeyard_db_core::pool::SqlitePool;
+use codeyard_database::pool::SqlitePool;
 
 pub async fn get_pin(pool: &SqlitePool, item: AssignedItem) -> Result<Option<Pin>> {
     let s = scope(item);
@@ -36,7 +36,7 @@ pub async fn get_pins(pool: &SqlitePool, pull_requests: bool, ids: &[i64]) -> Re
 pub async fn set_pin(
     pool: &SqlitePool,
     actor: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     repo: i64,
     item: AssignedItem,
     comment: i64,
@@ -46,11 +46,11 @@ pub async fn set_pin(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let permission = if s.pull { "pull_requests" } else { "issues" };
     anyhow::ensure!(
-        codeyard_db_core::queries::sqlite::discussions::lock_write_authority(&mut tx, actor, repo)
+        codeyard_database::queries::sqlite::discussions::lock_write_authority(&mut tx, actor, repo)
             .await?
-            && codeyard_db_core::queries::sqlite::credentials::repository(
+            && codeyard_database::queries::sqlite::credentials::repository(
                 &mut tx,
-                &codeyard_db_core::queries::credentials::Actor::from((actor, credential)),
+                &codeyard_database::queries::credentials::Actor::from((actor, credential)),
                 repo,
                 permission,
                 true

@@ -4,25 +4,25 @@ use codeyard_git as git;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
 use codeyard_git::TagInfo;
+use codeyard_git_storage::context::NodeContext;
+use codeyard_git_storage::push_workflows::RefUpdate;
+use codeyard_git_storage::ref_errors::{publication_error, RefError};
+use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_repos::protection::check_branch_write;
 use codeyard_repos::protection::BranchWrite;
 use codeyard_repos::protection::History;
 use codeyard_repos::protection::Refusal;
 use codeyard_repos::protection::WriteVia;
 use codeyard_repos::protection::ANY_TIP;
-use codeyard_repos_core::context::NodeContext;
-use codeyard_repos_core::push_workflows::RefUpdate;
-use codeyard_repos_core::ref_errors::{publication_error, RefError};
-use codeyard_repos_core::repositories::store::repo_store;
 
 async fn writable(
-    pool: &codeyard_db_core::DbPool,
-    actor: &codeyard_db_core::queries::credentials::Actor,
+    pool: &codeyard_database::DbPool,
+    actor: &codeyard_database::queries::credentials::Actor,
     repo_id: i64,
 ) -> Result<
     (
-        codeyard_db_core::models::Repository,
-        codeyard_db_core::models::User,
+        codeyard_database::models::Repository,
+        codeyard_database::models::User,
     ),
     RefError,
 > {
@@ -30,7 +30,7 @@ async fn writable(
         codeyard_identity::repository_access::check_write(pool, repo_id, actor.user_id)
             .await
             .map_err(RefError::Access)?;
-    codeyard_repos_core::repositories::access::check_publication_actor(pool, actor, &repository)
+    codeyard_git_storage::repositories::access::check_publication_actor(pool, actor, &repository)
         .await
         .map_err(|error| publication_error(RepoError::from(error)))?;
     Ok((repository, user))
@@ -46,9 +46,9 @@ fn invalid_ref(kind: &str) -> RefError {
 /// Refuses a branch delete that a protection rule forbids. A delete adds no commits, so the
 /// history check is never needed here.
 async fn allowed(
-    pool: &codeyard_db_core::DbPool,
-    repository: &codeyard_db_core::models::Repository,
-    actor: &codeyard_db_core::models::User,
+    pool: &codeyard_database::DbPool,
+    repository: &codeyard_database::models::Repository,
+    actor: &codeyard_database::models::User,
     write: BranchWrite<'_>,
 ) -> Result<(), RefError> {
     match check_branch_write(pool, repository, actor, &write, &History::SingleCommit).await {
@@ -63,10 +63,10 @@ async fn allowed(
     reason = "Explicit actor and resources keep operations HTTP-free."
 )]
 pub async fn create_branch(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     owner: &str,
     repo_id: i64,
     branch: &str,
@@ -96,7 +96,7 @@ pub async fn create_branch(
         Some(&[branch][..]),
         ci,
         actor,
-        codeyard_db_core::models::AccessLevel::Owner,
+        codeyard_database::models::AccessLevel::Owner,
     )
     .await
     .is_ok();
@@ -123,10 +123,10 @@ pub async fn create_branch(
     reason = "Explicit actor and resources keep operations HTTP-free."
 )]
 pub async fn update_reference(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     owner: &str,
     repo_id: i64,
     reference: &str,
@@ -150,7 +150,7 @@ pub async fn update_reference(
             Some(&[branch][..]),
             ci,
             actor,
-            codeyard_db_core::models::AccessLevel::Owner,
+            codeyard_database::models::AccessLevel::Owner,
         )
         .await
         .is_ok()
@@ -178,10 +178,10 @@ pub async fn update_reference(
 /// Makes an existing branch the repository's default. The caller checks that the actor administers
 /// the repository. Clones made afterwards get this branch.
 pub async fn set_default_branch(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     cluster: Option<&NodeContext>,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
-    repository: &codeyard_db_core::models::Repository,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
+    repository: &codeyard_database::models::Repository,
     branch: &str,
 ) -> Result<(), RefError> {
     if git::branch_ref(branch).is_none() {
@@ -194,10 +194,10 @@ pub async fn set_default_branch(
 }
 
 pub async fn delete_branch(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     branch: &str,
 ) -> Result<(), RefError> {
@@ -235,7 +235,7 @@ pub async fn delete_branch(
         Some(&[branch][..]),
         ci,
         actor,
-        codeyard_db_core::models::AccessLevel::Owner,
+        codeyard_database::models::AccessLevel::Owner,
     )
     .await
     .map_err(|_| RefError::AppliedFollowupFailed)?;
@@ -247,10 +247,10 @@ pub async fn delete_branch(
     reason = "Explicit actor and resources keep operations HTTP-free."
 )]
 pub async fn create_tag(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     owner: &str,
     repo_id: i64,
     tag: &str,
@@ -298,9 +298,9 @@ pub async fn create_tag(
 }
 
 pub async fn delete_tag(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     cluster: Option<&NodeContext>,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     tag: &str,
 ) -> Result<(), RefError> {

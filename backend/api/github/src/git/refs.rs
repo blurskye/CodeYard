@@ -17,11 +17,11 @@ use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
-use codeyard_model::urls::repo_url;
-use codeyard_repos_core::api_shared::github::contents::store_error;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_git_storage::api_shared::github::contents::store_error;
+use codeyard_git_storage::repositories::store::repo_store;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
+use codeyard_types::urls::repo_url;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -38,7 +38,7 @@ fn reference(
 ) -> Value {
     json!({
         "ref": reference,
-        "node_id": codeyard_model::node_id::reference(repo_id, reference),
+        "node_id": codeyard_types::node_id::reference(repo_id, reference),
         "url": format!("{}/git/refs/{}", repo_url(owner, name), codeyard_types::ref_path::encode_path(reference.strip_prefix("refs/").unwrap_or(reference))),
         "object": {"type": kind, "sha": sha, "url": format!("{}/git/{}s/{sha}", repo_url(owner, name), kind)},
     })
@@ -60,7 +60,7 @@ async fn read(
 }
 
 async fn object_kind(
-    store: &codeyard_repos_core::repositories::store::RepoStore,
+    store: &codeyard_git_storage::repositories::store::RepoStore,
     full: &str,
     sha: &str,
 ) -> Result<String> {
@@ -109,8 +109,8 @@ struct Create {
     sha: String,
 }
 
-pub(crate) fn ref_error(error: codeyard_repos_core::ref_errors::RefError) -> Error {
-    use codeyard_repos_core::ref_errors::RefError;
+pub(crate) fn ref_error(error: codeyard_git_storage::ref_errors::RefError) -> Error {
+    use codeyard_git_storage::ref_errors::RefError;
     match error {
         RefError::Git(error)
             if matches!(

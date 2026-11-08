@@ -1,8 +1,8 @@
 //! Personal token lifecycle (only hashes persist) and restricted activity-feed credentials.
 
 use chrono::{DateTime, Utc};
-use codeyard_db_core::models::PersonalAccessToken;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::PersonalAccessToken;
+use codeyard_database::DbPool;
 
 use codeyard_types::tokens::INSTALLATION_PREFIX;
 use codeyard_types::tokens::PAT_PREFIX;
@@ -19,7 +19,7 @@ pub struct CreatedToken {
 }
 
 pub struct ActivityFeedUser {
-    pub user: codeyard_db_core::models::User,
+    pub user: codeyard_database::models::User,
     pub token: i64,
 }
 
@@ -38,8 +38,8 @@ pub enum TokenError {
 /// Installation credentials use the hex format; Actions uses the URL-safe format with
 /// the same public prefix. Scanners must recognize both complete values.
 pub fn installation_token(
-    cell: codeyard_types::cells::Prefix,
-) -> Result<String, codeyard_types::cells::Invalid> {
+    cell: codeyard_types::cell_ids::Prefix,
+) -> Result<String, codeyard_types::cell_ids::Invalid> {
     cell.token(INSTALLATION_PREFIX, &codeyard_support::crypto::random_hex())
 }
 
@@ -114,7 +114,7 @@ pub async fn repository_scope(
     }
     if let Some(job) = codeyard_db_actions::ci_tokens::get(pool, token).await? {
         return Ok(job.repo_id == repo
-            && codeyard_model::github_apps::allows(
+            && codeyard_types::github_apps::allows(
                 &serde_json::from_str(&job.permissions)?,
                 permission,
                 write,
@@ -127,7 +127,7 @@ pub async fn repository_scope(
         {
             return Ok(false);
         }
-        return Ok(codeyard_model::oauth_apps::has_scope(&oauth.scopes, "repo")
+        return Ok(codeyard_types::oauth_apps::has_scope(&oauth.scopes, "repo")
             || (!write
                 && codeyard_db_repos::repositories::records::get_repository_by_id(pool, repo)
                     .await?
@@ -147,7 +147,7 @@ pub fn valid_name(name: &str) -> Option<&str> {
 pub fn validate(input: &TokenInput<'_>, now: DateTime<Utc>) -> Result<(), TokenError> {
     if valid_name(input.name).is_none()
         || !matches!(input.scope, "read" | "write")
-        || !codeyard_db_core::queries::users::tokens::supported_expiry(input.expires_at)
+        || !codeyard_database::queries::users::tokens::supported_expiry(input.expires_at)
         || input.expires_at.is_some_and(|expiry| expiry <= now)
     {
         return Err(TokenError::Invalid);

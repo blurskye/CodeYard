@@ -1,7 +1,7 @@
 use crate::users::two_factor::FactorAuthority;
 use crate::users::two_factor::StoredTwoFactor;
 use anyhow::Result;
-use codeyard_db_core::pool::PgPool;
+use codeyard_database::pool::PgPool;
 
 async fn authorized(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
@@ -24,7 +24,7 @@ async fn authorized(
                 .await?;
             Ok(
                 crate::postgres::users::transitions::active_admin(tx, user_id).await?
-                    && codeyard_db_core::queries::postgres::users::transitions::live_session(
+                    && codeyard_database::queries::postgres::users::transitions::live_session(
                         tx, user_id, session,
                     )
                     .await?,

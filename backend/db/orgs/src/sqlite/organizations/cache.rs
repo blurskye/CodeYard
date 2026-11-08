@@ -1,12 +1,12 @@
 use anyhow::Result;
-use codeyard_db_core::pool::SqlitePool;
-use codeyard_db_core::queries::action_objects::OrganizationCacheUsage;
-use codeyard_db_core::queries::actions::CacheLimit;
-use codeyard_db_core::queries::actions::CachePolicyError;
-use codeyard_db_core::queries::actions::OrgCacheSettings;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_db_core::queries::sqlite::organizations::authority::begin_read;
-use codeyard_db_core::require_read_org_sqlite;
+use codeyard_database::pool::SqlitePool;
+use codeyard_database::queries::action_objects::OrganizationCacheUsage;
+use codeyard_database::queries::actions::CacheLimit;
+use codeyard_database::queries::actions::CachePolicyError;
+use codeyard_database::queries::actions::OrgCacheSettings;
+use codeyard_database::queries::organizations::OrganizationOutcome;
+use codeyard_database::queries::sqlite::organizations::authority::begin_read;
+use codeyard_database::require_read_org_sqlite;
 
 pub async fn get_cache_settings(
     pool: &SqlitePool,
@@ -22,7 +22,7 @@ pub async fn get_cache_settings(
         return Ok(OrganizationOutcome::Missing);
     };
     let role = require_read_org_sqlite!(tx, actor, org);
-    if !codeyard_db_core::queries::organizations::administers(role) {
+    if !codeyard_database::queries::organizations::administers(role) {
         return Ok(OrganizationOutcome::Denied);
     }
     let settings = sqlx::query_as(
@@ -52,7 +52,7 @@ pub async fn set_cache_limit(
         return Ok(OrganizationOutcome::Missing);
     };
     let role = require_org!(tx, actor, org);
-    if !codeyard_db_core::queries::organizations::administers(role) {
+    if !codeyard_database::queries::organizations::administers(role) {
         return Ok(OrganizationOutcome::Denied);
     }
     let column = kind.column();
@@ -73,10 +73,10 @@ pub async fn set_cache_limit(
     sqlx::query(&format!("INSERT INTO org_actions_settings(org_id,{column}) VALUES($1,$2) ON CONFLICT(org_id) DO UPDATE SET {column}=EXCLUDED.{column},updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now')")).bind(org).bind(value).execute(&mut *tx).await?;
     for repo in repos {
         let (bytes, days) =
-            codeyard_db_core::queries::sqlite::action_objects::cache_policy(&mut tx, repo).await?;
+            codeyard_database::queries::sqlite::action_objects::cache_policy(&mut tx, repo).await?;
         match kind {
             CacheLimit::Storage => {
-                codeyard_db_core::queries::sqlite::action_objects::enforce_cache_limit(
+                codeyard_database::queries::sqlite::action_objects::enforce_cache_limit(
                     &mut tx, repo, bytes,
                 )
                 .await?
@@ -111,7 +111,7 @@ pub async fn org_cache_usage(
         return Ok(OrganizationOutcome::Missing);
     };
     let role = require_read_org_sqlite!(tx, actor, org);
-    if !codeyard_db_core::queries::organizations::administers(role) {
+    if !codeyard_database::queries::organizations::administers(role) {
         return Ok(OrganizationOutcome::Denied);
     }
     let (count,bytes)=sqlx::query_as("SELECT COUNT(*),COALESCE(SUM(o.size),0) FROM actions_objects o JOIN repositories r ON r.id=o.repo_id WHERE r.owner_org_id=$1 AND r.owner_kind='org' AND o.kind='cache' AND o.finalized AND o.expires_at>CAST(strftime('%s','now') AS INTEGER)").bind(org).fetch_one(&mut *tx).await?;

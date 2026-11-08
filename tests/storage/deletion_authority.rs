@@ -1,7 +1,7 @@
 use crate::support::database::Database;
 
-use codeyard_db_core::models::FileReason;
-use codeyard_db_core::models::FileVisibility;
+use codeyard_database::models::FileReason;
+use codeyard_database::models::FileVisibility;
 
 async fn restricted_account_cannot_delete(pg: bool) {
     let mut database = Database::new(pg).await;

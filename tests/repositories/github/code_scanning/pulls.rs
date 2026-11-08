@@ -9,7 +9,7 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 
 pub(super) async fn contract(
     router: &Router,
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     repo: i64,
     actor: i64,
     token: &str,
@@ -179,7 +179,7 @@ pub(super) async fn contract(
             actor,
             repo,
             "bob",
-            Some(codeyard_db_core::models::AccessLevel::Read)
+            Some(codeyard_database::models::AccessLevel::Read)
         )
         .await
         .unwrap(),

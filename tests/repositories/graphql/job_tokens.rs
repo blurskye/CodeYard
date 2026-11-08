@@ -1,6 +1,6 @@
 //! The GraphQL boundary must not widen the REST job-token policy.
 use super::*;
-use codeyard_model::node_id;
+use codeyard_types::node_id;
 use codeyard_webhooks::payloads;
 use std::collections::BTreeMap;
 
@@ -12,7 +12,7 @@ async fn contract(pg: bool) {
     let mut repos = Vec::new();
     for name in ["inside", "outside"] {
         repos.push(
-            codeyard_repos_core::repositories::lifecycle::provision(
+            codeyard_git_storage::repositories::lifecycle::provision(
                 (f.pool(), None),
                 root.path(),
                 codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(actor),
@@ -155,7 +155,7 @@ async fn contract(pg: bool) {
     .await;
     assert_eq!(
         metadata["viewer"]["login"],
-        codeyard_db_core::queries::ci_tokens::BOT
+        codeyard_database::queries::ci_tokens::BOT
     );
     let (_, denied) = call(
         &router,

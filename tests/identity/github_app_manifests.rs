@@ -393,7 +393,7 @@ async fn contract(pg: bool) {
         codeyard_db_identity::github_app_hooks::insert_delivery(
             f.pool(),
             id,
-            &codeyard_db_core::queries::webhooks::NewDelivery {
+            &codeyard_database::queries::webhooks::NewDelivery {
                 redelivery: false,
                 guid: guid.into(),
                 event: "issues".into(),
@@ -592,14 +592,14 @@ async fn contract(pg: bool) {
         .unwrap()
         .unwrap();
     let password = match f.pool() {
-        codeyard_db_core::DbPool::Sqlite(pool) => {
+        codeyard_database::DbPool::Sqlite(pool) => {
             sqlx::query("UPDATE users SET password_hash='forbidden' WHERE id=$1")
                 .bind(app.bot_id)
                 .execute(pool)
                 .await
                 .map(|_| ())
         }
-        codeyard_db_core::DbPool::Postgres(pool) => {
+        codeyard_database::DbPool::Postgres(pool) => {
             sqlx::query("UPDATE users SET password_hash='forbidden' WHERE id=$1")
                 .bind(app.bot_id)
                 .execute(pool)

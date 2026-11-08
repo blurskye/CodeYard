@@ -16,9 +16,9 @@ use codeyard_api_http::shared::repos::forms::field;
 use codeyard_api_http::shared::repos::forms::with_status;
 use codeyard_db_repos::discussions::comment_revision;
 use codeyard_db_repos::pull_requests::reviews::DiscussionItem;
-use codeyard_repos_core::repositories::store::repo_store;
-use codeyard_repos_core::store_types::allowed_merge_methods;
-use codeyard_repos_core::store_types::MergeMethod;
+use codeyard_git_storage::repositories::store::repo_store;
+use codeyard_git_storage::store_types::allowed_merge_methods;
+use codeyard_git_storage::store_types::MergeMethod;
 use codeyard_repos_pulls::issues::COMMENTS_PER_PAGE;
 use codeyard_repos_pulls::issues::MAX_COMMENT_PAGE;
 use codeyard_webui::pages::repos::issues as view;
@@ -135,7 +135,7 @@ pub(crate) fn submitted_detail(form: &HashMap<String, String>, action: &str) -> 
     }
 }
 pub(crate) struct RepositoryData {
-    pub(crate) record: codeyard_db_core::models::Repository,
+    pub(crate) record: codeyard_database::models::Repository,
     pub(crate) view: view::Repository,
 }
 pub(crate) async fn repository(
@@ -151,7 +151,7 @@ pub(crate) async fn repository(
                 .await
                 .map_err(|_| unavailable(ctx))?
         }
-        None => codeyard_db_core::models::AccessLevel::None,
+        None => codeyard_database::models::AccessLevel::None,
     };
     let mutable = ctx.user.is_some()
         && !record.is_archived
@@ -193,7 +193,7 @@ pub(crate) async fn author(ctx: &PageContext, id: i64) -> ResultPage<String> {
             .unwrap_or_else(|| "Deleted user".into()),
     )
 }
-pub(crate) fn label(value: codeyard_db_core::models::Label) -> view::Label {
+pub(crate) fn label(value: codeyard_database::models::Label) -> view::Label {
     view::Label {
         id: value.id,
         name: value.name,
@@ -237,9 +237,9 @@ fn can_edit_entry(ctx: &PageContext, repo: &RepositoryData, author_id: i64) -> b
 }
 
 pub(crate) fn issue_item(
-    issue: codeyard_db_core::models::Issue,
+    issue: codeyard_database::models::Issue,
     author: String,
-    labels: Vec<codeyard_db_core::models::Label>,
+    labels: Vec<codeyard_database::models::Label>,
 ) -> view::Item {
     view::Item {
         id: issue.id,
@@ -282,7 +282,7 @@ pub(crate) enum HeadRepository {
 
 async fn can_view_head(
     ctx: &PageContext,
-    head: &codeyard_db_core::models::Repository,
+    head: &codeyard_database::models::Repository,
 ) -> ResultPage<bool> {
     codeyard_identity::repository_access::can_read(&ctx.state.pool, ctx.user.as_ref(), head)
         .await
@@ -292,7 +292,7 @@ async fn can_view_head(
 /// The head repository of a pull request opened from a fork, for the detail page.
 async fn head_for_viewer(
     ctx: &PageContext,
-    head: Option<codeyard_db_core::models::Repository>,
+    head: Option<codeyard_database::models::Repository>,
 ) -> ResultPage<HeadRepository> {
     let Some(head) = head else {
         return Ok(HeadRepository::Deleted);
@@ -368,7 +368,7 @@ pub(crate) async fn listed_assignees(
 pub(crate) fn pull_item(
     ctx: &PageContext,
     repo: &RepositoryData,
-    pull: codeyard_db_core::models::PullRequest,
+    pull: codeyard_database::models::PullRequest,
     author: String,
     head_repository: HeadRepository,
 ) -> Result<view::Item, Box<Response>> {
@@ -1396,7 +1396,7 @@ async fn fill_merge_blockers(
 /// The branch names of a repository, sorted, and all its refs.
 pub(crate) async fn branches(
     ctx: &PageContext,
-    repository: &codeyard_db_core::models::Repository,
+    repository: &codeyard_database::models::Repository,
 ) -> ResultPage<(Vec<String>, HashMap<String, String>)> {
     let refs = repo_store(repository, ctx.state.cluster.as_ref())
         .refs()
@@ -1421,7 +1421,7 @@ pub(crate) async fn head_choices(
     draft: &mut NewDraft,
 ) -> ResultPage<(
     view::BranchChoices,
-    codeyard_db_core::models::Repository,
+    codeyard_database::models::Repository,
     HashMap<String, String>,
 )> {
     let mut candidates = vec![base.record.clone()];
@@ -1547,9 +1547,9 @@ mod tests {
 
     #[tokio::test]
     async fn listed_heads_reuse_the_base_and_each_distinct_visibility_check() {
-        let pool = codeyard_db_core::init_db("sqlite::memory:").await.unwrap();
-        codeyard_db_core::run_migrations(&pool).await.unwrap();
-        let codeyard_db_core::DbPool::Sqlite(sqlite) = &pool else {
+        let pool = codeyard_database::init_db("sqlite::memory:").await.unwrap();
+        codeyard_database::run_migrations(&pool).await.unwrap();
+        let codeyard_database::DbPool::Sqlite(sqlite) = &pool else {
             unreachable!()
         };
         sqlx::query("INSERT INTO node_configuration(id, setup_completed) VALUES(1, TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE").execute(sqlite).await.unwrap();
@@ -1558,7 +1558,7 @@ mod tests {
             .unwrap();
         let root = tempfile::tempdir().unwrap();
         for (name, private) in [("proj", false), ("vault", true)] {
-            codeyard_repos_core::repositories::lifecycle::provision(
+            codeyard_git_storage::repositories::lifecycle::provision(
                 (&pool, None),
                 root.path(),
                 codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(

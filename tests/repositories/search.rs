@@ -11,24 +11,24 @@ use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
 use codeyard_ci::config::CiConfig;
 
-use codeyard_db_core::models::AccessLevel;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
+use codeyard_database::models::AccessLevel;
+use codeyard_database::models::Repository;
+use codeyard_database::queries::organizations::OrganizationOutcome;
 use codeyard_db_orgs::organizations::profiles::NewOrganization;
 use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
 use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
 use codeyard_db_repos::repositories::creation::RepositoryTarget;
+use codeyard_git_storage::repositories::lifecycle::provision;
+use codeyard_git_storage::repositories::store::repo_store;
+use codeyard_git_storage::repositories::store::RepoStore;
 use codeyard_repos::editor::FileWrite;
-use codeyard_repos_core::repositories::lifecycle::provision;
-use codeyard_repos_core::repositories::store::repo_store;
-use codeyard_repos_core::repositories::store::RepoStore;
 use codeyard_storage::ObjectStore;
 use database::Database;
 use std::{path::Path, sync::Arc};
 
 /// Commits `bytes` as a new file at `path` on `main`, after `tip`, and returns the new tip.
 async fn save(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     repo_id: i64,
     actor: i64,
     store: &RepoStore,

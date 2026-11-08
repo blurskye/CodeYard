@@ -17,7 +17,7 @@ use codeyard_identity::sessions::AccountAuthorityError;
 use codeyard_identity::sessions::SessionIssueError;
 use codeyard_identity::setup::SetupError;
 use codeyard_identity::two_factor::TwoFactorError;
-use codeyard_model::account_input::AccountInputError;
+use codeyard_types::account_input::AccountInputError;
 
 pub(crate) fn database_failure() -> ApiFailure {
     ApiError::failure(

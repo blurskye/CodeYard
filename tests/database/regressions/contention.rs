@@ -128,11 +128,11 @@ async fn postgres_privileged_node_and_crawler_writes_retain_their_session() {
     let admin = f.actor("retained_admin").await;
     f.execute("UPDATE users SET is_admin=TRUE WHERE id=$1", &[admin])
         .await;
-    codeyard_db_cluster::node_config::upsert_node_configuration(f.pool(), "public", true)
+    codeyard_db_placement::node_config::upsert_node_configuration(f.pool(), "public", true)
         .await
         .unwrap();
     let key = codeyard_support::node_identity::NodeKey::generate().public_hex();
-    let node = codeyard_db_cluster::cluster::register_own_node(
+    let node = codeyard_db_placement::cluster::register_own_node(
         f.pool(),
         &key,
         "retained-node",
@@ -163,16 +163,16 @@ async fn postgres_privileged_node_and_crawler_writes_retain_their_session() {
         let session = original.clone();
         let mutation = tokio::spawn(async move {
             if crawler {
-                assert!(codeyard_db_cluster::node_config::set_ai_crawlers(
+                assert!(codeyard_db_placement::node_config::set_ai_crawlers(
                     &pool, admin, &session, "allow"
                 )
                 .await
                 .unwrap());
             } else {
                 assert!(matches!(
-                    codeyard_db_cluster::cluster::set_node_status(
+                    codeyard_db_placement::cluster::set_node_status(
                         &pool,
-                        codeyard_db_cluster::cluster::Authority::Administrator {
+                        codeyard_db_placement::cluster::Authority::Administrator {
                             user_id: admin,
                             session: &session
                         },
@@ -181,7 +181,7 @@ async fn postgres_privileged_node_and_crawler_writes_retain_their_session() {
                     )
                     .await
                     .unwrap(),
-                    codeyard_db_core::models::NodeStatusChange::Changed { .. }
+                    codeyard_database::models::NodeStatusChange::Changed { .. }
                 ));
             }
         });
@@ -426,7 +426,7 @@ async fn postgres_family_promotion_refuses_a_fork_committed_during_its_lock_wait
     let mut nodes = Vec::new();
     for name in ["former", "target"] {
         nodes.push(
-            codeyard_db_cluster::cluster::register_own_node(
+            codeyard_db_placement::cluster::register_own_node(
                 f.pool(),
                 &codeyard_support::node_identity::NodeKey::generate().public_hex(),
                 name,
@@ -474,13 +474,13 @@ async fn postgres_family_promotion_refuses_a_fork_committed_during_its_lock_wait
         .bind(owner).bind(uuid::Uuid::new_v4().to_string()).bind(r.id).bind(from).fetch_one(&mut *fork).await.unwrap();
     let pool = f.pool().clone();
     let promotion = tokio::spawn(async move {
-        codeyard_db_cluster::cluster::promote_fork_family(&pool, r.id, from, to).await
+        codeyard_db_placement::cluster::promote_fork_family(&pool, r.id, from, to).await
     });
     wait_until_blocked(raw, holder, 1).await;
     fork.commit().await.unwrap();
     assert_eq!(
         promotion.await.unwrap().unwrap(),
-        codeyard_db_cluster::cluster::FamilyOutcome::Refused
+        codeyard_db_placement::cluster::FamilyOutcome::Refused
     );
     assert_eq!(f.repository(r.id).await.storage_node_id, Some(from));
     assert_eq!(f.repository(child).await.storage_node_id, Some(from));

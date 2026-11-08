@@ -562,7 +562,7 @@ async fn contract(pg: bool) {
     let alice = f.actor("alice").await;
     let bob = f.actor("bob").await;
     let root = tempfile::tempdir().unwrap();
-    let repository_row = codeyard_repos_core::repositories::lifecycle::provision(
+    let repository_row = codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
@@ -1481,7 +1481,7 @@ async fn hooks_contract(pg: bool) {
         StatusCode::UNPROCESSABLE_ENTITY,
     )
     .await;
-    let record = codeyard_db_core::queries::webhooks::NewDelivery {
+    let record = codeyard_database::queries::webhooks::NewDelivery {
         redelivery: false,
         guid: uuid::Uuid::new_v4().to_string(),
         event: "push".into(),
@@ -1766,7 +1766,7 @@ async fn deploy_keys_contract(pg: bool) {
         remove_key(
             f.pool(),
             &actor,
-            codeyard_db_core::queries::users::accounts::OwnedAccountCredential::Token(
+            codeyard_database::queries::users::accounts::OwnedAccountCredential::Token(
                 read_id,
                 codeyard_support::token_hash::token_hash(reader.strip_prefix("Bearer ").unwrap())
             ),
@@ -1774,7 +1774,7 @@ async fn deploy_keys_contract(pg: bool) {
             id
         )
         .await,
-        Err(codeyard_model::repositories::DeployKeyError::Denied)
+        Err(codeyard_types::repositories::DeployKeyError::Denied)
     ));
     f.execute(
         "UPDATE personal_access_tokens SET expires_at='2000-01-01T00:00:00Z' WHERE id=$1",
@@ -1785,7 +1785,7 @@ async fn deploy_keys_contract(pg: bool) {
         remove_key(
             f.pool(),
             &actor,
-            codeyard_db_core::queries::users::accounts::OwnedAccountCredential::Token(
+            codeyard_database::queries::users::accounts::OwnedAccountCredential::Token(
                 token_id,
                 codeyard_support::token_hash::token_hash(writer.strip_prefix("Bearer ").unwrap())
             ),
@@ -1793,7 +1793,7 @@ async fn deploy_keys_contract(pg: bool) {
             id
         )
         .await,
-        Err(codeyard_model::repositories::DeployKeyError::Denied)
+        Err(codeyard_types::repositories::DeployKeyError::Denied)
     ));
     checked(
         &router,
@@ -2564,7 +2564,7 @@ async fn collaborators_contract(pg: bool) {
     .unwrap()
     .is_empty());
 
-    use codeyard_db_core::queries::organizations::OrganizationOutcome;
+    use codeyard_database::queries::organizations::OrganizationOutcome;
     use codeyard_db_orgs::organizations::membership;
     use codeyard_db_orgs::organizations::profiles;
     let input = profiles::NewOrganization::new(
@@ -2584,7 +2584,7 @@ async fn collaborators_contract(pg: bool) {
             alice,
             org.id,
             bob,
-            codeyard_db_core::models::OrgRole::Member
+            codeyard_database::models::OrgRole::Member
         )
         .await
         .unwrap(),
@@ -2793,7 +2793,7 @@ async fn update_contract(pg: bool) {
     assert_eq!(current["description"], "Updated");
     assert_eq!(current["homepage"], "https://example.test/");
     let repo = f.repository(created["id"].as_i64().unwrap()).await;
-    let refs = codeyard_repos_core::repositories::store::repo_store(&repo, None)
+    let refs = codeyard_git_storage::repositories::store::repo_store(&repo, None)
         .refs()
         .await
         .unwrap();
@@ -3170,7 +3170,7 @@ async fn metadata_contract(pg: bool) {
             .unwrap();
     assert!(matches!(
         org,
-        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(_)
+        codeyard_database::queries::organizations::OrganizationOutcome::Applied(_)
     ));
     checked(
         &router,

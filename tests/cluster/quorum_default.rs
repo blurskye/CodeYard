@@ -6,11 +6,11 @@ async fn majority_is_default_and_legacy_is_explicit_on_both_engines() {
     for pg in [false, true] {
         let mut db = Database::empty(pg).await;
         db.complete_setup().await;
-        assert!(codeyard_db_cluster::cluster::enable_cluster(db.pool())
+        assert!(codeyard_db_placement::cluster::enable_cluster(db.pool())
             .await
             .unwrap());
         assert_eq!(
-            codeyard_db_cluster::cluster::writes::write_settings(db.pool())
+            codeyard_db_placement::cluster::writes::write_settings(db.pool())
                 .await
                 .unwrap()
                 .write_quorum
@@ -18,12 +18,12 @@ async fn majority_is_default_and_legacy_is_explicit_on_both_engines() {
             Some("majority")
         );
         assert!(
-            !codeyard_db_cluster::cluster::enable_cluster_with_quorum(db.pool(), "1")
+            !codeyard_db_placement::cluster::enable_cluster_with_quorum(db.pool(), "1")
                 .await
                 .unwrap()
         );
         assert_eq!(
-            codeyard_db_cluster::cluster::writes::write_settings(db.pool())
+            codeyard_db_placement::cluster::writes::write_settings(db.pool())
                 .await
                 .unwrap()
                 .write_quorum
@@ -53,16 +53,16 @@ async fn enabling_refuses_live_cores_legacy_repositories_invalid_policy_and_fail
         )
         .await
         .unwrap();
-        assert!(codeyard_db_cluster::cluster::enable_cluster_with_quorum(
+        assert!(codeyard_db_placement::cluster::enable_cluster_with_quorum(
             db.pool(),
             "majority; DELETE FROM repositories"
         )
         .await
         .is_err());
-        assert!(codeyard_db_cluster::cluster::enable_cluster(db.pool())
+        assert!(codeyard_db_placement::cluster::enable_cluster(db.pool())
             .await
             .is_err());
-        assert!(!codeyard_db_cluster::cluster::cluster_enabled(db.pool())
+        assert!(!codeyard_db_placement::cluster::cluster_enabled(db.pool())
             .await
             .unwrap());
         assert_eq!(db.count().await, 1);
@@ -71,11 +71,11 @@ async fn enabling_refuses_live_cores_legacy_repositories_invalid_policy_and_fail
             path.to_str().unwrap()
         );
         assert!(path.join("HEAD").is_file());
-        let live = codeyard_db_cluster::cluster::serving_lock(db.pool(), "quorum-default-core")
+        let live = codeyard_db_placement::cluster::serving_lock(db.pool(), "quorum-default-core")
             .await
             .unwrap();
         assert!(
-            codeyard_db_cluster::cluster::enable_cluster_with_quorum(db.pool(), "1")
+            codeyard_db_placement::cluster::enable_cluster_with_quorum(db.pool(), "1")
                 .await
                 .is_err()
         );
@@ -87,15 +87,15 @@ async fn enabling_refuses_live_cores_legacy_repositories_invalid_policy_and_fail
             db.execute("CREATE TRIGGER owned_enable_failure BEFORE UPDATE ON node_configuration WHEN NEW.cluster_enabled BEGIN SELECT RAISE(ABORT,'owned configuration outage'); END",&[]).await;
         }
         assert!(
-            codeyard_db_cluster::cluster::enable_cluster_with_quorum(db.pool(), "1")
+            codeyard_db_placement::cluster::enable_cluster_with_quorum(db.pool(), "1")
                 .await
                 .is_err()
         );
-        assert!(!codeyard_db_cluster::cluster::cluster_enabled(db.pool())
+        assert!(!codeyard_db_placement::cluster::cluster_enabled(db.pool())
             .await
             .unwrap());
         assert!(
-            codeyard_db_cluster::cluster::writes::write_settings(db.pool())
+            codeyard_db_placement::cluster::writes::write_settings(db.pool())
                 .await
                 .unwrap()
                 .write_quorum
@@ -111,12 +111,12 @@ async fn enabling_refuses_live_cores_legacy_repositories_invalid_policy_and_fail
         )
         .await;
         assert!(
-            codeyard_db_cluster::cluster::enable_cluster_with_quorum(db.pool(), "1")
+            codeyard_db_placement::cluster::enable_cluster_with_quorum(db.pool(), "1")
                 .await
                 .unwrap()
         );
         assert!(
-            codeyard_db_cluster::cluster::writes::write_settings(db.pool())
+            codeyard_db_placement::cluster::writes::write_settings(db.pool())
                 .await
                 .unwrap()
                 .write_quorum
@@ -148,7 +148,7 @@ async fn cli_validates_policy_before_enabling_and_preserves_the_selected_mode() 
         )
         .await;
         assert!(!bad.status.success());
-        assert!(!codeyard_db_cluster::cluster::cluster_enabled(db.pool())
+        assert!(!codeyard_db_placement::cluster::cluster_enabled(db.pool())
             .await
             .unwrap());
         let args = if policy == "majority" {
@@ -171,11 +171,11 @@ async fn cli_validates_policy_before_enabling_and_preserves_the_selected_mode() 
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
-        assert!(codeyard_db_cluster::cluster::cluster_enabled(db.pool())
+        assert!(codeyard_db_placement::cluster::cluster_enabled(db.pool())
             .await
             .unwrap());
         assert_eq!(
-            codeyard_db_cluster::cluster::writes::write_settings(db.pool())
+            codeyard_db_placement::cluster::writes::write_settings(db.pool())
                 .await
                 .unwrap()
                 .write_quorum

@@ -109,7 +109,7 @@ fn every_product_route_declares_a_cell_policy() {
             "missing route: {path}"
         );
     }
-    let catalog = codeyard_cells_router::selection::Catalog::new(routes).unwrap();
+    let catalog = codeyard_router::selection::Catalog::new(routes).unwrap();
     let matched = catalog.at("/api/v3/repos/alice/repo").unwrap().unwrap();
     assert_eq!(matched.parameter("owner").unwrap(), "alice");
     fn walk(path: &std::path::Path) {

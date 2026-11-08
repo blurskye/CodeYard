@@ -6,7 +6,7 @@ use crate::notifications::threads::ThreadInbox;
 use crate::notifications::threads::ThreadSubscription;
 use crate::notifications::threads::ThreadSummary;
 use crate::notifications::threads::ThreadView;
-use codeyard_db_core::models::Repository;
+use codeyard_database::models::Repository;
 
 pub(crate) async fn subscribers(
     pool: &SqlitePool,
@@ -175,7 +175,7 @@ async fn manage_subscription(
         .unwrap_or(false);
     if !allowed
         || (stub
-            && !codeyard_db_core::cells::notices::readable(
+            && !codeyard_database::cells::notices::readable(
                 scopes.home.as_ref(),
                 thread.scope_repository_id,
             )
@@ -218,7 +218,7 @@ pub(super) async fn perform(
             .unwrap_or(false);
         if !allowed
             || (stub
-                && !codeyard_db_core::cells::notices::readable(scopes.home.as_ref(), repo).await)
+                && !codeyard_database::cells::notices::readable(scopes.home.as_ref(), repo).await)
         {
             return Ok(ThreadInbox::default());
         }

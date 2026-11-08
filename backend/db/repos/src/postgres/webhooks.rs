@@ -1,17 +1,17 @@
 use crate::webhooks::DeliveryWindow;
 use crate::webhooks::HookOwner;
 use anyhow::Result;
-use codeyard_db_core::models::OrgRole;
-use codeyard_db_core::models::Webhook;
-use codeyard_db_core::models::WebhookDelivery;
-use codeyard_db_core::pool::PgPool;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_db_core::queries::postgres::discussions::lock_policy_authority;
-use codeyard_db_core::queries::postgres::organizations::authority::authority;
-use codeyard_db_core::queries::webhooks::NewDelivery;
-use codeyard_db_core::queries::webhooks::SealedSecret;
-use codeyard_db_core::queries::webhooks::WebhookFields;
-use codeyard_db_core::queries::webhooks::WebhookPatch;
+use codeyard_database::models::OrgRole;
+use codeyard_database::models::Webhook;
+use codeyard_database::models::WebhookDelivery;
+use codeyard_database::pool::PgPool;
+use codeyard_database::queries::organizations::OrganizationOutcome;
+use codeyard_database::queries::postgres::discussions::lock_policy_authority;
+use codeyard_database::queries::postgres::organizations::authority::authority;
+use codeyard_database::queries::webhooks::NewDelivery;
+use codeyard_database::queries::webhooks::SealedSecret;
+use codeyard_database::queries::webhooks::WebhookFields;
+use codeyard_database::queries::webhooks::WebhookPatch;
 use sqlx::Postgres;
 use sqlx::Transaction;
 
@@ -26,7 +26,7 @@ pub async fn read_settings(
     pool: &PgPool,
     owner: HookOwner,
     actor_id: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     hook: Option<i64>,
     delivery: Option<i64>,
     after: i64,
@@ -59,7 +59,7 @@ pub async fn list_managed_webhooks(
     pool: &PgPool,
     owner: HookOwner,
     actor: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     offset: i64,
     limit: i64,
 ) -> Result<Option<Vec<Webhook>>> {
@@ -137,11 +137,11 @@ async fn may_manage_hooks(
     tx: &mut Transaction<'_, Postgres>,
     owner: HookOwner,
     actor_id: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     write: bool,
 ) -> Result<bool> {
     Ok(account_manages_hooks(tx, owner, actor_id).await?
-        && codeyard_db_core::queries::postgres::users::transitions::credential_live(
+        && codeyard_database::queries::postgres::users::transitions::credential_live(
             tx, actor_id, credential, write,
         )
         .await?)
@@ -183,7 +183,7 @@ pub async fn managed_webhook(
 pub async fn latest_push_for_hook(
     pool: &PgPool,
     actor: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     repo: i64,
     hook: i64,
     max_bytes: i64,
@@ -211,7 +211,7 @@ pub async fn insert_webhook(
     pool: &PgPool,
     owner: HookOwner,
     actor_id: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     fields: &WebhookFields,
     secret: Option<&SealedSecret>,
 ) -> Result<Option<i64>> {
@@ -229,7 +229,7 @@ pub async fn insert_webhook(
         hooks.len() < crate::webhooks::MAX_HOOKS_PER_OWNER,
         crate::webhooks::HookLimit
     );
-    codeyard_db_core::queries::webhooks::ensure_distinct(
+    codeyard_database::queries::webhooks::ensure_distinct(
         &hooks,
         None,
         &fields.payload_url,
@@ -266,7 +266,7 @@ pub async fn update_webhook(
     pool: &PgPool,
     owner: HookOwner,
     actor_id: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     id: i64,
     fields: &WebhookFields,
     secret: Option<&SealedSecret>,
@@ -287,7 +287,7 @@ pub async fn patch_webhook(
     pool: &PgPool,
     owner: HookOwner,
     actor_id: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     id: i64,
     fields: &WebhookPatch,
     secret: Option<&SealedSecret>,
@@ -356,7 +356,7 @@ pub async fn delete_webhook(
     pool: &PgPool,
     owner: HookOwner,
     actor_id: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     id: i64,
 ) -> Result<Option<bool>> {
     let mut tx = pool.begin().await?;

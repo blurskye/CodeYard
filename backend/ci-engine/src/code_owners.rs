@@ -1,14 +1,14 @@
 //! CODEOWNERS: which owners a path has at a commit, and which of them may review it.
 //! Parsing and matching are pure. Resolving owners reads users and teams.
-use codeyard_db_core::models::Repository;
+use codeyard_database::models::Repository;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
-use codeyard_model::repositories::MAX_REVIEWERS;
-use codeyard_model::workflow_glob::code_owner_glob_matches_bounded;
-use codeyard_model::workflow_glob::WorkflowMatchBudget;
-use codeyard_repos_core::context::NodeContext;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_git_storage::context::NodeContext;
+use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_storage::range::ByteRange as BlobRange;
+use codeyard_types::repositories::MAX_REVIEWERS;
+use codeyard_types::workflow_glob::code_owner_glob_matches_bounded;
+use codeyard_types::workflow_glob::WorkflowMatchBudget;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
@@ -299,7 +299,7 @@ pub async fn load_rules(
 /// `@org/team` names the team's members, `@user` one user, and an email the user it belongs to.
 /// An owner who names nobody, or nobody who can write, maps to an empty list.
 pub async fn resolve_owners<'a>(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     repository: &Repository,
     owners: impl IntoIterator<Item = &'a str>,
 ) -> anyhow::Result<HashMap<String, Vec<i64>>> {
@@ -337,7 +337,7 @@ pub async fn resolve_owners<'a>(
     for emails in emails.chunks(500) {
         // The same verified-address attribution as commits; banned accounts own nothing.
         for (email, user) in
-            codeyard_repos_core::repositories::reads::commit_authors(pool, emails).await?
+            codeyard_git_storage::repositories::reads::commit_authors(pool, emails).await?
         {
             if let Some(ids) = resolved.get_mut(&email) {
                 ids.push(user.id);

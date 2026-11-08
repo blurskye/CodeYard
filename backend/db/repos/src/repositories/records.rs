@@ -1,8 +1,8 @@
 use anyhow::Result;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::models::SharedRepository;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::Repository;
+use codeyard_database::models::SharedRepository;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 
 /// Forks in the whole network, as GitHub's GraphQL `forkCount` reports it. Only public forks
 /// count, so the number reveals no private repository to any audience.
@@ -200,7 +200,7 @@ native_operation!(crate::postgres::repositories::records::update_repository,
     /// failed write leaves all three unchanged.
     fn update_repository(
     pool: &DbPool,
-    actor_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor_id: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     description: Option<&str>,
     is_private: impl Into<VisibilityUpdate>,
@@ -365,12 +365,12 @@ impl<T> RepositoryChanges<T> {
 
 native_operation!(crate::postgres::repositories::records::patch_repository,
     crate::sqlite::repositories::records::patch_repository,
-    fn patch_repository(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo_id: i64, changes: &RepositoryChanges<&str>) -> Result<Repository>);
+    fn patch_repository(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, repo_id: i64, changes: &RepositoryChanges<&str>) -> Result<Repository>);
 
 native_operation!(crate::postgres::repositories::records::patch_repository_and_default,
     crate::sqlite::repositories::records::patch_repository_and_default,
     /// Called under the repository Git lock, after HEAD was changed successfully.
-    fn patch_repository_and_default(pool:&DbPool,actor:impl Into<codeyard_db_core::queries::credentials::Actor>,repo_id:i64,changes:&RepositoryChanges<&str>,name:&str,expected_owner:Option<&str>)->Result<Repository>);
+    fn patch_repository_and_default(pool:&DbPool,actor:impl Into<codeyard_database::queries::credentials::Actor>,repo_id:i64,changes:&RepositoryChanges<&str>,name:&str,expected_owner:Option<&str>)->Result<Repository>);
 
 /// Unconfirmed native saves may keep visibility, but must not change it concurrently.
 pub struct VisibilityUpdate {
@@ -414,7 +414,7 @@ native_operation!(crate::postgres::repositories::records::set_merge_methods,
     crate::sqlite::repositories::records::set_merge_methods,
     fn set_merge_methods(
     pool: &DbPool,
-    actor_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor_id: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     update: MergeMethodUpdate,
 ) -> Result<()>);
@@ -429,7 +429,7 @@ native_operation!(crate::postgres::repositories::records::set_repository_default
 
 native_operation!(crate::postgres::repositories::records::set_repository_archived,
     crate::sqlite::repositories::records::set_repository_archived,
-    fn set_repository_archived(pool: &DbPool, actor_id: impl Into<codeyard_db_core::queries::credentials::Actor>, repo_id: i64, archived: bool) -> Result<bool>);
+    fn set_repository_archived(pool: &DbPool, actor_id: impl Into<codeyard_database::queries::credentials::Actor>, repo_id: i64, archived: bool) -> Result<bool>);
 
 native_operation!(crate::postgres::repositories::records::update_repo_default_branch,
     crate::sqlite::repositories::records::update_repo_default_branch,
@@ -450,7 +450,7 @@ native_operation!(crate::postgres::repositories::records::update_repo_size,
 
 native_operation!(crate::postgres::repositories::records::delete_repository,
     crate::sqlite::repositories::records::delete_repository,
-    fn delete_repository(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo_id: i64) -> Result<Repository>);
+    fn delete_repository(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, repo_id: i64) -> Result<Repository>);
 
 native_operation!(crate::postgres::repositories::records::delete_unattached_advisory_fork,
     crate::sqlite::repositories::records::delete_unattached_advisory_fork,
@@ -464,7 +464,7 @@ native_operation!(crate::postgres::repositories::records::rename_repository,
     crate::sqlite::repositories::records::rename_repository,
     fn rename_repository(
     pool: &DbPool,
-    actor_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor_id: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     new_name: &str,
 ) -> Result<Repository>);
@@ -473,7 +473,7 @@ native_operation!(crate::postgres::repositories::records::transfer_repository,
     crate::sqlite::repositories::records::transfer_repository,
     fn transfer_repository(
     pool: &DbPool,
-    actor_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor_id: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     target: crate::repositories::creation::RepositoryTarget,
 ) -> Result<Repository>);
@@ -482,7 +482,7 @@ native_operation!(crate::postgres::repositories::records::transfer_repository,
 // name stable while the ownership transaction commits.
 native_operation!(crate::postgres::repositories::records::transfer_repository_checked,
     crate::sqlite::repositories::records::transfer_repository_checked,
-    fn transfer_repository_checked(pool:&DbPool,actor_id:impl Into<codeyard_db_core::queries::credentials::Actor>,repo_id:i64,target:crate::repositories::creation::RepositoryTarget,expected_owner:&str,expected_name:&str)->Result<Repository>);
+    fn transfer_repository_checked(pool:&DbPool,actor_id:impl Into<codeyard_database::queries::credentials::Actor>,repo_id:i64,target:crate::repositories::creation::RepositoryTarget,expected_owner:&str,expected_name:&str)->Result<Repository>);
 
 /// Canonical namespaces for already-selected repositories. This display read does
 /// not grant access; callers retain their visibility filtering before page limits.

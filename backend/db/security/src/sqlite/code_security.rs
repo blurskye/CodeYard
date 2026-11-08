@@ -3,22 +3,22 @@ use crate::code_security::SettingsPage;
 use crate::code_security::SETTINGS_PAGE_SIZE;
 use anyhow::ensure;
 use anyhow::Result;
-use codeyard_db_core::models::OrgRole;
-use codeyard_db_core::pool::SqlitePool;
-use codeyard_db_core::queries::code_security::Configuration;
-use codeyard_db_core::queries::code_security::Refusal;
-use codeyard_db_core::queries::code_security::RepositorySettings;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
+use codeyard_database::models::OrgRole;
+use codeyard_database::pool::SqlitePool;
+use codeyard_database::queries::code_security::Configuration;
+use codeyard_database::queries::code_security::Refusal;
+use codeyard_database::queries::code_security::RepositorySettings;
+use codeyard_database::queries::organizations::OrganizationOutcome;
 use sqlx::Sqlite;
 use sqlx::Transaction;
 
 async fn write<'a>(
     pool: &'a SqlitePool,
-    actor: &codeyard_db_core::queries::credentials::Actor,
+    actor: &codeyard_database::queries::credentials::Actor,
     org: i64,
 ) -> Result<Transaction<'a, Sqlite>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    match codeyard_db_core::queries::sqlite::organizations::authority::authority(
+    match codeyard_database::queries::sqlite::organizations::authority::authority(
         &mut tx,
         actor.user_id,
         org,
@@ -27,7 +27,7 @@ async fn write<'a>(
     {
         OrganizationOutcome::Applied(OrgRole::Owner | OrgRole::Admin) => {}
         OrganizationOutcome::Applied(OrgRole::Member)
-            if codeyard_db_core::queries::sqlite::organizations::roles::manages_security(
+            if codeyard_database::queries::sqlite::organizations::roles::manages_security(
                 &mut tx,
                 actor.user_id,
                 org,
@@ -37,7 +37,7 @@ async fn write<'a>(
         _ => return Err(Refusal::Denied.into()),
     }
     ensure!(
-        codeyard_db_core::queries::sqlite::credentials::organization(
+        codeyard_database::queries::sqlite::credentials::organization(
             &mut tx,
             actor,
             org,
@@ -113,7 +113,7 @@ pub async fn list_window(
 }
 pub async fn save(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     org: i64,
     id: Option<i64>,
     patch: &serde_json::Value,
@@ -144,7 +144,7 @@ pub async fn save(
 }
 pub async fn delete(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     org: i64,
     id: i64,
 ) -> Result<()> {
@@ -161,7 +161,7 @@ pub async fn delete(
 }
 pub async fn set_default(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     org: i64,
     id: i64,
     scope: &str,
@@ -204,7 +204,7 @@ pub async fn set_default(
 }
 pub async fn attach(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     org: i64,
     id: Option<i64>,
     scope: &str,
@@ -261,8 +261,8 @@ pub async fn repository_settings(
     )
 }
 
-use codeyard_db_core::queries::sqlite::code_security::configuration;
+use codeyard_database::queries::sqlite::code_security::configuration;
 
-use codeyard_db_core::queries::sqlite::code_security::apply_repository;
+use codeyard_database::queries::sqlite::code_security::apply_repository;
 
-use codeyard_db_core::queries::sqlite::code_security::readable;
+use codeyard_database::queries::sqlite::code_security::readable;

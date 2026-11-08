@@ -2,7 +2,7 @@
 
 use crate::support::native_database as native;
 
-use codeyard_db_core::pool::{PgPool, SqlitePool};
+use codeyard_database::pool::{PgPool, SqlitePool};
 use native::{NativeDatabase, PostgresDatabase};
 use uuid::Uuid;
 
@@ -141,7 +141,7 @@ async fn populate(source: &NativeDatabase) -> Seed {
     .await
     .unwrap()
     {
-        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(org) => org,
+        codeyard_database::queries::organizations::OrganizationOutcome::Applied(org) => org,
         other => panic!("organization fixture: {other:?}"),
     };
     let settings=codeyard_db_orgs::organizations::settings::Changes::parse(&serde_json::json!({"company":"Metadata café 名前","email":"public@example.test","billing_email":"private@example.test","location":"Montréal","blog":"https://example.test/metadata","default_repository_permission":"write","members_can_create_private_repositories":true,"members_can_fork_private_repositories":false,"has_organization_projects":false,"web_commit_signoff_required":true,"deploy_keys_enabled_for_repositories":false})).unwrap();
@@ -149,7 +149,7 @@ async fn populate(source: &NativeDatabase) -> Seed {
         codeyard_db_orgs::organizations::settings::change(pool, alice.id, org.id, &settings)
             .await
             .unwrap(),
-        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(_)
+        codeyard_database::queries::organizations::OrganizationOutcome::Applied(_)
     ));
     let metadata_repo = codeyard_db_repos::repositories::creation::insert_repository(
         pool,
@@ -176,7 +176,7 @@ async fn populate(source: &NativeDatabase) -> Seed {
         codeyard_db_orgs::organizations::properties::define(pool, alice.id, org.id, &[definition])
             .await
             .unwrap(),
-        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(_)
+        codeyard_database::queries::organizations::OrganizationOutcome::Applied(_)
     ));
     assert!(matches!(
         codeyard_db_orgs::organizations::properties::set_values(
@@ -185,10 +185,10 @@ async fn populate(source: &NativeDatabase) -> Seed {
             org.id,
             &["metadata".into()],
             &[
-                codeyard_db_core::queries::organizations::properties::ValueInput {
+                codeyard_database::queries::organizations::properties::ValueInput {
                     property_name: "traits".into(),
                     value: Some(
-                        codeyard_db_core::queries::organizations::properties::PropertyValue::Strings(
+                        codeyard_database::queries::organizations::properties::PropertyValue::Strings(
                             vec!["名前".into()]
                         )
                     )
@@ -197,7 +197,7 @@ async fn populate(source: &NativeDatabase) -> Seed {
         )
         .await
         .unwrap(),
-        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(())
+        codeyard_database::queries::organizations::OrganizationOutcome::Applied(())
     ));
     assert!(metadata_repo.id > repo.id);
 
@@ -319,7 +319,7 @@ async fn copies_repository_with_a_deleted_creator_to_postgres() {
             .unwrap();
     assert_eq!(retained, creator.id);
     let target = PostgresDatabase::new().await;
-    codeyard_db_cluster::copy::copy_database(&source.url, &target.connection_url())
+    codeyard_db_placement::copy::copy_database(&source.url, &target.connection_url())
         .await
         .unwrap();
     let copied: i64 =
@@ -337,7 +337,7 @@ async fn copies_every_table_and_value_to_postgres() {
     let seed = populate(&source).await;
     let target = PostgresDatabase::new().await;
 
-    let counts = codeyard_db_cluster::copy::copy_database(&source.url, &target.connection_url())
+    let counts = codeyard_db_placement::copy::copy_database(&source.url, &target.connection_url())
         .await
         .expect("copy SQLite to PostgreSQL");
 
@@ -476,12 +476,12 @@ async fn round_trip_through_postgres_keeps_every_row() {
     let original = NativeDatabase::new().await;
     populate(&original).await;
     let target = PostgresDatabase::new().await;
-    codeyard_db_cluster::copy::copy_database(&original.url, &target.connection_url())
+    codeyard_db_placement::copy::copy_database(&original.url, &target.connection_url())
         .await
         .expect("copy SQLite to PostgreSQL");
 
     let restored = NativeDatabase::new().await;
-    codeyard_db_cluster::copy::copy_database(&target.connection_url(), &restored.url)
+    codeyard_db_placement::copy::copy_database(&target.connection_url(), &restored.url)
         .await
         .expect("copy PostgreSQL to SQLite");
 
@@ -547,7 +547,7 @@ async fn non_empty_destination_is_refused_and_left_untouched() {
         .await
         .unwrap();
 
-    let error = codeyard_db_cluster::copy::copy_database(&source.url, &target.connection_url())
+    let error = codeyard_db_placement::copy::copy_database(&source.url, &target.connection_url())
         .await
         .expect_err("a populated destination is refused");
     assert!(
@@ -572,7 +572,7 @@ async fn missing_baseline_history_is_refused() {
         .unwrap();
     let target = PostgresDatabase::new().await;
 
-    let error = codeyard_db_cluster::copy::copy_database(&source.url, &target.connection_url())
+    let error = codeyard_db_placement::copy::copy_database(&source.url, &target.connection_url())
         .await
         .expect_err("a source without baseline history is refused");
     assert!(
@@ -593,12 +593,12 @@ async fn sqlite_source_checksum_mismatch_is_refused() {
         .execute(&source.raw)
         .await
         .unwrap();
-    let startup_error = codeyard_db_core::run_migrations(&source.pool)
+    let startup_error = codeyard_database::run_migrations(&source.pool)
         .await
         .unwrap_err();
     let target = PostgresDatabase::new().await;
 
-    let error = codeyard_db_cluster::copy::copy_database(&source.url, &target.connection_url())
+    let error = codeyard_db_placement::copy::copy_database(&source.url, &target.connection_url())
         .await
         .expect_err("copy must reject the same checksum as startup");
     assert_eq!(error.to_string(), startup_error.to_string());
@@ -613,7 +613,7 @@ async fn sqlite_source_checksum_mismatch_is_refused() {
     assert_eq!(checksum, "tampered");
 
     let error =
-        codeyard_db_cluster::copy::copy_database(&source.url, "postgres://127.0.0.1:1/unused")
+        codeyard_db_placement::copy::copy_database(&source.url, "postgres://127.0.0.1:1/unused")
             .await
             .expect_err("validate the snapshot before connecting to the destination");
     assert_eq!(error.to_string(), startup_error.to_string());
@@ -630,14 +630,14 @@ async fn postgres_source_checksum_mismatch_is_refused() {
         .execute(&source.raw)
         .await
         .unwrap();
-    let startup_error = codeyard_db_core::run_migrations(&source.pool)
+    let startup_error = codeyard_database::run_migrations(&source.pool)
         .await
         .unwrap_err();
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("copy.sqlite");
     let url = format!("sqlite://{}", path.display());
 
-    let error = codeyard_db_cluster::copy::copy_database(&source.connection_url(), &url)
+    let error = codeyard_db_placement::copy::copy_database(&source.connection_url(), &url)
         .await
         .expect_err("copy must reject the same checksum as startup");
     assert_eq!(error.to_string(), startup_error.to_string());
@@ -660,7 +660,7 @@ async fn postgres_cluster_placement_is_refused_before_sqlite_is_opened() {
         .await
         .unwrap();
     let repo = create_repository(&source.pool, owner.id, "placed").await;
-    let node = codeyard_db_cluster::cluster::register_own_node(
+    let node = codeyard_db_placement::cluster::register_own_node(
         &source.pool,
         &"a".repeat(64),
         "store",
@@ -670,7 +670,7 @@ async fn postgres_cluster_placement_is_refused_before_sqlite_is_opened() {
     .await
     .unwrap();
     assert!(
-        codeyard_db_cluster::cluster::place_repository(&source.pool, repo.id, node.id)
+        codeyard_db_placement::cluster::place_repository(&source.pool, repo.id, node.id)
             .await
             .unwrap()
     );
@@ -678,7 +678,7 @@ async fn postgres_cluster_placement_is_refused_before_sqlite_is_opened() {
     let path = directory.path().join("copy.sqlite");
     let url = format!("sqlite://{}", path.display());
 
-    let error = codeyard_db_cluster::copy::copy_database(&source.connection_url(), &url)
+    let error = codeyard_db_placement::copy::copy_database(&source.connection_url(), &url)
         .await
         .expect_err("SQLite cannot serve placed repositories");
     let message = error.to_string();
@@ -698,10 +698,10 @@ async fn postgres_cluster_placement_is_refused_before_sqlite_is_opened() {
         .execute(&source.raw)
         .await
         .unwrap();
-    codeyard_db_cluster::copy::copy_database(&source.connection_url(), &url)
+    codeyard_db_placement::copy::copy_database(&source.connection_url(), &url)
         .await
         .expect("unplaced repositories may be copied even with membership rows");
-    let restored = codeyard_db_core::init_db(&url).await.unwrap();
+    let restored = codeyard_database::init_db(&url).await.unwrap();
     let stored = codeyard_db_repos::repositories::records::get_repository_by_id(&restored, repo.id)
         .await
         .unwrap()
@@ -731,7 +731,7 @@ async fn failed_copy_leaves_destination_empty() {
     drop(connection);
 
     let target = PostgresDatabase::new().await;
-    let error = codeyard_db_cluster::copy::copy_database(&source.url, &target.connection_url())
+    let error = codeyard_db_placement::copy::copy_database(&source.url, &target.connection_url())
         .await
         .expect_err("orphaned star breaks the copy");
     assert!(format!("{error:#}").contains("foreign key"), "{error:#}");
@@ -770,7 +770,7 @@ async fn nul_text_is_refused_before_postgres_is_written() {
         .unwrap();
     let target = PostgresDatabase::new().await;
 
-    let error = codeyard_db_cluster::copy::copy_database(&source.url, &target.connection_url())
+    let error = codeyard_db_placement::copy::copy_database(&source.url, &target.connection_url())
         .await
         .expect_err("NUL text is refused");
     let message = format!("{error:#}");
@@ -819,10 +819,13 @@ async fn copy_cli_refuses_an_unfinished_account_move_before_opening_sqlite() {
         !path.exists(),
         "an in-flight move must not become writable through SQLite"
     );
-    assert!(codeyard_db_cluster::moves::cancel(
+    assert!(codeyard_db_placement::moves::cancel(
         &source.raw,
-        codeyard_db_cluster::moves::Account::new(codeyard_model::cells::ObjectKind::User, user.id)
-            .unwrap()
+        codeyard_db_placement::moves::Account::new(
+            codeyard_types::cells::ObjectKind::User,
+            user.id
+        )
+        .unwrap()
     )
     .await
     .unwrap());
@@ -883,10 +886,10 @@ async fn cli_reads_urls_from_environment_and_refuses_passwords_in_arguments() {
 }
 
 async fn create_repository(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     owner: i64,
     name: &str,
-) -> codeyard_db_core::models::Repository {
+) -> codeyard_database::models::Repository {
     codeyard_db_repos::repositories::records::create_repository(
         pool,
         owner,
@@ -917,7 +920,7 @@ async fn copies_never_reissue_deleted_repository_ids() {
         .unwrap();
 
     let target = PostgresDatabase::new().await;
-    codeyard_db_cluster::copy::copy_database(&source.url, &target.connection_url())
+    codeyard_db_placement::copy::copy_database(&source.url, &target.connection_url())
         .await
         .expect("copy SQLite to PostgreSQL");
     let after_copy = create_repository(&target.pool, owner.id, "after-copy").await;
@@ -936,7 +939,7 @@ async fn copies_never_reissue_deleted_repository_ids() {
     .unwrap();
 
     let restored = NativeDatabase::new().await;
-    codeyard_db_cluster::copy::copy_database(&target.connection_url(), &restored.url)
+    codeyard_db_placement::copy::copy_database(&target.connection_url(), &restored.url)
         .await
         .expect("copy PostgreSQL to SQLite");
     let next = create_repository(&restored.pool, owner.id, "restored").await;

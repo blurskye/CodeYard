@@ -7,13 +7,13 @@ use rsa::traits::PublicKeyParts;
 
 use anyhow::Result;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use codeyard_db_core::DbPool;
+use codeyard_database::DbPool;
 use rsa::RsaPrivateKey;
 use serde_json::json;
 use serde_json::Value;
 
 pub fn issuer() -> String {
-    codeyard_model::http_config::link_origin()
+    codeyard_types::http_config::link_origin()
         .trim_end_matches('/')
         .to_owned()
 }

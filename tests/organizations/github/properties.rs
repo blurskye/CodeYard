@@ -3,15 +3,15 @@ use crate::support::database::Database;
 use crate::support::http_client::Client;
 use crate::support::organizations::applied;
 
-use codeyard_db_core::queries::organizations::properties::PropertyValue;
-use codeyard_db_core::queries::organizations::properties::ValueInput;
+use codeyard_database::queries::organizations::properties::PropertyValue;
+use codeyard_database::queries::organizations::properties::ValueInput;
 use codeyard_db_orgs::organizations::profiles::NewOrganization;
 use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
 use codeyard_db_repos::repositories::creation::NewRepository;
 use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
 use codeyard_db_repos::repositories::creation::RepositoryTarget;
 
-use codeyard_db_core::models::OrgRole;
+use codeyard_database::models::OrgRole;
 use codeyard_identity::tokens::TokenInput;
 use serde_json::{json, Value};
 mod lifecycle;
@@ -30,7 +30,7 @@ async fn repository(
     owner: i64,
     org: i64,
     name: &str,
-) -> codeyard_db_core::models::Repository {
+) -> codeyard_database::models::Repository {
     let disk = uuid::Uuid::new_v4().to_string();
     let git = git2::Repository::init_bare(root.join(&disk)).unwrap();
     git.set_head("refs/heads/main").unwrap();
@@ -415,8 +415,8 @@ async fn contract(pg: bool) {
     .await
     .unwrap_err();
     assert!(matches!(
-        denied.downcast_ref::<codeyard_db_core::queries::organizations::properties::Refusal>(),
-        Some(codeyard_db_core::queries::organizations::properties::Refusal::Denied)
+        denied.downcast_ref::<codeyard_database::queries::organizations::properties::Refusal>(),
+        Some(codeyard_database::queries::organizations::properties::Refusal::Denied)
     ));
     assert_eq!(
         f.scalar(

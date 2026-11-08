@@ -33,7 +33,7 @@ async fn search(pg: bool) {
         ("secret", true, "hidden needle analysis"),
     ] {
         repositories.push(
-            codeyard_repos_core::repositories::lifecycle::provision(
+            codeyard_git_storage::repositories::lifecycle::provision(
                 (f.pool(), None),
                 root.path(),
                 codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
@@ -61,7 +61,7 @@ async fn search(pg: bool) {
     .await
     .unwrap()
     {
-        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(org) => org,
+        codeyard_database::queries::organizations::OrganizationOutcome::Applied(org) => org,
         _ => panic!("organization"),
     };
     let router = f.router(root.path()).await;

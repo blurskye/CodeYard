@@ -1,11 +1,11 @@
 use anyhow::Result;
-use codeyard_db_core::models::AdminAccountSummary;
-use codeyard_db_core::models::AdminActivityPoint;
-use codeyard_db_core::models::AdminUser;
-use codeyard_db_core::models::User;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::queries::users::accounts::AccountCredential;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::AdminAccountSummary;
+use codeyard_database::models::AdminActivityPoint;
+use codeyard_database::models::AdminUser;
+use codeyard_database::models::User;
+use codeyard_database::native_operation;
+use codeyard_database::queries::users::accounts::AccountCredential;
+use codeyard_database::DbPool;
 
 pub struct AdminUserPage {
     pub counts: (i64, i64, i64),

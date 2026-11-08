@@ -4,26 +4,26 @@ use axum::{
     body::{to_bytes, Body},
     http::{Request, StatusCode},
 };
-use codeyard_db_core::{cells::stubs, models::Organization, DbPool};
-use codeyard_types::cells::Prefix;
+use codeyard_database::{cells::stubs, models::Organization, DbPool};
+use codeyard_types::cell_ids::Prefix;
 use serde_json::Value;
 use tower::ServiceExt;
 
 struct NoticeHome(std::sync::atomic::AtomicU8);
-impl codeyard_db_core::cells::authorization::Home for NoticeHome {
+impl codeyard_database::cells::authorization::Home for NoticeHome {
     fn authorize<'a>(
         &'a self,
-        _: &'a codeyard_db_core::cells::authorization::Proof,
+        _: &'a codeyard_database::cells::authorization::Proof,
     ) -> futures_util::future::BoxFuture<
         'a,
-        anyhow::Result<Option<codeyard_db_core::cells::authorization::Answer>>,
+        anyhow::Result<Option<codeyard_database::cells::authorization::Answer>>,
     > {
         Box::pin(async { Ok(None) })
     }
     fn user<'a>(
         &'a self,
         _: &'a str,
-    ) -> futures_util::future::BoxFuture<'a, anyhow::Result<Option<codeyard_db_core::models::User>>>
+    ) -> futures_util::future::BoxFuture<'a, anyhow::Result<Option<codeyard_database::models::User>>>
     {
         Box::pin(async { Ok(None) })
     }
@@ -344,7 +344,7 @@ async fn contract(pg: bool) {
             .await,
         2
     );
-    let token = codeyard_types::cells::Prefix::ZERO
+    let token = codeyard_types::cell_ids::Prefix::ZERO
         .token(codeyard_types::tokens::PAT_PREFIX, &"d".repeat(64))
         .unwrap();
     codeyard_db_identity::users::tokens::create_token(
@@ -399,7 +399,7 @@ async fn contract(pg: bool) {
     // Collaborator projections evaluate the real stub marker, including the admin case.
     let session = "b".repeat(64);
     let credential =
-        codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session);
+        codeyard_database::queries::users::accounts::AccountCredential::Session(&session);
     assert!(
         codeyard_db_actions::variables::list(pool, native.id, &credential, local.id)
             .await
@@ -430,7 +430,7 @@ async fn contract(pg: bool) {
     );
     let mut hostile_path = repository.clone();
     hostile_path.disk_path = git_path.to_str().unwrap().into();
-    let store = codeyard_repos_core::repositories::store::repo_store(&hostile_path, None);
+    let store = codeyard_git_storage::repositories::store::repo_store(&hostile_path, None);
     assert!(store.info().await.is_err());
     assert!(store
         .set_default_branch_as(pool, repository.id, native.id, "changed")
@@ -530,7 +530,7 @@ async fn contract(pg: bool) {
     pool.set_foreign_authorization(home.clone());
     let notice = codeyard_db_repos::notifications::records::create_notification(
         pool,
-        codeyard_db_core::queries::notifications::records::NewNotification {
+        codeyard_database::queries::notifications::records::NewNotification {
             user_id: native.id,
             actor_id: None,
             repo_id: Some(repository.id),

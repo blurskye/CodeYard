@@ -10,7 +10,7 @@ use codeyard_db_orgs::organizations::teams::NewTeam;
 use codeyard_db_orgs::organizations::teams::TeamPrivacy;
 use codeyard_db_orgs::organizations::teams::TeamProfile;
 
-use codeyard_db_core::models::OrgRole;
+use codeyard_database::models::OrgRole;
 use codeyard_identity::tokens::TokenInput;
 use serde_json::{json, Value};
 

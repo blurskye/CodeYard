@@ -1,5 +1,5 @@
 use crate::notifications::events::EventBatch;
-use codeyard_db_core::pool::SqlitePool;
+use codeyard_database::pool::SqlitePool;
 
 pub(crate) async fn poll(pool: &SqlitePool, cursor: i64) -> Result<EventBatch, sqlx::Error> {
     let rows: Vec<(i64, Option<i64>, Option<String>)> = sqlx::query_as(

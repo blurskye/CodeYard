@@ -8,10 +8,10 @@ use crate::url;
 use crate::RequestContext;
 use crate::Result;
 use async_graphql::Error;
-use codeyard_model::node_id;
 use codeyard_repos_pulls::issues::comments::CreateCommentRequest;
 use codeyard_repos_pulls::issues::mutations::CreateIssueRequest;
 use codeyard_repos_pulls::issues::mutations::UpdateIssueRequest;
+use codeyard_types::node_id;
 use serde_json::json;
 use serde_json::Value;
 
@@ -39,14 +39,14 @@ fn lock_reason(value: Option<&str>) -> Option<&str> {
     })
 }
 
-pub(super) fn object(issue: &codeyard_db_core::models::Issue) -> Value {
+pub(super) fn object(issue: &codeyard_database::models::Issue) -> Value {
     json!({"__typename":"Issue","id":node_id::scoped("I",issue.repo_id,issue.id),"databaseId":issue.id,
         "_repo":issue.repo_id,"_author":issue.author_id,"_milestone":issue.milestone_id,"number":issue.number,"title":issue.title,
         "updatedAt":issue.updated_at,"closed":issue.state=="closed","locked":issue.locked,"activeLockReason":lock_reason(issue.lock_reason.as_deref()),"stateReason":issue.state_reason.as_ref().map(|s|s.to_uppercase()),
         "body":issue.body,"state":issue.state.to_uppercase(),"createdAt":issue.created_at,"closedAt":issue.closed_at})
 }
 
-pub(super) fn pull_object(pull: &codeyard_db_core::models::PullRequest) -> Value {
+pub(super) fn pull_object(pull: &codeyard_database::models::PullRequest) -> Value {
     json!({"__typename":"PullRequest","id":node_id::scoped("PR",pull.repo_id,pull.id),"databaseId":pull.id,
         "_repo":pull.repo_id,"_author":pull.author_id,"_milestone":pull.milestone_id,"number":pull.number,"title":pull.title,
         "updatedAt":pull.updated_at,"maintainerCanModify":pull.maintainer_can_modify,"closed":pull.state!="open","locked":pull.locked,"activeLockReason":lock_reason(pull.lock_reason.as_deref()),
@@ -182,7 +182,7 @@ pub(super) async fn resolve(
 }
 
 pub(super) async fn comment(
-    comment: &codeyard_db_core::models::IssueComment,
+    comment: &codeyard_database::models::IssueComment,
     request: &RequestContext,
 ) -> Result<Value> {
     let issue = codeyard_db_repos::issues::get_issue_by_id(&request.state.pool, comment.issue_id)
@@ -192,7 +192,7 @@ pub(super) async fn comment(
     crate::repository::by_id(issue.repo_id, request).await?;
     request.charge(comment.body.len().saturating_mul(4))?;
     Ok(
-        json!({"__typename":"IssueComment","id":node_id::scoped("IC",issue.repo_id,comment.id),"databaseId":codeyard_model::webhook_ids::conversation_comment_id(comment.id,false),"_comment":comment.id,
+        json!({"__typename":"IssueComment","id":node_id::scoped("IC",issue.repo_id,comment.id),"databaseId":codeyard_types::webhook_ids::conversation_comment_id(comment.id,false),"_comment":comment.id,
         "_repo":issue.repo_id,"_number":issue.number,"_pull":false,"_author":comment.author_id,
         "viewerDidAuthor":comment.author_id==request.auth.user.id,"includesCreatedEdit":comment.updated_at>comment.created_at,"isMinimized":false,"minimizedReason":null,
         "body":comment.body,"createdAt":comment.created_at,"updatedAt":comment.updated_at,"author":crate::user::retained_author(comment.author_id,request).await?}),
@@ -200,7 +200,7 @@ pub(super) async fn comment(
 }
 
 pub(super) async fn pull_comment(
-    comment: &codeyard_db_core::models::PullRequestComment,
+    comment: &codeyard_database::models::PullRequestComment,
     request: &RequestContext,
 ) -> Result<Value> {
     let pull = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(
@@ -213,7 +213,7 @@ pub(super) async fn pull_comment(
     crate::repository::by_id(pull.repo_id, request).await?;
     request.charge(comment.body.len().saturating_mul(4))?;
     Ok(
-        json!({"__typename":"IssueComment","id":node_id::scoped("PC",pull.repo_id,comment.id),"databaseId":codeyard_model::webhook_ids::conversation_comment_id(comment.id,true),"_comment":comment.id,
+        json!({"__typename":"IssueComment","id":node_id::scoped("PC",pull.repo_id,comment.id),"databaseId":codeyard_types::webhook_ids::conversation_comment_id(comment.id,true),"_comment":comment.id,
         "_repo":pull.repo_id,"_number":pull.number,"_pull":true,"_author":comment.author_id,
         "viewerDidAuthor":comment.author_id==request.auth.user.id,"includesCreatedEdit":comment.updated_at>comment.created_at,"isMinimized":false,"minimizedReason":null,
         "body":comment.body,"createdAt":comment.created_at,"updatedAt":comment.updated_at,"author":crate::user::retained_author(comment.author_id,request).await?}),
@@ -486,7 +486,7 @@ pub(super) async fn mutation(
             )
             .await
             .map_err(|error| {
-                use codeyard_repos_core::repositories::pull_requests::OperationError;
+                use codeyard_git_storage::repositories::pull_requests::OperationError;
                 match error {
                     OperationError::Missing { .. } => missing(),
                     OperationError::Unavailable { .. } => unavailable(()),

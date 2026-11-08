@@ -21,14 +21,14 @@ use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
 use codeyard_ci_engine::runs::DispatchRequest;
+use codeyard_database::ci_admission::AdmissionError;
 use codeyard_db_actions::action_workflows as workflows;
 use codeyard_db_actions::action_workflows::Workflow;
-use codeyard_db_core::ci_admission::AdmissionError;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
-use codeyard_model::urls::repo_url;
-use codeyard_repos_core::api_shared::github::contents::store_error;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_git_storage::api_shared::github::contents::store_error;
+use codeyard_git_storage::repositories::store::repo_store;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
+use codeyard_types::urls::repo_url;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -37,13 +37,13 @@ use std::sync::Arc;
 
 pub(super) async fn discover(
     state: &AppState,
-    repo: &codeyard_db_core::models::Repository,
+    repo: &codeyard_database::models::Repository,
 ) -> Result<Vec<Workflow>> {
     let store = repo_store(repo, state.cluster.as_ref());
     if store.refs().await.map_err(store_error)?.is_empty() {
         return Ok(Vec::new());
     }
-    let definitions = codeyard_repos_core::workflows::list_workflows_for_ref(
+    let definitions = codeyard_git_storage::workflows::list_workflows_for_ref(
         &store,
         &format!("refs/heads/{}", repo.default_branch),
     )
@@ -60,7 +60,7 @@ pub(super) async fn discover(
 
 pub(super) async fn lookup(
     state: &AppState,
-    repo: &codeyard_db_core::models::Repository,
+    repo: &codeyard_database::models::Repository,
     key: &str,
 ) -> Result<Workflow> {
     discover(state, repo)
@@ -129,7 +129,7 @@ async fn get_one(
 
 pub(super) async fn lookup_read(
     state: &AppState,
-    repo: &codeyard_db_core::models::Repository,
+    repo: &codeyard_database::models::Repository,
     key: &str,
 ) -> Result<workflows::Workflow> {
     match lookup(state, repo, key).await {
@@ -237,7 +237,7 @@ async fn dispatch(
         .await
         .map_err(admission_error)?;
     if input.return_run_details {
-        return Ok(Json(json!({"workflow_run_id":run.id,"run_url":format!("{}/actions/runs/{}",repo_url(&owner,&name),run.id),"html_url":format!("{}/{}/{}/actions?job={}",codeyard_model::http_config::link_origin(),codeyard_types::paths::encode_component(&owner),codeyard_types::paths::encode_component(&name),run.run_id)})).into_response());
+        return Ok(Json(json!({"workflow_run_id":run.id,"run_url":format!("{}/actions/runs/{}",repo_url(&owner,&name),run.id),"html_url":format!("{}/{}/{}/actions?job={}",codeyard_types::http_config::link_origin(),codeyard_types::paths::encode_component(&owner),codeyard_types::paths::encode_component(&name),run.run_id)})).into_response());
     }
     Ok(StatusCode::NO_CONTENT.into_response())
 }
@@ -256,7 +256,7 @@ async fn badge(
 ) -> Result<Response> {
     let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
     let workflow = lookup(&state, &repo, &key).await?;
-    let branch = codeyard_db_core::ci_messages::branch_name(
+    let branch = codeyard_database::ci_messages::branch_name(
         query.branch.as_deref().unwrap_or(&repo.default_branch),
     );
     let latest = workflows::latest_workflow_run(

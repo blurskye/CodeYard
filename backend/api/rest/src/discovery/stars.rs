@@ -35,7 +35,7 @@ async fn local_stars(
     limit: usize,
     offset: usize,
 ) -> Result<Vec<serde_json::Value>, DiscoveryReadError> {
-    let config = codeyard_db_core::cells::pointers::Config::default();
+    let config = codeyard_database::cells::pointers::Config::default();
     if limit > config.maximum_scan {
         return Err(DiscoveryReadError::Unavailable);
     }
@@ -44,7 +44,7 @@ async fn local_stars(
         async {
             let viewer = ctx.user.as_ref().map(|viewer| viewer.id);
             let mut values = Vec::new();
-            let mut budget = codeyard_db_core::cells::pointers::Budget::new(config)
+            let mut budget = codeyard_database::cells::pointers::Budget::new(config)
                 .map_err(|_| DiscoveryReadError::Unavailable)?;
             let mut scanned = 0;
             while scanned < limit {
@@ -101,11 +101,11 @@ async fn local_stars(
 
 async fn remote_stars(
     ctx: &PageContext,
-    target: &codeyard_db_core::models::User,
+    target: &codeyard_database::models::User,
     text: &str,
     sort: StarSort,
     wanted: usize,
-) -> Result<Option<codeyard_db_core::cells::pointers::PageResult>, DiscoveryReadError> {
+) -> Result<Option<codeyard_database::cells::pointers::PageResult>, DiscoveryReadError> {
     let actor = ctx.user.as_ref().map(|user| ctx.database_actor(user.id));
     // A signed-out visitor can still hold the anonymous session of a sign-in page; it is
     // not a credential.
@@ -115,7 +115,7 @@ async fn remote_stars(
         target,
         actor.as_ref(),
         credential,
-        codeyard_db_core::cells::pointers::List::BrowserStars,
+        codeyard_database::cells::pointers::List::BrowserStars,
         vec![
             ("username".into(), target.username.clone()),
             ("q".into(), text.into()),
@@ -137,7 +137,7 @@ async fn remote_stars(
 
 pub(crate) async fn starred_count(
     ctx: &PageContext,
-    target: &codeyard_db_core::models::User,
+    target: &codeyard_database::models::User,
 ) -> Result<i64, DiscoveryReadError> {
     let local = codeyard_db_repos::repositories::engagement::count_starred_repositories(
         &ctx.state.pool,
@@ -158,7 +158,7 @@ pub(crate) async fn starred_count(
 
 pub(crate) async fn starred_page(
     ctx: &PageContext,
-    target: &codeyard_db_core::models::User,
+    target: &codeyard_database::models::User,
     text: &str,
     sort: StarSort,
     page: usize,
@@ -276,7 +276,7 @@ pub(super) async fn star_rows(
     if text.len() > 256 || text.chars().any(char::is_control) {
         return ctx.error(StatusCode::BAD_REQUEST, "Invalid star filter");
     }
-    if codeyard_model::account_input::validate_namespace(&username, 1).is_err() {
+    if codeyard_types::account_input::validate_namespace(&username, 1).is_err() {
         return ctx.error(StatusCode::BAD_REQUEST, "Invalid star owner");
     }
     let target = match codeyard_db_identity::users::accounts::get_user_by_username(

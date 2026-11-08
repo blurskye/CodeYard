@@ -1,14 +1,14 @@
 use crate::organizations::discovery::MembershipState;
 use crate::postgres::organizations::authority::credential;
 use anyhow::Result;
-use codeyard_db_core::models::OrgRole;
-use codeyard_db_core::models::Organization;
-use codeyard_db_core::models::User;
-use codeyard_db_core::pool::PgPool;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_db_core::queries::postgres::organizations::authority::begin;
-use codeyard_db_core::queries::postgres::organizations::authority::begin_read;
-use codeyard_db_core::queries::postgres::organizations::authority::read_authority;
+use codeyard_database::models::OrgRole;
+use codeyard_database::models::Organization;
+use codeyard_database::models::User;
+use codeyard_database::pool::PgPool;
+use codeyard_database::queries::organizations::OrganizationOutcome;
+use codeyard_database::queries::postgres::organizations::authority::begin;
+use codeyard_database::queries::postgres::organizations::authority::begin_read;
+use codeyard_database::queries::postgres::organizations::authority::read_authority;
 use OrganizationOutcome::Applied;
 use OrganizationOutcome::Denied;
 
@@ -71,7 +71,7 @@ pub async fn list_membership_states(
 
 pub async fn set_membership_public(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     org: i64,
     public: bool,
 ) -> Result<OrganizationOutcome<()>> {

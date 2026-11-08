@@ -2,11 +2,11 @@
 use anyhow::Result;
 use codeyard_ci::config::CiConfig;
 use codeyard_ci::config::CiPipelineKind;
-use codeyard_db_core::ci_admission::AdmissionError;
-use codeyard_db_core::ci_messages::branch_name;
-use codeyard_db_core::DbPool;
+use codeyard_database::ci_admission::AdmissionError;
+use codeyard_database::ci_messages::branch_name;
+use codeyard_database::DbPool;
+use codeyard_git_storage::receive_ci::CiRunRequest;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
-use codeyard_repos_core::receive_ci::CiRunRequest;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -50,7 +50,7 @@ fn input_text(value: serde_json::Value) -> Result<String, AdmissionError> {
 #[derive(Clone)]
 pub struct CiRuns {
     pub pool: DbPool,
-    pub cluster: Option<codeyard_repos_core::context::NodeContext>,
+    pub cluster: Option<codeyard_git_storage::context::NodeContext>,
     pub config: Arc<CiConfig>,
     pub queued: Arc<Notify>,
     notifications: Arc<NotificationBroadcaster>,
@@ -67,7 +67,7 @@ impl CiRuns {
         pool: DbPool,
         config: Arc<CiConfig>,
         queued: Arc<Notify>,
-        cluster: Option<codeyard_repos_core::context::NodeContext>,
+        cluster: Option<codeyard_git_storage::context::NodeContext>,
         notifications: Arc<NotificationBroadcaster>,
     ) -> Self {
         Self {
@@ -84,14 +84,14 @@ impl CiRuns {
         &self,
         actor_id: i64,
         request: DispatchRequest,
-        credential: Option<codeyard_db_core::queries::ci::CiCredential>,
-    ) -> Result<codeyard_db_core::models::CiRun, AdmissionError> {
+        credential: Option<codeyard_database::queries::ci::CiCredential>,
+    ) -> Result<codeyard_database::models::CiRun, AdmissionError> {
         use crate::admission::is_safe_owner;
         use codeyard_git::is_full_commit_id;
-        use codeyard_repos_core::workflows::is_safe_ref;
-        use codeyard_repos_core::workflows::is_safe_workflow_path;
+        use codeyard_git_storage::workflows::is_safe_ref;
+        use codeyard_git_storage::workflows::is_safe_workflow_path;
         if !is_safe_owner(&request.repo_owner)
-            || codeyard_repos_core::repositories::lifecycle::validate_name(&request.repo_name)
+            || codeyard_git_storage::repositories::lifecycle::validate_name(&request.repo_name)
                 .is_err()
         {
             return Err(AdmissionError::InvalidRequest(
@@ -158,7 +158,7 @@ impl CiRuns {
                     "workflow_path must be under .github/workflows and end with .yml or .yaml",
                 ));
             }
-            pipeline = codeyard_repos_core::workflows::infer_pipeline_from_workflow_path(&path);
+            pipeline = codeyard_git_storage::workflows::infer_pipeline_from_workflow_path(&path);
             vec![path]
         } else {
             self.config.workflow_paths(pipeline)
@@ -195,7 +195,7 @@ impl CiRuns {
                 manual: true,
             },
             false,
-            codeyard_db_core::models::AccessLevel::Owner,
+            codeyard_database::models::AccessLevel::Owner,
             None,
             None,
             None,
@@ -209,8 +209,8 @@ impl CiRuns {
         &self,
         run_id: Uuid,
         actor_id: i64,
-        credential: Option<codeyard_db_core::queries::ci::CiCredential>,
-    ) -> Result<codeyard_db_core::models::CiRun, AdmissionError> {
+        credential: Option<codeyard_database::queries::ci::CiCredential>,
+    ) -> Result<codeyard_database::models::CiRun, AdmissionError> {
         self.rerun_run_options(
             run_id,
             actor_id,
@@ -229,8 +229,8 @@ impl CiRuns {
         id: i64,
         actor: i64,
         debug: bool,
-        credential: Option<codeyard_db_core::queries::ci::CiCredential>,
-    ) -> Result<codeyard_db_core::models::CiRun, AdmissionError> {
+        credential: Option<codeyard_database::queries::ci::CiCredential>,
+    ) -> Result<codeyard_database::models::CiRun, AdmissionError> {
         self.rerun_selected_workflow(
             repo,
             id,
@@ -247,8 +247,8 @@ impl CiRuns {
         id: i64,
         actor: i64,
         debug: bool,
-        credential: Option<codeyard_db_core::queries::ci::CiCredential>,
-    ) -> Result<codeyard_db_core::models::CiRun, AdmissionError> {
+        credential: Option<codeyard_database::queries::ci::CiCredential>,
+    ) -> Result<codeyard_database::models::CiRun, AdmissionError> {
         self.rerun_selected_workflow(
             repo,
             id,
@@ -265,8 +265,8 @@ impl CiRuns {
         id: i64,
         actor: i64,
         debug: bool,
-        credential: Option<codeyard_db_core::queries::ci::CiCredential>,
-    ) -> Result<codeyard_db_core::models::CiRun, AdmissionError> {
+        credential: Option<codeyard_database::queries::ci::CiCredential>,
+    ) -> Result<codeyard_database::models::CiRun, AdmissionError> {
         let job = codeyard_db_actions::action_jobs::get(&self.pool, repo, id, false)
             .await?
             .ok_or(AdmissionError::Missing("Job not found"))?;
@@ -289,9 +289,9 @@ impl CiRuns {
         id: i64,
         actor: i64,
         debug: bool,
-        credential: Option<codeyard_db_core::queries::ci::CiCredential>,
+        credential: Option<codeyard_database::queries::ci::CiCredential>,
         selection: codeyard_db_actions::ci::CiReplaySelection,
-    ) -> Result<codeyard_db_core::models::CiRun, AdmissionError> {
+    ) -> Result<codeyard_database::models::CiRun, AdmissionError> {
         let source = codeyard_db_actions::action_runs::get(&self.pool, repo, id, None)
             .await?
             .ok_or(AdmissionError::Missing("Run not found"))?;
@@ -310,9 +310,9 @@ impl CiRuns {
         actor_id: i64,
         debug: bool,
         selection: codeyard_db_actions::ci::CiReplaySelection,
-        credential: Option<codeyard_db_core::queries::ci::CiCredential>,
+        credential: Option<codeyard_database::queries::ci::CiCredential>,
         allow_active: bool,
-    ) -> Result<codeyard_db_core::models::CiRun, AdmissionError> {
+    ) -> Result<codeyard_database::models::CiRun, AdmissionError> {
         let run = codeyard_db_actions::ci::get_ci_run_by_run_id(&self.pool, run_id)
             .await?
             .ok_or(AdmissionError::Missing("Run not found"))?;
@@ -353,7 +353,7 @@ impl CiRuns {
                 manual: true,
             },
             true,
-            codeyard_db_core::models::AccessLevel::Owner,
+            codeyard_database::models::AccessLevel::Owner,
             attempt,
             run.event_payload,
             Some(run.workflow_blobs),
@@ -396,8 +396,8 @@ impl CiRuns {
     pub async fn trigger_run(
         &self,
         request: CiRunRequest,
-    ) -> Result<codeyard_db_core::models::CiRun, AdmissionError> {
-        self.trigger_run_with_access(request, codeyard_db_core::models::AccessLevel::Owner)
+    ) -> Result<codeyard_database::models::CiRun, AdmissionError> {
+        self.trigger_run_with_access(request, codeyard_database::models::AccessLevel::Owner)
             .await
     }
 
@@ -405,8 +405,8 @@ impl CiRuns {
     pub(crate) async fn trigger_run_with_access(
         &self,
         request: CiRunRequest,
-        access: codeyard_db_core::models::AccessLevel,
-    ) -> Result<codeyard_db_core::models::CiRun, AdmissionError> {
+        access: codeyard_database::models::AccessLevel,
+    ) -> Result<codeyard_database::models::CiRun, AdmissionError> {
         self.enqueue_run(request, false, access, None, None, None, None)
             .await
     }
@@ -414,10 +414,10 @@ impl CiRuns {
     pub(crate) async fn trigger_event_run(
         &self,
         request: CiRunRequest,
-        access: codeyard_db_core::models::AccessLevel,
+        access: codeyard_database::models::AccessLevel,
         payload: serde_json::Value,
-        credential: Option<codeyard_db_core::queries::ci::CiCredential>,
-    ) -> Result<codeyard_db_core::models::CiRun, AdmissionError> {
+        credential: Option<codeyard_database::queries::ci::CiCredential>,
+    ) -> Result<codeyard_database::models::CiRun, AdmissionError> {
         self.enqueue_run(
             request,
             false,
@@ -438,12 +438,12 @@ impl CiRuns {
         &self,
         request: CiRunRequest,
         rerun: bool,
-        access: codeyard_db_core::models::AccessLevel,
+        access: codeyard_database::models::AccessLevel,
         mut attempt: Option<codeyard_db_actions::ci::NewCiAttempt>,
         event_payload: Option<serde_json::Value>,
         source_blobs: Option<serde_json::Value>,
-        credential: Option<codeyard_db_core::queries::ci::CiCredential>,
-    ) -> Result<codeyard_db_core::models::CiRun, AdmissionError> {
+        credential: Option<codeyard_database::queries::ci::CiCredential>,
+    ) -> Result<codeyard_database::models::CiRun, AdmissionError> {
         let revision = crate::admission::resolve(
             &self.pool,
             &self.config,
@@ -574,7 +574,7 @@ impl CiRuns {
         &self,
         run_id: Uuid,
         actor_id: i64,
-        credential: Option<codeyard_db_core::queries::ci::CiCredential>,
+        credential: Option<codeyard_database::queries::ci::CiCredential>,
     ) -> Result<bool, AdmissionError> {
         let (changed, notifications, completed) = match credential {
             Some(proof) => {
@@ -606,10 +606,10 @@ mod tests {
             .max_connections(1)
             .connect("sqlite::memory:")
             .await
-            .map(codeyard_db_core::pool::Pool::from)
+            .map(codeyard_database::pool::Pool::from)
             .unwrap();
         let pool = DbPool::from(native.clone());
-        codeyard_db_core::run_migrations(&pool).await.unwrap();
+        codeyard_database::run_migrations(&pool).await.unwrap();
         let owner =
             codeyard_db_identity::users::accounts::create_user(&pool, "preflight_owner", None)
                 .await
@@ -646,7 +646,7 @@ mod tests {
             &pool,
             actor.id,
             repository.id,
-            codeyard_db_core::models::AccessLevel::Write,
+            codeyard_database::models::AccessLevel::Write,
         )
         .await
         .unwrap();

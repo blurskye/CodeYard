@@ -1,8 +1,8 @@
 use chrono::DateTime;
 use chrono::Utc;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::queries::secrets::SecretsError;
-use codeyard_db_core::DbPool;
+use codeyard_database::native_operation;
+use codeyard_database::queries::secrets::SecretsError;
+use codeyard_database::DbPool;
 use codeyard_support::secrets::SecretEncryptor;
 use serde::Deserialize;
 use serde::Serialize;
@@ -80,7 +80,7 @@ impl Configuration {
             return Err(RegistryError::Invalid("visibility"));
         }
         if let Some(ids) = &self.selected_repository_ids {
-            codeyard_db_core::queries::dependabot::validate_repository_access(ids, &[])?;
+            codeyard_database::queries::dependabot::validate_repository_access(ids, &[])?;
         }
         let required: Vec<(&str, Option<&str>)> = match self.auth_type.as_str() {
             "token" => vec![],
@@ -214,8 +214,8 @@ native_operation!(crate::postgres::private_registries::list,
 
 native_operation!(crate::postgres::private_registries::save,
     crate::sqlite::private_registries::save,
-    fn save(pool: &DbPool, encryptor: Option<&SecretEncryptor>, actor: i64, credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>, org: i64, name: Option<&str>, input: &Value, value: Option<&str>) -> Result<Registry, RegistryError>);
+    fn save(pool: &DbPool, encryptor: Option<&SecretEncryptor>, actor: i64, credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>, org: i64, name: Option<&str>, input: &Value, value: Option<&str>) -> Result<Registry, RegistryError>);
 
 native_operation!(crate::postgres::private_registries::delete,
     crate::sqlite::private_registries::delete,
-    fn delete(pool: &DbPool, actor: i64, credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>, org: i64, name: &str) -> Result<(), RegistryError>);
+    fn delete(pool: &DbPool, actor: i64, credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>, org: i64, name: &str) -> Result<(), RegistryError>);

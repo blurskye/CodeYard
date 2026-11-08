@@ -137,7 +137,7 @@ async fn an_edit_prepared_for_a_published_release_does_not_publish_a_draft(pg: b
     if let Ok((_, published)) = edited {
         assert!(!published);
     }
-    async fn draft(pool: &codeyard_db_core::DbPool, repo: i64, release: i64) -> bool {
+    async fn draft(pool: &codeyard_database::DbPool, repo: i64, release: i64) -> bool {
         codeyard_db_repos::releases::get_release(pool, repo, release)
             .await
             .unwrap()
@@ -182,7 +182,7 @@ async fn postgres_an_edit_prepared_for_a_published_release_does_not_publish_a_dr
 async fn release_asset_file_lookup_has_an_index(pg: bool) {
     let mut database = Database::new(pg).await;
     match database.pool() {
-        codeyard_db_core::DbPool::Sqlite(pool) => {
+        codeyard_database::DbPool::Sqlite(pool) => {
             let plan: Vec<(i64, i64, i64, String)> =
                 sqlx::query_as("EXPLAIN QUERY PLAN SELECT 1 FROM release_assets WHERE file_id=?1")
                     .bind(uuid::Uuid::nil())
@@ -195,7 +195,7 @@ async fn release_asset_file_lookup_has_an_index(pg: bool) {
                 "{plan:?}"
             );
         }
-        codeyard_db_core::DbPool::Postgres(pool) => {
+        codeyard_database::DbPool::Postgres(pool) => {
             let definition: String = sqlx::query_scalar("SELECT indexdef FROM pg_indexes WHERE schemaname=current_schema() AND indexname='idx_release_assets_file_id'")
                     .fetch_one(pool).await.unwrap();
             assert!(definition.contains("(file_id)"), "{definition}");

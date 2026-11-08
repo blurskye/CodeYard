@@ -12,10 +12,10 @@ use codeyard_app::app::AppState;
 use codeyard_ci::config::CiConfig;
 use codeyard_support::secrets::SecretEncryptor;
 
-use codeyard_db_core::models::OrgRole;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_db_core::queries::users::accounts::AccountCredential;
-use codeyard_db_core::queries::webhooks::WebhookFields;
+use codeyard_database::models::OrgRole;
+use codeyard_database::queries::organizations::OrganizationOutcome;
+use codeyard_database::queries::users::accounts::AccountCredential;
+use codeyard_database::queries::webhooks::WebhookFields;
 use codeyard_db_repos::webhooks::HookOwner;
 use codeyard_storage::ObjectStore;
 use codeyard_support::crypto::hmac_sha256;
@@ -145,7 +145,7 @@ async fn setup(pg: bool) -> (Database, tempfile::TempDir, Client, Client) {
     let alice_id = database.actor("alice").await;
     let bob_id = database.actor("bob").await;
     let root = tempfile::tempdir().unwrap();
-    codeyard_repos_core::repositories::lifecycle::provision(
+    codeyard_git_storage::repositories::lifecycle::provision(
         (database.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
@@ -187,7 +187,7 @@ async fn deliveries(
     database: &Database,
     hook: i64,
     count: usize,
-) -> Vec<codeyard_db_core::models::WebhookDelivery> {
+) -> Vec<codeyard_database::models::WebhookDelivery> {
     for _ in 0..200 {
         let rows = codeyard_db_repos::webhooks::list_deliveries(database.pool(), hook)
             .await
@@ -750,7 +750,7 @@ async fn api_ref_hooks_and_release_authors(pg: bool, url: &str) {
         pool,
         bob_id,
         repo.id,
-        codeyard_db_core::models::AccessLevel::Write,
+        codeyard_database::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -782,7 +782,7 @@ async fn api_ref_hooks_and_release_authors(pg: bool, url: &str) {
         .await;
     let built = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let seen = built.clone();
-    codeyard_repos_core::webhooks::emit(pool, &repo, "push", vec![], move |_, _| {
+    codeyard_git_storage::webhooks::emit(pool, &repo, "push", vec![], move |_, _| {
         seen.store(true, std::sync::atomic::Ordering::SeqCst);
         json!({"private": "new owner's issue body"})
     })
@@ -832,10 +832,10 @@ async fn pull_request_head_synchronize_hook(pg: bool, url: &str) {
 }
 
 async fn server_ref_events(pg: bool, url: &str) {
+    use codeyard_git_storage::repositories::store::repo_store;
+    use codeyard_git_storage::store_types::MergeMethod;
+    use codeyard_git_storage::store_types::MergeRequest;
     use codeyard_repos::editor::FileWrite;
-    use codeyard_repos_core::repositories::store::repo_store;
-    use codeyard_repos_core::store_types::MergeMethod;
-    use codeyard_repos_core::store_types::MergeRequest;
     let (database, _root, alice, _) = setup(pg).await;
     let repository =
         codeyard_db_repos::repositories::records::get_repository(database.pool(), "alice", "proj")
@@ -969,9 +969,9 @@ async fn server_ref_events(pg: bool, url: &str) {
 }
 
 async fn repository_creation_is_not_a_ref_event(pg: bool, url: &str) {
+    use codeyard_git_storage::repositories::lifecycle;
+    use codeyard_git_storage::repositories::store::repo_store;
     use codeyard_repos::editor::FileWrite;
-    use codeyard_repos_core::repositories::lifecycle;
-    use codeyard_repos_core::repositories::store::repo_store;
     let mut database = Database::new(pg).await;
     database.complete_setup().await;
     let actor = database.actor("creator").await;
@@ -1096,7 +1096,7 @@ async fn hook_writes_check_authority_in_the_transaction(pg: bool) {
     let outsider = database.actor("hook_outsider").await;
     let pool = database.pool();
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard_repos_core::repositories::lifecycle::provision(
+    let repo = codeyard_git_storage::repositories::lifecycle::provision(
         (pool, None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),

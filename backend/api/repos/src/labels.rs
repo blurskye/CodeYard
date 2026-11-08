@@ -34,8 +34,8 @@ pub struct LabelResponse {
     pub description: Option<String>,
 }
 
-impl From<codeyard_db_core::models::Label> for LabelResponse {
-    fn from(label: codeyard_db_core::models::Label) -> Self {
+impl From<codeyard_database::models::Label> for LabelResponse {
+    fn from(label: codeyard_database::models::Label) -> Self {
         Self {
             id: label.id,
             name: label.name,
@@ -114,7 +114,7 @@ pub async fn create_label(
     check_repo_admin_access(&state.pool, &repository, &actor).await?;
 
     if let Err(message) =
-        codeyard_model::issue_input::validate_label(&req.name, req.description.as_deref())
+        codeyard_types::issue_input::validate_label(&req.name, req.description.as_deref())
     {
         return Err((
             StatusCode::BAD_REQUEST,

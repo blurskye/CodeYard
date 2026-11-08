@@ -9,16 +9,16 @@ use crate::runners::Registration;
 use crate::runners::RegistrationBinding;
 use crate::runners::Selection;
 use anyhow::Result;
-use codeyard_db_core::models::CiRun;
-use codeyard_db_core::models::ClusterNode;
-use codeyard_db_core::pool::PgPool as Pool;
-use codeyard_db_core::queries::organizations::administers;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_db_core::queries::runners::Group;
-use codeyard_db_core::queries::runners::Refusal;
-use codeyard_db_core::queries::runners::Runner;
-use codeyard_db_core::queries::runners::RunnerQuery;
-use codeyard_db_core::queries::runners::Scope;
+use codeyard_database::models::CiRun;
+use codeyard_database::models::ClusterNode;
+use codeyard_database::pool::PgPool as Pool;
+use codeyard_database::queries::organizations::administers;
+use codeyard_database::queries::organizations::OrganizationOutcome;
+use codeyard_database::queries::runners::Group;
+use codeyard_database::queries::runners::Refusal;
+use codeyard_database::queries::runners::Runner;
+use codeyard_database::queries::runners::RunnerQuery;
+use codeyard_database::queries::runners::Scope;
 use sqlx::PgConnection as Connection;
 use sqlx::Postgres;
 use sqlx::Transaction;
@@ -26,7 +26,7 @@ use sqlx::Transaction;
 async fn authorize(c: &mut Transaction<'_, Postgres>, actor: i64, scope: Scope) -> Result<()> {
     match scope {
         Scope::Organization(org) => {
-            let role = codeyard_db_core::queries::postgres::organizations::authority::authority(
+            let role = codeyard_database::queries::postgres::organizations::authority::authority(
                 c, actor, org,
             )
             .await?;
@@ -36,7 +36,7 @@ async fn authorize(c: &mut Transaction<'_, Postgres>, actor: i64, scope: Scope) 
             );
         }
         Scope::Repository(repo) => anyhow::ensure!(
-            codeyard_db_core::queries::postgres::discussions::lock_admin_authority(c, actor, repo)
+            codeyard_database::queries::postgres::discussions::lock_admin_authority(c, actor, repo)
                 .await?,
             Refusal::Denied
         ),
@@ -76,7 +76,7 @@ async fn stop_runners(
     group: Option<i64>,
 ) -> Result<()> {
     let ids:Vec<i64>=sqlx::query_scalar("SELECT c.id FROM ci_runs c WHERE c.status='running' AND EXISTS(SELECT 1 FROM action_runners a JOIN nodes n ON n.id=a.node_id WHERE c.worker LIKE n.public_key || '/%' AND (a.id=$1 OR a.group_id=$2))").bind(runner).bind(group).fetch_all(&mut **tx).await?;
-    codeyard_db_core::queries::postgres::ci::stop_ci_runs(tx, &ids).await
+    codeyard_database::queries::postgres::ci::stop_ci_runs(tx, &ids).await
 }
 pub async fn authorize_scope(pool: &Pool, actor: i64, scope: Scope) -> Result<()> {
     let mut tx = pool.begin().await?;
@@ -110,7 +110,7 @@ pub async fn list_groups(
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         .execute(&mut *tx)
         .await?;
-    let role = codeyard_db_core::queries::postgres::organizations::authority::read_authority(
+    let role = codeyard_database::queries::postgres::organizations::authority::read_authority(
         &mut tx, actor, org,
     )
     .await?;
@@ -316,7 +316,7 @@ pub async fn delete_group(pool: &Pool, actor: i64, org: i64, id: i64) -> Result<
     let default = default_group(&mut tx, org).await?;
     let queued: Vec<i64> = sqlx::query_scalar("SELECT c.id FROM ci_runs c JOIN repositories r ON r.id=c.repo_id WHERE c.status='queued' AND lower(c.runner_group)=lower($2) AND r.owner_kind='org' AND r.owner_org_id=$1")
         .bind(org).bind(&row.name).fetch_all(&mut *tx).await?;
-    codeyard_db_core::queries::postgres::ci::stop_ci_runs(&mut tx, &queued).await?;
+    codeyard_database::queries::postgres::ci::stop_ci_runs(&mut tx, &queued).await?;
     stop_runners(&mut tx, None, Some(id)).await?;
     sqlx::query("UPDATE action_runners SET group_id=$2 WHERE group_id=$1 AND org_id=$3")
         .bind(id)
@@ -351,7 +351,7 @@ pub async fn group_repositories(
     if !removed.is_empty() {
         let runs: Vec<i64> = sqlx::query_scalar("SELECT c.id FROM ci_runs c WHERE c.status='running' AND c.repo_id=ANY($2) AND EXISTS(SELECT 1 FROM action_runners a JOIN nodes n ON n.id=a.node_id WHERE a.group_id=$1 AND c.worker LIKE n.public_key || '/%')")
             .bind(id).bind(&removed).fetch_all(&mut *tx).await?;
-        codeyard_db_core::queries::postgres::ci::stop_ci_runs(&mut tx, &runs).await?;
+        codeyard_database::queries::postgres::ci::stop_ci_runs(&mut tx, &runs).await?;
     }
     tx.commit().await?;
     Ok(())
@@ -376,7 +376,7 @@ pub async fn group_runners(
 async fn runner_rows(c: &mut Connection, scope: Scope, query: &RunnerQuery) -> Result<Vec<Runner>> {
     let (org, repo) = scope.ids();
     Ok(
-        sqlx::query_as::<_, codeyard_db_core::queries::runners::RunnerProjection>(&format!(
+        sqlx::query_as::<_, codeyard_database::queries::runners::RunnerProjection>(&format!(
             "{RUNNERS} WHERE {RUNNER_FILTER} ORDER BY a.id LIMIT $6 OFFSET $7"
         ))
         .bind(org)
@@ -487,7 +487,7 @@ pub async fn registration(
     authorize(&mut tx, actor, scope).await?;
     if let Some(session) = input.session {
         anyhow::ensure!(
-            codeyard_db_core::queries::postgres::users::transitions::live_session(
+            codeyard_database::queries::postgres::users::transitions::live_session(
                 &mut tx, actor, session
             )
             .await?,
@@ -691,8 +691,8 @@ pub(super) async fn mark_claimed(c: &mut Connection, key: Option<&str>) -> Resul
     Ok(())
 }
 
-use codeyard_db_core::queries::postgres::runners::runner;
+use codeyard_database::queries::postgres::runners::runner;
 
-use codeyard_db_core::queries::postgres::runners::RUNNER_FILTER;
+use codeyard_database::queries::postgres::runners::RUNNER_FILTER;
 
-use codeyard_db_core::queries::postgres::runners::RUNNERS;
+use codeyard_database::queries::postgres::runners::RUNNERS;

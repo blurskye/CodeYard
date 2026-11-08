@@ -4,7 +4,7 @@ use crate::unavailable;
 use crate::RequestContext;
 use crate::Result;
 use codeyard_db_repos::assignees::AssignedItem;
-use codeyard_model::node_id;
+use codeyard_types::node_id;
 use serde_json::json;
 use serde_json::Value;
 
@@ -29,7 +29,7 @@ pub(super) fn ids(value: &Value, expected: &str) -> Result<Vec<i64>> {
 }
 pub(super) async fn prepare(
     input: &Value,
-    repo: &codeyard_db_core::models::Repository,
+    repo: &codeyard_database::models::Repository,
     request: &RequestContext,
 ) -> Result<codeyard_webhooks::issue_documents::Metadata> {
     let mut translated = json!({});
@@ -116,10 +116,10 @@ pub(super) async fn prepare(
         &translated,
     )
     .await
-    .map_err(codeyard_model::github_error::Error::graphql)
+    .map_err(codeyard_types::github_error::Error::graphql)
 }
 pub(super) async fn apply(
-    repo: &codeyard_db_core::models::Repository,
+    repo: &codeyard_database::models::Repository,
     item: AssignedItem,
     number: i32,
     title: &str,
@@ -136,5 +136,5 @@ pub(super) async fn apply(
         metadata,
     )
     .await
-    .map_err(codeyard_model::github_error::Error::graphql)
+    .map_err(codeyard_types::github_error::Error::graphql)
 }

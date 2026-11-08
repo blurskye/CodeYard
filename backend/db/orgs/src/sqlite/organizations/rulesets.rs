@@ -1,22 +1,22 @@
 use anyhow::Result;
-use codeyard_db_core::models::OrgRole;
-use codeyard_db_core::pool::SqlitePool;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_db_core::queries::rulesets::records::ListFilter;
-use codeyard_db_core::queries::rulesets::records::Owner;
-use codeyard_db_core::queries::rulesets::records::Page;
-use codeyard_db_core::queries::rulesets::records::Ruleset;
-use codeyard_db_core::queries::rulesets::records::StoredRuleset;
-use codeyard_db_core::queries::rulesets::records::StoredVersion;
-use codeyard_db_core::queries::rulesets::records::Version;
-use codeyard_db_core::queries::rulesets::records::View;
-use codeyard_db_core::queries::rulesets::ActorType;
-use codeyard_db_core::queries::rulesets::Definition;
-use codeyard_db_core::queries::rulesets::Invalid;
-use codeyard_db_core::queries::rulesets::PropertySource;
-use codeyard_db_core::queries::rulesets::MAX_RULESETS;
-use codeyard_db_core::queries::sqlite::organizations::authority::begin;
-use codeyard_db_core::queries::sqlite::organizations::authority::begin_read;
+use codeyard_database::models::OrgRole;
+use codeyard_database::pool::SqlitePool;
+use codeyard_database::queries::organizations::OrganizationOutcome;
+use codeyard_database::queries::rulesets::records::ListFilter;
+use codeyard_database::queries::rulesets::records::Owner;
+use codeyard_database::queries::rulesets::records::Page;
+use codeyard_database::queries::rulesets::records::Ruleset;
+use codeyard_database::queries::rulesets::records::StoredRuleset;
+use codeyard_database::queries::rulesets::records::StoredVersion;
+use codeyard_database::queries::rulesets::records::Version;
+use codeyard_database::queries::rulesets::records::View;
+use codeyard_database::queries::rulesets::ActorType;
+use codeyard_database::queries::rulesets::Definition;
+use codeyard_database::queries::rulesets::Invalid;
+use codeyard_database::queries::rulesets::PropertySource;
+use codeyard_database::queries::rulesets::MAX_RULESETS;
+use codeyard_database::queries::sqlite::organizations::authority::begin;
+use codeyard_database::queries::sqlite::organizations::authority::begin_read;
 use serde_json::Value;
 use sqlx::SqliteConnection;
 use OrganizationOutcome::Applied;
@@ -264,7 +264,7 @@ pub async fn change(
     if previous == document {
         return Ok(Applied(current));
     }
-    let revision = codeyard_db_core::queries::sqlite::time::next_revision(current.updated_at)?;
+    let revision = codeyard_database::queries::sqlite::time::next_revision(current.updated_at)?;
     let row: StoredRuleset = sqlx::query_as(
         "UPDATE repository_rulesets SET definition=?2,updated_at=?3 WHERE id=?1 RETURNING *",
     )

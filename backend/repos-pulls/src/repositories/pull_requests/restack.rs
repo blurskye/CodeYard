@@ -7,18 +7,18 @@ use crate::repositories::pull_requests::merge::open_chain;
 use crate::repositories::pull_requests::merge::prepare_error;
 use codeyard_ci_engine::pull_requests::branches::branches_moved;
 use codeyard_ci_engine::runs::CiRuns;
-use codeyard_db_core::models::PullRequest;
+use codeyard_database::models::PullRequest;
 use codeyard_db_repos::pull_requests::records::MAX_STACK_LAYERS;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
-use codeyard_repos_core::push_workflows::RefUpdate;
-use codeyard_repos_core::repositories::pull_requests::actor;
-use codeyard_repos_core::repositories::pull_requests::database_error;
-use codeyard_repos_core::repositories::pull_requests::require_write;
-use codeyard_repos_core::repositories::pull_requests::OperationError;
-use codeyard_repos_core::repositories::store::repo_store;
-use codeyard_repos_core::repositories::store::RepoStore;
-use codeyard_repos_core::store_types::RestackMove;
+use codeyard_git_storage::push_workflows::RefUpdate;
+use codeyard_git_storage::repositories::pull_requests::actor;
+use codeyard_git_storage::repositories::pull_requests::database_error;
+use codeyard_git_storage::repositories::pull_requests::require_write;
+use codeyard_git_storage::repositories::pull_requests::OperationError;
+use codeyard_git_storage::repositories::store::repo_store;
+use codeyard_git_storage::repositories::store::RepoStore;
+use codeyard_git_storage::store_types::RestackMove;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::time::Duration;
@@ -37,9 +37,9 @@ pub struct RestackResponse {
 /// it, so any layer of the stack can ask for it. Layers below that layer do not move. When nothing
 /// needs to move, nothing is written and the answer is zero.
 pub async fn rebase_stack(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     ci: &CiRuns,
-    actor_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor_id: impl Into<codeyard_database::queries::credentials::Actor>,
     target: (String, String, i32),
 ) -> Result<RestackResponse, OperationError> {
     match prepare_rebase(pool, ci, actor_id, target).await? {
@@ -50,9 +50,9 @@ pub async fn rebase_stack(
 
 /// The replayed layers of a rebase, ready to publish.
 pub struct PreparedRestack {
-    authority: codeyard_db_core::queries::credentials::Actor,
+    authority: codeyard_database::queries::credentials::Actor,
     owner: String,
-    repository: codeyard_db_core::models::Repository,
+    repository: codeyard_database::models::Repository,
     stack_id: i64,
     /// The stack's versions from before its layers were read.
     versions: Vec<(i64, i64)>,
@@ -64,9 +64,9 @@ pub struct PreparedRestack {
 /// Replays the layers a rebase moves, without moving any branch. `None` when nothing needs to move.
 /// This can take minutes, so it holds no database transaction.
 pub async fn prepare_rebase(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     ci: &CiRuns,
-    authority: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    authority: impl Into<codeyard_database::queries::credentials::Actor>,
     (owner, repo, number): (String, String, i32),
 ) -> Result<Option<PreparedRestack>, OperationError> {
     let authority = authority.into();
@@ -195,7 +195,7 @@ pub async fn prepare_rebase(
 /// still be at the version it was read at, or nothing moves. The branches move only if each is still
 /// at the commit that was replayed, so a push to a layer fails the rebase as well.
 pub async fn publish_rebase(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     ci: &CiRuns,
     prepared: PreparedRestack,
 ) -> Result<RestackResponse, OperationError> {
@@ -483,7 +483,7 @@ async fn recorded_boundary(
 /// that already contains the current tip of its base sits on trunk, and merging it only adds its own
 /// changes, so it is not behind. The tips are read from `refs`, as `layers_to_move` reads them.
 pub(super) async fn squashed_below(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     store: &RepoStore,
     refs: &HashMap<String, String>,
     bottom: &PullRequest,
@@ -519,7 +519,7 @@ pub(super) async fn squashed_below(
 /// page still renders. Publication checks the same things on the primary.
 pub async fn restack_pending(
     ci: &CiRuns,
-    repository: &codeyard_db_core::models::Repository,
+    repository: &codeyard_database::models::Repository,
     pull: &PullRequest,
     members: &[PullRequest],
 ) -> bool {
@@ -538,7 +538,7 @@ pub async fn restack_pending(
 
 async fn pending(
     ci: &CiRuns,
-    repository: &codeyard_db_core::models::Repository,
+    repository: &codeyard_database::models::Repository,
     pull: &PullRequest,
     members: &[PullRequest],
 ) -> Result<bool, OperationError> {

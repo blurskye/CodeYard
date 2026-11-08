@@ -20,7 +20,7 @@ use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
 use codeyard_ci::config::CiConfig;
 
-use codeyard_db_core::models::repositories::AccessLevel;
+use codeyard_database::models::repositories::AccessLevel;
 use codeyard_notifications::NotificationEvent;
 use codeyard_storage::ObjectStore;
 use fixture::Fixture;
@@ -29,7 +29,7 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use tower::ServiceExt;
 
-fn ids(rows: &[codeyard_db_core::models::Notification]) -> Vec<i64> {
+fn ids(rows: &[codeyard_database::models::Notification]) -> Vec<i64> {
     rows.iter().map(|n| n.id).collect()
 }
 
@@ -270,7 +270,7 @@ async fn authority_contract(pg: bool) {
         )
         .await
         .unwrap(),
-        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(_)
+        codeyard_database::queries::organizations::OrganizationOutcome::Applied(_)
     ));
     agrees(&f, recipient, &[account]).await;
     f.execute(
@@ -288,7 +288,7 @@ async fn authority_contract(pg: bool) {
         )
         .await
         .unwrap(),
-        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(_)
+        codeyard_database::queries::organizations::OrganizationOutcome::Applied(_)
     ));
     agrees(&f, recipient, &[account]).await;
     f.execute(
@@ -325,7 +325,7 @@ async fn authority_contract(pg: bool) {
         )
         .await
         .unwrap(),
-        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(_)
+        codeyard_database::queries::organizations::OrganizationOutcome::Applied(_)
     ));
     agrees(&f, recipient, &[account]).await;
     f.execute(
@@ -707,7 +707,7 @@ async fn corrupt_row_privacy(pg: bool) {
 }
 
 async fn assert_created_event(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     hint: NotificationEvent,
     user_id: i64,
     kind: &str,
@@ -740,7 +740,7 @@ fn assert_no_event(events: &mut tokio::sync::broadcast::Receiver<NotificationEve
     );
 }
 
-async fn notice_count(pool: &codeyard_db_core::DbPool, user_id: i64, kind: &str) -> usize {
+async fn notice_count(pool: &codeyard_database::DbPool, user_id: i64, kind: &str) -> usize {
     codeyard_db_repos::notifications::records::list_notifications_for_user(
         pool, user_id, 100, false,
     )

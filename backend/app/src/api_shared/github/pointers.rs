@@ -1,11 +1,11 @@
 //! Home pointers select resource cells; their existing HTTP handlers own list authorization.
 use axum::http::HeaderMap;
-use codeyard_db_core::{
+use codeyard_database::{
     cells::pointers::{self, Budget, Config, List, Page, PageResult},
     DbPool,
 };
 use codeyard_identity::github_auth::{self, Authentication};
-use codeyard_model::github_error::{Error, Result};
+use codeyard_types::github_error::{Error, Result};
 use futures_util::{stream, StreamExt};
 use serde_json::Value;
 use std::time::Duration;
@@ -45,7 +45,7 @@ pub async fn remote(
 
 pub async fn browser(
     pool: &DbPool,
-    actor: &codeyard_db_core::queries::credentials::Actor,
+    actor: &codeyard_database::queries::credentials::Actor,
     stub: bool,
     session: &str,
     list: List,
@@ -53,11 +53,11 @@ pub async fn browser(
     wanted: usize,
 ) -> Result<Option<PageResult>> {
     if !list.browser()
-        || !matches!(actor.credential(), Some(codeyard_db_core::queries::users::accounts::AccountCredential::Session(value)) if value == session)
+        || !matches!(actor.credential(), Some(codeyard_database::queries::users::accounts::AccountCredential::Session(value)) if value == session)
     {
         return Err(github_auth::required());
     }
-    codeyard_types::cells::Secret::cookie(session).map_err(|_| github_auth::required())?;
+    codeyard_types::cell_ids::Secret::cookie(session).map_err(|_| github_auth::required())?;
     read(
         pool,
         (actor.user_id, stub),
@@ -73,8 +73,8 @@ pub async fn browser(
 /// A star pointer selects candidates only; the original viewer authorizes every resource read.
 pub async fn stars(
     pool: &DbPool,
-    owner: &codeyard_db_core::models::User,
-    actor: Option<&codeyard_db_core::queries::credentials::Actor>,
+    owner: &codeyard_database::models::User,
+    actor: Option<&codeyard_database::queries::credentials::Actor>,
     credential: Option<&str>,
     list: List,
     query: Vec<(String, String)>,
@@ -84,7 +84,7 @@ pub async fn stars(
         return Err(github_auth::required());
     }
     if let (Some(actor), Some(value)) = (actor, credential) {
-        use codeyard_db_core::queries::users::accounts::AccountCredential;
+        use codeyard_database::queries::users::accounts::AccountCredential;
         let valid = match actor.credential() {
             Some(AccountCredential::Session(session)) => session == value,
             Some(AccountCredential::Token(_, hash) | AccountCredential::ForeignToken(_, hash)) => {
@@ -110,8 +110,8 @@ pub async fn stars(
 
 pub async fn recheck_stars(
     pool: &DbPool,
-    owner: &codeyard_db_core::models::User,
-    actor: Option<&codeyard_db_core::queries::credentials::Actor>,
+    owner: &codeyard_database::models::User,
+    actor: Option<&codeyard_database::queries::credentials::Actor>,
 ) -> Result<()> {
     if !owner.is_stub && pool.foreign_authorization().is_some() {
         pointers::star_homes(pool, owner.id, actor, Config::default())
@@ -124,10 +124,10 @@ pub async fn recheck_stars(
 async fn homes(
     pool: &DbPool,
     owner: i64,
-    actor: Option<&codeyard_db_core::queries::credentials::Actor>,
+    actor: Option<&codeyard_database::queries::credentials::Actor>,
     list: List,
     config: Config,
-) -> Result<Vec<codeyard_types::cells::Prefix>> {
+) -> Result<Vec<codeyard_types::cell_ids::Prefix>> {
     if list.stars() {
         pointers::star_homes(pool, owner, actor, config)
             .await
@@ -142,7 +142,7 @@ async fn homes(
 async fn read(
     pool: &DbPool,
     owner: (i64, bool),
-    actor: Option<&codeyard_db_core::queries::credentials::Actor>,
+    actor: Option<&codeyard_database::queries::credentials::Actor>,
     credential: Option<&str>,
     list: List,
     query: Vec<(String, String)>,

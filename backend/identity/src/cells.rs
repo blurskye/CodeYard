@@ -1,6 +1,6 @@
 //! The home cell validates credentials; resource cells receive only public metadata and bounds.
 use anyhow::Result;
-use codeyard_db_core::{
+use codeyard_database::{
     cells::authorization::{Answer, Authority, Home, Proof},
     DbPool,
 };
@@ -16,13 +16,13 @@ impl Home for Local {
         proof: &'a Proof,
     ) -> Pin<
         Box<
-            dyn Future<Output = Result<Option<codeyard_db_core::cells::repositories::Source>>>
+            dyn Future<Output = Result<Option<codeyard_database::cells::repositories::Source>>>
                 + Send
                 + 'a,
         >,
     > {
         Box::pin(async move {
-            codeyard_types::cells::Prefix::for_id(id)?;
+            codeyard_types::cell_ids::Prefix::for_id(id)?;
             proof.validate()?;
             let Some(repo) =
                 codeyard_db_repos::repositories::records::get_repository_by_id(&self.pool, id)
@@ -54,14 +54,14 @@ impl Home for Local {
         proof: &'a Proof,
     ) -> Pin<
         Box<
-            dyn Future<Output = Result<Option<codeyard_db_core::cells::repositories::Source>>>
+            dyn Future<Output = Result<Option<codeyard_database::cells::repositories::Source>>>
                 + Send
                 + 'a,
         >,
     > {
         Box::pin(async move {
-            codeyard_model::cells::Key::new(codeyard_model::cells::KeyKind::Name, owner)?;
-            codeyard_types::cells::Prefix::for_id(base)?;
+            codeyard_types::cells::Key::new(codeyard_types::cells::KeyKind::Name, owner)?;
+            codeyard_types::cell_ids::Prefix::for_id(base)?;
             proof.validate()?;
             let Some(fork) = codeyard_db_repos::repositories::discovery::named_owner_fork(
                 &self.pool, owner, base,
@@ -80,29 +80,29 @@ impl Home for Local {
         proof: &'a Proof,
     ) -> Pin<
         Box<
-            dyn Future<Output = Result<Option<codeyard_db_core::cells::repositories::Source>>>
+            dyn Future<Output = Result<Option<codeyard_database::cells::repositories::Source>>>
                 + Send
                 + 'a,
         >,
     > {
         Box::pin(async move { self.source(owner, name, proof).await })
     }
-    fn cell(&self) -> Option<codeyard_types::cells::Prefix> {
+    fn cell(&self) -> Option<codeyard_types::cell_ids::Prefix> {
         Some(self.pool.cell_id())
     }
     fn receive_pointer<'a>(
         &'a self,
-        event: &'a codeyard_db_core::cells::pointers::Event,
-        admission: &'a dyn codeyard_db_core::cells::pointers::Admission,
+        event: &'a codeyard_database::cells::pointers::Event,
+        admission: &'a dyn codeyard_database::cells::pointers::Admission,
     ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
         Box::pin(async move {
-            codeyard_db_core::cells::pointers::apply(&self.pool, event, admission).await
+            codeyard_database::cells::pointers::apply(&self.pool, event, admission).await
         })
     }
     fn user<'a>(
         &'a self,
         name: &'a str,
-    ) -> Pin<Box<dyn Future<Output = Result<Option<codeyard_db_core::models::User>>> + Send + 'a>>
+    ) -> Pin<Box<dyn Future<Output = Result<Option<codeyard_database::models::User>>> + Send + 'a>>
     {
         Box::pin(async move {
             let user =
@@ -114,10 +114,10 @@ impl Home for Local {
     fn user_id<'a>(
         &'a self,
         id: i64,
-    ) -> Pin<Box<dyn Future<Output = Result<Option<codeyard_db_core::models::User>>> + Send + 'a>>
+    ) -> Pin<Box<dyn Future<Output = Result<Option<codeyard_database::models::User>>> + Send + 'a>>
     {
         Box::pin(async move {
-            codeyard_types::cells::Prefix::for_id(id)?;
+            codeyard_types::cell_ids::Prefix::for_id(id)?;
             Ok(self.public_user(
                 codeyard_db_identity::users::accounts::get_user_by_id(&self.pool, id).await?,
             ))
@@ -134,8 +134,8 @@ impl Local {
     pub async fn fork_actor(
         &self,
         proof: &Proof,
-    ) -> Result<Option<codeyard_db_core::queries::credentials::Actor>> {
-        use codeyard_db_core::queries::users::accounts::AccountCredential;
+    ) -> Result<Option<codeyard_database::queries::credentials::Actor>> {
+        use codeyard_database::queries::users::accounts::AccountCredential;
         proof.validate()?;
         anyhow::ensure!(
             !matches!(proof, Proof::Ssh { .. }),
@@ -164,10 +164,9 @@ impl Local {
             Proof::Session { value, .. } => AccountCredential::Session(value),
             Proof::Ssh { .. } => unreachable!(),
         };
-        Ok(Some(codeyard_db_core::queries::credentials::Actor::from((
-            user.id,
-            &credential,
-        ))))
+        Ok(Some(codeyard_database::queries::credentials::Actor::from(
+            (user.id, &credential),
+        )))
     }
     /// Whether another cell answers for this credential. A token is answered by the cell that
     /// holds its row, which after a move is not the cell that issued it.
@@ -176,7 +175,7 @@ impl Local {
             Proof::Token { home, hash } => {
                 // Most tokens were issued here and never moved: one lookup in a small table.
                 (!self.pool.owns_prefix(*home)
-                    || codeyard_db_core::cells::authorization::moved_token(&self.pool, hash)
+                    || codeyard_database::cells::authorization::moved_token(&self.pool, hash)
                         .await?)
                     && codeyard_db_identity::users::tokens::find_native_token(&self.pool, hash)
                         .await?
@@ -189,7 +188,7 @@ impl Local {
     /// The account behind a credential, answered here or by the cell that holds it.
     pub async fn resolve(&self, proof: &Proof) -> Result<Option<Answer>> {
         if self.remote(proof).await? {
-            codeyard_db_core::cells::authorization::authorize(&self.pool, proof).await
+            codeyard_database::cells::authorization::authorize(&self.pool, proof).await
         } else {
             self.answer(proof).await
         }
@@ -199,9 +198,9 @@ impl Local {
         owner: &str,
         name: &str,
         proof: &Proof,
-    ) -> Result<Option<codeyard_db_core::cells::repositories::Source>> {
-        use codeyard_db_core::cells::repositories::Source;
-        codeyard_model::cells::Key::new(codeyard_model::cells::KeyKind::Name, owner)?;
+    ) -> Result<Option<codeyard_database::cells::repositories::Source>> {
+        use codeyard_database::cells::repositories::Source;
+        codeyard_types::cells::Key::new(codeyard_types::cells::KeyKind::Name, owner)?;
         anyhow::ensure!(
             codeyard_types::repository_names::valid(name),
             "Invalid fork source name"
@@ -279,8 +278,8 @@ impl Local {
     }
     fn public_user(
         &self,
-        user: Option<codeyard_db_core::models::User>,
-    ) -> Option<codeyard_db_core::models::User> {
+        user: Option<codeyard_database::models::User>,
+    ) -> Option<codeyard_database::models::User> {
         user.filter(|user| {
             !user.is_stub
                 && !user.is_banned
@@ -288,14 +287,14 @@ impl Local {
                 && user.home_cell == i32::from(self.pool.cell_id().get())
         })
         .map(|mut user| {
-            codeyard_db_core::cells::authorization::redact_user(&mut user);
+            codeyard_database::cells::authorization::redact_user(&mut user);
             user
         })
     }
     async fn answer(&self, proof: &Proof) -> Result<Option<Answer>> {
         proof.validate()?;
         let pool = &self.pool;
-        use codeyard_db_core::cells::authorization::{freshness, heartbeat};
+        use codeyard_database::cells::authorization::{freshness, heartbeat};
         let read = freshness::policy()?
             .start(chrono::Utc::now(), std::time::Instant::now())
             .ok_or_else(|| anyhow::anyhow!("Identity freshness is unavailable"))?;
@@ -316,10 +315,10 @@ impl Local {
                     return Ok(None);
                 };
                 let credential =
-                    codeyard_db_core::queries::users::accounts::AccountCredential::Token(
+                    codeyard_database::queries::users::accounts::AccountCredential::Token(
                         token.id, hash,
                     );
-                let authority = if user.username == codeyard_db_core::queries::ci_tokens::BOT {
+                let authority = if user.username == codeyard_database::queries::ci_tokens::BOT {
                     let Some(job) = codeyard_db_actions::ci_tokens::get(pool, token.id).await?
                     else {
                         return Ok(None);
@@ -513,8 +512,8 @@ impl Local {
 pub async fn resolve_user(
     pool: &DbPool,
     name: &str,
-) -> Result<Option<codeyard_db_core::models::User>> {
-    if codeyard_model::cells::Key::new(codeyard_model::cells::KeyKind::Name, name).is_err() {
+) -> Result<Option<codeyard_database::models::User>> {
+    if codeyard_types::cells::Key::new(codeyard_types::cells::KeyKind::Name, name).is_err() {
         return Ok(None);
     }
     if let Some(user) =
@@ -541,11 +540,11 @@ pub async fn resolve_user(
 
 async fn retain_user(
     pool: &DbPool,
-    user: codeyard_db_core::models::User,
-) -> Result<Option<codeyard_db_core::models::User>> {
-    codeyard_db_core::cells::authorization::validate_public_user(&user)?;
-    let source = codeyard_types::cells::Prefix::try_from(i64::from(user.home_cell))?;
-    codeyard_db_core::cells::stubs::user(pool, source, &user).await?;
+    user: codeyard_database::models::User,
+) -> Result<Option<codeyard_database::models::User>> {
+    codeyard_database::cells::authorization::validate_public_user(&user)?;
+    let source = codeyard_types::cell_ids::Prefix::try_from(i64::from(user.home_cell))?;
+    codeyard_database::cells::stubs::user(pool, source, &user).await?;
     Ok(
         codeyard_db_identity::users::accounts::get_user_by_id(pool, user.id)
             .await?
@@ -556,8 +555,8 @@ async fn retain_user(
 pub async fn resolve_user_id(
     pool: &DbPool,
     id: i64,
-) -> Result<Option<codeyard_db_core::models::User>> {
-    if codeyard_types::cells::Prefix::for_id(id).is_err() {
+) -> Result<Option<codeyard_database::models::User>> {
+    if codeyard_types::cell_ids::Prefix::for_id(id).is_err() {
         return Ok(None);
     }
     if let Some(user) = codeyard_db_identity::users::accounts::get_user_by_id(pool, id).await? {
@@ -581,9 +580,9 @@ pub async fn resolve_user_id(
 /// The public profile of a native repository's owner, as another cell may store it.
 pub async fn public_owner(
     pool: &DbPool,
-    repository: &codeyard_db_core::models::Repository,
-) -> Result<Option<codeyard_db_core::cells::repositories::Owner>> {
-    use codeyard_db_core::cells::repositories::Owner;
+    repository: &codeyard_database::models::Repository,
+) -> Result<Option<codeyard_database::cells::repositories::Owner>> {
+    use codeyard_database::cells::repositories::Owner;
     Ok(Some(match repository.owner_kind.as_str() {
         "user" => {
             let Some(mut owner) =
@@ -592,7 +591,7 @@ pub async fn public_owner(
             else {
                 return Ok(None);
             };
-            codeyard_db_core::cells::authorization::redact_user(&mut owner);
+            codeyard_database::cells::authorization::redact_user(&mut owner);
             Owner::User(Box::new(owner))
         }
         "org" => {
@@ -622,8 +621,8 @@ pub async fn public_owner(
 pub async fn queue_notice(
     pool: &DbPool,
     recipient: i64,
-    repository: &codeyard_db_core::models::Repository,
-    actor: &codeyard_db_core::models::User,
+    repository: &codeyard_database::models::Repository,
+    actor: &codeyard_database::models::User,
     number: i32,
     subject: &str,
     title: &str,
@@ -640,15 +639,15 @@ pub async fn queue_notice(
     repository.disk_path.clear();
     repository.storage_node_id = None;
     let mut actor = actor.clone();
-    codeyard_db_core::cells::authorization::redact_user(&mut actor);
-    let maximum = codeyard_db_core::cells::notices::MAXIMUM_BODY;
+    codeyard_database::cells::authorization::redact_user(&mut actor);
+    let maximum = codeyard_database::cells::notices::MAXIMUM_BODY;
     let mut end = body.len().min(maximum);
     while !body.is_char_boundary(end) {
         end -= 1;
     }
-    codeyard_db_core::cells::notices::queue(
+    codeyard_database::cells::notices::queue(
         pool,
-        &codeyard_db_core::cells::notices::Notice {
+        &codeyard_database::cells::notices::Notice {
             user_id: recipient,
             repository,
             owner,

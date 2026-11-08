@@ -14,11 +14,11 @@ use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::app::AppState;
-use codeyard_db_core::queries::users::accounts::AccountCredential;
+use codeyard_database::queries::users::accounts::AccountCredential;
 use codeyard_identity::keys::KeyError;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
-use codeyard_model::urls::api_url;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
+use codeyard_types::urls::api_url;
 use serde::Deserialize;
 use serde_json::json;
 use std::sync::Arc;
@@ -125,7 +125,7 @@ async fn create(
         .await?
         .ok_or_else(codeyard_identity::github_auth::required)?;
     actor.require_write()?;
-    let Json(input) = input.map_err(codeyard_model::github_error::json_error)?;
+    let Json(input) = input.map_err(codeyard_types::github_error::json_error)?;
     let key = codeyard_identity::keys::enroll_signing(
         &state.pool,
         actor.user.id,

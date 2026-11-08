@@ -21,8 +21,8 @@ use codeyard_storage::files::uploads::UploadDeclaration;
 use codeyard_storage::files::uploads::UploadError;
 
 use codeyard_api_rest::avatar_ops::AvatarError;
-use codeyard_db_core::models::FileReason;
-use codeyard_db_core::models::FileVisibility;
+use codeyard_database::models::FileReason;
+use codeyard_database::models::FileVisibility;
 use codeyard_storage::local::LocalStore;
 use codeyard_storage::s3::S3Config;
 use codeyard_storage::ObjectStore;
@@ -246,7 +246,7 @@ struct Login {
 }
 
 async fn login(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     user: i64,
     session_fill: char,
     csrf_fill: char,
@@ -280,8 +280,8 @@ async fn login(
 
 struct Fixture {
     temporary: tempfile::TempDir,
-    raw: codeyard_db_core::pool::SqlitePool,
-    pool: codeyard_db_core::DbPool,
+    raw: codeyard_database::pool::SqlitePool,
+    pool: codeyard_database::DbPool,
     storage: Arc<ObjectStore>,
     owner: i64,
     stranger: i64,
@@ -303,10 +303,10 @@ impl Fixture {
                     .busy_timeout(Duration::from_secs(5)),
             )
             .await
-            .map(codeyard_db_core::pool::Pool::from)
+            .map(codeyard_database::pool::Pool::from)
             .unwrap();
-        let pool: codeyard_db_core::DbPool = raw.clone().into();
-        codeyard_db_core::run_migrations(&pool)
+        let pool: codeyard_database::DbPool = raw.clone().into();
+        codeyard_database::run_migrations(&pool)
             .await
             .expect("native SQLite migrations are required, not success-skipped");
         let owner =
@@ -3115,7 +3115,7 @@ async fn a_replaced_picture_is_removed_with_the_change_or_not_at_all() {
         codeyard_db_identity::users::accounts::set_user_avatar(
             &fixture.pool,
             fixture.owner,
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+            &codeyard_database::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(&fixture.pool, fixture.owner).await
             ),
             Some(old)
@@ -3133,7 +3133,7 @@ async fn a_replaced_picture_is_removed_with_the_change_or_not_at_all() {
     assert!(codeyard_db_identity::users::accounts::set_user_avatar(
         &fixture.pool,
         fixture.owner,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(&fixture.pool, fixture.owner).await
         ),
         Some(new)
@@ -3157,7 +3157,7 @@ async fn a_replaced_picture_is_removed_with_the_change_or_not_at_all() {
         codeyard_db_identity::users::accounts::set_user_avatar(
             &fixture.pool,
             fixture.owner,
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+            &codeyard_database::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(&fixture.pool, fixture.owner).await
             ),
             Some(new)
@@ -3193,7 +3193,7 @@ async fn a_banned_account_keeps_its_picture() {
     codeyard_api_rest::avatar_ops::set_user_avatar(
         &fixture.pool,
         &user,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(&fixture.pool, user.id).await,
         ),
         old,
@@ -3209,7 +3209,7 @@ async fn a_banned_account_keeps_its_picture() {
     let changed = codeyard_api_rest::avatar_ops::set_user_avatar(
         &fixture.pool,
         &user,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(&fixture.pool, user.id).await,
         ),
         new,
@@ -3219,7 +3219,7 @@ async fn a_banned_account_keeps_its_picture() {
     let cleared = codeyard_api_rest::avatar_ops::remove_user_avatar(
         &fixture.pool,
         &user,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(&fixture.pool, user.id).await,
         ),
     )

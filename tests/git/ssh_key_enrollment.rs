@@ -15,7 +15,7 @@ const PUBLIC: &str =
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl";
 
 async fn contract(pg: bool) {
-    use codeyard_model::identity::SshKeyWriteRefusal as Refusal;
+    use codeyard_types::identity::SshKeyWriteRefusal as Refusal;
     bundle::install();
     let mut f = Database::new(pg).await;
     f.complete_setup().await;
@@ -65,7 +65,7 @@ async fn contract(pg: bool) {
         .unwrap_err();
         assert_eq!(
             error.downcast_ref::<Refusal>(),
-            Some(&codeyard_model::identity::SshKeyWriteRefusal::InvalidKey)
+            Some(&codeyard_types::identity::SshKeyWriteRefusal::InvalidKey)
         );
         let reply = alice
             .form_reply(
@@ -193,7 +193,7 @@ async fn contract(pg: bool) {
                 .unwrap_err();
         assert_eq!(
             error.downcast_ref::<Refusal>(),
-            Some(&codeyard_model::identity::SshKeyWriteRefusal::AlreadyUsed)
+            Some(&codeyard_types::identity::SshKeyWriteRefusal::AlreadyUsed)
         );
         let (status, page) = client
             .form(
@@ -241,7 +241,7 @@ async fn contract(pg: bool) {
             }
             Err(error) => assert_eq!(
                 error.downcast_ref::<Refusal>(),
-                Some(&codeyard_model::identity::SshKeyWriteRefusal::AlreadyUsed)
+                Some(&codeyard_types::identity::SshKeyWriteRefusal::AlreadyUsed)
             ),
         }
     }
@@ -371,13 +371,13 @@ async fn contract(pg: bool) {
         .unwrap_err();
         assert_eq!(
             error.downcast_ref::<Refusal>(),
-            Some(&codeyard_model::identity::SshKeyWriteRefusal::AccountRestricted)
+            Some(&codeyard_types::identity::SshKeyWriteRefusal::AccountRestricted)
         );
         assert_eq!(
             codeyard_identity::keys::delete(
                 f.pool(),
                 user,
-                &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+                &codeyard_database::queries::users::accounts::AccountCredential::Session(
                     &client.session
                 ),
                 existing.id,
@@ -498,7 +498,7 @@ async fn session_enrollment_contract(pg: bool) {
         keys::delete(
             f.pool(),
             user.id,
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session),
+            &codeyard_database::queries::users::accounts::AccountCredential::Session(&session),
             key.id,
         )
         .await
@@ -530,7 +530,7 @@ async fn session_enrollment_contract(pg: bool) {
     keys::delete(
         f.pool(),
         user.id,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session),
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(&session),
         key.id,
     )
     .await
@@ -540,7 +540,7 @@ async fn session_enrollment_contract(pg: bool) {
     let enrollment = ssh_keys::add_ssh_key_for_session(&pool, user_id, &session, "Queued", PUBLIC);
     tokio::pin!(enrollment);
     match f.pool() {
-        codeyard_db_core::DbPool::Postgres(raw) => {
+        codeyard_database::DbPool::Postgres(raw) => {
             let mut change = raw.begin().await.unwrap();
             sqlx::query("UPDATE users SET password_hash='third-hash' WHERE id=$1")
                 .bind(user.id)
@@ -562,7 +562,7 @@ async fn session_enrollment_contract(pg: bool) {
                 .unwrap();
             change.commit().await.unwrap();
         }
-        codeyard_db_core::DbPool::Sqlite(raw) => {
+        codeyard_database::DbPool::Sqlite(raw) => {
             let mut change = raw.begin_with("BEGIN IMMEDIATE").await.unwrap();
             sqlx::query("UPDATE users SET password_hash='third-hash' WHERE id=?1")
                 .bind(user.id)
@@ -587,8 +587,8 @@ async fn session_enrollment_contract(pg: bool) {
         enrollment
             .await
             .unwrap_err()
-            .downcast_ref::<codeyard_model::identity::SshKeyWriteRefusal>(),
-        Some(&codeyard_model::identity::SshKeyWriteRefusal::InvalidSession)
+            .downcast_ref::<codeyard_types::identity::SshKeyWriteRefusal>(),
+        Some(&codeyard_types::identity::SshKeyWriteRefusal::InvalidSession)
     );
     assert!(ssh_keys::list_user_keys(f.pool(), user.id)
         .await

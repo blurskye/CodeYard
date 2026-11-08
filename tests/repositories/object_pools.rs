@@ -3,7 +3,7 @@ use crate::support::http_client::Client;
 use axum::http::StatusCode;
 use base64::Engine;
 use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
-use codeyard_repos_core::repositories::lifecycle;
+use codeyard_git_storage::repositories::lifecycle;
 use serde_json::json;
 use std::path::Path;
 
@@ -165,7 +165,7 @@ async fn forks_of_a_private_repository_keep_whole_copies() {
         f.pool(),
         bob_id,
         base.id,
-        codeyard_db_core::models::AccessLevel::Read,
+        codeyard_database::models::AccessLevel::Read,
     )
     .await
     .unwrap();

@@ -1,7 +1,7 @@
 use crate::action_workflows::Workflow;
 use anyhow::Result;
-use codeyard_db_core::models::CiRun;
-use codeyard_db_core::pool::PgPool;
+use codeyard_database::models::CiRun;
+use codeyard_database::pool::PgPool;
 use codeyard_db_repos::repositories::records::RepositorySettingsRefusal;
 
 pub async fn register_workflows(
@@ -68,7 +68,7 @@ pub async fn workflow_for_path(pool: &PgPool, repo: i64, path: &str) -> Result<O
 
 pub async fn set_workflow_enabled(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo: i64,
     id: i64,
     enabled: bool,
@@ -77,14 +77,14 @@ pub async fn set_workflow_enabled(
     let actor = credential.user_id;
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::postgres::discussions::lock_write_authority(
+        codeyard_database::queries::postgres::discussions::lock_write_authority(
             &mut tx, actor, repo
         )
         .await?,
         RepositorySettingsRefusal::Denied
     );
     anyhow::ensure!(
-        codeyard_db_core::queries::postgres::credentials::writes(
+        codeyard_database::queries::postgres::credentials::writes(
             &mut tx,
             &credential,
             Some(repo),

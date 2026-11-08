@@ -41,18 +41,18 @@ fn failure(
     loaded: &codeyard_api_http::shared::repos::chrome::Loaded,
     error: anyhow::Error,
 ) -> Response {
-    match error.downcast_ref::<codeyard_db_core::queries::secret_scanning::Refusal>() {
-        Some(codeyard_db_core::queries::secret_scanning::Refusal::Missing) => ctx.repo_error(
+    match error.downcast_ref::<codeyard_database::queries::secret_scanning::Refusal>() {
+        Some(codeyard_database::queries::secret_scanning::Refusal::Missing) => ctx.repo_error(
             &loaded.chrome,
             StatusCode::NOT_FOUND,
             "Secret scanning resource not found",
         ),
-        Some(codeyard_db_core::queries::secret_scanning::Refusal::Denied) => ctx.repo_error(
+        Some(codeyard_database::queries::secret_scanning::Refusal::Denied) => ctx.repo_error(
             &loaded.chrome,
             StatusCode::FORBIDDEN,
             "Repository administration required",
         ),
-        Some(codeyard_db_core::queries::secret_scanning::Refusal::Invalid) => ctx.repo_error(
+        Some(codeyard_database::queries::secret_scanning::Refusal::Invalid) => ctx.repo_error(
             &loaded.chrome,
             StatusCode::UNPROCESSABLE_ENTITY,
             "Invalid secret scanning submission",
@@ -149,8 +149,8 @@ async fn list(
         Ok(rows) => rows,
         Err(error)
             if matches!(
-                error.downcast_ref::<codeyard_db_core::queries::secret_scanning::Refusal>(),
-                Some(codeyard_db_core::queries::secret_scanning::Refusal::Missing)
+                error.downcast_ref::<codeyard_database::queries::secret_scanning::Refusal>(),
+                Some(codeyard_database::queries::secret_scanning::Refusal::Missing)
             ) =>
         {
             return show(&ctx, loaded, view::Page::Disabled)
@@ -207,7 +207,7 @@ async fn alert(
             return failure(
                 &ctx,
                 &loaded,
-                codeyard_db_core::queries::secret_scanning::Refusal::Missing.into(),
+                codeyard_database::queries::secret_scanning::Refusal::Missing.into(),
             )
         }
         Err(error) => return failure(&ctx, &loaded, error),
@@ -279,7 +279,7 @@ async fn resolve(
         return failure(
             &ctx,
             &loaded,
-            codeyard_db_core::queries::secret_scanning::Refusal::Missing.into(),
+            codeyard_database::queries::secret_scanning::Refusal::Missing.into(),
         );
     }
     let number = params["number"].parse().unwrap_or(0);
@@ -378,7 +378,7 @@ async fn bypass_form(
         return failure(
             &ctx,
             &loaded,
-            codeyard_db_core::queries::secret_scanning::Refusal::Missing.into(),
+            codeyard_database::queries::secret_scanning::Refusal::Missing.into(),
         );
     }
     let reason = codeyard_api_http::shared::repos::forms::field(&form, "reason");

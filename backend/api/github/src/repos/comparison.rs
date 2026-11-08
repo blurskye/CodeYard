@@ -14,14 +14,14 @@ use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_db_core::models::Repository;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
-use codeyard_model::urls::repo_url;
-use codeyard_repos_core::api_shared::github::contents::store_error;
-use codeyard_repos_core::repositories::reads::same_fork_network;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_database::models::Repository;
+use codeyard_git_storage::api_shared::github::contents::store_error;
+use codeyard_git_storage::repositories::reads::same_fork_network;
+use codeyard_git_storage::repositories::store::repo_store;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use codeyard_types::ref_path::encode_path as path_url;
+use codeyard_types::urls::repo_url;
 use serde_json::json;
 use std::sync::Arc;
 
@@ -149,7 +149,7 @@ async fn compare(
     );
     let site = format!(
         "{}/{owner}/{name}/compare",
-        codeyard_model::http_config::link_origin()
+        codeyard_types::http_config::link_origin()
     );
     let html_url = format!("{site}/{}", path_url(&spec));
     let mut value = json!({

@@ -6,8 +6,8 @@
 use crate::support::database::Database;
 use crate::support::organizations::applied;
 
-use codeyard_db_core::models::AccessLevel;
-use codeyard_db_core::models::OrgRole;
+use codeyard_database::models::AccessLevel;
+use codeyard_database::models::OrgRole;
 
 impl Database {
     async fn org(&self, owner: i64, name: &str) -> i64 {
@@ -129,11 +129,11 @@ impl Database {
 }
 
 async fn canonical_access_contract(database: &Database) {
-    use codeyard_db_core::models::AccessLevel::Admin;
-    use codeyard_db_core::models::AccessLevel::None as NoAccess;
-    use codeyard_db_core::models::AccessLevel::Owner;
-    use codeyard_db_core::models::AccessLevel::Read;
-    use codeyard_db_core::models::AccessLevel::Write;
+    use codeyard_database::models::AccessLevel::Admin;
+    use codeyard_database::models::AccessLevel::None as NoAccess;
+    use codeyard_database::models::AccessLevel::Owner;
+    use codeyard_database::models::AccessLevel::Read;
+    use codeyard_database::models::AccessLevel::Write;
     use codeyard_db_orgs::organizations::teams::TeamPrivacy::Secret;
     use codeyard_db_orgs::organizations::teams::TeamPrivacy::Visible;
     let pool = database.pool();

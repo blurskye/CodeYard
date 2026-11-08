@@ -4,7 +4,7 @@ use crate::gists::failure_store;
 use axum::response::IntoResponse;
 use codeyard_app::app::AppState;
 use codeyard_app::gists::LoadedGist;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_git_storage::repositories::store::repo_store;
 use serde_json::json;
 use serde_json::Map;
 use serde_json::Value;
@@ -90,7 +90,7 @@ pub(super) async fn detail(state: &AppState, loaded: &LoadedGist) -> Result<Valu
                 .ok_or_else(Error::missing)?;
         // GitHub lists each fork's owner as a full public profile.
         let user = crate::users::document(state, &user, None).await?;
-        entries.push(json!({"id":fork.id,"url":codeyard_model::urls::api_url(&format!("/gists/{}",fork.id)),"user":user,"created_at":fork.created_at,"updated_at":fork.updated_at}));
+        entries.push(json!({"id":fork.id,"url":codeyard_types::urls::api_url(&format!("/gists/{}",fork.id)),"user":user,"created_at":fork.created_at,"updated_at":fork.updated_at}));
     }
     value["forks"] = json!(entries);
     value["fork_of"] = Value::Null;
@@ -127,7 +127,7 @@ pub(super) async fn history(
         .iter()
         .map(|revision| revision.author_email.clone())
         .collect::<Vec<_>>();
-    let authors = codeyard_repos_core::repositories::reads::commit_authors(&state.pool, &emails)
+    let authors = codeyard_git_storage::repositories::reads::commit_authors(&state.pool, &emails)
         .await
         .map_err(Error::unavailable)?;
     let mut entries = Vec::new();

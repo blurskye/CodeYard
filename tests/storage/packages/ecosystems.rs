@@ -1,7 +1,7 @@
 //! Client-shaped Maven/Gradle, NuGet and RubyGems conversations on both databases.
 use super::*;
 
-use codeyard_model::permissions::Permissions;
+use codeyard_types::permissions::Permissions;
 use sha2::{Digest, Sha512};
 use std::{
     collections::BTreeMap,

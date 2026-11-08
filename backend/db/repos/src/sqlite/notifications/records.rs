@@ -8,18 +8,18 @@ use crate::notifications::records::NotificationMark;
 use crate::notifications::records::NotificationScopes;
 use crate::notifications::threads::ThreadAction;
 use anyhow::Result;
-use codeyard_db_core::models::Notification;
-use codeyard_db_core::pool::SqlitePool;
-use codeyard_db_core::queries::notifications::records::NewNotification;
-use codeyard_db_core::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
-use codeyard_db_core::queries::sqlite::search::contains;
+use codeyard_database::models::Notification;
+use codeyard_database::pool::SqlitePool;
+use codeyard_database::queries::notifications::records::NewNotification;
+use codeyard_database::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
+use codeyard_database::queries::sqlite::search::contains;
 pub(crate) mod threads;
 
 pub async fn create_notification(
     pool: &SqlitePool,
     input: NewNotification<'_>,
 ) -> Result<Notification> {
-    use codeyard_db_core::queries::notifications::records::NotificationSuppressed;
+    use codeyard_database::queries::notifications::records::NotificationSuppressed;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
         fork_readable(&mut tx, input.user_id, input.kind, input.metadata).await?,
@@ -39,7 +39,7 @@ pub async fn create_notification(
     if let Some(repo) = input.repo_id {
         for user in [Some(input.user_id), input.actor_id].into_iter().flatten() {
             anyhow::ensure!(
-                !codeyard_db_core::queries::sqlite::users::blocks::repository_interaction_blocked(
+                !codeyard_database::queries::sqlite::users::blocks::repository_interaction_blocked(
                     &mut tx, user, repo
                 )
                 .await?,
@@ -78,7 +78,7 @@ pub async fn create_notification(
             anyhow::ensure!(
                 readable
                     && (!stub
-                        || codeyard_db_core::cells::notices::readable(
+                        || codeyard_database::cells::notices::readable(
                             pool.foreign_authorization().as_ref(),
                             scope
                         )
@@ -161,9 +161,10 @@ pub async fn create_notification(
                 .await?;
         anyhow::ensure!(comment.is_some(), NotificationSuppressed);
     }
-    let thread_id =
-        codeyard_db_core::queries::sqlite::notifications::records::threads::ensure(&mut tx, &input)
-            .await?;
+    let thread_id = codeyard_database::queries::sqlite::notifications::records::threads::ensure(
+        &mut tx, &input,
+    )
+    .await?;
     let notification = sqlx::query_as::<_, Notification>(
         r#"
         INSERT INTO notifications (user_id, actor_id, repo_id, kind, title, body, link, metadata, scope_repository_id,thread_id)
@@ -265,7 +266,7 @@ async fn decide_scopes(
                 .fetch_one(&mut *connection)
                 .await?;
             if stub {
-                allowed = codeyard_db_core::cells::notices::readable_until(
+                allowed = codeyard_database::cells::notices::readable_until(
                     pool.foreign_authorization().as_ref(),
                     id,
                     remote_deadline,
@@ -591,7 +592,7 @@ pub async fn count_header_unread(pool: &SqlitePool, user_id: i64) -> Result<i64>
     .await?;
     Ok(native
         + crate::notifications::records::foreign_unread(
-            &codeyard_db_core::DbPool::Sqlite(pool.clone()),
+            &codeyard_database::DbPool::Sqlite(pool.clone()),
             user_id,
         )
         .await?)
@@ -710,8 +711,11 @@ pub async fn notification_email_allowed(pool: &SqlitePool, notification_id: i64)
         .await?
         .unwrap_or(false);
     if stub
-        && !codeyard_db_core::cells::notices::readable(pool.foreign_authorization().as_ref(), scope)
-            .await
+        && !codeyard_database::cells::notices::readable(
+            pool.foreign_authorization().as_ref(),
+            scope,
+        )
+        .await
     {
         return Ok(false);
     }

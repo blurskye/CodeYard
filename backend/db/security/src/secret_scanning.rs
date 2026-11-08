@@ -1,9 +1,9 @@
 use anyhow::Result;
 use chrono::DateTime;
 use chrono::Utc;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::queries::users::accounts::AccountCredential;
-use codeyard_db_core::DbPool;
+use codeyard_database::native_operation;
+use codeyard_database::queries::users::accounts::AccountCredential;
+use codeyard_database::DbPool;
 use codeyard_git::secret_scanning::Location;
 use codeyard_support::secret_detection::patterns::Create;
 use codeyard_support::secret_detection::patterns::Delete;
@@ -162,7 +162,7 @@ pub struct ScanJob {
     pub completed_at: Option<DateTime<Utc>>,
 }
 
-native_operation!(codeyard_db_core::queries::postgres::secret_scanning::settings, codeyard_db_core::queries::sqlite::secret_scanning::settings,
+native_operation!(codeyard_database::queries::postgres::secret_scanning::settings, codeyard_database::queries::sqlite::secret_scanning::settings,
     fn settings(pool: &DbPool, repo: i64) -> Result<Settings>);
 native_operation!(crate::postgres::secret_scanning::save_settings, crate::sqlite::secret_scanning::save_settings,
     fn save_settings(pool: &DbPool, actor: i64, repo: i64, settings: &Settings) -> Result<()>);
@@ -210,4 +210,4 @@ pub(super) fn path_digest(path: &str) -> String {
     format!("{:x}", Sha256::digest(path.as_bytes()))
 }
 
-use codeyard_db_core::queries::secret_scanning::Settings;
+use codeyard_database::queries::secret_scanning::Settings;

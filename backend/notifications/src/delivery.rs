@@ -11,7 +11,7 @@ pub enum DeliveryError {
 /// Broadcasts are wakeups, never payload or count authority. Native projection
 /// binds the original still-live session and current repository Read at commit.
 pub async fn current_event(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     session_id: &str,
     user_id: i64,
     event: &NotificationEvent,

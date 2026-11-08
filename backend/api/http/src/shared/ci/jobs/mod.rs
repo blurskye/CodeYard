@@ -23,8 +23,8 @@ pub fn missing() -> CiReadError {
 
 pub async fn ensure_repo_read_access(
     state: &AppState,
-    user: &codeyard_db_core::models::User,
-    repository: &codeyard_db_core::models::Repository,
+    user: &codeyard_database::models::User,
+    repository: &codeyard_database::models::Repository,
 ) -> Result<(), CiReadError> {
     if codeyard_identity::repository_access::can_read(&state.pool, Some(user), repository)
         .await

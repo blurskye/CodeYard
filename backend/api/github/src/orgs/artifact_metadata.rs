@@ -19,8 +19,8 @@ use codeyard_db_repos::artifact_metadata::DeploymentInput;
 use codeyard_db_repos::artifact_metadata::Mutation;
 use codeyard_db_repos::artifact_metadata::Refusal;
 use codeyard_db_repos::artifact_metadata::StorageInput;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde::de::DeserializeOwned;
 use serde_json::json;
 use serde_json::Value;
@@ -62,12 +62,12 @@ async fn actor(
         auth.require_write()?;
     }
     let org = crate::orgs::target(state, &params["org"]).await?;
-    let repo = if auth.user.username == codeyard_db_core::queries::ci_tokens::BOT {
+    let repo = if auth.user.username == codeyard_database::queries::ci_tokens::BOT {
         let job = codeyard_db_actions::ci_tokens::get(&state.pool, auth.token.id)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(codeyard_identity::github_auth::required)?;
-        let permissions: codeyard_model::permissions::Permissions =
+        let permissions: codeyard_types::permissions::Permissions =
             serde_json::from_str(&job.permissions).map_err(Error::unavailable)?;
         if !permissions.allows("artifact-metadata", write) {
             return Err(Error::new(
@@ -258,7 +258,7 @@ async fn list(
     let (actor, org) = actor(&state, &headers, &params, false).await?;
     let digest = &params["subject_digest"];
     if !digest.starts_with("sha256:")
-        || !codeyard_db_core::queries::attestations::valid_digest(digest)
+        || !codeyard_database::queries::attestations::valid_digest(digest)
     {
         return Err(Error::validation(
             "ArtifactMetadata",

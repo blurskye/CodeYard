@@ -11,7 +11,7 @@ use codeyard_db_repos::discussions::ListSort;
 use codeyard_db_repos::discussions::Pick;
 use codeyard_db_repos::milestones::MilestoneWriteRefusal;
 
-use codeyard_db_core::models::AccessLevel;
+use codeyard_database::models::AccessLevel;
 use database::Database;
 
 fn assignment_refusal(error: anyhow::Error) -> AssignmentRefusal {
@@ -28,7 +28,7 @@ fn milestone_refusal(error: anyhow::Error) -> MilestoneWriteRefusal {
 
 /// The numbers a filter lists, in the order the list gives them.
 async fn issue_numbers(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     repo: i64,
     filter: ListFilter<'_>,
 ) -> Vec<i32> {
@@ -41,7 +41,11 @@ async fn issue_numbers(
 }
 
 /// The numbers a filter lists, sorted, for a set comparison.
-async fn issue_set(pool: &codeyard_db_core::DbPool, repo: i64, filter: ListFilter<'_>) -> Vec<i32> {
+async fn issue_set(
+    pool: &codeyard_database::DbPool,
+    repo: i64,
+    filter: ListFilter<'_>,
+) -> Vec<i32> {
     let mut numbers = issue_numbers(pool, repo, filter).await;
     numbers.sort_unstable();
     numbers
@@ -56,7 +60,7 @@ async fn contract(pg: bool) {
     let stranger = f.actor("carol").await;
     let root = tempfile::tempdir().unwrap();
     let pool = f.pool();
-    let repo = codeyard_repos_core::repositories::lifecycle::provision(
+    let repo = codeyard_git_storage::repositories::lifecycle::provision(
         (pool, None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),
@@ -427,7 +431,7 @@ async fn contract(pg: bool) {
         second.id,
         owner,
         "one",
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(pool, owner).await,
         ),
     )
@@ -439,7 +443,7 @@ async fn contract(pg: bool) {
         second.id,
         owner,
         "two",
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(pool, owner).await,
         ),
     )
@@ -649,7 +653,7 @@ async fn postgres_concurrent_assignments_stop_at_the_limit() {
     let owner = f.actor("alice").await;
     let root = tempfile::tempdir().unwrap();
     let pool = f.pool().clone();
-    let repo = codeyard_repos_core::repositories::lifecycle::provision(
+    let repo = codeyard_git_storage::repositories::lifecycle::provision(
         (&pool, None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),

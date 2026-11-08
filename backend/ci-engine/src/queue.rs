@@ -5,15 +5,15 @@ use anyhow::Result;
 use codeyard_ci::config::CiConfig;
 use codeyard_ci::config::CiExecutionMode;
 use codeyard_ci::config::RunLimits;
-use codeyard_db_core::ci_logs::prepare_logs;
-use codeyard_db_core::models::CiRun;
-use codeyard_db_core::DbPool;
-use codeyard_model::ci::LogLine;
+use codeyard_database::ci_logs::prepare_logs;
+use codeyard_database::models::CiRun;
+use codeyard_database::DbPool;
+use codeyard_git_storage::context::NodeContext;
+use codeyard_git_storage::repositories::store::repo_store;
+use codeyard_git_storage::repositories::store::RepoStore;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
-use codeyard_repos_core::context::NodeContext;
-use codeyard_repos_core::repositories::store::repo_store;
-use codeyard_repos_core::repositories::store::RepoStore;
 use codeyard_support::secrets::SecretEncryptor;
+use codeyard_types::ci::LogLine;
 use serde::Deserialize;
 use serde::Serialize;
 use std::sync::Arc;
@@ -51,7 +51,7 @@ pub(super) async fn run_variables(pool: &DbPool, repo: i64) -> Result<Vec<(Strin
         if variables.contains_key(&name) {
             continue;
         }
-        if bytes + name.len() + value.len() > codeyard_actions::values::MAX_VARIABLE_BYTES {
+        if bytes + name.len() + value.len() > codeyard_runner::values::MAX_VARIABLE_BYTES {
             break;
         }
         bytes += name.len() + value.len();
@@ -84,7 +84,7 @@ pub struct ClaimedRun {
     #[serde(default)]
     pub original_actor: Option<RunActor>,
     #[serde(default)]
-    pub replay: Option<codeyard_actions::progress::Replay>,
+    pub replay: Option<codeyard_runner::progress::Replay>,
     #[serde(default)]
     pub debug: bool,
     pub secrets: Vec<(String, String)>,
@@ -94,9 +94,9 @@ pub struct ClaimedRun {
     pub environment_values: codeyard_ci::environment_values::EnvironmentValues,
     #[serde(default)]
     pub pull_request: Option<PullRequestEvent>,
-    pub storage_peer: Option<codeyard_cluster_core::worker::CorePeer>,
+    pub storage_peer: Option<codeyard_nodes::worker::CorePeer>,
     #[serde(default)]
-    pub storage_replicas: Vec<(i64, codeyard_cluster_core::worker::CorePeer)>,
+    pub storage_replicas: Vec<(i64, codeyard_nodes::worker::CorePeer)>,
     #[serde(default)]
     pub limits: RunLimits,
     #[serde(default)]
@@ -119,7 +119,7 @@ pub enum RunQueue {
     },
     Remote {
         context: NodeContext,
-        peers: Vec<codeyard_cluster_core::worker::CorePeer>,
+        peers: Vec<codeyard_nodes::worker::CorePeer>,
         preferred: Arc<std::sync::Mutex<Option<String>>>,
     },
 }
@@ -141,13 +141,13 @@ pub enum Operation {
         id: i64,
         generation: String,
         workflow: String,
-        event: codeyard_actions::progress::Event,
+        event: codeyard_runner::progress::Event,
     },
     JobState {
         id: i64,
         generation: String,
         workflow: String,
-        state: codeyard_actions::progress::State,
+        state: codeyard_runner::progress::State,
     },
     AdmitJob {
         id: i64,
@@ -308,7 +308,7 @@ impl RunQueue {
                 let local_worker = worker
                     .strip_prefix(&format!("{}/", context.key.public_hex()))
                     .context("the CI run belongs to another worker")?;
-                let (node, peer): (i64, codeyard_cluster_core::worker::CorePeer) = self
+                let (node, peer): (i64, codeyard_nodes::worker::CorePeer) = self
                     .call(
                         local_worker,
                         Operation::Storage {
@@ -430,7 +430,7 @@ impl RunQueue {
                         )
                         .await?
                         .context("the repository no longer exists")?;
-                    let uuid = codeyard_repos_core::wire::repository_uuid(&repository.disk_path)?;
+                    let uuid = codeyard_git_storage::wire::repository_uuid(&repository.disk_path)?;
                     let owner = codeyard_db_actions::ci::ci_repository_owner(pool, run.repo_id)
                         .await?
                         .unwrap_or_default();
@@ -545,12 +545,13 @@ impl RunQueue {
                             );
                         }
                         for id in candidates {
-                            let Some(node) = codeyard_db_cluster::cluster::get_node_by_id(pool, id)
-                                .await?
-                                .filter(|node| {
-                                    node.status == "active"
-                                        && node.roles.iter().any(|role| role == "storage")
-                                })
+                            let Some(node) =
+                                codeyard_db_placement::cluster::get_node_by_id(pool, id)
+                                    .await?
+                                    .filter(|node| {
+                                        node.status == "active"
+                                            && node.roles.iter().any(|role| role == "storage")
+                                    })
                             else {
                                 continue;
                             };
@@ -563,7 +564,7 @@ impl RunQueue {
                             };
                             targets.push((
                                 id,
-                                codeyard_cluster_core::worker::CorePeer {
+                                codeyard_nodes::worker::CorePeer {
                                     target: None,
                                     public_key: node.public_key,
                                     address,
@@ -674,7 +675,7 @@ impl RunQueue {
                         owner,
                         actor,
                         original_actor,
-                        forge_origin: codeyard_model::http_config::link_origin(),
+                        forge_origin: codeyard_types::http_config::link_origin(),
                         replay: options.replay.map(|data| data.0),
                         debug: options.debug,
                         secrets,
@@ -735,15 +736,15 @@ impl RunQueue {
         id: i64,
         generation: &str,
         workflow: &str,
-        event: &codeyard_actions::progress::Event,
+        event: &codeyard_runner::progress::Event,
     ) -> Result<i64> {
         ensure!(
-            serde_json::to_vec(event)?.len() <= codeyard_actions::progress::MAX_EVENT_BYTES,
+            serde_json::to_vec(event)?.len() <= codeyard_runner::progress::MAX_EVENT_BYTES,
             "progress exceeds native limits"
         );
         match self {
             Self::Database { pool, .. } => {
-                use codeyard_actions::progress::Update;
+                use codeyard_runner::progress::Update;
                 let job = codeyard_db_actions::action_jobs::apply(
                     pool, worker, id, generation, workflow, event,
                 )
@@ -782,7 +783,7 @@ impl RunQueue {
         id: i64,
         generation: &str,
         workflow: &str,
-        state: &codeyard_actions::progress::State,
+        state: &codeyard_runner::progress::State,
     ) -> Result<()> {
         state.validate()?;
         match self {
@@ -990,11 +991,11 @@ impl RunQueue {
             // ends only the dial: once the request is written, its reply is awaited below.
             let dial = async {
                 let address = peer.resolved_address().await?;
-                codeyard_cluster_core::transport::dial_node(
+                codeyard_nodes::transport::dial_node(
                     &context.iroh,
                     node,
                     &address,
-                    codeyard_cluster_core::transport::ALPN_EVENTS,
+                    codeyard_nodes::transport::ALPN_EVENTS,
                 )
                 .await
             };
@@ -1022,17 +1023,17 @@ impl RunQueue {
                 continue;
             };
             let result = tokio::time::timeout(std::time::Duration::from_secs(100), async {
-                codeyard_cluster_core::link::write_frame(
+                codeyard_nodes::link::write_frame(
                     &mut link.writer,
                     &header,
-                    codeyard_db_core::limits::MAX_JSON + 64 * 1024,
+                    codeyard_database::limits::MAX_JSON + 64 * 1024,
                 )
                 .await?;
                 link.finish().await?;
                 let reply: Reply = serde_json::from_slice(
-                    &codeyard_cluster_core::link::read_frame(
+                    &codeyard_nodes::link::read_frame(
                         &mut link.reader,
-                        codeyard_db_core::limits::MAX_JSON,
+                        codeyard_database::limits::MAX_JSON,
                     )
                     .await?,
                 )?;

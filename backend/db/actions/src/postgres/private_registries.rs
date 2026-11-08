@@ -1,8 +1,8 @@
 use crate::private_registries::Configuration;
 use crate::private_registries::Registry;
 use crate::private_registries::RegistryError;
-use codeyard_db_core::pool::PgPool;
-use codeyard_db_core::queries::secrets::SecretsError;
+use codeyard_database::pool::PgPool;
+use codeyard_database::queries::secrets::SecretsError;
 use codeyard_support::secrets::SecretEncryptor;
 use serde_json::Value;
 
@@ -42,7 +42,7 @@ pub async fn list(
         return Err(RegistryError::Invalid("page"));
     }
     let mut tx =
-        codeyard_db_core::queries::postgres::dependabot::authorized(pool, actor, org, false)
+        codeyard_database::queries::postgres::dependabot::authorized(pool, actor, org, false)
             .await?;
     let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM org_private_registries WHERE org_id=$1 AND ($2::text IS NULL OR lower(name)=lower($2))")
         .bind(org).bind(name).fetch_one(&mut *tx).await?;
@@ -68,13 +68,13 @@ pub async fn save(
     pool: &PgPool,
     encryptor: Option<&SecretEncryptor>,
     actor: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     org: i64,
     name: Option<&str>,
     input: &Value,
     value: Option<&str>,
 ) -> Result<Registry, RegistryError> {
-    let mut tx = codeyard_db_core::queries::postgres::dependabot::authorized(
+    let mut tx = codeyard_database::queries::postgres::dependabot::authorized(
         pool,
         (actor, credential),
         org,
@@ -107,7 +107,7 @@ pub async fn save(
     let config = crate::private_registries::configuration(stored.as_deref(), input)?;
     config.validate(value, stored.is_some())?;
     if let Some(ids) = &config.selected_repository_ids {
-        codeyard_db_core::queries::postgres::dependabot::check_repositories(&mut tx, org, ids)
+        codeyard_database::queries::postgres::dependabot::check_repositories(&mut tx, org, ids)
             .await?;
     }
     let generated = format!(
@@ -150,11 +150,11 @@ pub async fn save(
 pub async fn delete(
     pool: &PgPool,
     actor: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     org: i64,
     name: &str,
 ) -> Result<(), RegistryError> {
-    let mut tx = codeyard_db_core::queries::postgres::dependabot::authorized(
+    let mut tx = codeyard_database::queries::postgres::dependabot::authorized(
         pool,
         (actor, credential),
         org,

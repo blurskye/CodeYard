@@ -3,11 +3,11 @@ use crate::support::database::Database;
 
 use codeyard_ci::config::CiConfig;
 
-use codeyard_actions::progress::Event;
-use codeyard_actions::progress::Update;
+use codeyard_database::models::CiRun;
 use codeyard_db_actions::action_logs::Target;
-use codeyard_db_core::models::CiRun;
-use codeyard_model::ci::LogLine;
+use codeyard_runner::progress::Event;
+use codeyard_runner::progress::Update;
+use codeyard_types::ci::LogLine;
 use std::io::Read;
 
 const WORKER: &str = "chunk-worker";
@@ -641,12 +641,12 @@ enum ObjectFault {
     Corrupt,
 }
 struct FaultingObjects {
-    inner: std::sync::Arc<dyn codeyard_db_core::ci_logs::LogObjects>,
-    pool: codeyard_db_core::DbPool,
+    inner: std::sync::Arc<dyn codeyard_database::ci_logs::LogObjects>,
+    pool: codeyard_database::DbPool,
     run: i64,
     fault: ObjectFault,
 }
-impl codeyard_db_core::ci_logs::LogObjects for FaultingObjects {
+impl codeyard_database::ci_logs::LogObjects for FaultingObjects {
     fn put<'a>(
         &'a self,
         key: &'a str,
@@ -665,10 +665,10 @@ impl codeyard_db_core::ci_logs::LogObjects for FaultingObjects {
                     "UPDATE ci_runs SET log_version=log_version+1 WHERE id=$1"
                 };
                 match &self.pool {
-                    codeyard_db_core::DbPool::Postgres(pool) => {
+                    codeyard_database::DbPool::Postgres(pool) => {
                         sqlx::query(statement).bind(self.run).execute(pool).await?;
                     }
-                    codeyard_db_core::DbPool::Sqlite(pool) => {
+                    codeyard_database::DbPool::Sqlite(pool) => {
                         sqlx::query(statement).bind(self.run).execute(pool).await?;
                     }
                 }

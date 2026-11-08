@@ -12,8 +12,8 @@ use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -61,8 +61,8 @@ async fn create_bypass(
     .await
     .map_err(|refusal| {
         if matches!(
-            refusal.downcast_ref::<codeyard_db_core::queries::secret_scanning::Refusal>(),
-            Some(codeyard_db_core::queries::secret_scanning::Refusal::Invalid)
+            refusal.downcast_ref::<codeyard_database::queries::secret_scanning::Refusal>(),
+            Some(codeyard_database::queries::secret_scanning::Refusal::Invalid)
         ) {
             Error::validation("SecretScanningPushProtectionBypass", "reason", "invalid")
         } else {
@@ -75,20 +75,20 @@ async fn create_bypass(
 }
 
 pub(super) fn error(error: anyhow::Error) -> Error {
-    match error.downcast_ref::<codeyard_db_core::queries::secret_scanning::Refusal>() {
-        Some(codeyard_db_core::queries::secret_scanning::Refusal::Denied) => {
+    match error.downcast_ref::<codeyard_database::queries::secret_scanning::Refusal>() {
+        Some(codeyard_database::queries::secret_scanning::Refusal::Denied) => {
             Error::new(StatusCode::FORBIDDEN, "Resource not accessible by token")
         }
-        Some(codeyard_db_core::queries::secret_scanning::Refusal::Missing) => Error::missing(),
-        Some(codeyard_db_core::queries::secret_scanning::Refusal::Version) => Error::new(
+        Some(codeyard_database::queries::secret_scanning::Refusal::Missing) => Error::missing(),
+        Some(codeyard_database::queries::secret_scanning::Refusal::Version) => Error::new(
             StatusCode::PRECONDITION_FAILED,
             "Custom pattern version changed",
         ),
-        Some(codeyard_db_core::queries::secret_scanning::Refusal::Conflict) => Error::new(
+        Some(codeyard_database::queries::secret_scanning::Refusal::Conflict) => Error::new(
             StatusCode::CONFLICT,
             "Pattern configuration version changed",
         ),
-        Some(codeyard_db_core::queries::secret_scanning::Refusal::Invalid) => {
+        Some(codeyard_database::queries::secret_scanning::Refusal::Invalid) => {
             Error::validation("SecretScanningAlert", "state", "invalid")
         }
         None => Error::unavailable(error),

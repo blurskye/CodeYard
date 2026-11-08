@@ -1,5 +1,5 @@
 use anyhow::Result;
-use codeyard_db_core::pool::SqlitePool;
+use codeyard_database::pool::SqlitePool;
 use sqlx::QueryBuilder;
 use sqlx::Sqlite;
 

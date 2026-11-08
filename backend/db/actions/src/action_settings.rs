@@ -1,7 +1,7 @@
 use anyhow::ensure;
 use anyhow::Result;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 use serde_json::json;
 use serde_json::Value;
 
@@ -77,20 +77,20 @@ pub(crate) fn resolved(
 
 native_operation!(crate::postgres::action_settings::settings,
     crate::sqlite::action_settings::settings,
-    fn settings(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, scope: &Scope, setting: Setting, update: Option<&Value>) -> Result<Value>);
+    fn settings(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, scope: &Scope, setting: Setting, update: Option<&Value>) -> Result<Value>);
 native_operation!(crate::postgres::action_settings::effective,
     crate::sqlite::action_settings::effective,
     fn effective(pool: &DbPool, repo: i64) -> Result<(Value, Value)>);
 native_operation!(crate::postgres::action_settings::policies_page,
     crate::sqlite::action_settings::policies_page,
-    fn policies_page(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, scope: &Scope, has_parents: bool, offset: i64, limit: i64) -> Result<(i64, Vec<ListedPolicy>)>);
+    fn policies_page(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, scope: &Scope, has_parents: bool, offset: i64, limit: i64) -> Result<(i64, Vec<ListedPolicy>)>);
 native_operation!(crate::postgres::action_settings::policies,
     crate::sqlite::action_settings::policies,
-    fn policies(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, scope: &Scope, id: Option<i64>, change: Option<Option<&Value>>) -> Result<Vec<Policy>>);
+    fn policies(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, scope: &Scope, id: Option<i64>, change: Option<Option<&Value>>) -> Result<Vec<Policy>>);
 
-native_operation!(codeyard_db_core::queries::postgres::action_settings::repositories,
-    codeyard_db_core::queries::sqlite::action_settings::repositories,
-    fn repositories(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, scope: &Scope, setting: Setting, change: Option<&SelectionChange>, window: (i64, i64)) -> Result<(i64, Vec<codeyard_db_core::models::Repository>)>);
+native_operation!(codeyard_database::queries::postgres::action_settings::repositories,
+    codeyard_database::queries::sqlite::action_settings::repositories,
+    fn repositories(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, scope: &Scope, setting: Setting, change: Option<&SelectionChange>, window: (i64, i64)) -> Result<(i64, Vec<codeyard_database::models::Repository>)>);
 
 #[derive(sqlx::FromRow)]
 pub struct Policy {
@@ -117,8 +117,8 @@ pub(crate) struct PolicySelector {
 impl PolicySelector {
     pub(crate) fn applies(
         &self,
-        repository: &codeyard_db_core::queries::rulesets::matching::RepositoryContext<'_>,
-        budget: &mut codeyard_model::workflow_glob::WorkflowMatchBudget,
+        repository: &codeyard_database::queries::rulesets::matching::RepositoryContext<'_>,
+        budget: &mut codeyard_types::workflow_glob::WorkflowMatchBudget,
     ) -> Result<bool> {
         if self.own {
             return Ok(true);
@@ -132,7 +132,7 @@ impl PolicySelector {
 
 pub(crate) fn policy_conditions(
     stored: Option<&str>,
-) -> Result<Option<codeyard_db_core::queries::rulesets::Conditions>> {
+) -> Result<Option<codeyard_database::queries::rulesets::Conditions>> {
     let Some(stored) = stored else {
         return Ok(None);
     };
@@ -145,7 +145,7 @@ pub(crate) fn policy_conditions(
     if fields.is_empty() {
         return Ok(None);
     }
-    let conditions: codeyard_db_core::queries::rulesets::Conditions =
+    let conditions: codeyard_database::queries::rulesets::Conditions =
         serde_json::from_value(value).map_err(|_| Refusal::Invalid)?;
     ensure!(
         conditions.ref_name.is_none()
@@ -228,22 +228,22 @@ pub(crate) fn policy_update(existing: Option<&str>, input: &Value) -> Result<Val
     Ok(result)
 }
 
-use codeyard_db_core::queries::action_settings::SelectionChange;
+use codeyard_database::queries::action_settings::SelectionChange;
 
-use codeyard_db_core::queries::action_settings::can_approve_reviews;
+use codeyard_database::queries::action_settings::can_approve_reviews;
 
-use codeyard_db_core::queries::action_settings::Setting;
+use codeyard_database::queries::action_settings::Setting;
 
-use codeyard_db_core::queries::action_settings::Refusal;
+use codeyard_database::queries::action_settings::Refusal;
 
-use codeyard_db_core::queries::action_settings::Scope;
+use codeyard_database::queries::action_settings::Scope;
 
-use codeyard_db_core::queries::action_settings::retention;
+use codeyard_database::queries::action_settings::retention;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codeyard_db_core::queries::action_settings::fork_workflows_allowed;
+    use codeyard_database::queries::action_settings::fork_workflows_allowed;
 
     #[test]
     fn private_fork_workflows_follow_the_repository_and_organization_switches() {

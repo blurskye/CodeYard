@@ -1,8 +1,8 @@
 use chrono::DateTime;
 use chrono::Utc;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::queries::users::accounts::AccountCredential;
-use codeyard_db_core::DbPool;
+use codeyard_database::native_operation;
+use codeyard_database::queries::users::accounts::AccountCredential;
+use codeyard_database::DbPool;
 use codeyard_support::secrets::SecretEncryptor;
 use codeyard_support::secrets::SecretError;
 
@@ -101,8 +101,8 @@ pub enum ValueError {
 pub(crate) const REACHES_REPOSITORY: &str = "(v.visibility='all' OR (v.visibility='private' AND r.is_private) OR (v.visibility='selected' AND EXISTS(SELECT 1 FROM org_actions_value_repositories s WHERE s.org_id=v.org_id AND s.kind=v.kind AND s.name=v.name AND s.repo_id=r.id)))";
 
 pub fn validate(name: &str, value: &str) -> Result<(), ValueError> {
-    use codeyard_actions::values::InvalidValue;
-    codeyard_actions::values::validate(name, value).map_err(|error| match error {
+    use codeyard_runner::values::InvalidValue;
+    codeyard_runner::values::validate(name, value).map_err(|error| match error {
         InvalidValue::Name | InvalidValue::ReservedName => ValueError::InvalidName,
         InvalidValue::Nul | InvalidValue::TooLarge => ValueError::InvalidValue,
     })
@@ -125,7 +125,7 @@ native_operation!(crate::postgres::organizations::action_values::delete,
     fn delete(pool: &DbPool, actor: i64, credential: &AccountCredential<'_>, org: i64, kind: Kind, name: &str) -> Result<(), ValueError>);
 native_operation!(crate::postgres::organizations::action_values::repositories,
     crate::sqlite::organizations::action_values::repositories,
-    fn repositories(pool: &DbPool, actor: i64, org: i64, kind: Kind, name: &str, offset: i64, limit: i64) -> Result<(i64, Vec<codeyard_db_core::queries::repository_stats::RepositorySnapshot>), ValueError>);
+    fn repositories(pool: &DbPool, actor: i64, org: i64, kind: Kind, name: &str, offset: i64, limit: i64) -> Result<(i64, Vec<codeyard_database::queries::repository_stats::RepositorySnapshot>), ValueError>);
 native_operation!(crate::postgres::organizations::action_values::select,
     crate::sqlite::organizations::action_values::select,
     fn select(pool: &DbPool, actor: i64, credential: &AccountCredential<'_>, org: i64, kind: Kind, name: &str, change: Selection<'_>) -> Result<(), ValueError>);

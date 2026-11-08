@@ -10,10 +10,10 @@ use axum::{
     http::{Request, StatusCode},
 };
 
+use codeyard_git_storage::repositories::lifecycle::provision;
+use codeyard_git_storage::repositories::store::repo_store;
+use codeyard_git_storage::repositories::store::RepoStore;
 use codeyard_repos::editor::FileWrite;
-use codeyard_repos_core::repositories::lifecycle::provision;
-use codeyard_repos_core::repositories::store::repo_store;
-use codeyard_repos_core::repositories::store::RepoStore;
 use codeyard_webui::app::Page;
 use codeyard_webui::app::PageEnvelope;
 use codeyard_webui::pages::repos as view;
@@ -27,7 +27,7 @@ use tower::ServiceExt;
     reason = "The fixture keeps publication authority explicit."
 )]
 async fn save(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     repo_id: i64,
     actor: i64,
     store: &RepoStore,
@@ -620,7 +620,7 @@ async fn browse_fixture(
 ) -> (
     Database,
     tempfile::TempDir,
-    codeyard_db_core::models::Repository,
+    codeyard_database::models::Repository,
     http::Client,
 ) {
     bundle::install();

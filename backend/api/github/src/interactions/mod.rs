@@ -11,14 +11,14 @@ use axum::routing::put;
 use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_app::app::AppState;
-use codeyard_db_core::models::User;
-use codeyard_db_core::queries::users::accounts::AccountCredential;
+use codeyard_database::models::User;
+use codeyard_database::queries::users::accounts::AccountCredential;
 use codeyard_db_identity::interactions::InteractionRefusal;
 use codeyard_db_identity::interactions::InteractionScope;
 use codeyard_db_identity::interactions::NewRestriction;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
 use codeyard_types::credentials::AccountRestricted;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde_json::json;
 use std::sync::Arc;
 

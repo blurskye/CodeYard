@@ -1,5 +1,7 @@
 pub mod activity;
 
+pub mod release_integrity;
+
 pub mod artifact_metadata;
 
 pub mod assignees;

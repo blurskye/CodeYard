@@ -1,9 +1,9 @@
 use chrono::DateTime;
 use chrono::Utc;
-use codeyard_actions::values::MAX_SCOPE_VALUES;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 use codeyard_db_orgs::organization_values::Kind;
+use codeyard_runner::values::MAX_SCOPE_VALUES;
 use codeyard_support::secrets::SecretEncryptor;
 use codeyard_support::secrets::SecretError;
 
@@ -62,8 +62,8 @@ pub fn environment_key(name: &str) -> Result<String, ValueError> {
 }
 
 pub fn validate(name: &str, value: &str) -> Result<(), ValueError> {
-    use codeyard_actions::values::InvalidValue;
-    codeyard_actions::values::validate(name, value).map_err(|error| match error {
+    use codeyard_runner::values::InvalidValue;
+    codeyard_runner::values::validate(name, value).map_err(|error| match error {
         InvalidValue::Name | InvalidValue::ReservedName => ValueError::InvalidName,
         InvalidValue::Nul | InvalidValue::TooLarge => ValueError::InvalidValue,
     })
@@ -71,7 +71,7 @@ pub fn validate(name: &str, value: &str) -> Result<(), ValueError> {
 
 native_operation!(crate::postgres::environment_values::create,
     crate::sqlite::environment_values::create,
-    fn create(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo: i64, name: &str) -> Result<(), ValueError>);
+    fn create(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, repo: i64, name: &str) -> Result<(), ValueError>);
 pub const ENVIRONMENTS_PER_PAGE: usize = 50;
 native_operation!(crate::postgres::environment_values::environments,
     crate::sqlite::environment_values::environments,
@@ -84,10 +84,10 @@ native_operation!(crate::postgres::environment_values::list,
     fn list(pool: &DbPool, actor: i64, repo: i64, environment: &str, kind: Kind) -> Result<Vec<EnvironmentValue>, ValueError>);
 native_operation!(crate::postgres::environment_values::save,
     crate::sqlite::environment_values::save,
-    fn save(pool: &DbPool, encryptor: Option<&SecretEncryptor>, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo: i64, environment: &str, input: &Save<'_>) -> Result<bool, ValueError>);
+    fn save(pool: &DbPool, encryptor: Option<&SecretEncryptor>, actor: impl Into<codeyard_database::queries::credentials::Actor>, repo: i64, environment: &str, input: &Save<'_>) -> Result<bool, ValueError>);
 native_operation!(crate::postgres::environment_values::delete,
     crate::sqlite::environment_values::delete,
-    fn delete(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo: i64, environment: &str, kind: Kind, name: &str) -> Result<(), ValueError>);
+    fn delete(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, repo: i64, environment: &str, kind: Kind, name: &str) -> Result<(), ValueError>);
 
 #[derive(sqlx::FromRow)]
 pub struct StoredValue {

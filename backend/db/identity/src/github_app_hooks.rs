@@ -1,11 +1,11 @@
 use anyhow::Result;
-use codeyard_db_core::models::Webhook;
-use codeyard_db_core::models::WebhookDelivery;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::queries::webhooks::NewDelivery;
-use codeyard_db_core::queries::webhooks::SealedSecret;
-use codeyard_db_core::queries::webhooks::WebhookPatch;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::Webhook;
+use codeyard_database::models::WebhookDelivery;
+use codeyard_database::native_operation;
+use codeyard_database::queries::webhooks::NewDelivery;
+use codeyard_database::queries::webhooks::SealedSecret;
+use codeyard_database::queries::webhooks::WebhookPatch;
+use codeyard_database::DbPool;
 
 #[derive(Debug, sqlx::FromRow)]
 pub struct Delivery {

@@ -5,7 +5,7 @@ use super::Value;
 
 pub(super) async fn contract(
     router: &Router,
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     repo: i64,
     config: i64,
     writer: &str,

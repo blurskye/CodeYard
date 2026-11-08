@@ -5,10 +5,10 @@ use crate::interactions::InteractionScope;
 use crate::interactions::NewRestriction;
 use crate::interactions::Restriction;
 use anyhow::Result;
-use codeyard_db_core::models::OrgRole;
-use codeyard_db_core::pool::PgPool;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_db_core::queries::users::accounts::AccountCredential;
+use codeyard_database::models::OrgRole;
+use codeyard_database::pool::PgPool;
+use codeyard_database::queries::organizations::OrganizationOutcome;
+use codeyard_database::queries::users::accounts::AccountCredential;
 use sqlx::PgConnection;
 
 const FIELDS: &str = "restriction AS \"limit\",CASE WHEN user_id IS NOT NULL THEN 'user' WHEN org_id IS NOT NULL THEN 'organization' ELSE 'repository' END AS origin,expires_at";
@@ -53,8 +53,8 @@ async fn authorize(
     }
     let allowed = match scope {
         InteractionScope::User(user) => user==actor && sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND NOT is_banned AND NOT must_change_password)").bind(actor).fetch_one(&mut *connection).await?,
-        InteractionScope::Organization(org) => match codeyard_db_core::queries::postgres::organizations::authority::authority(&mut *connection,actor,org).await? {OrganizationOutcome::Applied(OrgRole::Owner)=>true,OrganizationOutcome::Applied(OrgRole::Admin)=>!write,_=>false},
-        InteractionScope::Repository(repo) => codeyard_db_core::queries::postgres::repositories::access::lock_user_repo_access_in_transaction(&mut *connection,actor,repo,codeyard_db_core::queries::postgres::repositories::access::RepositoryRowLock::Exclusive,true).await?.is_some_and(|authority|(!authority.organization || authority.organization_usable) && (authority.access.can_admin() || (!authority.organization && (authority.is_admin || authority.owner_user_id==Some(actor))))),
+        InteractionScope::Organization(org) => match codeyard_database::queries::postgres::organizations::authority::authority(&mut *connection,actor,org).await? {OrganizationOutcome::Applied(OrgRole::Owner)=>true,OrganizationOutcome::Applied(OrgRole::Admin)=>!write,_=>false},
+        InteractionScope::Repository(repo) => codeyard_database::queries::postgres::repositories::access::lock_user_repo_access_in_transaction(&mut *connection,actor,repo,codeyard_database::queries::postgres::repositories::access::RepositoryRowLock::Exclusive,true).await?.is_some_and(|authority|(!authority.organization || authority.organization_usable) && (authority.access.can_admin() || (!authority.organization && (authority.is_admin || authority.owner_user_id==Some(actor))))),
     };
     anyhow::ensure!(allowed, InteractionRefusal::Denied);
     Ok(())
@@ -65,7 +65,7 @@ pub async fn get_restriction(
     scope: InteractionScope,
 ) -> Result<Option<Restriction>> {
     let mut tx = pool.begin().await?;
-    codeyard_db_core::queries::postgres::users::transitions::lock_accounts_shared(
+    codeyard_database::queries::postgres::users::transitions::lock_accounts_shared(
         &mut tx,
         &[actor],
     )
@@ -89,7 +89,7 @@ pub async fn set_restriction(
         sqlx::query("SELECT id FROM repositories WHERE owner_kind='user' AND owner_user_id=$1 ORDER BY id FOR UPDATE")
             .bind(user).execute(&mut *tx).await?;
     } else {
-        codeyard_db_core::queries::postgres::users::transitions::lock_accounts_shared(
+        codeyard_database::queries::postgres::users::transitions::lock_accounts_shared(
             &mut tx,
             &[actor],
         )
@@ -158,11 +158,11 @@ pub async fn save_proof(
 ) -> Result<bool> {
     let mut tx = pool.begin().await?;
     let access =
-        codeyard_db_core::queries::postgres::repositories::access::lock_user_repo_access_in_transaction(
+        codeyard_database::queries::postgres::repositories::access::lock_user_repo_access_in_transaction(
             &mut tx,
             actor,
             source.repo_id,
-            codeyard_db_core::queries::postgres::repositories::access::RepositoryRowLock::Shared,
+            codeyard_database::queries::postgres::repositories::access::RepositoryRowLock::Shared,
             true,
         )
         .await?;

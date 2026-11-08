@@ -2,8 +2,8 @@
 use crate::collection::CreationRefusal;
 use axum::http::StatusCode;
 use codeyard_api_http::context::PageContext;
-use codeyard_db_core::models::OrgRole;
-use codeyard_db_core::queries::organizations::OrganizationOutcome::Applied;
+use codeyard_database::models::OrgRole;
+use codeyard_database::queries::organizations::OrganizationOutcome::Applied;
 use codeyard_webui::components::repository_properties::RepositoryPropertyField;
 use codeyard_webui::pages::discovery::NewRepositoryForm;
 use codeyard_webui::pages::discovery::RepositoryCreationChoices;
@@ -18,7 +18,7 @@ pub(super) fn drafts(
     for (key, value) in form {
         if let Some(name) = key
             .strip_prefix("property_value_")
-            .filter(|name| codeyard_db_core::queries::organizations::properties::valid_name(name))
+            .filter(|name| codeyard_database::queries::organizations::properties::valid_name(name))
         {
             if values.property_values.len()
                 < codeyard_db_orgs::organizations::properties::MAX_DEFINITIONS
@@ -35,7 +35,7 @@ pub(super) fn drafts(
         }
         if let Some(name) = key
             .strip_prefix("property_set_")
-            .filter(|name| codeyard_db_core::queries::organizations::properties::valid_name(name))
+            .filter(|name| codeyard_database::queries::organizations::properties::valid_name(name))
         {
             if values.property_set.len()
                 < codeyard_db_orgs::organizations::properties::MAX_DEFINITIONS
@@ -49,14 +49,14 @@ pub(super) fn drafts(
     for (key, value) in form {
         if let Some(name) = key.strip_prefix("property_value_") {
             count += 1;
-            if !codeyard_db_core::queries::organizations::properties::valid_name(name)
+            if !codeyard_database::queries::organizations::properties::valid_name(name)
                 || value.len() > codeyard_db_orgs::organizations::properties::MAX_FORM_VALUE_BYTES
             {
                 return Err((None, "Invalid repository property input."));
             }
         }
         if let Some(name) = key.strip_prefix("property_set_") {
-            if !codeyard_db_core::queries::organizations::properties::valid_name(name)
+            if !codeyard_database::queries::organizations::properties::valid_name(name)
                 || !matches!(value.as_str(), "true" | "on")
             {
                 return Err((None, "Invalid repository property selection."));
@@ -147,7 +147,7 @@ pub(super) async fn populate(
                 description: fields.description.clone().unwrap_or_default(),
                 allowed_values: fields.allowed_values.clone().unwrap_or_default(),
                 required: fields.needs_explicit_value(),
-                editable: owner || fields.values_editable_by == codeyard_db_core::queries::organizations::properties::EditableBy::OrgAndRepoActors,
+                editable: owner || fields.values_editable_by == codeyard_database::queries::organizations::properties::EditableBy::OrgAndRepoActors,
                 default_preview: fields
                     .default_value
                     .as_ref()
@@ -171,7 +171,7 @@ pub(super) async fn values(
     target: Option<i64>,
     form: &NewRepositoryForm,
 ) -> Result<
-    Vec<codeyard_db_core::queries::organizations::properties::ValueInput>,
+    Vec<codeyard_database::queries::organizations::properties::ValueInput>,
     (StatusCode, &'static str),
 > {
     let invalid = |message| (StatusCode::BAD_REQUEST, message);
@@ -215,10 +215,10 @@ pub(super) async fn values(
                 .property_values
                 .get(name)
                 .ok_or_else(|| invalid("Provide a value for each selected property."))?;
-            Ok(codeyard_db_core::queries::organizations::properties::ValueInput {
+            Ok(codeyard_database::queries::organizations::properties::ValueInput {
                 property_name: name.clone(),
                 value: Some(
-                    codeyard_db_core::queries::organizations::properties::PropertyValue::from_form(
+                    codeyard_database::queries::organizations::properties::PropertyValue::from_form(
                         definition.fields.value_type,
                         value,
                     ),

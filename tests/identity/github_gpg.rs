@@ -273,7 +273,7 @@ async fn contract(pg: bool) {
     identity::emails::change(
         f.pool(),
         alice,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session.session),
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(&session.session),
         &["work@example.com".into()],
         true,
     )
@@ -378,7 +378,7 @@ async fn contract(pg: bool) {
     let error = gpg::enroll(
         f.pool(),
         alice,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Token(i64::MAX, ""),
+        &codeyard_database::queries::users::accounts::AccountCredential::Token(i64::MAX, ""),
         None,
         &armored,
     )

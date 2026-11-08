@@ -12,7 +12,7 @@ use axum::response::Response;
 use codeyard_api_http::context::PageContext;
 use codeyard_api_http::shared::repos::discussion::page;
 use codeyard_app::app::AppState;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_webui::pages::repos::issues as view;
 use codeyard_webui::pages::repos::issues::Kind;
 use codeyard_webui::pages::repos::pulls::MAX_LISTED_COMMITS;

@@ -1,7 +1,7 @@
 //! Notification hints cross web nodes through a bounded database cursor.
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
 use crate::support::database::Database;
-use codeyard_db_core::DbPool;
+use codeyard_database::DbPool;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_notifications::broadcast::MAX_SOCKETS_PER_USER;
 use codeyard_notifications::NotificationEvent;
@@ -123,7 +123,7 @@ async fn sqlite_local_delivery_and_poller_shutdown() {
 #[tokio::test]
 async fn an_account_holds_a_bounded_number_of_sockets() {
     let pool = DbPool::from(
-        codeyard_db_core::pool::SqlitePool::connect("sqlite::memory:")
+        codeyard_database::pool::SqlitePool::connect("sqlite::memory:")
             .await
             .unwrap(),
     );

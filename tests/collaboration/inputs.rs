@@ -22,7 +22,7 @@ async fn contract(pg: bool) {
     let alice_id = f.actor("alice").await;
     let bob_id = f.actor("bob").await;
     let root = tempfile::tempdir().unwrap();
-    codeyard_repos_core::repositories::lifecycle::provision(
+    codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
@@ -194,7 +194,7 @@ async fn contract(pg: bool) {
         f.pool(),
         bob_id,
         repo.id,
-        codeyard_db_core::models::AccessLevel::Write,
+        codeyard_database::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -1685,7 +1685,7 @@ async fn assert_notification_actor_batch(f: &Database, alice: &Client, recipient
         let actor = f.actor(&name).await;
         let notification = codeyard_db_repos::notifications::records::create_notification(
             f.pool(),
-            codeyard_db_core::queries::notifications::records::NewNotification {
+            codeyard_database::queries::notifications::records::NewNotification {
                 user_id: recipient,
                 actor_id: Some(actor),
                 repo_id: None,
@@ -1728,7 +1728,7 @@ async fn assert_notification_actor_batch(f: &Database, alice: &Client, recipient
         assert!(item["read_at"].is_string());
     }
     // PostgreSQL emits query events on this request future; SQLite runs its SQL on a worker.
-    if matches!(f.pool(), codeyard_db_core::DbPool::Postgres(_)) {
+    if matches!(f.pool(), codeyard_database::DbPool::Postgres(_)) {
         let queries = queries.0.lock().unwrap();
         let batches = queries
             .iter()

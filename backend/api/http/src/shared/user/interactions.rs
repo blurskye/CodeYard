@@ -4,7 +4,7 @@ use codeyard_webui::components::interactions::InteractionPanel;
 use codeyard_webui::components::interactions::InteractionRestriction;
 use codeyard_webui::components::interactions::PullCapForm;
 pub async fn panel(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     actor: i64,
     scope: InteractionScope,
     csrf: &str,

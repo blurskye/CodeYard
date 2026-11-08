@@ -29,7 +29,8 @@ pub(crate) fn redirect(
             return response;
         }
         let Ok(Some((owner, name))) =
-            codeyard_db_core::cells::repositories::redirect(&state.pool, old.owner, old.name).await
+            codeyard_database::cells::repositories::redirect(&state.pool, old.owner, old.name)
+                .await
         else {
             return response;
         };

@@ -1,11 +1,11 @@
 use crate::github_app_hooks::Delivery;
 use crate::github_app_hooks::Subscription;
 use anyhow::Result;
-use codeyard_db_core::models::Webhook;
-use codeyard_db_core::pool::PgPool;
-use codeyard_db_core::queries::webhooks::NewDelivery;
-use codeyard_db_core::queries::webhooks::SealedSecret;
-use codeyard_db_core::queries::webhooks::WebhookPatch;
+use codeyard_database::models::Webhook;
+use codeyard_database::pool::PgPool;
+use codeyard_database::queries::webhooks::NewDelivery;
+use codeyard_database::queries::webhooks::SealedSecret;
+use codeyard_database::queries::webhooks::WebhookPatch;
 
 const HOOK:&str="NULL AS username,NULL AS encrypted_password,NULL AS password_nonce,h.app_id AS id,h.app_id,NULL AS repo_id,NULL AS org_id,h.payload_url,h.content_type,h.encrypted_secret,h.secret_nonce,h.events,h.active,h.ssl_verify,a.owner_id AS created_by_id,h.created_at,h.updated_at";
 pub async fn hook(pool: &PgPool, app: i64) -> Result<Option<Webhook>> {

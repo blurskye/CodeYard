@@ -1,8 +1,8 @@
 use anyhow::Result;
 use chrono::DateTime;
 use chrono::Utc;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 
 pub const QUERY_LIMIT: i32 = 5000;
 
@@ -121,8 +121,8 @@ native_operation!(crate::postgres::graphql::reaction,
     fn reaction(pool: &DbPool, id: i64) -> Result<Option<crate::reactions::Reaction>>);
 native_operation!(crate::postgres::graphql::status,
     crate::sqlite::graphql::status,
-    fn status(pool: &DbPool, id: i64) -> Result<Option<codeyard_db_core::models::CommitStatus>>);
+    fn status(pool: &DbPool, id: i64) -> Result<Option<codeyard_database::models::CommitStatus>>);
 
 native_operation!(crate::postgres::graphql::admit_query,
     crate::sqlite::graphql::admit_query,
-    fn admit_query(pool: &DbPool, actor: &codeyard_db_core::queries::credentials::Actor) -> Result<Option<RateLimit>>);
+    fn admit_query(pool: &DbPool, actor: &codeyard_database::queries::credentials::Actor) -> Result<Option<RateLimit>>);

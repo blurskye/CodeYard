@@ -1,11 +1,11 @@
 use crate::repositories::access::CollaboratorChange;
 use anyhow::Result;
-use codeyard_db_core::models::AccessLevel;
-use codeyard_db_core::models::RepoAccess;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::models::User;
-use codeyard_db_core::pool::PgPool;
-use codeyard_db_core::queries::postgres::users::transitions::lock_accounts_shared;
+use codeyard_database::models::AccessLevel;
+use codeyard_database::models::RepoAccess;
+use codeyard_database::models::Repository;
+use codeyard_database::models::User;
+use codeyard_database::pool::PgPool;
+use codeyard_database::queries::postgres::users::transitions::lock_accounts_shared;
 use sqlx::PgConnection;
 use sqlx::Postgres;
 use sqlx::Transaction;
@@ -114,7 +114,7 @@ pub(super) async fn grant_repo_access_in_transaction(
     level: AccessLevel,
 ) -> Result<RepoAccess> {
     anyhow::ensure!(
-        !codeyard_db_core::queries::postgres::users::blocks::repository_interaction_blocked(
+        !codeyard_database::queries::postgres::users::blocks::repository_interaction_blocked(
             tx, user_id, repo_id
         )
         .await?,
@@ -142,7 +142,7 @@ pub(super) async fn grant_repo_access_in_transaction(
     .await?;
     sqlx::query("UPDATE repository_invitations SET state='cancelled' WHERE repo_id=$1 AND invitee_id=$2 AND state='pending'").bind(repo_id).bind(user_id).execute(&mut **tx).await?;
     if previous.is_some_and(|previous| previous > level as i16) {
-        codeyard_db_core::queries::postgres::ci::stop_actor_repo_ci_runs(tx, user_id, repo_id)
+        codeyard_database::queries::postgres::ci::stop_actor_repo_ci_runs(tx, user_id, repo_id)
             .await?;
     }
     Ok(result)
@@ -163,7 +163,7 @@ pub(super) async fn revoke_repo_access_in_transaction(
     if removed {
         // The collaborator's queued runs here are cancelled and running ones are
         // asked to stop, like the organization revocations do.
-        codeyard_db_core::queries::postgres::ci::stop_actor_repo_ci_runs(tx, user_id, repo_id)
+        codeyard_database::queries::postgres::ci::stop_actor_repo_ci_runs(tx, user_id, repo_id)
             .await?;
     }
     Ok(removed)
@@ -171,7 +171,7 @@ pub(super) async fn revoke_repo_access_in_transaction(
 
 pub async fn change_personal_repository_collaborator(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     username: &str,
     permission: Option<AccessLevel>,
@@ -338,8 +338,8 @@ pub async fn revoke_repo_access(pool: &PgPool, user_id: i64, repo_id: i64) -> Re
     Ok(removed)
 }
 
-use codeyard_db_core::queries::postgres::repositories::access::user_repo_access_in_transaction;
+use codeyard_database::queries::postgres::repositories::access::user_repo_access_in_transaction;
 
-use codeyard_db_core::queries::postgres::repositories::access::readable_condition;
+use codeyard_database::queries::postgres::repositories::access::readable_condition;
 
-use codeyard_db_core::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL;
+use codeyard_database::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL;

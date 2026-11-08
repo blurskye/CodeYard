@@ -46,9 +46,9 @@ use codeyard_storage::files::uploads::UploadError;
 
 use codeyard_api_rest::avatar_ops::AvatarError;
 
-use codeyard_db_core::models::File;
-use codeyard_db_core::models::FileReason;
-use codeyard_db_core::models::FileVisibility;
+use codeyard_database::models::File;
+use codeyard_database::models::FileReason;
+use codeyard_database::models::FileVisibility;
 use codeyard_storage::s3::S3Config;
 use codeyard_storage::ObjectStore;
 use sha2::{Digest, Sha256};
@@ -66,8 +66,8 @@ mod shared_web;
 const PNG: &[u8] = b"\x89PNG\r\n\x1a\n";
 
 struct Database {
-    pool: codeyard_db_core::DbPool,
-    raw: codeyard_db_core::pool::PgPool,
+    pool: codeyard_database::DbPool,
+    raw: codeyard_database::pool::PgPool,
     user: i64,
     _schema: native::PostgresDatabase,
 }
@@ -1179,7 +1179,7 @@ async fn pg_a_replaced_picture_is_removed_with_the_change_or_not_at_all() {
         codeyard_db_identity::users::accounts::set_user_avatar(
             &db.pool,
             db.user,
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+            &codeyard_database::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(&db.pool, db.user).await
             ),
             Some(old.id)
@@ -1201,7 +1201,7 @@ async fn pg_a_replaced_picture_is_removed_with_the_change_or_not_at_all() {
     assert!(codeyard_db_identity::users::accounts::set_user_avatar(
         &db.pool,
         db.user,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(&db.pool, db.user).await
         ),
         Some(new.id)
@@ -1225,7 +1225,7 @@ async fn pg_a_replaced_picture_is_removed_with_the_change_or_not_at_all() {
         codeyard_db_identity::users::accounts::set_user_avatar(
             &db.pool,
             db.user,
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+            &codeyard_database::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(&db.pool, db.user).await
             ),
             Some(new.id)
@@ -1262,7 +1262,7 @@ async fn pg_a_banned_account_keeps_its_picture() {
     codeyard_api_rest::avatar_ops::set_user_avatar(
         &db.pool,
         &user,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(&db.pool, user.id).await,
         ),
         old.id,
@@ -1278,7 +1278,7 @@ async fn pg_a_banned_account_keeps_its_picture() {
     let changed = codeyard_api_rest::avatar_ops::set_user_avatar(
         &db.pool,
         &user,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(&db.pool, user.id).await,
         ),
         new.id,
@@ -1288,7 +1288,7 @@ async fn pg_a_banned_account_keeps_its_picture() {
     let cleared = codeyard_api_rest::avatar_ops::remove_user_avatar(
         &db.pool,
         &user,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(&db.pool, user.id).await,
         ),
     )

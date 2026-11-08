@@ -18,7 +18,7 @@ fn actions(notification_id: i64) -> [Action; 3] {
     ]
 }
 
-pub(super) async fn session(pool: &codeyard_db_core::DbPool, user: i64) -> String {
+pub(super) async fn session(pool: &codeyard_database::DbPool, user: i64) -> String {
     let id = uuid::Uuid::new_v4().simple().to_string().repeat(2);
     codeyard_db_identity::users::sessions::create_session(
         pool,
@@ -191,7 +191,7 @@ async fn contract(pg: bool) {
         f.pool(),
         user,
         repo,
-        codeyard_db_core::models::repositories::AccessLevel::Read,
+        codeyard_database::models::repositories::AccessLevel::Read,
     )
     .await
     .unwrap();
@@ -204,7 +204,7 @@ async fn contract(pg: bool) {
         f.pool(),
         user,
         repo,
-        codeyard_db_core::models::repositories::AccessLevel::Read,
+        codeyard_database::models::repositories::AccessLevel::Read,
     )
     .await
     .unwrap();
@@ -439,7 +439,7 @@ async fn done_marks_are_announced(pg: bool) {
     let broadcaster = codeyard_notifications::broadcast::NotificationBroadcaster::new(pool);
     let mut events = broadcaster.subscribe(user);
     async fn announced(
-        pool: &codeyard_db_core::DbPool,
+        pool: &codeyard_database::DbPool,
         session: &str,
         user: i64,
         events: &mut tokio::sync::broadcast::Receiver<codeyard_notifications::NotificationEvent>,
@@ -518,7 +518,7 @@ async fn page_walk(pg: bool) {
             fixture.pool(),
             user,
             repo,
-            codeyard_db_core::models::repositories::AccessLevel::Read,
+            codeyard_database::models::repositories::AccessLevel::Read,
         )
         .await
         .unwrap();

@@ -1,8 +1,8 @@
 use anyhow::ensure;
 use anyhow::Result;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::Repository;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 use serde_json::json;
 use serde_json::Value;
 
@@ -150,8 +150,8 @@ pub fn merge(current: Option<&str>, patch: &Value) -> Result<Value> {
 /// `None` when the configuration is not enforced. A setting it leaves unset stays as `current`.
 pub(crate) fn enforced_scanning(
     configuration: &str,
-    current: codeyard_db_core::queries::secret_scanning::Settings,
-) -> Result<Option<codeyard_db_core::queries::secret_scanning::Settings>> {
+    current: codeyard_database::queries::secret_scanning::Settings,
+) -> Result<Option<codeyard_database::queries::secret_scanning::Settings>> {
     let value: Value = serde_json::from_str(configuration)?;
     if value["enforcement"] != "enforced" {
         return Ok(None);
@@ -167,29 +167,29 @@ native_operation!(crate::postgres::code_security::list_window,crate::sqlite::cod
 native_operation!(crate::postgres::code_security::settings_page,crate::sqlite::code_security::settings_page,
     fn settings_page(pool:&DbPool,actor:i64,session:&str,org:i64,before:Option<i64>) -> Result<SettingsPage>);
 native_operation!(crate::postgres::code_security::save,crate::sqlite::code_security::save,
-    fn save(pool:&DbPool,actor:impl Into<codeyard_db_core::queries::credentials::Actor>,org:i64,id:Option<i64>,patch:&Value) -> Result<Configuration>);
+    fn save(pool:&DbPool,actor:impl Into<codeyard_database::queries::credentials::Actor>,org:i64,id:Option<i64>,patch:&Value) -> Result<Configuration>);
 native_operation!(crate::postgres::code_security::delete,crate::sqlite::code_security::delete,
-    fn delete(pool:&DbPool,actor:impl Into<codeyard_db_core::queries::credentials::Actor>,org:i64,id:i64) -> Result<()>);
+    fn delete(pool:&DbPool,actor:impl Into<codeyard_database::queries::credentials::Actor>,org:i64,id:i64) -> Result<()>);
 native_operation!(crate::postgres::code_security::set_default,crate::sqlite::code_security::set_default,
-    fn set_default(pool:&DbPool,actor:impl Into<codeyard_db_core::queries::credentials::Actor>,org:i64,id:i64,scope:&str) -> Result<Configuration>);
+    fn set_default(pool:&DbPool,actor:impl Into<codeyard_database::queries::credentials::Actor>,org:i64,id:i64,scope:&str) -> Result<Configuration>);
 native_operation!(crate::postgres::code_security::attach,crate::sqlite::code_security::attach,
-    fn attach(pool:&DbPool,actor:impl Into<codeyard_db_core::queries::credentials::Actor>,org:i64,id:Option<i64>,scope:&str,selected:&[i64]) -> Result<()>);
-native_operation!(codeyard_db_core::queries::postgres::code_security::repositories,codeyard_db_core::queries::sqlite::code_security::repositories,
+    fn attach(pool:&DbPool,actor:impl Into<codeyard_database::queries::credentials::Actor>,org:i64,id:Option<i64>,scope:&str,selected:&[i64]) -> Result<()>);
+native_operation!(codeyard_database::queries::postgres::code_security::repositories,codeyard_database::queries::sqlite::code_security::repositories,
     /// One keyset window of the repositories attached to configuration `id`, ordered as `list_window`.
     fn repositories(pool:&DbPool,actor:i64,org:i64,id:i64,after:i64,before:i64,limit:i64) -> Result<Vec<Repository>>);
 native_operation!(crate::postgres::code_security::repository_settings,crate::sqlite::code_security::repository_settings,
     fn repository_settings(pool:&DbPool,repo:i64) -> Result<Option<RepositorySettings>>);
-native_operation!(codeyard_db_core::queries::postgres::code_security::repository_configuration,codeyard_db_core::queries::sqlite::code_security::repository_configuration,
+native_operation!(codeyard_database::queries::postgres::code_security::repository_configuration,codeyard_database::queries::sqlite::code_security::repository_configuration,
     fn repository_configuration(pool:&DbPool,repo:i64) -> Result<Option<Configuration>>);
 
-use codeyard_db_core::queries::code_security::scanning_settings;
+use codeyard_database::queries::code_security::scanning_settings;
 
-use codeyard_db_core::queries::code_security::Refusal;
+use codeyard_database::queries::code_security::Refusal;
 
-use codeyard_db_core::queries::code_security::TOGGLES;
+use codeyard_database::queries::code_security::TOGGLES;
 
-use codeyard_db_core::queries::code_security::apply;
+use codeyard_database::queries::code_security::apply;
 
-use codeyard_db_core::queries::code_security::RepositorySettings;
+use codeyard_database::queries::code_security::RepositorySettings;
 
-use codeyard_db_core::queries::code_security::Configuration;
+use codeyard_database::queries::code_security::Configuration;

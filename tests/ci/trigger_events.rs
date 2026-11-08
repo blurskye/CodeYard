@@ -10,7 +10,7 @@ use codeyard_app::app::AppState;
 use codeyard_ci::config::CiConfig;
 use codeyard_ci::config::CiExecutionMode;
 use codeyard_ci_engine::queue::RunQueue;
-use codeyard_repos_core::repositories::lifecycle::provision;
+use codeyard_git_storage::repositories::lifecycle::provision;
 use codeyard_storage::ObjectStore;
 use codeyard_support::secrets::SecretEncryptor;
 use serde_json::{json, Value};
@@ -52,7 +52,7 @@ async fn contract(pg: bool) {
         f.pool(),
         bob,
         repo.id,
-        codeyard_db_core::models::AccessLevel::Write,
+        codeyard_database::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -64,7 +64,7 @@ async fn contract(pg: bool) {
         "BASE_SECRET",
         "base-value",
         Some(alice),
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), alice).await,
         ),
     )
@@ -489,7 +489,7 @@ async fn dispatch_contract(pg: bool) {
     assert_eq!(runs.len(), 4);
     assert_eq!(
         runs[1].event_payload.as_ref().unwrap()["sender"]["login"],
-        codeyard_db_core::queries::ci_tokens::BOT
+        codeyard_database::queries::ci_tokens::BOT
     );
     assert_eq!(runs[1].triggered_by_id, Some(alice));
     use chrono::Timelike;

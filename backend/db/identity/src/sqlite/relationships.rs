@@ -7,8 +7,8 @@ use crate::relationships::Refusal;
 use crate::relationships::RelationCounts;
 use crate::relationships::Window;
 use anyhow::Result;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::pool::SqlitePool;
+use codeyard_database::models::Repository;
+use codeyard_database::pool::SqlitePool;
 use sqlx::Sqlite;
 use sqlx::Transaction;
 
@@ -17,7 +17,7 @@ pub async fn window(pool: &SqlitePool, page: &Window<'_>) -> Result<Vec<Link>> {
         page.offset >= 0 && (1..=101).contains(&page.limit),
         Refusal::Invalid
     );
-    let readable = codeyard_db_core::queries::sqlite::repositories::access::readable_condition();
+    let readable = codeyard_database::queries::sqlite::repositories::access::readable_condition();
     let sql = window_sql(
         page,
         &readable,
@@ -29,7 +29,7 @@ pub async fn window(pool: &SqlitePool, page: &Window<'_>) -> Result<Vec<Link>> {
         .bind(page.viewer)
         .bind(page.root)
         .bind(page.kind.storage())
-        .bind(codeyard_db_core::queries::ci_tokens::BOT)
+        .bind(codeyard_database::queries::ci_tokens::BOT)
         .bind(repositories)
         .bind(page.limit)
         .bind(page.offset)
@@ -42,7 +42,7 @@ pub async fn repository_counts(
     root: i64,
     kind: Kind,
 ) -> Result<Vec<(i64, i64)>> {
-    let readable = codeyard_db_core::queries::sqlite::repositories::access::readable_condition();
+    let readable = codeyard_database::queries::sqlite::repositories::access::readable_condition();
     let sql = format!(
         "SELECT i.repo_id,COUNT(*) {} GROUP BY i.repo_id ORDER BY i.repo_id",
         related_sql(kind, &readable, "1")
@@ -52,7 +52,7 @@ pub async fn repository_counts(
         .bind(viewer)
         .bind(root)
         .bind(kind.storage())
-        .bind(codeyard_db_core::queries::ci_tokens::BOT)
+        .bind(codeyard_database::queries::ci_tokens::BOT)
         .fetch_all(pool)
         .await?)
 }
@@ -124,9 +124,10 @@ async fn authority(
     triage: bool,
 ) -> Result<bool> {
     if triage {
-        codeyard_db_core::queries::sqlite::discussions::lock_triage_authority(tx, actor, repo).await
+        codeyard_database::queries::sqlite::discussions::lock_triage_authority(tx, actor, repo)
+            .await
     } else {
-        codeyard_db_core::queries::sqlite::discussions::lock_write_authority(tx, actor, repo).await
+        codeyard_database::queries::sqlite::discussions::lock_write_authority(tx, actor, repo).await
     }
 }
 pub async fn change_in_transaction<'a>(
@@ -147,7 +148,7 @@ pub async fn change_in_transaction<'a>(
     let restricted: bool =
         sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id=?1 AND username=?2)")
             .bind(actor)
-            .bind(codeyard_db_core::queries::ci_tokens::BOT)
+            .bind(codeyard_database::queries::ci_tokens::BOT)
             .fetch_one(&mut *tx)
             .await?;
     // BEGIN IMMEDIATE serializes graph validation and insertion, including disjoint edges.
@@ -171,7 +172,7 @@ pub async fn change_in_transaction<'a>(
             );
         }
     }
-    let visible:bool=sqlx::query_scalar(&format!("SELECT EXISTS (SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=?1 WHERE r.id=?2 AND {})",codeyard_db_core::queries::sqlite::repositories::access::readable_condition())).bind(actor).bind(target_repo).fetch_one(&mut *tx).await?;
+    let visible:bool=sqlx::query_scalar(&format!("SELECT EXISTS (SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=?1 WHERE r.id=?2 AND {})",codeyard_database::queries::sqlite::repositories::access::readable_condition())).bind(actor).bind(target_repo).fetch_one(&mut *tx).await?;
     anyhow::ensure!(visible, Refusal::Missing);
     let ids: Vec<i64> = sqlx::query_scalar(
         "SELECT id FROM issues WHERE (id=?1 AND repo_id=?3) OR (id=?2 AND repo_id=?4) ORDER BY id",
@@ -327,7 +328,7 @@ async fn touch(tx: &mut Transaction<'_, Sqlite>, a: i64, b: i64) -> Result<()> {
             .fetch_all(&mut **tx)
             .await?;
     for (id, updated) in rows {
-        let next = codeyard_db_core::queries::sqlite::time::next_revision(updated)?;
+        let next = codeyard_database::queries::sqlite::time::next_revision(updated)?;
         sqlx::query("UPDATE issues SET updated_at=?2 WHERE id=?1")
             .bind(id)
             .bind(next)

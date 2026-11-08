@@ -1,8 +1,8 @@
 use anyhow::ensure;
 use anyhow::Result;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
-use codeyard_model::advisories::Refusal;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
+use codeyard_types::advisories::Refusal;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
@@ -303,11 +303,11 @@ pub(crate) fn catalogue_matches(a: &Value, q: &std::collections::HashMap<String,
             vulnerabilities().any(|v| {
                 v["package"]["name"] == name
                     && version.is_none_or(|version| {
-                        codeyard_model::vulnerabilities::ecosystem(
+                        codeyard_types::vulnerabilities::ecosystem(
                             v["package"]["ecosystem"].as_str().unwrap_or(""),
                         )
                         .is_some_and(|ecosystem| {
-                            codeyard_model::vulnerabilities::in_range(
+                            codeyard_types::vulnerabilities::in_range(
                                 ecosystem,
                                 version,
                                 v["vulnerable_version_range"].as_str().unwrap_or(""),
@@ -407,12 +407,12 @@ native_operation!(crate::postgres::dependabot_alerts::without_osv,crate::sqlite:
 native_operation!(crate::postgres::dependabot_alerts::global_one,crate::sqlite::dependabot_alerts::global_one,
     fn global_one(pool:&DbPool, ghsa_id:&str)->Result<Option<Value>>);
 native_operation!(crate::postgres::dependabot_alerts::import,crate::sqlite::dependabot_alerts::import,
-    fn import(pool:&DbPool,actor:impl Into<codeyard_db_core::queries::credentials::Actor>,value:&Value)->Result<Value>);
+    fn import(pool:&DbPool,actor:impl Into<codeyard_database::queries::credentials::Actor>,value:&Value)->Result<Value>);
 native_operation!(crate::postgres::dependabot_alerts::alerts,crate::sqlite::dependabot_alerts::alerts,
-    fn alerts(pool:&DbPool,actor:impl Into<codeyard_db_core::queries::credentials::Actor>,repo:i64)->Result<Vec<Alert>>);
+    fn alerts(pool:&DbPool,actor:impl Into<codeyard_database::queries::credentials::Actor>,repo:i64)->Result<Vec<Alert>>);
 native_operation!(crate::postgres::dependabot_alerts::update,crate::sqlite::dependabot_alerts::update,
-    fn update(pool:&DbPool,actor:impl Into<codeyard_db_core::queries::credentials::Actor>,repo:i64,number:i64,input:&Update)->Result<Alert>);
+    fn update(pool:&DbPool,actor:impl Into<codeyard_database::queries::credentials::Actor>,repo:i64,number:i64,input:&Update)->Result<Alert>);
 native_operation!(crate::postgres::dependabot_alerts::organization_repositories,crate::sqlite::dependabot_alerts::organization_repositories,
     fn organization_repositories(pool:&DbPool,actor:i64,org:i64)->Result<Vec<i64>>);
 
-use codeyard_db_core::queries::dependabot_alerts::Alert;
+use codeyard_database::queries::dependabot_alerts::Alert;

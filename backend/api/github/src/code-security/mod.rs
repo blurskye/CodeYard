@@ -18,9 +18,9 @@ use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
-use codeyard_model::urls::api_url;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
+use codeyard_types::urls::api_url;
 use codeyard_webhooks::payloads;
 use serde::Deserialize;
 use serde_json::json;
@@ -53,16 +53,16 @@ pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     ]
 }
 fn failure(error: anyhow::Error) -> Error {
-    match error.downcast_ref::<codeyard_db_core::queries::code_security::Refusal>() {
-        Some(codeyard_db_core::queries::code_security::Refusal::Missing) => Error::missing(),
-        Some(codeyard_db_core::queries::code_security::Refusal::Denied) => Error::new(
+    match error.downcast_ref::<codeyard_database::queries::code_security::Refusal>() {
+        Some(codeyard_database::queries::code_security::Refusal::Missing) => Error::missing(),
+        Some(codeyard_database::queries::code_security::Refusal::Denied) => Error::new(
             StatusCode::FORBIDDEN,
             "Must have organization security access",
         ),
-        Some(codeyard_db_core::queries::code_security::Refusal::Duplicate) => {
+        Some(codeyard_database::queries::code_security::Refusal::Duplicate) => {
             Error::invalid_simple("A security configuration with this name already exists")
         }
-        Some(codeyard_db_core::queries::code_security::Refusal::Invalid) => Error::invalid_simple(
+        Some(codeyard_database::queries::code_security::Refusal::Invalid) => Error::invalid_simple(
             "Invalid security configuration; CodeQL default setup cannot be enabled on Codeyard",
         ),
         None => Error::unavailable(error),
@@ -84,7 +84,7 @@ async fn scope(
     Ok((auth, org.id))
 }
 fn document(
-    row: &codeyard_db_core::queries::code_security::Configuration,
+    row: &codeyard_database::queries::code_security::Configuration,
     org: &str,
 ) -> Result<Value> {
     let mut value: Value = serde_json::from_str(&row.settings).map_err(Error::unavailable)?;
@@ -97,7 +97,7 @@ fn document(
     )));
     value["html_url"] = json!(format!(
         "{}/settings/organizations/{}/security#code-security-{}",
-        codeyard_model::http_config::link_origin(),
+        codeyard_types::http_config::link_origin(),
         row.org_id,
         row.id
     ));

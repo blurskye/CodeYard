@@ -1,0 +1,66 @@
+[package]
+name = "codeyard-git-storage"
+version.workspace = true
+edition.workspace = true
+license = "LGPL-3.0-or-later"
+
+[features]
+test-hooks = []
+
+[dependencies]
+codeyard-webhooks.workspace = true
+codeyard-nodes.workspace = true
+codeyard-ci.workspace = true
+codeyard-repos.workspace = true
+codeyard-storage.workspace = true
+anyhow.workspace = true
+axum.workspace = true
+base64.workspace = true
+bytes.workspace = true
+chrono.workspace = true
+codeyard-runner.workspace = true
+codeyard-db-actions.workspace = true
+codeyard-db-placement.workspace = true
+codeyard-database.workspace = true
+codeyard-db-identity.workspace = true
+codeyard-db-orgs.workspace = true
+codeyard-db-repos.workspace = true
+codeyard-db-security.workspace = true
+codeyard-git.workspace = true
+codeyard-identity.workspace = true
+codeyard-notifications.workspace = true
+codeyard-support.workspace = true
+croner.workspace = true
+flate2.workspace = true
+futures-util.workspace = true
+git2.workspace = true
+iroh.workspace = true
+libc.workspace = true
+sha2.workspace = true
+hex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+sqlx.workspace = true
+tar.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-rustls.workspace = true
+tracing.workspace = true
+uuid = { workspace = true, features = ["v4"] }
+
+[dev-dependencies]
+codeyard-repos-rpc.workspace = true
+codeyard-ci-engine.workspace = true
+codeyard-repos-pulls.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies.tokio]
+workspace = true
+features = ["test-util"]
+
+[dependencies.codeyard-types]
+workspace = true

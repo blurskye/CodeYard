@@ -4,18 +4,18 @@ use crate::missing;
 use crate::unavailable;
 use crate::RequestContext;
 use crate::Result;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_git_storage::repositories::store::repo_store;
 use serde_json::json;
 use serde_json::Value;
 
 async fn mergeable(
-    repo: &codeyard_db_core::models::Repository,
-    pull: &codeyard_db_core::models::PullRequest,
+    repo: &codeyard_database::models::Repository,
+    pull: &codeyard_database::models::PullRequest,
     request: &RequestContext,
 ) -> Result<Option<(bool, String)>> {
     use codeyard_git::error::ErrorKind;
-    use codeyard_repos_core::store_types::MergeMethod;
-    use codeyard_repos_core::store_types::MergeRequest;
+    use codeyard_git_storage::store_types::MergeMethod;
+    use codeyard_git_storage::store_types::MergeRequest;
     let store = repo_store(repo, request.state.cluster.as_ref());
     let base = match store
         .commit_from_primary(&format!("refs/heads/{}", pull.base_branch))
@@ -62,7 +62,7 @@ pub(super) async fn resolve(
     args: &Arguments,
     request: &RequestContext,
     parent: &Value,
-    repo: &codeyard_db_core::models::Repository,
+    repo: &codeyard_database::models::Repository,
 ) -> Result<Value> {
     let mut pull = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(
         &request.state.pool,
@@ -90,7 +90,7 @@ pub(super) async fn resolve(
                 .map(|value| value.enum_name())
                 .transpose()?
                 .unwrap_or("MERGE");
-            let method = codeyard_repos_core::store_types::MergeMethod::parse(
+            let method = codeyard_git_storage::store_types::MergeMethod::parse(
                 &method.to_ascii_lowercase(),
             )
             .ok_or_else(|| async_graphql::Error::new("Invalid merge method"))?;
@@ -224,11 +224,11 @@ pub(super) async fn resolve(
                     None => "UNKNOWN",
                     Some(true) => {
                         let method = if repo.allow_merge_commit {
-                            codeyard_repos_core::store_types::MergeMethod::Merge
+                            codeyard_git_storage::store_types::MergeMethod::Merge
                         } else if repo.allow_squash_merge {
-                            codeyard_repos_core::store_types::MergeMethod::Squash
+                            codeyard_git_storage::store_types::MergeMethod::Squash
                         } else {
-                            codeyard_repos_core::store_types::MergeMethod::Rebase
+                            codeyard_git_storage::store_types::MergeMethod::Rebase
                         };
                         if codeyard_repos_pulls::repositories::pull_requests::merge::page_blocker_messages(
                             &request.state.pool,

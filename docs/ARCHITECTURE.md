@@ -18,13 +18,13 @@ backend/app/src/                   app state, repositories/store, CI, cluster,
                                   SSH, storage, backups and domain composition
 backend/identity/src/              login, accounts, sessions, tokens and keys
 backend/notifications/src/         notifications, broadcast hints and email
-backend/db/core/                   pools, migrations, records and shared transactions
+backend/database/                   pools, migrations, records and shared transactions
 backend/db/{identity,orgs,repos,actions,security,cluster}/
                                   domain queries, with both native engines
-backend/model/                    shared types, validation and policy
+backend/types/                    shared types, validation and policy
 backend/support/                  pure helpers and native support
 backend/git/                      Git reads and hardened child processes
-backend/ci/runner/                native Actions runner
+backend/runner/                native Actions runner
 backend/api/{http,github,repos,graphql,rest}/
                                   HTTP plumbing and resource adapters
 backend/api/github-graphql/        generated GraphQL schema types
@@ -559,7 +559,7 @@ membership and offers approval and revocation; invites are made with the CLI.
 ### One repository interface: `RepoStore`
 
 Callers ask for `repo_store(&repo, node_context)`
-(`backend/repos-core/src/repositories/store/`). Node context holds this node's endpoint,
+(`backend/git-storage/src/repositories/store/`). Node context holds this node's endpoint,
 identity, optional database pool, learned peer addresses and repository root;
 it is passed explicitly so several
 nodes can run in one process. Plain single-node callers pass None. Only
@@ -657,25 +657,25 @@ non-storage nodes leave it NULL.
 ```
 backend/app/wiring/backend/node/  binary startup and runtime ownership
 backend/support/src/node_identity.rs  node key loading and generation
-backend/cluster/core/src/
+backend/nodes/src/
   pairing.rs      invitations, enrollment and revocation
   transport.rs    iroh dialer, addresses and membership checks
   tcp.rs, tls.rs, link.rs  authenticated TCP dialing and shared request links
   settings.rs     node configuration and startup limits
   writes.rs       quorum preparation, votes and publication decisions
-backend/cluster/src/
+backend/placement/src/
   lib.rs          listener startup, node registration and heartbeat
   tcp.rs          authenticated TCP listener
   ci.rs, worker.rs  core CI requests and database-free workers
   drain.rs, provision.rs, scaling.rs  node lifecycle and scaling policy
   replicas/       owned copy queue, snapshots, promotion, catch-up and rebalancing
-backend/repos-core/src/
+backend/git-storage/src/
   context.rs      node identity, repository roots, term fencing and addresses
   wire.rs, rpc_client.rs, git_transport.rs  repository messages and Git transport
   cluster/        placement and shared replica policy
   repositories/store/  RepoStore and local Git publications
 backend/repos-rpc/src/  repository handlers, Git streams and local RPC dispatch
-backend/db/cluster/src/  cluster queries, with postgres/ and sqlite/ implementations
+backend/db/placement/src/  cluster queries, with postgres/ and sqlite/ implementations
 ```
 
 ### Tests
@@ -1123,7 +1123,7 @@ account (reads work; a per-account trigger refuses writes, also from background 
 GitHub REST 503 responses include retry guidance and `Retry-After`),
 copies its repositories with Git and its rows in one target transaction with deferred
 foreign keys, switches the directory, waits out the routers' route cache, and turns the
-source rows into stubs (`backend/db/cluster/src/moves.rs`). A receiving copy stays
+source rows into stubs (`backend/db/placement/src/moves.rs`). A receiving copy stays
 write-frozen until its source has durably switched; retries cannot replace an active
 target. The source retains a released move row with bounded cleanup paths until its
 Git directories are removed, so a crash after row release resumes cleanup rather than

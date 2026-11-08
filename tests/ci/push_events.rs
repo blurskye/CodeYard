@@ -5,11 +5,11 @@ use codeyard_ci::config::CiConfig;
 use codeyard_ci::config::CiPipelineKind;
 use codeyard_ci_engine::runs::CiRuns;
 use codeyard_ci_engine::runs::DispatchRequest;
+use codeyard_git_storage::push_workflows::RefUpdate;
+use codeyard_git_storage::receive_ci::CiRunRequest;
+use codeyard_git_storage::repositories::lifecycle;
+use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
-use codeyard_repos_core::push_workflows::RefUpdate;
-use codeyard_repos_core::receive_ci::CiRunRequest;
-use codeyard_repos_core::repositories::lifecycle;
-use codeyard_repos_core::repositories::store::repo_store;
 use std::{collections::BTreeSet, sync::Arc};
 use tokio::sync::Notify;
 
@@ -276,7 +276,7 @@ async fn contract(pg: bool) {
     assert_eq!(deleted.branch, "new");
     assert_eq!(deleted.head_sha.as_deref(), Some(new.as_str()));
 
-    let discovered = codeyard_repos_core::workflows::list_workflows_for_ref(&store, "main")
+    let discovered = codeyard_git_storage::workflows::list_workflows_for_ref(&store, "main")
         .await
         .unwrap();
     let path = ".github/workflows/unit-test.yml";
@@ -331,7 +331,7 @@ async fn contract(pg: bool) {
             .unwrap();
         assert_eq!(
             run.branch,
-            codeyard_db_core::ci_messages::branch_name(&reference)
+            codeyard_database::ci_messages::branch_name(&reference)
         );
         let again = service.rerun_run(run.run_id, actor, None).await.unwrap();
         assert_eq!(again.branch, run.branch);

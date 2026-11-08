@@ -3,8 +3,8 @@ use crate::environments::Environment;
 use anyhow::Result;
 use chrono::DateTime;
 use chrono::Utc;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 use serde::Deserialize;
 
 #[derive(sqlx::FromRow)]
@@ -44,7 +44,7 @@ impl Input {
                     .all(|(i, id)| *id > 0 && !self.environment_ids[..i].contains(id))
                 && matches!(self.state.as_str(), "approved" | "rejected")
                 && self.comment.len() <= 65536,
-            codeyard_db_core::queries::action_settings::Refusal::Invalid
+            codeyard_database::queries::action_settings::Refusal::Invalid
         );
         Ok(())
     }
@@ -55,7 +55,7 @@ native_operation!(crate::postgres::deployment_reviews::pending,
     fn pending(pool: &DbPool, repo: i64, run: i64, actor: Option<i64>) -> Result<Vec<Pending>>);
 native_operation!(crate::postgres::deployment_reviews::review,
     crate::sqlite::deployment_reviews::review,
-    fn review(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo: i64, run: i64, input: &Input) -> Result<Vec<Deployment>>);
+    fn review(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, repo: i64, run: i64, input: &Input) -> Result<Vec<Deployment>>);
 native_operation!(crate::postgres::deployment_reviews::history,
     crate::sqlite::deployment_reviews::history,
     fn history(pool: &DbPool, repo: i64, run: i64) -> Result<Vec<Review>>);

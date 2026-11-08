@@ -14,7 +14,7 @@ use axum::response::Response;
 use axum::Extension;
 use axum::Json;
 use codeyard_app::app::AppState;
-use codeyard_model::http_config::WebConfig;
+use codeyard_types::http_config::WebConfig;
 use std::collections::HashSet;
 use std::io;
 use std::net::IpAddr;
@@ -37,11 +37,11 @@ pub async fn stamp_client_address(
     // Only a router, as a trusted proxy, names the region a request came through.
     let region = request
         .headers_mut()
-        .remove(codeyard_model::cells::REGION_HEADER)
+        .remove(codeyard_types::cells::REGION_HEADER)
         .filter(|value| {
             value
                 .to_str()
-                .is_ok_and(|value| codeyard_model::cells::validate_region(value).is_ok())
+                .is_ok_and(|value| codeyard_types::cells::validate_region(value).is_ok())
         })
         .filter(|_| from_trusted_proxy(&request, &config.trusted_proxies));
     if let Some(Ok(value)) = client_key(&request, &config.trusted_proxies)
@@ -54,7 +54,7 @@ pub async fn stamp_client_address(
     if let Some(region) = region {
         request
             .headers_mut()
-            .insert(codeyard_model::cells::REGION_HEADER, region);
+            .insert(codeyard_types::cells::REGION_HEADER, region);
     }
     next.run(request).await
 }
@@ -69,10 +69,10 @@ fn from_trusted_proxy(request: &Request, trusted_proxies: &HashSet<IpAddr>) -> b
 /// The token and browser-session proofs a request carries, for any home cell.
 fn credential_proofs(
     headers: &axum::http::HeaderMap,
-) -> [Option<codeyard_db_core::cells::authorization::Proof>; 2] {
-    use codeyard_db_core::cells::authorization::Proof;
+) -> [Option<codeyard_database::cells::authorization::Proof>; 2] {
+    use codeyard_database::cells::authorization::Proof;
     let token = if headers.contains_key(header::AUTHORIZATION) {
-        match codeyard_cells_router::selection::Credential::from_headers(headers, "session_id") {
+        match codeyard_router::selection::Credential::from_headers(headers, "session_id") {
             Ok(Some(hint)) => Some(Proof::Token {
                 home: hint.prefix,
                 hash: codeyard_support::token_hash::token_hash(hint.value()),
@@ -95,12 +95,12 @@ pub async fn count_regional_requests(
     request: Request,
     next: Next,
 ) -> Response {
-    let codeyard_db_core::DbPool::Postgres(pool) = &state.pool else {
+    let codeyard_database::DbPool::Postgres(pool) = &state.pool else {
         return next.run(request).await;
     };
     let region = request
         .headers()
-        .get(codeyard_model::cells::REGION_HEADER)
+        .get(codeyard_types::cells::REGION_HEADER)
         .and_then(|value| value.to_str().ok())
         .map(str::to_owned);
     let (Some(region), true) = (region, pool.directory().is_some()) else {
@@ -143,11 +143,11 @@ pub async fn count_regional_requests(
 
 async fn credential_account(
     state: &AppState,
-    proof: &codeyard_db_core::cells::authorization::Proof,
+    proof: &codeyard_database::cells::authorization::Proof,
 ) -> anyhow::Result<Option<i64>> {
     if matches!(
         proof,
-        codeyard_db_core::cells::authorization::Proof::Ssh { .. }
+        codeyard_database::cells::authorization::Proof::Ssh { .. }
     ) {
         return Ok(None);
     }
@@ -155,7 +155,7 @@ async fn credential_account(
         pool: state.pool.clone(),
     };
     // A foreign answer is kept only inside an operation scope; this runs outside the request's.
-    let answer = codeyard_db_core::cells::authorization::scope(local.resolve(proof)).await?;
+    let answer = codeyard_database::cells::authorization::scope(local.resolve(proof)).await?;
     Ok(answer.map(|answer| answer.user.id))
 }
 
@@ -169,7 +169,7 @@ pub async fn foreign_authorization(
     if state.pool.foreign_authorization().is_none() {
         return next.run(request).await;
     }
-    use codeyard_db_core::cells::authorization::authorize;
+    use codeyard_database::cells::authorization::authorize;
     let local = codeyard_identity::cells::Local {
         pool: state.pool.clone(),
     };
@@ -179,27 +179,27 @@ pub async fn foreign_authorization(
         match local.remote(&proof).await {
             Ok(true) => foreign.push(proof),
             Ok(false) => {}
-            Err(_) => return codeyard_model::github_error::Error::unavailable(()).into_response(),
+            Err(_) => return codeyard_types::github_error::Error::unavailable(()).into_response(),
         }
     }
-    codeyard_db_core::cells::authorization::scope(async {
+    codeyard_database::cells::authorization::scope(async {
         for proof in &foreign {
             if authorize(&state.pool, proof).await.is_err() {
-                return codeyard_model::github_error::Error::unavailable(()).into_response();
+                return codeyard_types::github_error::Error::unavailable(()).into_response();
             }
         }
         let response = next.run(request).await;
-        if codeyard_db_core::cells::authorization::ensure_current().is_err() {
+        if codeyard_database::cells::authorization::ensure_current().is_err() {
             // Long operations (including forwarding a fork) may outlive admission.
             // Ask the primary again before exposing their response; never renew an
             // old snapshot just because the downstream work completed.
             for proof in &foreign {
                 if !matches!(authorize(&state.pool, proof).await, Ok(Some(_))) {
-                    return codeyard_model::github_error::Error::unavailable(()).into_response();
+                    return codeyard_types::github_error::Error::unavailable(()).into_response();
                 }
             }
-            if codeyard_db_core::cells::authorization::ensure_current().is_err() {
-                return codeyard_model::github_error::Error::unavailable(()).into_response();
+            if codeyard_database::cells::authorization::ensure_current().is_err() {
+                return codeyard_types::github_error::Error::unavailable(()).into_response();
             }
         }
         response
@@ -399,7 +399,7 @@ pub async fn wait_for_static_slot(
         .ok()
 }
 
-pub use codeyard_cells_router::body::download_body;
+pub use codeyard_router::body::download_body;
 
 pub fn buffered_download_body(
     bytes: Vec<u8>,
@@ -425,7 +425,7 @@ pub async fn require_node_access(
     next: Next,
 ) -> Response {
     let node_config =
-        match codeyard_db_cluster::node_config::get_node_configuration(&state.pool).await {
+        match codeyard_db_placement::node_config::get_node_configuration(&state.pool).await {
             Ok(config) => config,
             Err(_) => {
                 return (

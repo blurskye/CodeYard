@@ -1,7 +1,7 @@
-use codeyard_db_core::queries::users::accounts::AccountCredential;
+use codeyard_database::queries::users::accounts::AccountCredential;
 use codeyard_types::credentials::AccountRestricted;
 
-use codeyard_db_core::DbPool;
+use codeyard_database::DbPool;
 use codeyard_db_identity::users::blocks::BlockTargetMissing;
 use codeyard_db_identity::users::blocks::InvalidBlock;
 

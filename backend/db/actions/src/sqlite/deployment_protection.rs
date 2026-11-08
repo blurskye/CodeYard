@@ -5,10 +5,10 @@ use crate::deployment_protection::Refusal;
 use crate::deployment_protection::Review;
 use crate::deployment_protection::Rule;
 use anyhow::Result;
-use codeyard_db_core::models::CiRun;
-use codeyard_db_core::pool::SqlitePool;
+use codeyard_database::models::CiRun;
+use codeyard_database::pool::SqlitePool;
 use codeyard_db_identity::github_apps::App;
-use codeyard_model::workflow_glob::github_glob_matches;
+use codeyard_types::workflow_glob::github_glob_matches;
 use sqlx::SqliteConnection;
 
 pub async fn rules(pool: &SqlitePool, environment: i64) -> Result<Vec<Rule>> {
@@ -33,7 +33,7 @@ pub async fn integrations(pool: &SqlitePool, repo: i64) -> Result<Vec<App>> {
 
 pub async fn create(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo: i64,
     environment: i64,
     app: i64,
@@ -41,13 +41,13 @@ pub async fn create(
     let actor = actor.into();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::sqlite::discussions::lock_admin_authority(
+        codeyard_database::queries::sqlite::discussions::lock_admin_authority(
             &mut tx,
             actor.user_id,
             repo
         )
         .await?
-            && codeyard_db_core::queries::sqlite::credentials::repository(
+            && codeyard_database::queries::sqlite::credentials::repository(
                 &mut tx,
                 &actor,
                 repo,
@@ -90,7 +90,7 @@ pub async fn create(
 
 pub async fn disable(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo: i64,
     environment: i64,
     rule: i64,
@@ -98,13 +98,13 @@ pub async fn disable(
     let actor = actor.into();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::sqlite::discussions::lock_admin_authority(
+        codeyard_database::queries::sqlite::discussions::lock_admin_authority(
             &mut tx,
             actor.user_id,
             repo
         )
         .await?
-            && codeyard_db_core::queries::sqlite::credentials::repository(
+            && codeyard_database::queries::sqlite::credentials::repository(
                 &mut tx,
                 &actor,
                 repo,
@@ -258,8 +258,8 @@ pub async fn review(
     let granted = serde_json::from_str(&granted)?;
     let repositories: Vec<i64> = serde_json::from_str(&repositories)?;
     anyhow::ensure!(
-        codeyard_model::github_apps::allows(&permissions, "deployments", true)
-            && codeyard_model::github_apps::allows(&granted, "deployments", true)
+        codeyard_types::github_apps::allows(&permissions, "deployments", true)
+            && codeyard_types::github_apps::allows(&granted, "deployments", true)
             && (repositories.is_empty() || repositories.contains(&repo)),
         Refusal::Denied
     );

@@ -6,7 +6,7 @@ use anyhow::Result;
 use chrono::DateTime;
 use chrono::Duration;
 use chrono::Utc;
-use codeyard_db_core::pool::PgPool;
+use codeyard_database::pool::PgPool;
 use sqlx::PgConnection;
 
 fn check_keys(client_key: Option<&str>, account_key: &str) -> Result<()> {

@@ -1,10 +1,10 @@
 use anyhow::Result;
 use chrono::DateTime;
 use chrono::Utc;
-use codeyard_db_core::models::Notification;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::Notification;
+use codeyard_database::models::Repository;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 use sqlx::FromRow;
 
 native_operation!(crate::postgres::notifications::records::threads::subscribers,
@@ -109,7 +109,7 @@ impl ThreadView {
         target: ThreadTarget,
         comment: Option<(i64, bool)>,
     ) -> Self {
-        use codeyard_model::urls::repo_url;
+        use codeyard_types::urls::repo_url;
         crate::notifications::records::refresh_link(&mut notification, &owner, &repository.name);
         let repo = repo_url(&owner, &repository.name);
         let (kind, title, url, author) = match target {
@@ -153,7 +153,7 @@ impl ThreadView {
                             .link
                             .as_deref()
                             .filter(|l| l.starts_with('/'))
-                            .map(|l| format!("{}{l}", codeyard_model::http_config::link_origin()))
+                            .map(|l| format!("{}{l}", codeyard_types::http_config::link_origin()))
                             .unwrap_or_default(),
                     ),
                     // A mention from another cell names its issue or pull request by number;
@@ -170,13 +170,13 @@ impl ThreadView {
             .as_i64()
             .filter(|_| kind == "Issue")
         {
-            let id = codeyard_model::webhook_ids::conversation_comment_id(id, false);
+            let id = codeyard_types::webhook_ids::conversation_comment_id(id, false);
             format!("{repo}/issues/comments/{id}")
         } else if let Some((id, inline)) = comment.filter(|_| kind == "PullRequest") {
             if inline {
                 format!("{repo}/pulls/comments/{id}")
             } else {
-                let id = codeyard_model::webhook_ids::conversation_comment_id(id, true);
+                let id = codeyard_types::webhook_ids::conversation_comment_id(id, true);
                 format!("{repo}/issues/comments/{id}")
             }
         } else if let Some(id) = notification.metadata["commit_comment_id"]

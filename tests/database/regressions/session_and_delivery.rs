@@ -2,18 +2,18 @@ use super::*;
 
 #[tokio::test]
 async fn privileged_node_and_crawler_changes_require_the_original_live_session() {
-    use codeyard_db_cluster::cluster::Authority;
+    use codeyard_db_placement::cluster::Authority;
     for pg in [false, true] {
         let mut f = Database::new(pg).await;
         let admin = f.actor("session_admin").await;
         let other = f.actor("session_other").await;
         f.execute("UPDATE users SET is_admin=TRUE WHERE id=$1", &[admin])
             .await;
-        codeyard_db_cluster::node_config::upsert_node_configuration(f.pool(), "public", true)
+        codeyard_db_placement::node_config::upsert_node_configuration(f.pool(), "public", true)
             .await
             .unwrap();
         let key = codeyard_support::node_identity::NodeKey::generate().public_hex();
-        codeyard_db_cluster::cluster::register_own_node(
+        codeyard_db_placement::cluster::register_own_node(
             f.pool(),
             &key,
             "session-node",
@@ -25,7 +25,7 @@ async fn privileged_node_and_crawler_changes_require_the_original_live_session()
         let original = session(f.pool(), admin).await;
         let replacement = session(f.pool(), admin).await;
         let foreign = session(f.pool(), other).await;
-        assert!(codeyard_db_cluster::node_config::set_ai_crawlers(
+        assert!(codeyard_db_placement::node_config::set_ai_crawlers(
             f.pool(),
             admin,
             &original,
@@ -34,7 +34,7 @@ async fn privileged_node_and_crawler_changes_require_the_original_live_session()
         .await
         .unwrap());
         assert!(matches!(
-            codeyard_db_cluster::cluster::set_node_status(
+            codeyard_db_placement::cluster::set_node_status(
                 f.pool(),
                 Authority::Administrator {
                     user_id: admin,
@@ -45,13 +45,13 @@ async fn privileged_node_and_crawler_changes_require_the_original_live_session()
             )
             .await
             .unwrap(),
-            codeyard_db_core::models::NodeStatusChange::Changed { .. }
+            codeyard_database::models::NodeStatusChange::Changed { .. }
         ));
         codeyard_db_identity::users::sessions::delete_session(f.pool(), &original)
             .await
             .unwrap();
         for invalid in [&original, &foreign] {
-            assert!(!codeyard_db_cluster::node_config::set_ai_crawlers(
+            assert!(!codeyard_db_placement::node_config::set_ai_crawlers(
                 f.pool(),
                 admin,
                 invalid,
@@ -60,7 +60,7 @@ async fn privileged_node_and_crawler_changes_require_the_original_live_session()
             .await
             .unwrap());
             assert_eq!(
-                codeyard_db_cluster::cluster::set_node_status(
+                codeyard_db_placement::cluster::set_node_status(
                     f.pool(),
                     Authority::Administrator {
                         user_id: admin,
@@ -71,11 +71,11 @@ async fn privileged_node_and_crawler_changes_require_the_original_live_session()
                 )
                 .await
                 .unwrap(),
-                codeyard_db_core::models::NodeStatusChange::Denied
+                codeyard_database::models::NodeStatusChange::Denied
             );
         }
         // A second login must not substitute for the revoked session, but remains usable itself.
-        assert!(codeyard_db_cluster::node_config::set_ai_crawlers(
+        assert!(codeyard_db_placement::node_config::set_ai_crawlers(
             f.pool(),
             admin,
             &replacement,
@@ -88,7 +88,7 @@ async fn privileged_node_and_crawler_changes_require_the_original_live_session()
             &[admin],
         )
         .await;
-        assert!(!codeyard_db_cluster::node_config::set_ai_crawlers(
+        assert!(!codeyard_db_placement::node_config::set_ai_crawlers(
             f.pool(),
             admin,
             &replacement,
@@ -97,7 +97,7 @@ async fn privileged_node_and_crawler_changes_require_the_original_live_session()
         .await
         .unwrap());
         assert_eq!(
-            codeyard_db_cluster::cluster::set_node_status(
+            codeyard_db_placement::cluster::set_node_status(
                 f.pool(),
                 Authority::Administrator {
                     user_id: admin,
@@ -108,10 +108,10 @@ async fn privileged_node_and_crawler_changes_require_the_original_live_session()
             )
             .await
             .unwrap(),
-            codeyard_db_core::models::NodeStatusChange::Denied
+            codeyard_database::models::NodeStatusChange::Denied
         );
         assert!(matches!(
-            codeyard_db_cluster::cluster::set_node_status(
+            codeyard_db_placement::cluster::set_node_status(
                 f.pool(),
                 Authority::Operator,
                 "session-node",
@@ -119,7 +119,7 @@ async fn privileged_node_and_crawler_changes_require_the_original_live_session()
             )
             .await
             .unwrap(),
-            codeyard_db_core::models::NodeStatusChange::Changed { .. }
+            codeyard_database::models::NodeStatusChange::Changed { .. }
         ));
         f.finish().await;
     }
@@ -209,7 +209,7 @@ async fn late_pr_comment_notices_and_mentions_cannot_restore_deleted_text() {
                     } else {
                         assert!(result
                             .unwrap_err()
-                            .is::<codeyard_db_core::queries::notifications::records::NotificationSuppressed>());
+                            .is::<codeyard_database::queries::notifications::records::NotificationSuppressed>());
                     }
                 }
             }

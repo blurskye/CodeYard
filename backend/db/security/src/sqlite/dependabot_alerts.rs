@@ -2,11 +2,11 @@ use crate::dependabot_alerts::Update;
 use anyhow::ensure;
 use anyhow::Result;
 use chrono::Utc;
-use codeyard_db_core::pool::SqlitePool;
-use codeyard_db_core::queries::credentials::Actor;
-use codeyard_db_core::queries::dependabot_alerts::Alert;
-use codeyard_model::advisories::Advisory;
-use codeyard_model::advisories::Refusal;
+use codeyard_database::pool::SqlitePool;
+use codeyard_database::queries::credentials::Actor;
+use codeyard_database::queries::dependabot_alerts::Alert;
+use codeyard_types::advisories::Advisory;
+use codeyard_types::advisories::Refusal;
 use serde_json::Value;
 use sqlx::Sqlite;
 use sqlx::Transaction;
@@ -76,7 +76,7 @@ pub async fn without_osv(pool: &SqlitePool) -> Result<Vec<Value>> {
     tx.commit().await?;
     let mut rows = Vec::with_capacity(imported.len() + published.len());
     for row in published {
-        match codeyard_db_core::queries::dependabot_alerts::published(row) {
+        match codeyard_database::queries::dependabot_alerts::published(row) {
             Ok(value) => rows.push(value),
             Err(_) => tracing::warn!("Invalid published advisory excluded from catalogue"),
         }
@@ -109,7 +109,7 @@ async fn global_one_in(
         .await?;
     match published {
         Some(row) => Ok(Some(
-            codeyard_db_core::queries::dependabot_alerts::published(row)?,
+            codeyard_database::queries::dependabot_alerts::published(row)?,
         )),
         None => Ok(None),
     }
@@ -117,7 +117,7 @@ async fn global_one_in(
 pub async fn import(pool: &SqlitePool, actor: impl Into<Actor>, value: &Value) -> Result<Value> {
     let authority = actor.into();
     let actor = authority.user_id;
-    let value = codeyard_model::advisory_documents::import_document(value)?;
+    let value = codeyard_types::advisory_documents::import_document(value)?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     ensure!(
         codeyard_db_identity::sqlite::users::transitions::active_admin(&mut tx, actor).await?,
@@ -144,14 +144,14 @@ async fn authorize(
     write: bool,
 ) -> Result<()> {
     ensure!(
-        codeyard_db_core::queries::sqlite::discussions::lock_security_authority(
+        codeyard_database::queries::sqlite::discussions::lock_security_authority(
             tx,
             actor.user_id,
             repo,
             write
         )
         .await?
-            && codeyard_db_core::queries::sqlite::credentials::repository(
+            && codeyard_database::queries::sqlite::credentials::repository(
                 tx,
                 actor,
                 repo,
@@ -225,7 +225,7 @@ pub async fn organization_repositories(
     let allowed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM org_memberships m JOIN users u ON u.id=m.user_id WHERE m.org_id=$1 AND m.user_id=$2 AND m.role IN ('owner','admin') AND NOT u.is_banned AND NOT u.must_change_password AND EXISTS(SELECT 1 FROM org_memberships owners JOIN users active ON active.id=owners.user_id WHERE owners.org_id=m.org_id AND owners.role='owner' AND NOT active.is_banned AND NOT active.must_change_password))").bind(org).bind(actor).fetch_one(&mut *tx).await?;
     ensure!(
         allowed
-            || codeyard_db_core::queries::sqlite::organizations::roles::manages_security(
+            || codeyard_database::queries::sqlite::organizations::roles::manages_security(
                 &mut tx, actor, org
             )
             .await?,
@@ -241,6 +241,6 @@ pub async fn organization_repositories(
     Ok(rows)
 }
 
-use codeyard_db_core::queries::sqlite::dependabot_alerts::refresh;
+use codeyard_database::queries::sqlite::dependabot_alerts::refresh;
 
-use codeyard_db_core::queries::sqlite::dependabot_alerts::global_in;
+use codeyard_database::queries::sqlite::dependabot_alerts::global_in;

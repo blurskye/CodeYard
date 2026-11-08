@@ -37,7 +37,7 @@ async fn patch_atomicity(pg: bool) {
     )
     .await;
     checked(&router,"repos/update","PATCH","/api/v3/repos/alice/patch",Some(&writer),json!({"name":"taken","description":"Must roll back","homepage":null,"private":false,"default_branch":"dev","allow_merge_commit":false}),StatusCode::UNPROCESSABLE_ENTITY).await;
-    let unchanged = |row: &codeyard_db_core::models::Repository| {
+    let unchanged = |row: &codeyard_database::models::Repository| {
         assert_eq!(row.name, "patch");
         assert_eq!(row.description.as_deref(), Some("Restored"));
         assert_eq!(row.website.as_deref(), Some("https://original.test/"));
@@ -93,7 +93,7 @@ async fn postgres_github_patch_atomicity() {
 #[test]
 fn github_repository_patch_preserves_nullable_presence_over_rpc() {
     use codeyard_db_repos::repositories::records::{MergeMethodUpdate, RepositoryChanges};
-    use codeyard_repos_core::wire::Operation;
+    use codeyard_git_storage::wire::Operation;
     let input = RepositoryChanges {
         token: None,
         name: Some("renamed"),

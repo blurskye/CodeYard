@@ -1,7 +1,7 @@
 use anyhow::Result;
-use codeyard_db_core::models::Label;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::Label;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum LabelWriteRefusal {
@@ -60,7 +60,7 @@ native_operation!(crate::postgres::labels::create_label,
     crate::sqlite::labels::create_label,
     fn create_label(
     pool: &DbPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     name: &str,
     color: &str,
@@ -99,7 +99,7 @@ native_operation!(crate::postgres::labels::update_label,
     crate::sqlite::labels::update_label,
     fn update_label(
     pool: &DbPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     label_id: i64,
     name: Option<&str>,
@@ -113,31 +113,31 @@ pub(crate) const PAGE_DESCRIPTION_CHARS: usize = 1024;
 
 native_operation!(crate::postgres::labels::update_label_checked,
     crate::sqlite::labels::update_label_checked,
-    fn update_label_checked(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo_id: i64, label_id: i64, fields: (Option<&str>, Option<&str>, Option<Option<&str>>), expected: Option<&str>) -> Result<Label>);
+    fn update_label_checked(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, repo_id: i64, label_id: i64, fields: (Option<&str>, Option<&str>, Option<Option<&str>>), expected: Option<&str>) -> Result<Label>);
 
 native_operation!(crate::postgres::labels::delete_label,
     crate::sqlite::labels::delete_label,
-    fn delete_label(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo_id: i64, label_id: i64) -> Result<bool>);
+    fn delete_label(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, repo_id: i64, label_id: i64) -> Result<bool>);
 
 native_operation!(crate::postgres::labels::add_issue_label,
     crate::sqlite::labels::add_issue_label,
-    fn add_issue_label(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo_id: i64, issue_id: i64, label_id: i64) -> Result<()>);
+    fn add_issue_label(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, repo_id: i64, issue_id: i64, label_id: i64) -> Result<()>);
 
 native_operation!(crate::postgres::labels::add_issue_labels,
     crate::sqlite::labels::add_issue_labels,
-    fn add_issue_labels(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo_id: i64, issue_id: i64, label_ids: &[i64]) -> Result<Vec<Label>>);
+    fn add_issue_labels(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, repo_id: i64, issue_id: i64, label_ids: &[i64]) -> Result<Vec<Label>>);
 
 native_operation!(crate::postgres::labels::add_pull_request_labels,
     crate::sqlite::labels::add_pull_request_labels,
-    fn add_pull_request_labels(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo_id: i64, pull_request_id: i64, label_ids: &[i64]) -> Result<Vec<Label>>);
+    fn add_pull_request_labels(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, repo_id: i64, pull_request_id: i64, label_ids: &[i64]) -> Result<Vec<Label>>);
 
 native_operation!(crate::postgres::labels::remove_issue_label,
     crate::sqlite::labels::remove_issue_label,
-    fn remove_issue_label(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo_id: i64, issue_id: i64, label_id: i64) -> Result<bool>);
+    fn remove_issue_label(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, repo_id: i64, issue_id: i64, label_id: i64) -> Result<bool>);
 
 native_operation!(crate::postgres::labels::remove_pull_request_label,
     crate::sqlite::labels::remove_pull_request_label,
-    fn remove_pull_request_label(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo_id: i64, pull_request_id: i64, label_id: i64) -> Result<bool>);
+    fn remove_pull_request_label(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, repo_id: i64, pull_request_id: i64, label_id: i64) -> Result<bool>);
 
 native_operation!(crate::postgres::labels::get_issue_labels,
     crate::sqlite::labels::get_issue_labels,
@@ -213,8 +213,8 @@ pub(crate) struct ItemLabel {
 
 native_operation!(crate::postgres::labels::set_issue_labels,
     crate::sqlite::labels::set_issue_labels,
-    fn set_issue_labels(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo_id: i64, issue_id: i64, label_ids: &[i64]) -> Result<()>);
+    fn set_issue_labels(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, repo_id: i64, issue_id: i64, label_ids: &[i64]) -> Result<()>);
 
 native_operation!(crate::postgres::labels::set_pull_request_labels,
     crate::sqlite::labels::set_pull_request_labels,
-    fn set_pull_request_labels(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo_id: i64, pull_request_id: i64, label_ids: &[i64]) -> Result<()>);
+    fn set_pull_request_labels(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, repo_id: i64, pull_request_id: i64, label_ids: &[i64]) -> Result<()>);

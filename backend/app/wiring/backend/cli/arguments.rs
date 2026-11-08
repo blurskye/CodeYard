@@ -28,7 +28,7 @@ pub(super) enum Commands {
         /// server's parts are the web, storage and ssh roles, on separate machines.
         /// A router runs alone with a directory and no application database.
         #[arg(long, env = "GITSERV_NODE_ROLES", default_value = "server,runner")]
-        roles: codeyard_model::node_roles::NodeRoles,
+        roles: codeyard_types::node_roles::NodeRoles,
 
         /// Pinned directory endpoint for a router or cell SSH gateway
         #[arg(long, env = "DIRECTORY_ADDRESS")]
@@ -61,10 +61,10 @@ pub(super) enum Commands {
 
         /// SSH transport: auto, openssh, builtin or disabled
         #[arg(long, env = "SSH_MODE", value_enum, default_value = "auto")]
-        ssh_mode: codeyard_support::ssh_mode::SshMode,
+        ssh_mode: codeyard_types::ssh_mode::SshMode,
 
         /// Private app broker socket for host OpenSSH helpers
-        #[arg(long, env = "SSH_SOCKET_PATH", default_value = codeyard_support::ssh_mode::DEFAULT_SOCKET)]
+        #[arg(long, env = "SSH_SOCKET_PATH", default_value = codeyard_types::ssh_mode::DEFAULT_SOCKET)]
         ssh_socket: PathBuf,
 
         /// Dedicated host SSH login, distinct from any existing Git login
@@ -72,7 +72,7 @@ pub(super) enum Commands {
         ssh_git_user: String,
 
         /// Root-owned marker created by the opt-in OpenSSH installer
-        #[arg(long, env = "SSH_INSTALL_MANIFEST", default_value = codeyard_support::ssh_mode::DEFAULT_MANIFEST)]
+        #[arg(long, env = "SSH_INSTALL_MANIFEST", default_value = codeyard_types::ssh_mode::DEFAULT_MANIFEST)]
         ssh_install_manifest: PathBuf,
 
         /// Built-in SSH bind address (unused in openssh/disabled mode)

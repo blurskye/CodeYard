@@ -10,9 +10,9 @@
 use super::{shards, Directory, Refusal, MAIN_CLUSTER};
 use anyhow::{ensure, Result};
 use chrono::{DateTime, Utc};
-use codeyard_model::cells::{Key, KeyKind, Location, Object, ObjectKind};
 use codeyard_support::token_hash::token_hash;
-use codeyard_types::cells::Prefix;
+use codeyard_types::cell_ids::Prefix;
+use codeyard_types::cells::{Key, KeyKind, Location, Object, ObjectKind};
 use sqlx::{Postgres, Transaction};
 
 type Tx = Transaction<'static, Postgres>;

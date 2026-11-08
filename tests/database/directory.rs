@@ -1,8 +1,8 @@
 //! Separate-directory operator commands and atomic claims across two cells.
 use crate::support::native_database::PostgresDatabase;
 use codeyard_db_directory::{Config, Directory};
-use codeyard_model::cells::{Cell, Key, KeyKind, Object, ObjectKind, State};
-use codeyard_types::cells::Prefix;
+use codeyard_types::cell_ids::Prefix;
+use codeyard_types::cells::{Cell, Key, KeyKind, Object, ObjectKind, State};
 use std::{path::Path, process::Output, time::Duration};
 
 fn cell(prefix: u16, key: char) -> Cell {
@@ -328,7 +328,7 @@ async fn successor_prefixes_are_atomic_owned_and_retry_the_same_reservation() {
         .next_prefix(&b, first, *first.ids().end())
         .await
         .is_err());
-    let capacity = codeyard_types::cells::IDS_PER_PREFIX - 1;
+    let capacity = codeyard_types::cell_ids::IDS_PER_PREFIX - 1;
     let threshold = *first.ids().start() + capacity - capacity / 5 - 1;
     assert!(directory
         .next_prefix(&a, first, threshold - 1)
@@ -391,7 +391,7 @@ fn name_in(shard: i16, after: usize) -> (usize, Key) {
         .unwrap()
 }
 
-async fn rows_in(pool: &codeyard_db_core::pool::PgPool, shard: i16) -> (i64, i64) {
+async fn rows_in(pool: &codeyard_database::pool::PgPool, shard: i16) -> (i64, i64) {
     sqlx::query_as("SELECT (SELECT COUNT(*) FROM directory_objects WHERE shard=$1),(SELECT COUNT(*) FROM directory_claims WHERE shard=$1)")
         .bind(shard)
         .fetch_one(pool)
@@ -594,7 +594,7 @@ async fn directory_shards_move_between_clusters_with_no_failed_lookup() {
 
 #[tokio::test]
 async fn directory_search_comments_are_bounded_and_pending_reviews_stay_private() {
-    use codeyard_db_core::cells::search::{self, Item};
+    use codeyard_database::cells::search::{self, Item};
     let mut database = PostgresDatabase::new().await;
     let user = codeyard_db_identity::users::accounts::create_user(&database.pool, "indexer", None)
         .await
@@ -688,7 +688,7 @@ async fn directory_search_comments_are_bounded_and_pending_reviews_stay_private(
 
 #[tokio::test]
 async fn directory_ranked_search_bounds_input_counts_and_last_page() {
-    use codeyard_db_core::cells::search::{Filter, Kind, Query};
+    use codeyard_database::cells::search::{Filter, Kind, Query};
     let mut database = PostgresDatabase::unmigrated().await;
     let directory = Directory::connect(
         &database.connection_url(),

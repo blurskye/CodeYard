@@ -1,6 +1,6 @@
 use super::*;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::queries::credentials::Actor;
+use codeyard_database::native_operation;
+use codeyard_database::queries::credentials::Actor;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Refusal {
@@ -18,7 +18,7 @@ pub enum Refusal {
 
 native_operation!(crate::postgres::issues::management::closing_candidates,
     crate::sqlite::issues::management::closing_candidates,
-    fn closing_candidates(pool: &DbPool, viewer: Option<i64>, repo: i64, scope: &str, number: i32, before: i64) -> Result<Vec<codeyard_db_core::models::PullRequest>>);
+    fn closing_candidates(pool: &DbPool, viewer: Option<i64>, repo: i64, scope: &str, number: i32, before: i64) -> Result<Vec<codeyard_database::models::PullRequest>>);
 
 #[derive(Clone, Debug, sqlx::FromRow)]
 pub struct LinkedBranch {

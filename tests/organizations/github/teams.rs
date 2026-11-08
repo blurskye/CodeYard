@@ -12,7 +12,7 @@ use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
 use codeyard_ci::config::CiConfig;
 
-use codeyard_db_core::models::OrgRole;
+use codeyard_database::models::OrgRole;
 use codeyard_identity::tokens::TokenInput;
 use codeyard_storage::ObjectStore;
 use serde_json::{json, Value};
@@ -632,7 +632,7 @@ async fn contract(pg: bool) {
             )
             .await
             .unwrap(),
-            codeyard_db_core::models::AccessLevel::from(level)
+            codeyard_database::models::AccessLevel::from(level)
         );
     }
     // A fine-grained token selected for another repository cannot change team access to

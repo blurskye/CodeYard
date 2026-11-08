@@ -3,7 +3,7 @@
 
 use codeyard_support::secrets::SecretEncryptor;
 
-use codeyard_db_core::DbPool;
+use codeyard_database::DbPool;
 use std::time::Duration;
 use tracing::{info, warn};
 

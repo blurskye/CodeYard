@@ -1,7 +1,7 @@
 use anyhow::Result;
-use codeyard_db_core::models::AccessLevel;
-use codeyard_db_core::DbPool;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_database::models::AccessLevel;
+use codeyard_database::DbPool;
+use codeyard_git_storage::repositories::store::repo_store;
 
 /// Keep untrusted fields on one terminal line without interpreting control bytes.
 fn terminal_text(value: &str) -> String {
@@ -18,8 +18,8 @@ fn terminal_text(value: &str) -> String {
 
 /// Where a repository lives. One stored on another node has no path on this machine.
 fn storage_location(
-    repo: &codeyard_db_core::models::Repository,
-    context: Option<&codeyard_repos_core::context::NodeContext>,
+    repo: &codeyard_database::models::Repository,
+    context: Option<&codeyard_git_storage::context::NodeContext>,
     location: &str,
 ) -> String {
     match repo.storage_node_id {
@@ -32,7 +32,7 @@ fn storage_location(
 
 /// Copy every table between SQLite and PostgreSQL and print the row counts
 pub async fn copy_database_cmd(from: &str, to: &str) -> Result<()> {
-    let counts = codeyard_db_cluster::copy::copy_database(from, to).await?;
+    let counts = codeyard_db_placement::copy::copy_database(from, to).await?;
     println!("{:<40} {:>12}", "Table", "Rows");
     for count in &counts {
         println!("{:<40} {:>12}", count.table, count.rows);
@@ -49,7 +49,7 @@ pub async fn create_user_cmd(pool: &DbPool, username: &str, email: Option<&str>)
     validate_cli_username(username)?;
     let email = email.map(str::trim).filter(|value| !value.is_empty());
     if let Some(email) = email {
-        codeyard_model::account_input::validate_email(email)
+        codeyard_types::account_input::validate_email(email)
             .map_err(|_| anyhow::anyhow!("Invalid email address"))?;
     }
     let user = match codeyard_db_identity::users::transitions::create_cli_user(pool, username, email).await? {
@@ -64,7 +64,7 @@ pub async fn create_user_cmd(pool: &DbPool, username: &str, email: Option<&str>)
 }
 
 fn validate_cli_username(username: &str) -> Result<()> {
-    codeyard_model::account_input::validate_namespace(username, 3).map_err(|_| anyhow::anyhow!(
+    codeyard_types::account_input::validate_namespace(username, 3).map_err(|_| anyhow::anyhow!(
         "Username must be 3-1024 bytes, at most 255 characters, and contain only letters, numbers, hyphens and underscores"
     ))?;
     codeyard_identity::credentials::validate_new_account_name(username)
@@ -214,9 +214,9 @@ pub async fn create_repo_cmd(
         .await?
         .ok_or_else(|| anyhow::anyhow!("User not found: {}", owner))?;
 
-    codeyard_repos_core::repositories::lifecycle::validate_description(description.unwrap_or(""))?;
-    let context = codeyard_cluster::client_context(pool, state_dir, repos_path).await?;
-    let created = codeyard_repos_core::repositories::lifecycle::provision(
+    codeyard_git_storage::repositories::lifecycle::validate_description(description.unwrap_or(""))?;
+    let context = codeyard_placement::client_context(pool, state_dir, repos_path).await?;
+    let created = codeyard_git_storage::repositories::lifecycle::provision(
         (pool, context.as_ref()),
         repos_path,
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(user.id),
@@ -327,7 +327,7 @@ pub async fn repo_info_cmd(
     println!("ID: {}", repo.id);
     println!("Private: {}", if repo.is_private { "yes" } else { "no" });
     println!("Default branch: {}", terminal_text(&repo.default_branch));
-    let context = codeyard_cluster::client_context(pool, state_dir, repos_path).await?;
+    let context = codeyard_placement::client_context(pool, state_dir, repos_path).await?;
     let store = repo_store(&repo, context.as_ref());
     println!(
         "Disk path: {}",

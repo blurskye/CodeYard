@@ -4,7 +4,7 @@ use crate::reactions::ReactionRefusal;
 use crate::reactions::Subject;
 use crate::reactions::Target;
 use anyhow::Result;
-use codeyard_db_core::pool::PgPool;
+use codeyard_database::pool::PgPool;
 use sqlx::Postgres;
 use sqlx::Transaction;
 
@@ -19,7 +19,7 @@ use sqlx::Transaction;
 pub async fn toggle_reaction(
     pool: &PgPool,
     actor_id: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     repo_id: i64,
     item_id: i64,
     subject: Subject,
@@ -71,7 +71,7 @@ pub async fn toggle_reaction(
 async fn begin_write<'a>(
     pool: &'a PgPool,
     actor_id: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     target: Target,
 ) -> Result<Transaction<'a, Postgres>> {
     let mut tx = pool.begin().await?;
@@ -102,7 +102,7 @@ async fn begin_write<'a>(
             .await?;
         anyhow::ensure!(
             !draft
-                || codeyard_db_core::queries::postgres::discussions::lock_write_authority(
+                || codeyard_database::queries::postgres::discussions::lock_write_authority(
                     &mut tx,
                     actor_id,
                     target.repo_id
@@ -112,7 +112,7 @@ async fn begin_write<'a>(
         );
     }
     anyhow::ensure!(
-        codeyard_db_core::queries::postgres::users::transitions::credential_live(
+        codeyard_database::queries::postgres::users::transitions::credential_live(
             &mut tx, actor_id, credential, true
         )
         .await?,
@@ -124,7 +124,7 @@ async fn begin_write<'a>(
 pub async fn create_reaction(
     pool: &PgPool,
     actor_id: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     target: Target,
     content: &str,
 ) -> Result<(Reaction, bool)> {
@@ -147,7 +147,7 @@ pub async fn create_reaction(
 pub async fn delete_reaction(
     pool: &PgPool,
     actor_id: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     target: Target,
     reaction_id: i64,
 ) -> Result<bool> {

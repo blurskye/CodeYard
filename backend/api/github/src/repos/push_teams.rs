@@ -17,11 +17,11 @@ use axum::routing::put;
 use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_app::app::AppState;
-use codeyard_db_core::models::BranchProtectionRule;
+use codeyard_database::models::BranchProtectionRule;
 use codeyard_db_repos::repositories::protection::ActorListUpdate;
 use codeyard_db_repos::repositories::protection::ProtectionUpdate;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
@@ -81,7 +81,7 @@ async fn teams(
     if !read_method(&method) {
         let Json(input) = Json::<Input>::from_request(request, &state)
             .await
-            .map_err(codeyard_model::github_error::json_error)?;
+            .map_err(codeyard_types::github_error::json_error)?;
         let (Input::Array(names) | Input::Object { teams: names }) = input;
         let ids = codeyard_db_repos::repositories::push_teams::resolve_names(
             &state.pool,

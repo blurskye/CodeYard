@@ -43,7 +43,7 @@ impl Fixture {
         };
         let id = codeyard_db_repos::notifications::records::create_notification(
             self.pool(),
-            codeyard_db_core::queries::notifications::records::NewNotification {
+            codeyard_database::queries::notifications::records::NewNotification {
                 user_id: recipient,
                 actor_id: None,
                 repo_id: repo,
@@ -213,10 +213,10 @@ impl Fixture {
                 f.raw = sqlx::postgres::PgPoolOptions::new()
                     .connect_with(options)
                     .await
-                    .map(codeyard_db_core::pool::Pool::from)
+                    .map(codeyard_database::pool::Pool::from)
                     .unwrap();
                 f.pool = f.raw.clone().into();
-                codeyard_db_core::run_migrations(&f.pool)
+                codeyard_database::run_migrations(&f.pool)
                     .await
                     .expect("verify reopened PostgreSQL history");
             }

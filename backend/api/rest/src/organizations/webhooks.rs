@@ -38,7 +38,7 @@ pub(super) async fn post(
         &ctx.state.pool,
         ctx.state.secret_encryptor.as_deref(),
         actor,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &codeyard_api_http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
         ),
         HookOwner::Organization(org),

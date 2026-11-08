@@ -7,12 +7,12 @@ use crate::url;
 use crate::RequestContext;
 use crate::Result;
 use async_graphql::Error;
-use codeyard_model::node_id;
+use codeyard_types::node_id;
 use serde_json::json;
 use serde_json::Value;
 
 pub(super) async fn team_object(
-    team: &codeyard_db_core::models::Team,
+    team: &codeyard_database::models::Team,
     request: &RequestContext,
 ) -> Result<Value> {
     let organization = crate::user::organization_by_id(team.org_id, request).await?;
@@ -29,7 +29,7 @@ pub(super) async fn team_object(
     )
 }
 
-async fn pull(id: i64, request: &RequestContext) -> Result<codeyard_db_core::models::PullRequest> {
+async fn pull(id: i64, request: &RequestContext) -> Result<codeyard_database::models::PullRequest> {
     let pull =
         codeyard_db_repos::pull_requests::records::get_pull_request_by_id(&request.state.pool, id)
             .await
@@ -45,7 +45,7 @@ async fn pull(id: i64, request: &RequestContext) -> Result<codeyard_db_core::mod
 }
 
 async fn window(
-    pull: &codeyard_db_core::models::PullRequest,
+    pull: &codeyard_database::models::PullRequest,
     request: &RequestContext,
 ) -> Result<codeyard_db_repos::pull_requests::team_reviewers::RequestWindow> {
     Ok(
@@ -64,7 +64,7 @@ async fn window(
 }
 
 async fn objects(
-    pull: &codeyard_db_core::models::PullRequest,
+    pull: &codeyard_database::models::PullRequest,
     origins: &[codeyard_db_repos::pull_requests::reviews::ReviewRequestOrigin],
     viewer: Option<i64>,
     request: &RequestContext,
@@ -283,7 +283,7 @@ pub(super) async fn mutation(
     if user_ids.len() + team_ids.len() > 100 {
         return Err(Error::new("At most 100 reviewers are allowed"));
     }
-    codeyard_repos_core::repositories::pull_requests::team_reviewers::set_requests(
+    codeyard_git_storage::repositories::pull_requests::team_reviewers::set_requests(
         pool,
         &request.state.notification_broadcaster,
         actor,

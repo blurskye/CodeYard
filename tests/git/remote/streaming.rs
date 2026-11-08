@@ -41,7 +41,7 @@ pub async fn exercise(remote: bool) {
     crate::support::native_database::enable_cluster(&database.pool)
         .await
         .unwrap();
-    codeyard_db_cluster::node_config::upsert_node_configuration(&database.pool, "public", true)
+    codeyard_db_placement::node_config::upsert_node_configuration(&database.pool, "public", true)
         .await
         .unwrap();
     let owner =

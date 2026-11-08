@@ -10,8 +10,8 @@ use codeyard_db_repos::discussions::ListFilter;
 use codeyard_db_repos::files::AdmissionError;
 use codeyard_db_repos::files::ReserveUpload;
 
-use codeyard_db_core::models::FileReason;
-use codeyard_db_core::models::FileVisibility;
+use codeyard_database::models::FileReason;
+use codeyard_database::models::FileVisibility;
 use codeyard_db_identity::users::transitions::AccountAdmission;
 use codeyard_db_identity::users::transitions::BanChange;
 use codeyard_db_identity::users::transitions::SetupClaim;
@@ -24,7 +24,7 @@ use uuid::Uuid;
 fn timestamp(value: DateTime<Utc>) -> String {
     value.to_rfc3339_opts(SecondsFormat::Micros, true)
 }
-async fn setup(pool: &codeyard_db_core::DbPool, mode: &str) -> codeyard_db_core::models::User {
+async fn setup(pool: &codeyard_database::DbPool, mode: &str) -> codeyard_database::models::User {
     match codeyard_db_identity::users::transitions::complete_setup(
         pool,
         "admin",
@@ -41,10 +41,10 @@ async fn setup(pool: &codeyard_db_core::DbPool, mode: &str) -> codeyard_db_core:
     }
 }
 async fn repository(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     owner: i64,
     name: &str,
-) -> codeyard_db_core::models::Repository {
+) -> codeyard_database::models::Repository {
     codeyard_db_repos::repositories::records::create_repository(
         pool,
         owner,
@@ -72,11 +72,11 @@ fn upload(user_id: i64, reason: FileReason, visibility: FileVisibility) -> Reser
     }
 }
 async fn new_pr(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     repo: i64,
     actor: i64,
     head_branch: &str,
-) -> codeyard_db_core::models::PullRequest {
+) -> codeyard_database::models::PullRequest {
     codeyard_db_repos::pull_requests::records::create_pull_request(
         pool,
         codeyard_db_repos::pull_requests::records::NewPullRequest {
@@ -98,7 +98,7 @@ async fn new_pr(
     .unwrap()
 }
 
-async fn package_read_during_mutation(pool: &codeyard_db_core::DbPool, package: i64) {
+async fn package_read_during_mutation(pool: &codeyard_database::DbPool, package: i64) {
     let count = tokio::time::timeout(
         std::time::Duration::from_secs(2),
         codeyard_db_repos::packages::version_count(pool, package, None),
@@ -166,7 +166,7 @@ async fn simultaneous_setup_has_one_winner_and_constraint_failure_rolls_back() {
         0
     );
     assert!(
-        codeyard_db_cluster::node_config::get_node_configuration(&fixture.pool)
+        codeyard_db_placement::node_config::get_node_configuration(&fixture.pool)
             .await
             .unwrap()
             .is_none()
@@ -215,7 +215,7 @@ async fn simultaneous_setup_has_one_winner_and_constraint_failure_rolls_back() {
         1
     );
     assert!(
-        codeyard_db_cluster::node_config::get_node_configuration(&fixture.pool)
+        codeyard_db_placement::node_config::get_node_configuration(&fixture.pool)
             .await
             .unwrap()
             .unwrap()
@@ -758,7 +758,7 @@ async fn sessions_csrf_oauth_consumption_and_rotation_survive_reopen() {
 }
 
 /// The stored CSRF token of a session, creating one when the session has none yet.
-async fn stored_csrf(pool: &codeyard_db_core::DbPool, id: &str, user: Option<i64>) -> String {
+async fn stored_csrf(pool: &codeyard_database::DbPool, id: &str, user: Option<i64>) -> String {
     codeyard_db_identity::users::sessions::get_or_create_csrf_token(pool, id, user, &token(), 7200)
         .await
         .unwrap()
@@ -1067,7 +1067,7 @@ async fn issue_pr_numbers_rollback_and_exact_future_microsecond_revision_cas() {
         issue.id,
         user.id,
         "comment bumps revision monotonically",
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(&fixture.pool, user.id).await,
         ),
     )
@@ -1484,14 +1484,14 @@ async fn file_activation_is_atomic_happens_once_and_survives_reopen() {
     fixture.close().await;
 }
 
-async fn execute_sql(pool: &codeyard_db_core::DbPool, sql: &str) {
+async fn execute_sql(pool: &codeyard_database::DbPool, sql: &str) {
     match pool {
-        codeyard_db_core::DbPool::Postgres(raw) => sqlx::raw_sql(sql)
+        codeyard_database::DbPool::Postgres(raw) => sqlx::raw_sql(sql)
             .execute(raw)
             .await
             .unwrap()
             .rows_affected(),
-        codeyard_db_core::DbPool::Sqlite(raw) => sqlx::raw_sql(sql)
+        codeyard_database::DbPool::Sqlite(raw) => sqlx::raw_sql(sql)
             .execute(raw)
             .await
             .unwrap()
@@ -1500,12 +1500,12 @@ async fn execute_sql(pool: &codeyard_db_core::DbPool, sql: &str) {
 }
 
 pub(crate) async fn assert_indexed_plan(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     sql: &str,
     indexes: &[&str],
 ) {
     let plan = match pool {
-        codeyard_db_core::DbPool::Sqlite(raw) => {
+        codeyard_database::DbPool::Sqlite(raw) => {
             // EXPLAIN QUERY PLAN does not reload the schema; refresh this pooled connection first.
             let mut conn = raw.acquire().await.unwrap();
             sqlx::query("SELECT 1 FROM sqlite_schema LIMIT 1")
@@ -1521,7 +1521,7 @@ pub(crate) async fn assert_indexed_plan(
                 .collect::<Vec<_>>()
                 .join("\n")
         }
-        codeyard_db_core::DbPool::Postgres(raw) => {
+        codeyard_database::DbPool::Postgres(raw) => {
             let mut tx = raw.begin().await.unwrap();
             // Small fixtures otherwise prefer sequential scans. Check that the
             // ordered/foreign-key index path is available without a sort.
@@ -1546,7 +1546,7 @@ pub(crate) async fn assert_indexed_plan(
     }
 }
 
-async fn assert_watch_count(pool: &codeyard_db_core::DbPool, repo_id: i64, expected: i32) {
+async fn assert_watch_count(pool: &codeyard_database::DbPool, repo_id: i64, expected: i32) {
     assert_eq!(
         codeyard_db_repos::repositories::records::get_repository_by_id(pool, repo_id)
             .await
@@ -1557,7 +1557,7 @@ async fn assert_watch_count(pool: &codeyard_db_core::DbPool, repo_id: i64, expec
     );
 }
 
-async fn watch_count_transitions(pool: &codeyard_db_core::DbPool) {
+async fn watch_count_transitions(pool: &codeyard_database::DbPool) {
     let owner = setup(pool, "public").await;
     let ignored = codeyard_db_identity::users::accounts::create_user(pool, "ignored", None)
         .await
@@ -1573,7 +1573,7 @@ async fn watch_count_transitions(pool: &codeyard_db_core::DbPool) {
             pool,
             reader.id,
             repo.id,
-            codeyard_db_core::models::AccessLevel::Read,
+            codeyard_database::models::AccessLevel::Read,
         )
         .await
         .unwrap();
@@ -1719,7 +1719,7 @@ async fn postgres_watch_change_and_repository_deletion_do_not_deadlock() {
             pool,
             watcher.id,
             repo.id,
-            codeyard_db_core::models::AccessLevel::Read,
+            codeyard_database::models::AccessLevel::Read,
         )
         .await
         .unwrap();
@@ -1797,7 +1797,7 @@ async fn postgres_ban_and_milestone_write_do_not_deadlock() {
         )
         .await
         .unwrap();
-        let codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(organization) =
+        let codeyard_database::queries::organizations::OrganizationOutcome::Applied(organization) =
             organization
         else {
             panic!("organization was not created");
@@ -1827,7 +1827,7 @@ async fn postgres_ban_and_milestone_write_do_not_deadlock() {
             pool,
             writer.id,
             repo.id,
-            codeyard_db_core::models::AccessLevel::Write,
+            codeyard_database::models::AccessLevel::Write,
         )
         .await
         .unwrap();
@@ -1873,7 +1873,7 @@ async fn postgres_comment_changes_and_repository_deletion_do_not_deadlock() {
             issue.id,
             owner.id,
             "first",
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+            &codeyard_database::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(pool, owner.id).await,
             ),
         )
@@ -1900,7 +1900,7 @@ async fn postgres_comment_changes_and_repository_deletion_do_not_deadlock() {
         .unwrap();
         let session = crate::support::live_session(pool, owner.id).await;
         let credential =
-            codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session);
+            codeyard_database::queries::users::accounts::AccountCredential::Session(&session);
         let (edited, deleted_comment, deleted) =
             tokio::time::timeout(std::time::Duration::from_secs(30), async {
                 tokio::join!(
@@ -1934,7 +1934,7 @@ async fn postgres_comment_changes_and_repository_deletion_do_not_deadlock() {
     }
 }
 
-async fn accounting_and_explore_indexes(pool: &codeyard_db_core::DbPool) {
+async fn accounting_and_explore_indexes(pool: &codeyard_database::DbPool) {
     let owner = setup(pool, "public").await;
     let popular = repository(pool, owner.id, "popular").await;
     let newer = repository(pool, owner.id, "newer").await;
@@ -1970,10 +1970,10 @@ async fn accounting_and_explore_indexes(pool: &codeyard_db_core::DbPool) {
         // SQLite stores file ids as 16-byte blobs. A text literal would apply text affinity
         // and skip the index, so compare with a blob literal as the application does.
         let sql = match pool {
-            codeyard_db_core::DbPool::Postgres(_) => {
+            codeyard_database::DbPool::Postgres(_) => {
                 format!("SELECT * FROM {table} WHERE file_id='{}'", expired.id)
             }
-            codeyard_db_core::DbPool::Sqlite(_) => {
+            codeyard_database::DbPool::Sqlite(_) => {
                 format!(
                     "SELECT * FROM {table} WHERE file_id=X'{}'",
                     expired.id.simple()
@@ -1983,8 +1983,8 @@ async fn accounting_and_explore_indexes(pool: &codeyard_db_core::DbPool) {
         assert_indexed_plan(pool, &sql, &[&format!("idx_{table}_file_id")]).await;
     }
     let explore_sql = match pool {
-        codeyard_db_core::DbPool::Postgres(_) => "SELECT * FROM repositories WHERE is_private = false ORDER BY stars_count DESC, created_at DESC, id DESC LIMIT 1",
-        codeyard_db_core::DbPool::Sqlite(_) => "SELECT * FROM repositories INDEXED BY idx_repositories_public_stars WHERE is_private = false ORDER BY stars_count DESC, created_at DESC, id DESC LIMIT 1",
+        codeyard_database::DbPool::Postgres(_) => "SELECT * FROM repositories WHERE is_private = false ORDER BY stars_count DESC, created_at DESC, id DESC LIMIT 1",
+        codeyard_database::DbPool::Sqlite(_) => "SELECT * FROM repositories INDEXED BY idx_repositories_public_stars WHERE is_private = false ORDER BY stars_count DESC, created_at DESC, id DESC LIMIT 1",
     };
     assert_indexed_plan(pool, explore_sql, &["idx_repositories_public_stars"]).await;
     let ranked = codeyard_db_repos::repositories::records::list_public_repositories(
@@ -2057,7 +2057,7 @@ async fn postgres_search_uses_ordered_scans_and_keeps_private_rows_hidden() {
     search_uses_ordered_scans_and_keeps_private_rows_hidden(&fixture.pool).await;
 }
 
-async fn search_uses_ordered_scans_and_keeps_private_rows_hidden(pool: &codeyard_db_core::DbPool) {
+async fn search_uses_ordered_scans_and_keeps_private_rows_hidden(pool: &codeyard_database::DbPool) {
     let owner = setup(pool, "public").await;
     let public = repository(pool, owner.id, "public-needle").await;
     let private = repository(pool, owner.id, "private-needle").await;
@@ -2087,11 +2087,11 @@ async fn search_uses_ordered_scans_and_keeps_private_rows_hidden(pool: &codeyard
     // INDEXED BY is a SQLite hint. Postgres is checked on each ordered scan alone, because its
     // planner may choose a partial index or a hash join around the private filter and the join.
     let (repositories_sql, issues_sql) = match pool {
-        codeyard_db_core::DbPool::Postgres(_) => (
+        codeyard_database::DbPool::Postgres(_) => (
             "SELECT * FROM repositories ORDER BY stars_count DESC,updated_at DESC",
             "SELECT * FROM issues ORDER BY updated_at DESC",
         ),
-        codeyard_db_core::DbPool::Sqlite(_) => (
+        codeyard_database::DbPool::Sqlite(_) => (
             "SELECT * FROM repositories INDEXED BY idx_repositories_search_order WHERE NOT is_private ORDER BY stars_count DESC,updated_at DESC",
             "SELECT i.* FROM issues i INDEXED BY idx_issues_updated_at CROSS JOIN repositories r ON r.id=i.repo_id WHERE NOT r.is_private ORDER BY i.updated_at DESC",
         ),
@@ -2132,7 +2132,7 @@ async fn search_uses_ordered_scans_and_keeps_private_rows_hidden(pool: &codeyard
     );
 }
 
-async fn default_branch_accepts_full_ref_length(pool: &codeyard_db_core::DbPool) {
+async fn default_branch_accepts_full_ref_length(pool: &codeyard_database::DbPool) {
     let owner = codeyard_db_identity::users::accounts::create_user(pool, "branch-migration", None)
         .await
         .unwrap();
@@ -2193,8 +2193,8 @@ async fn postgres_default_branch_accepts_full_ref_length() {
 async fn native_schema_history_foreign_keys_and_integer_overflow_fail_closed() {
     let fixture = NativeDatabase::new().await;
     let (a, b) = tokio::join!(
-        codeyard_db_core::run_migrations(&fixture.pool),
-        codeyard_db_core::run_migrations(&fixture.pool)
+        codeyard_database::run_migrations(&fixture.pool),
+        codeyard_database::run_migrations(&fixture.pool)
     );
     a.unwrap();
     b.unwrap();
@@ -2237,7 +2237,7 @@ async fn native_schema_history_foreign_keys_and_integer_overflow_fail_closed() {
         .execute(&fixture.raw)
         .await
         .unwrap();
-    assert!(codeyard_db_core::run_migrations(&fixture.pool)
+    assert!(codeyard_database::run_migrations(&fixture.pool)
         .await
         .is_err());
     assert_eq!(
@@ -2274,7 +2274,7 @@ async fn sqlite_current_ledger_skips_foreign_key_scan() {
     drop(connection);
 
     // A current ledger needs no database-wide scan on ordinary CLI startup.
-    codeyard_db_core::run_migrations(&fixture.pool)
+    codeyard_database::run_migrations(&fixture.pool)
         .await
         .unwrap();
     let violations = sqlx::query("PRAGMA foreign_key_check")
@@ -2292,8 +2292,8 @@ async fn sqlite_baseline_orphan_row_fails_and_rolls_back() {
         "sqlite://{}",
         directory.path().join("orphan.sqlite").display()
     );
-    let pool = codeyard_db_core::init_db(&url).await.unwrap();
-    let codeyard_db_core::DbPool::Sqlite(raw) = &pool else {
+    let pool = codeyard_database::init_db(&url).await.unwrap();
+    let codeyard_database::DbPool::Sqlite(raw) = &pool else {
         panic!("SQLite fixture");
     };
     // A table outside the schema holds an orphan row. The baseline applies cleanly over it,
@@ -2309,7 +2309,7 @@ async fn sqlite_baseline_orphan_row_fails_and_rolls_back() {
     .await
     .unwrap();
     drop(connection);
-    let error = codeyard_db_core::run_migrations(&pool).await.unwrap_err();
+    let error = codeyard_database::run_migrations(&pool).await.unwrap_err();
     assert!(error.to_string().contains("foreign key validation failed"));
     let tables: Vec<String> =
         sqlx::query_scalar("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
@@ -2354,7 +2354,7 @@ async fn real_sqlite_writer_contention_waits_and_closed_selected_database_fails(
     assert!(waiting.await.unwrap().is_ok());
     other.close().await;
     assert!(
-        codeyard_db_cluster::node_config::get_node_configuration(&other)
+        codeyard_db_placement::node_config::get_node_configuration(&other)
             .await
             .is_err(),
         "unavailable is not uninitialized/setup"
@@ -2385,11 +2385,11 @@ async fn fresh_concurrent_native_migrations_use_an_independent_atomic_ledger() {
         "sqlite://{}",
         directory.path().join("fresh.sqlite").display()
     );
-    let first = codeyard_db_core::init_db(&url).await.unwrap();
-    let second = codeyard_db_core::init_db(&url).await.unwrap();
+    let first = codeyard_database::init_db(&url).await.unwrap();
+    let second = codeyard_database::init_db(&url).await.unwrap();
     let (a, b) = tokio::join!(
-        codeyard_db_core::run_migrations(&first),
-        codeyard_db_core::run_migrations(&second)
+        codeyard_database::run_migrations(&first),
+        codeyard_database::run_migrations(&second)
     );
     a.unwrap();
     b.unwrap();
@@ -2593,7 +2593,7 @@ async fn repository_provisioning_visibility_floor_and_native_array_decoding_pers
     fixture.close().await;
 }
 
-async fn repository_search_ids(pool: &codeyard_db_core::DbPool, query: &str) -> Vec<i64> {
+async fn repository_search_ids(pool: &codeyard_database::DbPool, query: &str) -> Vec<i64> {
     let mut ids: Vec<i64> = codeyard_db_repos::repositories::discovery::search_repositories(
         pool,
         None,
@@ -2611,7 +2611,7 @@ async fn repository_search_ids(pool: &codeyard_db_core::DbPool, query: &str) -> 
     ids
 }
 
-async fn check_repository_search_matches_owner_names(pool: &codeyard_db_core::DbPool) {
+async fn check_repository_search_matches_owner_names(pool: &codeyard_database::DbPool) {
     let admin = setup(pool, "public").await;
     let alice = codeyard_db_identity::users::accounts::create_user(pool, "alice", None)
         .await
@@ -2629,7 +2629,7 @@ async fn check_repository_search_matches_owner_names(pool: &codeyard_db_core::Db
     .await
     .unwrap()
     {
-        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(metadata) => {
+        codeyard_database::queries::organizations::OrganizationOutcome::Applied(metadata) => {
             metadata
         }
         _ => panic!("the owner creates the organization"),
@@ -2791,7 +2791,7 @@ async fn concurrent_searches_share_the_pool_without_stalling() {
     fixture.close().await;
 }
 
-async fn populated_snapshot(pool: &codeyard_db_core::DbPool) -> Value {
+async fn populated_snapshot(pool: &codeyard_database::DbPool) -> Value {
     let owner = setup(pool, "public").await;
     let reader = codeyard_db_identity::users::accounts::create_user_with_password(
         pool,
@@ -2806,7 +2806,7 @@ async fn populated_snapshot(pool: &codeyard_db_core::DbPool) -> Value {
         pool,
         reader.id,
         repo.id,
-        codeyard_db_core::models::AccessLevel::Write,
+        codeyard_database::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -2835,7 +2835,7 @@ async fn populated_snapshot(pool: &codeyard_db_core::DbPool) -> Value {
         issue.id,
         reader.id,
         "comment",
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(pool, reader.id).await,
         ),
     )
@@ -2845,7 +2845,7 @@ async fn populated_snapshot(pool: &codeyard_db_core::DbPool) -> Value {
         pool,
         pr.id,
         reader.id,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(pool, reader.id).await,
         ),
         "approved",
@@ -2905,7 +2905,7 @@ async fn populated_snapshot(pool: &codeyard_db_core::DbPool) -> Value {
         pool,
         reader.id,
         owner.id,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(pool, reader.id).await,
         ),
     )
@@ -2915,7 +2915,7 @@ async fn populated_snapshot(pool: &codeyard_db_core::DbPool) -> Value {
         pool,
         reader.id,
         reader.id,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(pool, reader.id).await
         )
     )
@@ -2956,7 +2956,7 @@ async fn populated_snapshot(pool: &codeyard_db_core::DbPool) -> Value {
     );
     codeyard_db_repos::notifications::records::create_notification(
         pool,
-        codeyard_db_core::queries::notifications::records::NewNotification {
+        codeyard_database::queries::notifications::records::NewNotification {
             user_id: owner.id,
             actor_id: Some(reader.id),
             repo_id: Some(repo.id),
@@ -2977,7 +2977,7 @@ async fn populated_snapshot(pool: &codeyard_db_core::DbPool) -> Value {
         "TOKEN",
         "fixture-secret",
         Some(owner.id),
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(pool, owner.id).await,
         ),
     )
@@ -3003,7 +3003,7 @@ async fn populated_snapshot(pool: &codeyard_db_core::DbPool) -> Value {
         codeyard_db_identity::users::accounts::set_user_avatar(
             pool,
             owner.id,
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+            &codeyard_database::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(pool, owner.id).await
             ),
             Some(avatar.id)
@@ -3101,10 +3101,10 @@ async fn populated_sqlite_and_postgres_named_operations_have_semantic_parity() {
     postgres.pool.close().await;
 }
 
-async fn check_ci_admission_refusals(pool: &codeyard_db_core::DbPool) {
+async fn check_ci_admission_refusals(pool: &codeyard_database::DbPool) {
+    use codeyard_database::ci_policy::CiAdmissionRefusal;
     use codeyard_db_actions::ci;
     use codeyard_db_actions::ci::NewCiRun;
-    use codeyard_db_core::ci_policy::CiAdmissionRefusal;
 
     let owner = setup(pool, "public").await;
     let repo = repository(pool, owner.id, "ci-refusals").await;
@@ -3213,7 +3213,7 @@ async fn postgres_ci_admission_refusals_are_typed_and_leave_state_unchanged() {
     fixture.pool.close().await;
 }
 
-async fn check_list_display_projections(pool: &codeyard_db_core::DbPool) {
+async fn check_list_display_projections(pool: &codeyard_database::DbPool) {
     use codeyard_db_identity::users::accounts;
     use codeyard_db_orgs::organizations;
     use codeyard_db_repos::issues;
@@ -3247,7 +3247,7 @@ async fn check_list_display_projections(pool: &codeyard_db_core::DbPool) {
         pool,
         writer.id,
         base.id,
-        codeyard_db_core::models::AccessLevel::Write,
+        codeyard_database::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -3258,7 +3258,7 @@ async fn check_list_display_projections(pool: &codeyard_db_core::DbPool) {
         .await
         .unwrap();
     match pool {
-        codeyard_db_core::DbPool::Postgres(native) => {
+        codeyard_database::DbPool::Postgres(native) => {
             sqlx::query("UPDATE issues SET created_at='2020-01-01T00:00:00Z' WHERE id=$1")
                 .bind(older.id)
                 .execute(native)
@@ -3270,7 +3270,7 @@ async fn check_list_display_projections(pool: &codeyard_db_core::DbPool) {
                 .await
                 .unwrap();
         }
-        codeyard_db_core::DbPool::Sqlite(native) => {
+        codeyard_database::DbPool::Sqlite(native) => {
             sqlx::query("UPDATE issues SET created_at='2020-01-01T00:00:00.000000Z' WHERE id=?1")
                 .bind(older.id)
                 .execute(native)
@@ -3374,7 +3374,7 @@ async fn check_list_display_projections(pool: &codeyard_db_core::DbPool) {
         newer.id,
         owner.id,
         "Discussion",
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(pool, owner.id).await,
         ),
     )
@@ -3392,7 +3392,7 @@ async fn check_list_display_projections(pool: &codeyard_db_core::DbPool) {
         newer.id,
         owner.id,
         "Second",
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(pool, owner.id).await,
         ),
     )
@@ -3404,7 +3404,7 @@ async fn check_list_display_projections(pool: &codeyard_db_core::DbPool) {
         newer.id,
         owner.id,
         "Third",
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(pool, owner.id).await,
         ),
     )
@@ -3450,7 +3450,7 @@ async fn check_list_display_projections(pool: &codeyard_db_core::DbPool) {
     .await
     .unwrap()
     {
-        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(org) => org,
+        codeyard_database::queries::organizations::OrganizationOutcome::Applied(org) => org,
         other => panic!("organization creation failed: {other:?}"),
     };
     let org_repo = codeyard_db_repos::repositories::creation::insert_repository(
@@ -3630,7 +3630,7 @@ async fn check_list_display_projections(pool: &codeyard_db_core::DbPool) {
         pool,
         pull.id,
         writer.id,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(pool, writer.id).await,
         ),
         "approved",
@@ -3644,7 +3644,7 @@ async fn check_list_display_projections(pool: &codeyard_db_core::DbPool) {
         pool,
         pull.id,
         writer.id,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(pool, writer.id).await,
         ),
         "commented",
@@ -3658,7 +3658,7 @@ async fn check_list_display_projections(pool: &codeyard_db_core::DbPool) {
         pool,
         pull.id,
         writer.id,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(pool, writer.id).await,
         ),
         "commented",
@@ -3677,7 +3677,7 @@ async fn check_list_display_projections(pool: &codeyard_db_core::DbPool) {
         pool,
         pull.id,
         writer.id,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(pool, writer.id).await,
         ),
         "approved",
@@ -3691,7 +3691,7 @@ async fn check_list_display_projections(pool: &codeyard_db_core::DbPool) {
         pool,
         pull.id,
         writer.id,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(pool, writer.id).await,
         ),
         "commented",
@@ -3714,7 +3714,7 @@ async fn check_list_display_projections(pool: &codeyard_db_core::DbPool) {
         pool,
         pull.id,
         writer.id,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(pool, writer.id).await,
         ),
         "changes_requested",
@@ -3756,7 +3756,7 @@ async fn check_list_display_projections(pool: &codeyard_db_core::DbPool) {
         pool,
         second.id,
         base.id,
-        codeyard_db_core::models::AccessLevel::Write,
+        codeyard_database::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -3764,7 +3764,7 @@ async fn check_list_display_projections(pool: &codeyard_db_core::DbPool) {
         pool,
         pull.id,
         second.id,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(pool, second.id).await,
         ),
         "changes_requested",
@@ -3842,7 +3842,7 @@ async fn postgres_list_projections_and_owned_notification_cursor() {
     fixture.pool.close().await;
 }
 
-async fn check_notification_cursor(pool: &codeyard_db_core::DbPool) {
+async fn check_notification_cursor(pool: &codeyard_database::DbPool) {
     use codeyard_db_repos::notifications::events::announce;
     use codeyard_db_repos::notifications::events::EventCursor;
     let mut cursor = EventCursor::connect(pool).await.unwrap();
@@ -3894,7 +3894,7 @@ async fn sqlite_read_failures_propagate() {
 /// Backdates `count` rows in each table the identity sweep covers. The application
 /// API cannot create expired rows, so the fixture writes them directly.
 async fn insert_transfer_rows(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     user_id: i64,
     file_id: Uuid,
     uploaded_at: DateTime<Utc>,
@@ -3914,12 +3914,12 @@ async fn insert_transfer_rows(
             ""
         } else {
             match pool {
-                codeyard_db_core::DbPool::Postgres(_) => ", 10, $3::timestamptz",
-                codeyard_db_core::DbPool::Sqlite(_) => ", 10, ?3",
+                codeyard_database::DbPool::Postgres(_) => ", 10, $3::timestamptz",
+                codeyard_database::DbPool::Sqlite(_) => ", 10, ?3",
             }
         };
         match pool {
-            codeyard_db_core::DbPool::Postgres(raw) => {
+            codeyard_database::DbPool::Postgres(raw) => {
                 sqlx::query(&format!(
                     "INSERT INTO {table} (user_id, file_id, reason, {column}{size})
                      SELECT $1, $2, 'other', $3::timestamptz{bytes} FROM generate_series(1::bigint, $4::bigint)"
@@ -3932,7 +3932,7 @@ async fn insert_transfer_rows(
                 .await
                 .unwrap();
             }
-            codeyard_db_core::DbPool::Sqlite(raw) => {
+            codeyard_database::DbPool::Sqlite(raw) => {
                 sqlx::query(&format!(
                     "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ?4)
                      INSERT INTO {table} (user_id, file_id, reason, {column}{size})
@@ -3950,18 +3950,18 @@ async fn insert_transfer_rows(
     }
 }
 
-async fn transfer_row_counts(pool: &codeyard_db_core::DbPool) -> (i64, i64) {
+async fn transfer_row_counts(pool: &codeyard_database::DbPool) -> (i64, i64) {
     let sql = "SELECT (SELECT COUNT(*) FROM upload_rate_limit), (SELECT COUNT(*) FROM download_rate_limit)";
     match pool {
-        codeyard_db_core::DbPool::Postgres(raw) => {
+        codeyard_database::DbPool::Postgres(raw) => {
             sqlx::query_as(sql).fetch_one(raw).await.unwrap()
         }
-        codeyard_db_core::DbPool::Sqlite(raw) => sqlx::query_as(sql).fetch_one(raw).await.unwrap(),
+        codeyard_database::DbPool::Sqlite(raw) => sqlx::query_as(sql).fetch_one(raw).await.unwrap(),
     }
 }
 
 async fn check_expired_transfer_rows_are_bounded_and_preserve_windows(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
 ) {
     let owner = setup(pool, "public").await;
     let live = codeyard_db_repos::files::reserve_upload(
@@ -4025,10 +4025,10 @@ async fn check_expired_transfer_rows_are_bounded_and_preserve_windows(
     .await;
     // Expired charges with no surviving file must be reclaimed too.
     match pool {
-        codeyard_db_core::DbPool::Postgres(raw) => {
+        codeyard_database::DbPool::Postgres(raw) => {
             sqlx::query("UPDATE upload_rate_limit SET file_id=NULL WHERE uploaded_at < NOW() - INTERVAL '730 days'").execute(raw).await.unwrap();
         }
-        codeyard_db_core::DbPool::Sqlite(raw) => {
+        codeyard_database::DbPool::Sqlite(raw) => {
             sqlx::query("UPDATE upload_rate_limit SET file_id=NULL WHERE uploaded_at < strftime('%Y-%m-%dT%H:%M:%f000Z','now','-730 days')").execute(raw).await.unwrap();
         }
     }
@@ -4099,11 +4099,11 @@ async fn check_expired_transfer_rows_are_bounded_and_preserve_windows(
     // Independently exhaust the hour and day counts, including the deleted file's charge.
     for (hour, day) in [(2, 4), (3, 3)] {
         match pool {
-            codeyard_db_core::DbPool::Postgres(raw) => {
+            codeyard_database::DbPool::Postgres(raw) => {
                 sqlx::query("UPDATE file_reason_limits SET max_uploads_per_hour=$1,max_uploads_per_day=$2 WHERE reason='other'")
                     .bind(hour).bind(day).execute(raw).await.unwrap();
             }
-            codeyard_db_core::DbPool::Sqlite(raw) => {
+            codeyard_database::DbPool::Sqlite(raw) => {
                 sqlx::query("UPDATE file_reason_limits SET max_uploads_per_hour=?1,max_uploads_per_day=?2 WHERE reason='other'")
                     .bind(hour).bind(day).execute(raw).await.unwrap();
             }
@@ -4159,10 +4159,10 @@ async fn postgres_expired_transfer_rows_are_bounded_and_preserve_windows() {
     fixture.pool.close().await;
 }
 
-async fn insert_expired_identity_rows(pool: &codeyard_db_core::DbPool, user_id: i64, count: i64) {
+async fn insert_expired_identity_rows(pool: &codeyard_database::DbPool, user_id: i64, count: i64) {
     let past = Utc::now() - Duration::days(1);
     match pool {
-        codeyard_db_core::DbPool::Postgres(raw) => {
+        codeyard_database::DbPool::Postgres(raw) => {
             sqlx::query("INSERT INTO anonymous_sessions (id, expires_at) SELECT 'expired-anon-' || i, $1::timestamptz FROM generate_series(1::bigint, $2::bigint) AS i")
                 .bind(past)
                 .bind(count)
@@ -4183,7 +4183,7 @@ async fn insert_expired_identity_rows(pool: &codeyard_db_core::DbPool, user_id: 
                 .await
                 .unwrap();
         }
-        codeyard_db_core::DbPool::Sqlite(raw) => {
+        codeyard_database::DbPool::Sqlite(raw) => {
             let past = timestamp(past);
             sqlx::query("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ?2) INSERT INTO anonymous_sessions (id, expires_at) SELECT 'expired-anon-' || i, ?1 FROM n")
                 .bind(past.clone())
@@ -4208,7 +4208,7 @@ async fn insert_expired_identity_rows(pool: &codeyard_db_core::DbPool, user_id: 
     }
 }
 
-async fn check_expired_identity_rows_are_removed_in_batches(pool: &codeyard_db_core::DbPool) {
+async fn check_expired_identity_rows_are_removed_in_batches(pool: &codeyard_database::DbPool) {
     let admin = setup(pool, "public").await;
     // 501 rows per table: each statement runs one full batch, then one short batch.
     insert_expired_identity_rows(pool, admin.id, 501).await;
@@ -4275,7 +4275,7 @@ async fn check_expired_identity_rows_are_removed_in_batches(pool: &codeyard_db_c
     );
 }
 
-async fn profile_session(pool: &codeyard_db_core::DbPool, actor: i64) -> String {
+async fn profile_session(pool: &codeyard_database::DbPool, actor: i64) -> String {
     let session = token();
     codeyard_db_identity::users::sessions::create_session(
         pool,
@@ -4290,7 +4290,7 @@ async fn profile_session(pool: &codeyard_db_core::DbPool, actor: i64) -> String 
     session
 }
 
-async fn check_processed_signup_verifiers_are_cleared(pool: &codeyard_db_core::DbPool) {
+async fn check_processed_signup_verifiers_are_cleared(pool: &codeyard_database::DbPool) {
     use codeyard_db_identity::users::signup_requests;
     let admin = setup(pool, "private").await;
     signup_requests::create_signup_request(pool, "applicant-pending", None, "hash-pending")
@@ -4334,14 +4334,14 @@ async fn check_processed_signup_verifiers_are_cleared(pool: &codeyard_db_core::D
             .unwrap();
         assert_eq!(processed.len(), 1);
         let hash: String = match pool {
-            codeyard_db_core::DbPool::Postgres(raw) => {
+            codeyard_database::DbPool::Postgres(raw) => {
                 sqlx::query_scalar("SELECT password_hash FROM signup_requests WHERE id=$1")
                     .bind(processed[0].id)
                     .fetch_one(raw)
                     .await
                     .unwrap()
             }
-            codeyard_db_core::DbPool::Sqlite(raw) => {
+            codeyard_database::DbPool::Sqlite(raw) => {
                 sqlx::query_scalar("SELECT password_hash FROM signup_requests WHERE id=?1")
                     .bind(processed[0].id)
                     .fetch_one(raw)
@@ -4360,7 +4360,7 @@ async fn check_processed_signup_verifiers_are_cleared(pool: &codeyard_db_core::D
     assert_eq!(user.password_hash.as_deref(), Some("hash-approved"));
 }
 
-async fn check_anonymous_sessions_keep_the_newest_rows(pool: &codeyard_db_core::DbPool) {
+async fn check_anonymous_sessions_keep_the_newest_rows(pool: &codeyard_database::DbPool) {
     let admin = setup(pool, "public").await;
     let now = Utc::now();
     // Five live anonymous sessions, oldest first, and one authenticated session.
@@ -4432,20 +4432,20 @@ async fn check_anonymous_sessions_keep_the_newest_rows(pool: &codeyard_db_core::
     );
 }
 
-async fn anonymous_session_ids_newest_first(pool: &codeyard_db_core::DbPool) -> Vec<String> {
+async fn anonymous_session_ids_newest_first(pool: &codeyard_database::DbPool) -> Vec<String> {
     const SQL: &str = "SELECT id FROM anonymous_sessions ORDER BY expires_at DESC, id DESC";
     match pool {
-        codeyard_db_core::DbPool::Postgres(raw) => {
+        codeyard_database::DbPool::Postgres(raw) => {
             sqlx::query_scalar(SQL).fetch_all(raw).await.unwrap()
         }
-        codeyard_db_core::DbPool::Sqlite(raw) => {
+        codeyard_database::DbPool::Sqlite(raw) => {
             sqlx::query_scalar(SQL).fetch_all(raw).await.unwrap()
         }
     }
 }
 
 async fn check_concurrent_anonymous_session_sweeps_keep_the_newest_rows(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
 ) {
     const CAP: i64 = 10;
     // 510 rows beyond the cap: the first sweep deletes a full batch, the second the rest.
@@ -4481,11 +4481,11 @@ async fn sqlite_anonymous_sessions_keep_only_the_newest_rows() {
     check_anonymous_sessions_keep_the_newest_rows(&fixture.pool).await;
     // One connection makes the two sweeps take turns statement by statement, so the second
     // starts after the first has deleted a batch.
-    let single: codeyard_db_core::DbPool = SqlitePoolOptions::new()
+    let single: codeyard_database::DbPool = SqlitePoolOptions::new()
         .max_connections(1)
         .connect(&fixture.url)
         .await
-        .map(codeyard_db_core::pool::Pool::from)
+        .map(codeyard_database::pool::Pool::from)
         .unwrap()
         .into();
     check_concurrent_anonymous_session_sweeps_keep_the_newest_rows(&single).await;
@@ -4498,11 +4498,11 @@ async fn postgres_anonymous_sessions_keep_only_the_newest_rows() {
     let fixture = PostgresDatabase::new().await;
     check_anonymous_sessions_keep_the_newest_rows(&fixture.pool).await;
     // As in the SQLite test, one connection makes the two sweeps take turns.
-    let single: codeyard_db_core::DbPool = PgPoolOptions::new()
+    let single: codeyard_database::DbPool = PgPoolOptions::new()
         .max_connections(1)
         .connect(&fixture.connection_url())
         .await
-        .map(codeyard_db_core::pool::Pool::from)
+        .map(codeyard_database::pool::Pool::from)
         .unwrap()
         .into();
     check_concurrent_anonymous_session_sweeps_keep_the_newest_rows(&single).await;
@@ -4510,19 +4510,19 @@ async fn postgres_anonymous_sessions_keep_only_the_newest_rows() {
     fixture.pool.close().await;
 }
 
-async fn anonymous_session_count(pool: &codeyard_db_core::DbPool) -> i64 {
+async fn anonymous_session_count(pool: &codeyard_database::DbPool) -> i64 {
     const SQL: &str = "SELECT count(*) FROM anonymous_sessions";
     match pool {
-        codeyard_db_core::DbPool::Postgres(raw) => {
+        codeyard_database::DbPool::Postgres(raw) => {
             sqlx::query_scalar(SQL).fetch_one(raw).await.unwrap()
         }
-        codeyard_db_core::DbPool::Sqlite(raw) => {
+        codeyard_database::DbPool::Sqlite(raw) => {
             sqlx::query_scalar(SQL).fetch_one(raw).await.unwrap()
         }
     }
 }
 
-async fn check_sessions_arriving_during_a_sweep_survive(pool: &codeyard_db_core::DbPool) {
+async fn check_sessions_arriving_during_a_sweep_survive(pool: &codeyard_database::DbPool) {
     const CAP: i64 = 10;
     // Three batches of surplus, so the sweep runs more than one delete.
     let base = Utc::now() + Duration::days(2);
@@ -4707,7 +4707,7 @@ async fn postgres_acknowledgement_waits_for_account_transition() {
     let recipient = owner.id;
     codeyard_db_repos::notifications::records::create_notification(
         &fixture.pool,
-        codeyard_db_core::queries::notifications::records::NewNotification {
+        codeyard_database::queries::notifications::records::NewNotification {
             user_id: recipient,
             actor_id: None,
             repo_id: None,
@@ -4769,7 +4769,7 @@ async fn postgres_acknowledgement_waits_for_account_transition() {
 }
 
 async fn profile_after_update(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     actor: i64,
     organization: i64,
     profile: codeyard_db_orgs::organizations::profiles::OrganizationProfile,
@@ -4777,7 +4777,7 @@ async fn profile_after_update(
     match codeyard_db_orgs::organizations::profiles::update_organization_profile(
         pool,
         actor,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(pool, actor).await,
         ),
         organization,
@@ -4786,7 +4786,7 @@ async fn profile_after_update(
     .await
     .unwrap()
     {
-        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(metadata) => {
+        codeyard_database::queries::organizations::OrganizationOutcome::Applied(metadata) => {
             (metadata.display_name, metadata.description)
         }
         _ => panic!("the owner updates the profile"),
@@ -4796,7 +4796,7 @@ async fn profile_after_update(
 /// A field that an update leaves out keeps the value the database holds when the update
 /// runs. A description-only update must not restore a display name that another update
 /// changed after the request read the organization.
-async fn check_partial_profile_updates_keep_omitted_fields(pool: &codeyard_db_core::DbPool) {
+async fn check_partial_profile_updates_keep_omitted_fields(pool: &codeyard_database::DbPool) {
     use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
 
     let owner = codeyard_db_identity::users::accounts::create_user(pool, "profile_owner", None)
@@ -4814,7 +4814,7 @@ async fn check_partial_profile_updates_keep_omitted_fields(pool: &codeyard_db_co
     .await
     .unwrap()
     {
-        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(metadata) => {
+        codeyard_database::queries::organizations::OrganizationOutcome::Applied(metadata) => {
             metadata
         }
         _ => panic!("the owner creates the organization"),
@@ -4862,13 +4862,13 @@ const MIB: i64 = 1 << 20;
 
 /// Records a storage snapshot at a chosen time instead of the schema's "now" default.
 async fn record_storage_snapshot(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     repo_id: i64,
     size_bytes: i64,
     recorded_at: DateTime<Utc>,
 ) {
     match pool {
-        codeyard_db_core::DbPool::Sqlite(raw) => {
+        codeyard_database::DbPool::Sqlite(raw) => {
             sqlx::query(
                 "INSERT INTO repo_storage_history (repo_id, size_bytes, recorded_at) VALUES (?1, ?2, ?3)",
             )
@@ -4879,7 +4879,7 @@ async fn record_storage_snapshot(
             .await
             .unwrap();
         }
-        codeyard_db_core::DbPool::Postgres(raw) => {
+        codeyard_database::DbPool::Postgres(raw) => {
             sqlx::query(
                 "INSERT INTO repo_storage_history (repo_id, size_bytes, recorded_at) VALUES ($1, $2, $3)",
             )
@@ -4895,13 +4895,13 @@ async fn record_storage_snapshot(
 
 /// Moves a row's creation time so the activity window can be tested at its edges.
 async fn set_created_at(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     table: &str,
     id: i64,
     created_at: DateTime<Utc>,
 ) {
     match pool {
-        codeyard_db_core::DbPool::Sqlite(raw) => {
+        codeyard_database::DbPool::Sqlite(raw) => {
             sqlx::query(&format!("UPDATE {table} SET created_at = ?1 WHERE id = ?2"))
                 .bind(timestamp(created_at))
                 .bind(id)
@@ -4909,7 +4909,7 @@ async fn set_created_at(
                 .await
                 .unwrap();
         }
-        codeyard_db_core::DbPool::Postgres(raw) => {
+        codeyard_database::DbPool::Postgres(raw) => {
             sqlx::query(&format!("UPDATE {table} SET created_at = $1 WHERE id = $2"))
                 .bind(created_at)
                 .bind(id)
@@ -4921,7 +4921,7 @@ async fn set_created_at(
 }
 
 async fn check_storage_growth_counts_only_bytes_added_in_the_window(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
 ) {
     let owner = codeyard_db_identity::users::accounts::create_user(pool, "storage-owner", None)
         .await
@@ -4948,7 +4948,7 @@ async fn check_storage_growth_counts_only_bytes_added_in_the_window(
     assert_eq!(last.cumulative_storage_bytes, MIB);
 }
 
-async fn check_activity_window_starts_at_midnight_utc(pool: &codeyard_db_core::DbPool) {
+async fn check_activity_window_starts_at_midnight_utc(pool: &codeyard_database::DbPool) {
     let owner = codeyard_db_identity::users::accounts::create_user(pool, "activity-owner", None)
         .await
         .unwrap();
@@ -5002,7 +5002,7 @@ async fn postgres_storage_growth_counts_only_bytes_added_in_the_window() {
     fixture.pool.close().await;
 }
 
-async fn check_activity_baselines_use_per_repository_lookups(pool: &codeyard_db_core::DbPool) {
+async fn check_activity_baselines_use_per_repository_lookups(pool: &codeyard_database::DbPool) {
     let owner = codeyard_db_identity::users::accounts::create_user(pool, "history-owner", None)
         .await
         .unwrap();
@@ -5014,11 +5014,11 @@ async fn check_activity_baselines_use_per_repository_lookups(pool: &codeyard_db_
         .unwrap()
         .and_utc();
     match pool {
-        codeyard_db_core::DbPool::Postgres(raw) => {
+        codeyard_database::DbPool::Postgres(raw) => {
             sqlx::query("INSERT INTO repo_storage_history(repo_id,size_bytes,recorded_at) SELECT CASE WHEN i%2=0 THEN $1 ELSE $2 END,$3,$4::timestamptz+i*interval '1 second' FROM generate_series(1,20000) i")
                 .bind(active.id).bind(idle.id).bind(GIB).bind(midnight - Duration::days(30)).execute(raw).await.unwrap();
         }
-        codeyard_db_core::DbPool::Sqlite(raw) => {
+        codeyard_database::DbPool::Sqlite(raw) => {
             sqlx::query("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<20000) INSERT INTO repo_storage_history(repo_id,size_bytes,recorded_at) SELECT CASE WHEN i%2=0 THEN ?1 ELSE ?2 END,?3,strftime('%Y-%m-%dT%H:%M:%f000Z',?4,printf('%d seconds',i)) FROM n")
                 .bind(active.id).bind(idle.id).bind(GIB).bind(timestamp(midnight - Duration::days(30))).execute(raw).await.unwrap();
         }
@@ -5039,10 +5039,10 @@ async fn check_activity_baselines_use_per_repository_lookups(pool: &codeyard_db_
 
     // Keep plan coverage tied to the SQL executed by the database function.
     let source = match pool {
-        codeyard_db_core::DbPool::Postgres(_) => {
+        codeyard_database::DbPool::Postgres(_) => {
             include_str!("../../backend/db/identity/src/postgres/users/accounts.rs")
         }
-        codeyard_db_core::DbPool::Sqlite(_) => {
+        codeyard_database::DbPool::Sqlite(_) => {
             include_str!("../../backend/db/identity/src/sqlite/users/accounts.rs")
         }
     };
@@ -5057,7 +5057,7 @@ async fn check_activity_baselines_use_per_repository_lookups(pool: &codeyard_db_
         .unwrap()
         .0;
     match pool {
-        codeyard_db_core::DbPool::Postgres(raw) => {
+        codeyard_database::DbPool::Postgres(raw) => {
             sqlx::query("ANALYZE repo_storage_history")
                 .execute(raw)
                 .await
@@ -5098,7 +5098,7 @@ async fn check_activity_baselines_use_per_repository_lookups(pool: &codeyard_db_
                 assert!(examined < 100.0, "history must not be scanned: {plan}");
             }
         }
-        codeyard_db_core::DbPool::Sqlite(raw) => {
+        codeyard_database::DbPool::Sqlite(raw) => {
             sqlx::query("ANALYZE repo_storage_history")
                 .execute(raw)
                 .await
@@ -5159,7 +5159,7 @@ async fn postgres_activity_window_starts_at_midnight_utc() {
 }
 
 /// Reopening clears `closed_at`, but the closure stays in the activity charts.
-async fn check_reopening_keeps_the_closure_in_activity(pool: &codeyard_db_core::DbPool) {
+async fn check_reopening_keeps_the_closure_in_activity(pool: &codeyard_database::DbPool) {
     let owner = codeyard_db_identity::users::accounts::create_user(pool, "closure-owner", None)
         .await
         .unwrap();
@@ -5251,7 +5251,7 @@ fn pull_request_titles(
 
 /// Counts and search are one rule per database, so both kinds share one fixture: the state
 /// tabs and the search must agree with the list they label.
-async fn check_issue_and_pull_request_counts_and_search(pool: &codeyard_db_core::DbPool) {
+async fn check_issue_and_pull_request_counts_and_search(pool: &codeyard_database::DbPool) {
     use codeyard_db_repos::discussions::StateCounts;
     use codeyard_db_repos::issues;
     use codeyard_db_repos::pull_requests::records;
@@ -5705,14 +5705,14 @@ async fn only_columns_that_can_decide_a_merge_move_the_merge_policy_on_both_engi
         .await;
         for (table, ignored) in IGNORED {
             let columns: Vec<String> = match pool {
-                codeyard_db_core::DbPool::Postgres(raw) => sqlx::query_scalar(
+                codeyard_database::DbPool::Postgres(raw) => sqlx::query_scalar(
                     "SELECT column_name::text FROM information_schema.columns WHERE table_schema=current_schema() AND table_name=$1",
                 )
                 .bind(table)
                 .fetch_all(raw)
                 .await
                 .unwrap(),
-                codeyard_db_core::DbPool::Sqlite(raw) => {
+                codeyard_database::DbPool::Sqlite(raw) => {
                     sqlx::query_scalar("SELECT name FROM pragma_table_info(?1)")
                         .bind(table)
                         .fetch_all(raw)

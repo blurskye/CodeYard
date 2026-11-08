@@ -1,6 +1,6 @@
 use anyhow::Result;
-use codeyard_db_core::models::Follow;
-use codeyard_db_core::pool::PgPool;
+use codeyard_database::models::Follow;
+use codeyard_database::pool::PgPool;
 
 pub async fn list_connections(
     pool: &PgPool,
@@ -8,7 +8,7 @@ pub async fn list_connections(
     followers: bool,
     limit: i64,
     offset: i64,
-) -> Result<Vec<codeyard_db_core::models::User>> {
+) -> Result<Vec<codeyard_database::models::User>> {
     Ok(sqlx::query_as(crate::following::connections_sql(followers))
         .bind(user_id)
         .bind(limit)
@@ -21,7 +21,7 @@ pub async fn follow_user(
     pool: &PgPool,
     follower_id: i64,
     following_id: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
 ) -> Result<bool> {
     let mut tx = pool.begin().await?;
     crate::postgres::users::transitions::require_account(&mut tx, follower_id, credential).await?;
@@ -45,7 +45,7 @@ pub async fn unfollow_user(
     pool: &PgPool,
     follower_id: i64,
     following_id: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
 ) -> Result<bool> {
     let mut tx = pool.begin().await?;
     crate::postgres::users::transitions::require_account(&mut tx, follower_id, credential).await?;

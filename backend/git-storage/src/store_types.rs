@@ -1,0 +1,271 @@
+//! The values that cross the store boundary: Git sessions, blob reads, merge requests and
+//! the size limits that apply to them.
+
+use codeyard_database::models::Repository;
+use codeyard_git::MAX_WORKFLOW_DIRECTORY_ENTRIES;
+use codeyard_types::ci::MAX_CI_WORKFLOW_BYTES;
+use serde::Deserialize;
+use serde::Serialize;
+
+/// The initiating reader of a pull head; remote publication retains token bounds.
+#[derive(Clone, Copy, Debug)]
+pub struct PullHeadActor {
+    pub user: i64,
+    pub token: Option<i64>,
+}
+impl From<i64> for PullHeadActor {
+    fn from(user: i64) -> Self {
+        Self { user, token: None }
+    }
+}
+
+/// The two Git server programs a session can run.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GitService {
+    UploadPack,
+    ReceivePack,
+}
+
+impl GitService {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::UploadPack => "upload-pack",
+            Self::ReceivePack => "receive-pack",
+        }
+    }
+}
+
+/// A live Git service, interactive over SSH and stateless over HTTP.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct GitSession {
+    pub service: GitService,
+    pub stateless: bool,
+    pub git_protocol: Option<String>,
+    pub credential: Option<crate::repositories::git_sessions::ReceiveCredential>,
+    pub owner: String,
+    /// Set only after a storage-side CI claim check; never accepted from the wire.
+    #[serde(skip)]
+    pub allow_unreachable: bool,
+}
+
+impl GitSession {
+    pub fn new(service: GitService, stateless: bool) -> Self {
+        Self {
+            service,
+            stateless,
+            git_protocol: None,
+            credential: None,
+            owner: String::new(),
+            allow_unreachable: false,
+        }
+    }
+}
+
+pub struct GitStreams<'a> {
+    pub input: &'a mut (dyn tokio::io::AsyncRead + Unpin + Send),
+    pub output: &'a mut (dyn tokio::io::AsyncWrite + Unpin + Send),
+    pub errors: &'a mut (dyn tokio::io::AsyncWrite + Unpin + Send),
+}
+
+/// A bounded part of an immutable blob, with metadata for range and preview
+/// responses.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BlobBytes {
+    pub id: String,
+    pub bytes: Vec<u8>,
+    pub is_binary: bool,
+    pub size: u64,
+    pub offset: u64,
+    /// The Git file mode of the entry, such as 0o100644 or 0o120000.
+    pub mode: u32,
+    #[serde(default)]
+    pub preview: Option<BlobPreviewMetadata>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BlobPreviewMetadata {
+    pub first_line: usize,
+    pub previous: Option<u64>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BlobMetadata {
+    pub id: String,
+    pub is_binary: bool,
+    pub size: u64,
+    pub offset: u64,
+    pub mode: u32,
+    #[serde(default)]
+    pub preview: Option<BlobPreviewMetadata>,
+}
+
+pub const MAX_BLOB_RESPONSE_BYTES: usize = codeyard_git::MAX_BLOB_MATERIALIZE_BYTES;
+pub const MAX_ARCHIVE_RESPONSE_BYTES: usize = 32 * 1024 * 1024;
+pub const MAX_COMMIT_PAGE_SIZE: usize = 100;
+pub const MAX_COMMIT_OFFSET: usize = 100_000;
+pub const MAX_CONTRIBUTOR_RESPONSE_BYTES: usize = 1024 * 1024;
+
+pub const MAX_WORKFLOW_PAYLOAD_BYTES: usize =
+    MAX_WORKFLOW_DIRECTORY_ENTRIES * MAX_CI_WORKFLOW_BYTES;
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct WorkflowPayloadEntry {
+    pub path: String,
+    pub length: usize,
+}
+
+/// How the commits of a pull request reach the base branch.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MergeMethod {
+    /// A merge commit with the base and the head as parents.
+    #[default]
+    Merge,
+    /// One commit on the base branch that holds the whole change.
+    Squash,
+    /// Each commit of the head, replayed in order on the base branch.
+    Rebase,
+}
+
+impl MergeMethod {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Merge => "merge",
+            Self::Squash => "squash",
+            Self::Rebase => "rebase",
+        }
+    }
+
+    /// The method a merge form or request names, if it is one.
+    pub fn parse(name: &str) -> Option<Self> {
+        [Self::Merge, Self::Squash, Self::Rebase]
+            .into_iter()
+            .find(|method| method.as_str() == name)
+    }
+}
+
+/// The merge methods that `repository` allows, in the order the merge form offers them.
+pub fn allowed_merge_methods(repository: &Repository) -> Vec<MergeMethod> {
+    [
+        (repository.allow_merge_commit, MergeMethod::Merge),
+        (repository.allow_squash_merge, MergeMethod::Squash),
+        (repository.allow_rebase_merge, MergeMethod::Rebase),
+    ]
+    .into_iter()
+    .filter_map(|(allowed, method)| allowed.then_some(method))
+    .collect()
+}
+
+/// The old tip remains part of the result when syncing a fork from its upstream.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct UpstreamMerge {
+    pub old: String,
+    pub sha: String,
+    pub merge_type: UpstreamMergeType,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum UpstreamMergeType {
+    None,
+    FastForward,
+    Merge,
+}
+
+/// Merge the readable source's `base` into an existing writable head branch, or replay the
+/// head's commits onto it when `rebase` is set.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PullBranchUpdate {
+    pub pull_request_id: i64,
+    pub base_branch: String,
+    pub branch: String,
+    pub head: String,
+    pub base: String,
+    #[serde(default)]
+    pub rebase: bool,
+    pub name: String,
+    pub email: String,
+    /// The token the request came with, for the workflows permission; `None` for a session.
+    #[serde(default)]
+    pub token: Option<i64>,
+}
+
+/// Merge `head_branch` into `base_branch`, as approved when the branches were at
+/// `head` and `base`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MergeRequest {
+    pub head_branch: String,
+    pub base_branch: String,
+    pub head: String,
+    pub base: String,
+    /// The merge message or squash title. A rebase keeps each commit's own message.
+    pub message: String,
+    /// A supplied squash description replaces the default list of commit subjects.
+    #[serde(default)]
+    pub squash_body: Option<String>,
+    /// The committer: the person who merges.
+    pub name: String,
+    pub email: String,
+    pub method: MergeMethod,
+    /// The author of a merge or squash commit. Without one, the committer is the author.
+    pub author_name: Option<String>,
+    pub author_email: Option<String>,
+}
+
+/// Reverse the merged tree's change from `before` on top of the current base.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RevertRequest {
+    pub current: String,
+    pub merged: String,
+    pub before: String,
+    pub message: String,
+    pub name: String,
+    pub email: String,
+}
+
+/// An asynchronous publication carries the original credential and durable request identity
+/// all the way to the owning storage node. Older peers must reject, not ignore, this authority.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AsyncMergePublication {
+    pub policy: Option<codeyard_db_repos::pull_requests::merge_policy::Snapshot>,
+    pub uuid: String,
+    pub token_id: i64,
+    pub pull_request_id: i64,
+    pub heads: Vec<(String, String)>,
+    pub base_branch: String,
+    pub base: String,
+    pub result: String,
+    pub method: MergeMethod,
+}
+
+/// A prepared, direct branch merge. Both mutable branches are pinned independently of the
+/// merge commit's identity. Unlike pull-request publication, this must pass direct-write policy.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BranchMergePublication {
+    pub base_branch: String,
+    pub base: String,
+    pub head_branch: Option<String>,
+    pub head: String,
+    pub result: String,
+    pub authority: codeyard_database::queries::credentials::Actor,
+}
+
+/// One branch that a restack moves: the commit it must still be at, and the commit it moves to.
+/// Equal commits hold a branch the restack built on without moving it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RestackMove {
+    pub branch: String,
+    pub old: String,
+    pub new: String,
+}
+
+/// Why a prepared merge changed nothing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MergeFailure {
+    /// The branches conflict, or Git could not build the merge commit.
+    CannotMerge,
+    /// A branch moved after the merge commit was built, so nothing was published.
+    BranchMoved,
+    /// The owning storage node could not be reached.
+    Unavailable,
+}

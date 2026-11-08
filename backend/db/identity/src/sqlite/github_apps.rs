@@ -3,10 +3,10 @@ use crate::github_apps::Installation;
 use crate::github_apps::InstallationFilter;
 use crate::github_apps::RepositoryChange;
 use anyhow::Result;
-use codeyard_db_core::models::PersonalAccessToken;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::pool::SqlitePool;
-use codeyard_db_core::queries::github_apps::Token;
+use codeyard_database::models::PersonalAccessToken;
+use codeyard_database::models::Repository;
+use codeyard_database::pool::SqlitePool;
+use codeyard_database::queries::github_apps::Token;
 
 pub async fn delete_registration(
     pool: &SqlitePool,
@@ -65,7 +65,7 @@ pub(super) async fn register_in_connection(
     sqlx::query("INSERT INTO oauth_applications(owner_id,client_id,secret_hash,name,homepage,redirect_uri,is_github_app) VALUES($1,$2,$3,$4,$5,$5,TRUE)").bind(actor).bind(&app.client_id).bind(secret_hash).bind(&app.name).bind(&app.homepage).execute(&mut *tx).await?;
     let bot: i64 = sqlx::query_scalar(&format!(
         "INSERT INTO users(home_cell,username,display_name) VALUES({cell_home},$1,$2) RETURNING id",
-        cell_home = codeyard_db_core::cells::LOCAL_HOME_SQL
+        cell_home = codeyard_database::cells::LOCAL_HOME_SQL
     ))
     .bind(format!("{}[bot]", app.slug))
     .bind(&app.name)
@@ -73,7 +73,7 @@ pub(super) async fn register_in_connection(
     .await?;
     let app=sqlx::query_as("INSERT INTO github_apps(owner_id,bot_id,client_id,slug,name,description,homepage,public_key,permissions,events,access_level,is_public) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *")
         .bind(actor).bind(bot).bind(&app.client_id).bind(&app.slug).bind(&app.name).bind(&app.description).bind(&app.homepage).bind(&app.public_key).bind(&app.permissions).bind(&app.events).bind(app.access_level).bind(app.is_public).fetch_one(&mut *tx).await?;
-    if !codeyard_db_core::cells::directory::sqlite::user_id(pool, tx, bot, &[]).await? {
+    if !codeyard_database::cells::directory::sqlite::user_id(pool, tx, bot, &[]).await? {
         return Ok(None);
     }
     if !crate::sqlite::users::transitions::active_session(tx, actor, session).await? {
@@ -86,7 +86,7 @@ pub(super) async fn register_in_connection(
 pub async fn client_active(pool: &SqlitePool, client: &str) -> Result<bool> {
     Ok(sqlx::query_scalar(&format!(
         "SELECT {}",
-        codeyard_db_core::queries::oauth_apps::client_condition("$1")
+        codeyard_database::queries::oauth_apps::client_condition("$1")
     ))
     .bind(client)
     .fetch_one(pool)
@@ -238,7 +238,7 @@ pub async fn installation_repositories(
     offset: i64,
     limit: i64,
 ) -> Result<(i64, Vec<Repository>)> {
-    let filters = format!("(r.owner_user_id=i.user_id OR r.owner_org_id=i.org_id) AND NOT r.is_gist AND (i.all_repos OR EXISTS(SELECT 1 FROM github_app_repositories ar WHERE ar.installation_id=i.id AND ar.repo_id=r.id)) AND ($3 = '[]' OR r.id IN (SELECT value FROM json_each($3))) AND ($2 IS NULL OR ((r.owner_user_id=u.id OR EXISTS(SELECT 1 FROM repo_access d WHERE d.repo_id=r.id AND d.user_id=u.id AND d.access_level BETWEEN 1 AND 5) OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=r.owner_org_id AND m.user_id=u.id)) AND ({access}) >= 1))", access = codeyard_db_core::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL);
+    let filters = format!("(r.owner_user_id=i.user_id OR r.owner_org_id=i.org_id) AND NOT r.is_gist AND (i.all_repos OR EXISTS(SELECT 1 FROM github_app_repositories ar WHERE ar.installation_id=i.id AND ar.repo_id=r.id)) AND ($3 = '[]' OR r.id IN (SELECT value FROM json_each($3))) AND ($2 IS NULL OR ((r.owner_user_id=u.id OR EXISTS(SELECT 1 FROM repo_access d WHERE d.repo_id=r.id AND d.user_id=u.id AND d.access_level BETWEEN 1 AND 5) OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=r.owner_org_id AND m.user_id=u.id)) AND ({access}) >= 1))", access = codeyard_database::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL);
     let from = "FROM repositories r JOIN github_app_installations i ON i.id=$1 LEFT JOIN users u ON u.id=$2";
     let mut tx = pool.begin().await?;
     let total: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) {from} WHERE {filters}"))
@@ -279,7 +279,7 @@ pub async fn rotate_credentials(
     crate::sqlite::users::transitions::require_account(
         &mut tx,
         actor,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(session),
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(session),
     )
     .await?;
     let app: Option<(i64, String)> =
@@ -382,7 +382,7 @@ async fn change_in_connection(
 }
 pub async fn change_repository(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     id: i64,
     repo: i64,
     add: bool,
@@ -391,11 +391,11 @@ pub async fn change_repository(
     let actor = credential.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
 
-    let installation: Option<(bool, Option<i64>)> = sqlx::query_as(&format!("SELECT i.all_repos,i.org_id FROM github_app_installations i JOIN users u ON u.id=$1 JOIN repositories r ON r.id=$3 WHERE i.id=$2 AND NOT u.is_banned AND NOT u.must_change_password AND (r.owner_user_id=i.user_id OR r.owner_org_id=i.org_id) AND ({})>=5", codeyard_db_core::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL)).bind(actor).bind(id).bind(repo).fetch_optional(&mut *tx).await?;
+    let installation: Option<(bool, Option<i64>)> = sqlx::query_as(&format!("SELECT i.all_repos,i.org_id FROM github_app_installations i JOIN users u ON u.id=$1 JOIN repositories r ON r.id=$3 WHERE i.id=$2 AND NOT u.is_banned AND NOT u.must_change_password AND (r.owner_user_id=i.user_id OR r.owner_org_id=i.org_id) AND ({})>=5", codeyard_database::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL)).bind(actor).bind(id).bind(repo).fetch_optional(&mut *tx).await?;
     let Some((all_repos, org)) = installation else {
         return Ok(RepositoryChange::Missing);
     };
-    if !codeyard_db_core::queries::sqlite::credentials::writes(
+    if !codeyard_database::queries::sqlite::credentials::writes(
         &mut tx,
         &credential,
         Some(repo),
@@ -486,7 +486,7 @@ pub async fn issue(
             return Ok(None);
         }
     }
-    let token: Option<PersonalAccessToken>=sqlx::query_as("INSERT INTO personal_access_tokens(user_id,name,token_hash,scope,expires_at) SELECT id,'GitHub App',$2,$3,$4 FROM users WHERE id=$1 AND NOT is_banned AND NOT must_change_password RETURNING id,user_id,name,scope,expires_at,created_at").bind(owner).bind(hash).bind(if write {"write"}else{"read"}).bind(codeyard_db_core::queries::sqlite::time::encode(expiry)).fetch_optional(&mut *tx).await?;
+    let token: Option<PersonalAccessToken>=sqlx::query_as("INSERT INTO personal_access_tokens(user_id,name,token_hash,scope,expires_at) SELECT id,'GitHub App',$2,$3,$4 FROM users WHERE id=$1 AND NOT is_banned AND NOT must_change_password RETURNING id,user_id,name,scope,expires_at,created_at").bind(owner).bind(hash).bind(if write {"write"}else{"read"}).bind(codeyard_database::queries::sqlite::time::encode(expiry)).fetch_optional(&mut *tx).await?;
     let Some(token) = token else {
         return Ok(None);
     };

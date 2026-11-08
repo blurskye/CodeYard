@@ -7,12 +7,12 @@ use crate::support::database::Database;
 use crate::support::fake_webui_bundle;
 use axum::http::StatusCode;
 
-use codeyard_actions::progress::Conclusion;
-use codeyard_actions::progress::Event;
-use codeyard_actions::progress::JobResult;
-use codeyard_actions::progress::State;
-use codeyard_actions::progress::Update;
-use codeyard_model::ci::LogLine;
+use codeyard_runner::progress::Conclusion;
+use codeyard_runner::progress::Event;
+use codeyard_runner::progress::JobResult;
+use codeyard_runner::progress::State;
+use codeyard_runner::progress::Update;
+use codeyard_types::ci::LogLine;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
@@ -31,7 +31,7 @@ async fn contract(pg: bool) {
     let alice = f.actor("alice").await;
     let bob = f.actor("bob").await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard_repos_core::repositories::lifecycle::provision(
+    let repo = codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
@@ -42,7 +42,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    let other = codeyard_repos_core::repositories::lifecycle::provision(
+    let other = codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
@@ -111,7 +111,7 @@ async fn contract(pg: bool) {
             workflow_name: "Build".into(),
             name: "Build Linux".into(),
             labels: vec!["linux".into()],
-            matrix: Some(codeyard_actions::progress::Matrix {
+            matrix: Some(codeyard_runner::progress::Matrix {
                 values: json!({"os":"linux"}),
             }),
         },
@@ -286,7 +286,7 @@ async fn contract(pg: bool) {
                 workflow_name: "Build".into(),
                 name: "Build Mac".into(),
                 labels: vec!["macos".into()],
-                matrix: Some(codeyard_actions::progress::Matrix {
+                matrix: Some(codeyard_runner::progress::Matrix {
                     values: json!({"os":"macos"}),
                 }),
             },
@@ -650,7 +650,7 @@ async fn summaries(f: &Database, (run, job, repo, other): (i64, i64, i64, i64), 
     assert!(send(
         "jobs",
         1,
-        "x".repeat(codeyard_actions::progress::MAX_STEP_SUMMARY_BYTES + 1)
+        "x".repeat(codeyard_runner::progress::MAX_STEP_SUMMARY_BYTES + 1)
             .as_str()
     )
     .await
@@ -682,7 +682,7 @@ async fn annotations(
     generation: &str,
     (reader, outsider): (&str, &str),
 ) {
-    use codeyard_actions::progress::Annotation;
+    use codeyard_runner::progress::Annotation;
     let annotation = Annotation {
         path: "src/main.rs".into(),
         start_line: 7,

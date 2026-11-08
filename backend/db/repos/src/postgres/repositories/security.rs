@@ -2,10 +2,10 @@ use crate::repositories::security::Reply;
 use crate::repositories::security::Report;
 use crate::repositories::security::Thread;
 use anyhow::Result;
-use codeyard_db_core::pool::PgPool;
-use codeyard_db_core::queries::postgres::repositories::access::RepositoryRowLock;
-use codeyard_model::security_reports::NewReport;
-use codeyard_model::security_reports::Refusal;
+use codeyard_database::pool::PgPool;
+use codeyard_database::queries::postgres::repositories::access::RepositoryRowLock;
+use codeyard_types::security_reports::NewReport;
+use codeyard_types::security_reports::Refusal;
 use sqlx::Postgres;
 use sqlx::Transaction;
 
@@ -29,7 +29,7 @@ async fn authority(
         RepositoryRowLock::Shared
     };
     let a =
-        codeyard_db_core::queries::postgres::repositories::access::lock_user_repo_access_in_transaction(
+        codeyard_database::queries::postgres::repositories::access::lock_user_repo_access_in_transaction(
             tx, actor, repo, lock, !write,
         )
         .await?
@@ -44,7 +44,7 @@ async fn authority(
 }
 async fn retain_credential(
     tx: &mut Transaction<'_, Postgres>,
-    actor: &codeyard_db_core::queries::credentials::Actor,
+    actor: &codeyard_database::queries::credentials::Actor,
 ) -> Result<()> {
     if let Some(credential) = actor.credential() {
         codeyard_db_identity::postgres::users::transitions::require_account(
@@ -61,7 +61,7 @@ pub async fn enabled(pool: &PgPool, repo: i64) -> Result<bool> {
 }
 pub async fn set_enabled(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo: i64,
     enabled: bool,
 ) -> Result<()> {
@@ -69,14 +69,14 @@ pub async fn set_enabled(
     let actor = authority.user_id;
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::postgres::discussions::lock_admin_authority(
+        codeyard_database::queries::postgres::discussions::lock_admin_authority(
             &mut tx, actor, repo
         )
         .await?,
         Refusal::Denied
     );
     anyhow::ensure!(
-        codeyard_db_core::queries::postgres::credentials::repository(
+        codeyard_database::queries::postgres::credentials::repository(
             &mut tx,
             &authority,
             repo,
@@ -87,10 +87,12 @@ pub async fn set_enabled(
         Refusal::Denied
     );
     if let Some(configuration) =
-        codeyard_db_core::queries::postgres::code_security::repository_configuration(&mut *tx, repo)
-            .await?
+        codeyard_database::queries::postgres::code_security::repository_configuration(
+            &mut *tx, repo,
+        )
+        .await?
     {
-        if let Some(fixed) = codeyard_db_core::queries::code_security::private_reporting(
+        if let Some(fixed) = codeyard_database::queries::code_security::private_reporting(
             &configuration.settings,
             true,
         )? {
@@ -121,7 +123,7 @@ pub async fn set_enabled(
     .bind(repo)
     .fetch_optional(&mut *tx)
     .await?;
-    let settings = codeyard_db_core::queries::code_security::with_toggle_status(
+    let settings = codeyard_database::queries::code_security::with_toggle_status(
         raw.as_deref(),
         "private_vulnerability_reporting",
         enabled,
@@ -133,7 +135,7 @@ pub async fn set_enabled(
 }
 pub async fn create_report(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo: i64,
     input: &NewReport<'_>,
 ) -> Result<i64> {
@@ -159,7 +161,7 @@ pub async fn create_report_in(
 }
 pub async fn list_reports(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo: i64,
     limit: i64,
     offset: i64,
@@ -184,7 +186,7 @@ async fn report_in(
 }
 pub async fn report_thread(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo: i64,
     id: i64,
     offset: i64,
@@ -201,12 +203,12 @@ pub async fn report_thread(
 }
 pub async fn reply(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo: i64,
     id: i64,
     body: &str,
 ) -> Result<i64> {
-    codeyard_model::security_reports::validate_body(body)?;
+    codeyard_types::security_reports::validate_body(body)?;
     let retained = actor.into();
     let actor = retained.user_id;
     let mut tx = pool.begin().await?;
@@ -240,7 +242,7 @@ pub async fn reply(
 }
 pub async fn set_state(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo: i64,
     id: i64,
     closed: bool,

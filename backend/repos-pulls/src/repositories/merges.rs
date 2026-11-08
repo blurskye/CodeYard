@@ -1,19 +1,19 @@
 //! Direct branch merges use normal ref-admission policy, not pull-request approval authority.
 
 use codeyard_ci_engine::runs::CiRuns;
-use codeyard_db_core::cells::authorization::inherit;
+use codeyard_database::cells::authorization::inherit;
 use codeyard_git as git;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
 use codeyard_git::CommitInfo;
-use codeyard_repos_core::context::NodeContext;
-use codeyard_repos_core::push_workflows::RefUpdate;
-use codeyard_repos_core::ref_errors::publication_error;
-use codeyard_repos_core::ref_errors::RefError;
-use codeyard_repos_core::repositories::store::repo_store;
-use codeyard_repos_core::store_types::BranchMergePublication;
-use codeyard_repos_core::store_types::MergeMethod;
-use codeyard_repos_core::store_types::MergeRequest;
+use codeyard_git_storage::context::NodeContext;
+use codeyard_git_storage::push_workflows::RefUpdate;
+use codeyard_git_storage::ref_errors::publication_error;
+use codeyard_git_storage::ref_errors::RefError;
+use codeyard_git_storage::repositories::store::repo_store;
+use codeyard_git_storage::store_types::BranchMergePublication;
+use codeyard_git_storage::store_types::MergeMethod;
+use codeyard_git_storage::store_types::MergeRequest;
 
 /// Native forms pin both commit identities. REST callers without a preview use the identities
 /// resolved by this operation, and publication still compares both mutable refs atomically.
@@ -34,10 +34,10 @@ fn moved() -> RefError {
 
 /// None means that the base already contains the head; no object or ref is created in that case.
 pub async fn merge_branch(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     owner: &str,
     input: BranchMerge<'_>,
@@ -163,7 +163,7 @@ pub async fn merge_branch(
             Some(&[base_name.as_str()]),
             &ci,
             actor,
-            codeyard_db_core::models::AccessLevel::Owner,
+            codeyard_database::models::AccessLevel::Owner,
         )
         .await
         .is_ok();

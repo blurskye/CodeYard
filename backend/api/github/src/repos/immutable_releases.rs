@@ -9,8 +9,8 @@ use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde_json::json;
 use serde_json::Value;
 use std::sync::Arc;
@@ -35,7 +35,7 @@ async fn check(
 ) -> Result<Json<Value>> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, false).await?;
     let actor = actor.ok_or_else(codeyard_identity::github_auth::required)?;
-    if !codeyard_repos_core::repositories::releases::immutable::enabled(
+    if !codeyard_git_storage::repositories::releases::immutable::enabled(
         &state.pool,
         Some(&actor.user),
         &repo,
@@ -62,7 +62,7 @@ async fn change(
 ) -> Result<StatusCode> {
     let (repo, actor) = repository(state, headers, owner, name, true).await?;
     let actor = actor.ok_or_else(codeyard_identity::github_auth::required)?;
-    codeyard_repos_core::repositories::releases::immutable::set_enabled(
+    codeyard_git_storage::repositories::releases::immutable::set_enabled(
         &state.pool,
         actor.database_actor(),
         repo.id,

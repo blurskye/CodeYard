@@ -46,7 +46,7 @@ backend/
   ssh/                         SSH serving and the OpenSSH gateway
   app/                         app state and domain composition
     wiring/                    the `codeyard` binary, cli and node startup
-backend/test-support/          dev-only shared fixtures
+backend/testing/          dev-only shared fixtures
 tests/                         same tests; imports use the crates' public items
 ```
 
@@ -101,7 +101,7 @@ and results stay the same. A stage can be the last one.
 0. **Measure.** `cargo build --timings` once, and once more after touching a leaf file.
    Also check which linker the builder uses and whether the 11 integration test binaries
    (each linking the whole library) can become fewer. Decide the GraphQL question here.
-1. **Layout.** Complete: the runner is in `backend/ci/runner` and generated
+1. **Layout.** Complete: the runner is in `backend/runner` and generated
    GraphQL types are in `backend/api/github-graphql`; build and generation paths follow them.
 2. **`webui`.** Native and `wasm32-unknown-unknown` with the `web` feature check.
 3. **`support` and `git`.** Moved to `backend/support/` and `backend/git/`; server
@@ -119,18 +119,18 @@ and results stay the same. A stage can be the last one.
 6. **Services.** Repository policy, imports, lockfile parsing, traffic,
    templates and Git editor preparation live in `backend/repos/`. CI configuration,
    credentials, logs and environment values live in `backend/ci/`. Membership,
-   transport, settings and quorum writes live in `backend/cluster/core/`. Webhook payloads,
+   transport, settings and quorum writes live in `backend/nodes/`. Webhook payloads,
    subscriptions and delivery live in `backend/webhooks/`. `identity`, `notifications`
    and `ssh` are extracted. Repository authority, identity mail links and delivery
    helpers have one lower owner.
-   `backend/repos-core/` owns the concrete store, Git sessions, publication checks
+   `backend/git-storage/` owns the concrete store, Git sessions, publication checks
    and workflow readers. `backend/repos-rpc/` owns repository RPC handlers.
    `backend/ci-engine/` owns admission, queues, workers and pull-request refresh.
    Receive hooks use a lower resource trait. Local RPC fallback uses an injected factory.
    Code-owner resolution lives in the CI engine. Store fixtures are an integration target.
    Receive fixtures share the composed broker integration target. Cluster startup,
-   replica maintenance and CI request handling live in `backend/cluster/`; transport
-   and quorum primitives live in `backend/cluster/core/`. Document readers
+   replica maintenance and CI request handling live in `backend/placement/`; transport
+   and quorum primitives live in `backend/nodes/`. Document readers
    use resource-access traits implemented by `AppState`. Token authentication lives
    in `identity`; issue and comment documents live in `webhooks`.
 7. **API.** Source extraction complete: HTTP plumbing, GitHub REST (one crate,

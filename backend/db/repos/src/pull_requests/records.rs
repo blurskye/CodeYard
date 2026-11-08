@@ -1,10 +1,10 @@
 use crate::discussions::ListFilter;
 use crate::discussions::StateCounts;
 use anyhow::Result;
-use codeyard_db_core::models::PullRequest;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::PullRequest;
+use codeyard_database::models::Repository;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 
 native_operation!(crate::postgres::pull_requests::records::commit_association_candidates,
     crate::sqlite::pull_requests::records::commit_association_candidates,
@@ -70,15 +70,15 @@ pub struct NewPullRequest<'a> {
 pub fn can_grant_maintainer_edit(
     actor: i64,
     base: i64,
-    head: &codeyard_db_core::models::Repository,
+    head: &codeyard_database::models::Repository,
 ) -> bool {
     head.id == base || (head.owner_kind == "user" && head.owner_user_id == Some(actor))
 }
 
 pub(crate) fn retarget_dismisses_reviews(patterns: &[String], branch: &str) -> Result<bool> {
-    let mut budget = codeyard_model::workflow_glob::WorkflowMatchBudget::new();
+    let mut budget = codeyard_types::workflow_glob::WorkflowMatchBudget::new();
     for pattern in patterns {
-        if codeyard_model::workflow_glob::branch_pattern_matches(pattern, branch, &mut budget)
+        if codeyard_types::workflow_glob::branch_pattern_matches(pattern, branch, &mut budget)
             .map_err(|_| anyhow::anyhow!("branch protection could not be checked"))?
         {
             return Ok(true);
@@ -699,13 +699,13 @@ pub struct PullRequestHeadDisplay {
 
 native_operation!(crate::postgres::pull_requests::records::create_pull_request_with_head,
     crate::sqlite::pull_requests::records::create_pull_request_with_head,
-    fn create_pull_request_with_head(pool: &DbPool, input: NewPullRequest<'_>, foreign: Option<&codeyard_db_core::cells::repositories::Admission>) -> Result<PullRequest>);
+    fn create_pull_request_with_head(pool: &DbPool, input: NewPullRequest<'_>, foreign: Option<&codeyard_database::cells::repositories::Admission>) -> Result<PullRequest>);
 
 pub(crate) async fn check_foreign_head(
     pool: &DbPool,
     input: &NewPullRequest<'_>,
     head: &Repository,
-    foreign: Option<&codeyard_db_core::cells::repositories::Admission>,
+    foreign: Option<&codeyard_database::cells::repositories::Admission>,
 ) -> Result<()> {
     let Some(foreign) = foreign else {
         anyhow::ensure!(

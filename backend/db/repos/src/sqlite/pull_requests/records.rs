@@ -15,8 +15,8 @@ use crate::pull_requests::records::StackJoin;
 use crate::pull_requests::records::StackRefusal;
 use crate::pull_requests::records::ViewerPullRequestEntry;
 use anyhow::Result;
-use codeyard_db_core::models::PullRequest;
-use codeyard_db_core::pool::SqlitePool;
+use codeyard_database::models::PullRequest;
+use codeyard_database::pool::SqlitePool;
 
 pub async fn commit_association_candidates(
     pool: &SqlitePool,
@@ -143,8 +143,8 @@ pub async fn move_open_pull_request_head(
     let Some(stored) = stored else {
         return Ok(false);
     };
-    let next = codeyard_db_core::queries::sqlite::time::next_revision(
-        codeyard_db_core::queries::sqlite::time::decode(&stored)?,
+    let next = codeyard_database::queries::sqlite::time::next_revision(
+        codeyard_database::queries::sqlite::time::decode(&stored)?,
     )?;
     let changed = sqlx::query(
         "UPDATE pull_requests SET head_sha = ?2, updated_at = ?3 WHERE id = ?1 AND state = 'open' AND head_sha = ?4",
@@ -157,7 +157,7 @@ pub async fn move_open_pull_request_head(
     .await?
     .rows_affected();
     if changed == 1 && old_head != new_head {
-        let access = codeyard_db_core::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
+        let access = codeyard_database::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
         sqlx::query(&format!("DELETE FROM pull_request_auto_merges WHERE pull_request_id=?1 AND NOT EXISTS(SELECT 1 FROM pull_requests p JOIN repositories r ON r.id=p.repo_id JOIN users u ON u.id=?2 WHERE p.id=?1 AND ({access})>=3)"))
             .bind(pull_request_id).bind(pusher).execute(&mut *tx).await?;
     }
@@ -185,8 +185,8 @@ pub async fn move_open_pull_request_base(
     let Some(stored) = stored else {
         return Ok(false);
     };
-    let next = codeyard_db_core::queries::sqlite::time::next_revision(
-        codeyard_db_core::queries::sqlite::time::decode(&stored)?,
+    let next = codeyard_database::queries::sqlite::time::next_revision(
+        codeyard_database::queries::sqlite::time::decode(&stored)?,
     )?;
     let changed = sqlx::query(
         "UPDATE pull_requests SET base_sha = ?2, fork_sha = COALESCE(?6, fork_sha), updated_at = ?3 WHERE id = ?1 AND state = 'open' AND base_sha = ?4 AND base_branch = ?5",
@@ -224,8 +224,8 @@ pub async fn clear_fork_point(
     let Some(stored) = stored else {
         return Ok(false);
     };
-    let next = codeyard_db_core::queries::sqlite::time::next_revision(
-        codeyard_db_core::queries::sqlite::time::decode(&stored)?,
+    let next = codeyard_database::queries::sqlite::time::next_revision(
+        codeyard_database::queries::sqlite::time::decode(&stored)?,
     )?;
     let changed = sqlx::query(
         "UPDATE pull_requests SET fork_sha = NULL, updated_at = ?2 WHERE id = ?1 AND state = 'open' AND fork_sha = ?3 AND base_sha = ?4 AND head_sha = ?5",
@@ -255,7 +255,7 @@ pub async fn approve_pull_request_workflows(
         .fetch_optional(&mut *tx)
         .await?;
     let Some(repo) = repo else { return Ok(false) };
-    if !codeyard_db_core::queries::sqlite::discussions::lock_write_authority(
+    if !codeyard_database::queries::sqlite::discussions::lock_write_authority(
         &mut tx, actor_id, repo,
     )
     .await?
@@ -269,7 +269,7 @@ pub async fn approve_pull_request_workflows(
     .fetch_one(&mut *tx)
     .await?;
     if fork
-        && !codeyard_db_core::queries::sqlite::action_settings::fork_runs_allowed(&mut tx, repo)
+        && !codeyard_database::queries::sqlite::action_settings::fork_runs_allowed(&mut tx, repo)
             .await?
     {
         return Ok(false);
@@ -308,7 +308,7 @@ pub async fn set_pull_request_draft(
     let Some((repo, author, state, draft, updated)) = row else {
         return Ok(ReadyOutcome::Missing);
     };
-    let writer = codeyard_db_core::queries::sqlite::discussions::lock_write_authority(
+    let writer = codeyard_database::queries::sqlite::discussions::lock_write_authority(
         &mut tx, actor_id, repo,
     )
     .await?;
@@ -319,7 +319,7 @@ pub async fn set_pull_request_draft(
         return Ok(ReadyOutcome::Denied);
     }
     if expected.is_some_and(|revision| {
-        codeyard_db_core::queries::sqlite::time::decode(&updated)
+        codeyard_database::queries::sqlite::time::decode(&updated)
             .map_or(true, |updated| revision != updated.to_rfc3339())
     }) {
         return Ok(ReadyOutcome::Changed);
@@ -334,8 +334,8 @@ pub async fn set_pull_request_draft(
     if !is_draft {
         crate::sqlite::pull_caps::check(&mut tx, author, repo, false, true, Some(pr_id)).await?;
     }
-    let next = codeyard_db_core::queries::sqlite::time::next_revision(
-        codeyard_db_core::queries::sqlite::time::decode(&updated)?,
+    let next = codeyard_database::queries::sqlite::time::next_revision(
+        codeyard_database::queries::sqlite::time::decode(&updated)?,
     )?;
     let pr = sqlx::query_as::<_, PullRequest>(
         "UPDATE pull_requests SET is_draft = ?3, updated_at = ?2 WHERE id = ?1 RETURNING *",
@@ -353,11 +353,11 @@ async fn admit_creation_head(
     pool: &SqlitePool,
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     input: &NewPullRequest<'_>,
-    head: &codeyard_db_core::models::Repository,
-    foreign: Option<&codeyard_db_core::cells::repositories::Admission>,
+    head: &codeyard_database::models::Repository,
+    foreign: Option<&codeyard_database::cells::repositories::Admission>,
 ) -> Result<()> {
     crate::pull_requests::records::check_foreign_head(
-        &codeyard_db_core::DbPool::Sqlite(pool.clone()),
+        &codeyard_database::DbPool::Sqlite(pool.clone()),
         input,
         head,
         foreign,
@@ -365,7 +365,7 @@ async fn admit_creation_head(
     .await?;
     if let Some(foreign) = foreign {
         anyhow::ensure!(
-            codeyard_db_core::queries::sqlite::credentials::repository(
+            codeyard_database::queries::sqlite::credentials::repository(
                 tx,
                 &foreign.actor,
                 input.repo_id,
@@ -373,7 +373,7 @@ async fn admit_creation_head(
                 true,
             )
             .await?
-                && codeyard_db_core::queries::sqlite::credentials::repository(
+                && codeyard_database::queries::sqlite::credentials::repository(
                     tx,
                     &foreign.actor,
                     input.repo_id,
@@ -397,7 +397,7 @@ pub async fn create_pull_request(
 pub async fn create_pull_request_with_head(
     pool: &SqlitePool,
     input: NewPullRequest<'_>,
-    foreign: Option<&codeyard_db_core::cells::repositories::Admission>,
+    foreign: Option<&codeyard_database::cells::repositories::Admission>,
 ) -> Result<PullRequest> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     crate::sqlite::discussions::require_contribution_authority(
@@ -419,7 +419,7 @@ pub async fn create_pull_request_with_head(
         None => None,
     };
     let head_id = input.head_repo_id.unwrap_or(input.repo_id);
-    let head = sqlx::query_as::<_, codeyard_db_core::models::Repository>(
+    let head = sqlx::query_as::<_, codeyard_database::models::Repository>(
         "SELECT * FROM repositories WHERE id = ?1",
     )
     .bind(head_id)
@@ -427,7 +427,7 @@ pub async fn create_pull_request_with_head(
     .await?
     .ok_or(crate::sqlite::discussions::AUTHORITY_DENIED)?;
     let access =
-        codeyard_db_core::queries::sqlite::repositories::access::user_repo_access_in_transaction(
+        codeyard_database::queries::sqlite::repositories::access::user_repo_access_in_transaction(
             &mut tx,
             input.author_id,
             head_id,
@@ -499,7 +499,7 @@ pub async fn create_pull_request_with_head(
     .bind(input.maintainer_can_modify)
     .bind(input.maintainer_can_modify.then_some(input.author_id))
     .bind(source.as_ref().map(|issue| issue.id))
-    .bind(source.as_ref().map(|issue| codeyard_db_core::queries::sqlite::time::encode(issue.created_at)))
+    .bind(source.as_ref().map(|issue| codeyard_database::queries::sqlite::time::encode(issue.created_at)))
     .bind(source.as_ref().and_then(|issue| issue.milestone_id))
     .bind(input.author_id)
     .fetch_one(&mut *tx)
@@ -582,7 +582,7 @@ pub async fn list_filtered_pull_requests(
     offset: i64,
     limit: i64,
 ) -> Result<Vec<PullRequest>> {
-    let readable = codeyard_db_core::queries::sqlite::repositories::access::readable_condition();
+    let readable = codeyard_database::queries::sqlite::repositories::access::readable_condition();
     let rows = sqlx::query_as::<_, PullRequest>(&format!(
         "SELECT p.* FROM pull_requests p LEFT JOIN repositories h ON h.id = p.head_repo_id
          LEFT JOIN users u ON u.id = h.owner_user_id LEFT JOIN organizations o ON o.id = h.owner_org_id
@@ -628,7 +628,7 @@ pub async fn list_repo_pull_requests(
     ))
     .bind(repo_id)
     .bind(filter.state)
-    .bind(filter.search.map(codeyard_db_core::queries::sqlite::search::contains))
+    .bind(filter.search.map(codeyard_database::queries::sqlite::search::contains))
     .bind(limit)
     .bind(filter.author_id)
     .bind(assignee_mode)
@@ -667,7 +667,7 @@ pub async fn list_viewer_pull_requests(
     limit: i64,
 ) -> Result<Vec<ViewerPullRequestEntry>> {
     anyhow::ensure!(limit >= 0, "Result limit must be nonnegative");
-    let access = codeyard_db_core::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
+    let access = codeyard_database::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
     let relation_sql = viewer_pull_request_sql(relation);
     let prs = sqlx::query_as::<_, ViewerPullRequestEntry>(&format!(
         r"SELECT p.number, p.title, p.state, p.created_at,
@@ -696,7 +696,7 @@ pub async fn count_viewer_pull_requests(
     viewer_id: i64,
     relation: PullRequestRelation,
 ) -> Result<StateCounts> {
-    let access = codeyard_db_core::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
+    let access = codeyard_database::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
     let relation_sql = viewer_pull_request_sql(relation);
     let rows = sqlx::query_as::<_, (String, i64)>(&format!(
         r"SELECT CASE WHEN p.state = 'open' THEN 'open' ELSE 'closed' END AS bucket, COUNT(*)
@@ -759,7 +759,7 @@ pub async fn count_repo_pull_requests_by_state(
         GROUP BY bucket",
     )
     .bind(repo_id)
-    .bind(filter.search.map(codeyard_db_core::queries::sqlite::search::contains))
+    .bind(filter.search.map(codeyard_database::queries::sqlite::search::contains))
     .bind(filter.author_id)
     .bind(assignee_mode)
     .bind(assignee_id)
@@ -795,14 +795,14 @@ pub async fn update_pull_request(
     let Some((repo, author, draft, head_id)) = scope else {
         return Ok(None);
     };
-    let writer = codeyard_db_core::queries::sqlite::discussions::lock_write_authority(
+    let writer = codeyard_database::queries::sqlite::discussions::lock_write_authority(
         &mut tx,
         edit.actor_id,
         repo,
     )
     .await?;
     let head = if maintainer_can_modify.is_some() {
-        sqlx::query_as::<_, codeyard_db_core::models::Repository>(
+        sqlx::query_as::<_, codeyard_database::models::Repository>(
             "SELECT * FROM repositories WHERE id=?1",
         )
         .bind(head_id)
@@ -873,7 +873,7 @@ pub async fn update_pull_request(
     let Some((state, stored_revision, old_title, old_branch)) = stored else {
         return Ok(None);
     };
-    let previous = codeyard_db_core::queries::sqlite::time::decode(&stored_revision)?;
+    let previous = codeyard_database::queries::sqlite::time::decode(&stored_revision)?;
     if state != edit.expected_state || previous != edit.expected_updated {
         return Ok(None);
     }
@@ -897,7 +897,7 @@ pub async fn update_pull_request(
             return Err(DuplicateOpenPullRequest { number }.into());
         }
     }
-    let next = codeyard_db_core::queries::sqlite::time::next_revision(previous)?;
+    let next = codeyard_database::queries::sqlite::time::next_revision(previous)?;
     let pr = sqlx::query_as::<_, PullRequest>(
         r#"UPDATE pull_requests SET
             title = COALESCE(?2, title), body = COALESCE(?3, body),
@@ -956,8 +956,8 @@ pub async fn mark_pull_requests_merged(
     actor_id: i64,
     merge_sha: &str,
 ) -> Result<bool> {
-    let now = codeyard_db_core::queries::sqlite::time::encode(
-        codeyard_db_core::queries::sqlite::time::now(),
+    let now = codeyard_database::queries::sqlite::time::encode(
+        codeyard_database::queries::sqlite::time::now(),
     );
     let mut ordered: Vec<&PullRequest> = pulls.iter().collect();
     ordered.sort_by_key(|pull| pull.id);
@@ -1043,7 +1043,7 @@ pub async fn join_pull_request_stack(
     let Some(repo) = repo else {
         return Ok(StackJoin::Refused(StackRefusal::Missing));
     };
-    if !codeyard_db_core::queries::sqlite::discussions::lock_write_authority(
+    if !codeyard_database::queries::sqlite::discussions::lock_write_authority(
         &mut tx, actor_id, repo,
     )
     .await?
@@ -1089,7 +1089,7 @@ pub async fn join_pull_request_stack_batch(
     creating: bool,
 ) -> Result<StackJoin> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    if !codeyard_db_core::queries::sqlite::discussions::lock_write_authority(
+    if !codeyard_database::queries::sqlite::discussions::lock_write_authority(
         &mut tx, actor_id, repo_id,
     )
     .await?
@@ -1163,7 +1163,7 @@ pub async fn unstack_named_stack(
     stack_id: i64,
 ) -> Result<Option<Vec<PullRequest>>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    if !codeyard_db_core::queries::sqlite::discussions::lock_write_authority(
+    if !codeyard_database::queries::sqlite::discussions::lock_write_authority(
         &mut tx, actor_id, repo_id,
     )
     .await?
@@ -1218,7 +1218,7 @@ pub async fn retarget_stacked_pull_requests(
     to_sha: &str,
 ) -> Result<(Vec<PullRequest>, Vec<i32>)> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    if !codeyard_db_core::queries::sqlite::discussions::lock_write_authority(
+    if !codeyard_database::queries::sqlite::discussions::lock_write_authority(
         &mut tx, actor_id, repo_id,
     )
     .await?
@@ -1254,8 +1254,8 @@ pub async fn retarget_stacked_pull_requests(
             left.push(number);
             continue;
         }
-        let next = codeyard_db_core::queries::sqlite::time::next_revision(
-            codeyard_db_core::queries::sqlite::time::decode(&stored)?,
+        let next = codeyard_database::queries::sqlite::time::next_revision(
+            codeyard_database::queries::sqlite::time::decode(&stored)?,
         )?;
         // The row comes back from the statement that moves it, so it is what the move wrote.
         let row = sqlx::query_as::<_, PullRequest>(
@@ -1291,7 +1291,7 @@ pub async fn unstack_pull_requests(
     let Some(repo) = repo else {
         return Ok(None);
     };
-    if !codeyard_db_core::queries::sqlite::discussions::lock_write_authority(
+    if !codeyard_database::queries::sqlite::discussions::lock_write_authority(
         &mut tx, actor_id, repo,
     )
     .await?

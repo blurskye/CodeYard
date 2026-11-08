@@ -4,12 +4,12 @@ use crate::fine_grained_tokens::TokenFilter;
 use anyhow::Result;
 use chrono::DateTime;
 use chrono::Utc;
-use codeyard_db_core::models::OrgRole;
-use codeyard_db_core::pool::PgPool;
-use codeyard_db_core::queries::credentials::Actor;
-use codeyard_db_core::queries::fine_grained_tokens::Policy;
-use codeyard_db_core::queries::fine_grained_tokens::Token;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
+use codeyard_database::models::OrgRole;
+use codeyard_database::pool::PgPool;
+use codeyard_database::queries::credentials::Actor;
+use codeyard_database::queries::fine_grained_tokens::Policy;
+use codeyard_database::queries::fine_grained_tokens::Token;
+use codeyard_database::queries::organizations::OrganizationOutcome;
 use sqlx::PgConnection;
 
 const TOKEN: &str = "SELECT f.token_id,t.user_id,t.name,f.description,f.owner_org_id,f.repository_access,f.permissions,f.status,f.reason,f.reviewed_at,f.requested_at,t.expires_at,t.created_at,t.last_used_at,t.last_used_ip FROM fine_grained_tokens f JOIN personal_access_tokens t ON t.id=f.token_id";
@@ -101,7 +101,7 @@ pub async fn regenerate(
 pub async fn repository_choices(
     pool: &PgPool,
     actor: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     org: Option<i64>,
     query: &str,
     selected: &[i64],
@@ -112,7 +112,7 @@ pub async fn repository_choices(
     );
     let mut tx = pool.begin().await?;
     crate::postgres::users::transitions::require_account(&mut tx, actor, credential).await?;
-    let access = codeyard_db_core::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL;
+    let access = codeyard_database::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL;
     let projection = format!("SELECT r.id,r.name FROM repositories r JOIN users u ON u.id=$1 WHERE NOT r.is_gist AND (($2::BIGINT IS NULL AND r.owner_kind='user' AND r.owner_user_id=u.id) OR ($2::BIGINT IS NOT NULL AND r.owner_kind='org' AND r.owner_org_id=$2)) AND ({access})>=1");
     let kept = sqlx::query_as(&format!("{projection} AND r.id=ANY($3) ORDER BY r.id"))
         .bind(actor)
@@ -125,7 +125,7 @@ pub async fn repository_choices(
     ))
     .bind(actor)
     .bind(org)
-    .bind(codeyard_db_core::queries::discussions::contains_pattern(
+    .bind(codeyard_database::queries::discussions::contains_pattern(
         query,
     ))
     .fetch_all(&mut *tx)
@@ -153,7 +153,7 @@ pub async fn list_before(pool: &PgPool, user: i64, before: Option<i64>) -> Resul
 /// checked by the shared organization guard inside the writing transaction.
 async fn active_owner(connection: &mut PgConnection, actor: i64, org: i64) -> Result<bool> {
     Ok(matches!(
-        codeyard_db_core::queries::postgres::organizations::authority::authority(
+        codeyard_database::queries::postgres::organizations::authority::authority(
             connection, actor, org
         )
         .await?,
@@ -171,7 +171,7 @@ pub async fn set_policy(
     let actor = owner.user_id;
     let mut tx = pool.begin().await?;
     if !active_owner(&mut tx, actor, org).await?
-        || !codeyard_db_core::queries::postgres::credentials::organization(
+        || !codeyard_database::queries::postgres::credentials::organization(
             &mut tx,
             &owner,
             org,
@@ -249,7 +249,7 @@ pub async fn owner_tokens(
         .filter(|token| token.repository_access == "selected")
         .map(|token| token.token_id)
         .collect();
-    let readable = codeyard_db_core::queries::postgres::repositories::access::readable_condition();
+    let readable = codeyard_database::queries::postgres::repositories::access::readable_condition();
     let repositories: Vec<(i64, String)> = sqlx::query_as(&format!("SELECT token_id,name FROM (SELECT selected.token_id,r.name,ROW_NUMBER() OVER (PARTITION BY selected.token_id ORDER BY r.name,r.id) AS row_position
         FROM fine_grained_token_repositories selected JOIN fine_grained_tokens g ON g.token_id=selected.token_id
         JOIN repositories r ON r.id=selected.repo_id JOIN users u ON u.id=$2
@@ -278,7 +278,7 @@ pub async fn review(
     let reviewer = owner.user_id;
     let mut tx = pool.begin().await?;
     if !active_owner(&mut tx, reviewer, org).await?
-        || !codeyard_db_core::queries::postgres::credentials::organization(
+        || !codeyard_database::queries::postgres::credentials::organization(
             &mut tx,
             &owner,
             org,
@@ -310,7 +310,7 @@ pub async fn review_all(
     let reviewer = owner.user_id;
     let mut tx = pool.begin().await?;
     if !active_owner(&mut tx, reviewer, org).await?
-        || !codeyard_db_core::queries::postgres::credentials::organization(
+        || !codeyard_database::queries::postgres::credentials::organization(
             &mut tx,
             &owner,
             org,
@@ -329,7 +329,7 @@ pub async fn review_all(
 
 pub async fn classic_refused(pool: &PgPool, token: i64, org: i64) -> Result<bool> {
     let allowed =
-        codeyard_db_core::queries::fine_grained_tokens::classic_allowed_condition("$1", "$2");
+        codeyard_database::queries::fine_grained_tokens::classic_allowed_condition("$1", "$2");
     Ok(sqlx::query_scalar(&format!("SELECT NOT ({allowed})"))
         .bind(token)
         .bind(org)
@@ -338,7 +338,7 @@ pub async fn classic_refused(pool: &PgPool, token: i64, org: i64) -> Result<bool
 }
 
 pub async fn classic_refused_repository(pool: &PgPool, token: i64, repo: i64) -> Result<bool> {
-    let allowed = codeyard_db_core::queries::fine_grained_tokens::classic_allowed_condition(
+    let allowed = codeyard_database::queries::fine_grained_tokens::classic_allowed_condition(
         "$1",
         "r.owner_org_id",
     );

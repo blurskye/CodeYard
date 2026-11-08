@@ -93,7 +93,7 @@ async fn contract(pg: bool) {
         pool,
         recipient,
         repo,
-        codeyard_db_core::models::repositories::AccessLevel::Read,
+        codeyard_database::models::repositories::AccessLevel::Read,
     )
     .await
     .unwrap();
@@ -269,7 +269,7 @@ async fn canonical_links(pg: bool) {
         f.pool(),
         recipient,
         repo,
-        codeyard_db_core::models::AccessLevel::Read,
+        codeyard_database::models::AccessLevel::Read,
     )
     .await
     .unwrap();

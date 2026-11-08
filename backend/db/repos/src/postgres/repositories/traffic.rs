@@ -9,7 +9,7 @@ use crate::repositories::traffic::PopularReferrer;
 use crate::repositories::traffic::Summary;
 use crate::repositories::traffic::Window;
 use anyhow::Result;
-use codeyard_db_core::pool::PgPool;
+use codeyard_database::pool::PgPool;
 
 /// The callers give up after two seconds. The server stops waiting first, so an abandoned
 /// observation does not keep its pooled connection behind a lock.

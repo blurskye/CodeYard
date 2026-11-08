@@ -28,7 +28,7 @@ pub struct WorkflowInfo {
     pub supports_workflow_dispatch: bool,
 }
 
-pub fn map_job_info(run: codeyard_db_core::models::CiRun) -> JobInfo {
+pub fn map_job_info(run: codeyard_database::models::CiRun) -> JobInfo {
     JobInfo {
         id: run.run_id.to_string(),
         repo_id: run.repo_id,
@@ -39,7 +39,7 @@ pub fn map_job_info(run: codeyard_db_core::models::CiRun) -> JobInfo {
         branch: if matches!(run.event.as_str(), "pull_request" | "pull_request_target") {
             run.branch
         } else {
-            codeyard_db_core::ci_messages::branch_name(&run.branch).to_owned()
+            codeyard_database::ci_messages::branch_name(&run.branch).to_owned()
         },
         event: run.event,
         head_sha: run.head_sha,
@@ -48,13 +48,13 @@ pub fn map_job_info(run: codeyard_db_core::models::CiRun) -> JobInfo {
         started_at: run.started_at.map(|v| v.timestamp()),
         completed_at: run.completed_at.map(|v| v.timestamp()),
         created_at: run.created_at.timestamp(),
-        error_message: codeyard_db_core::ci_messages::visible_run_error(
+        error_message: codeyard_database::ci_messages::visible_run_error(
             run.error_message.as_deref(),
         ),
     }
 }
 pub fn map_workflow_info(
-    workflow: codeyard_repos_core::workflows::WorkflowDefinition,
+    workflow: codeyard_git_storage::workflows::WorkflowDefinition,
 ) -> WorkflowInfo {
     WorkflowInfo {
         path: workflow.path,
@@ -75,10 +75,10 @@ mod tests {
 
     #[test]
     fn workflow_metadata_fits_the_model_budget_without_a_selected_run() {
-        use codeyard_actions::workflow::dispatch_inputs::DispatchInput;
-        use codeyard_actions::workflow::dispatch_inputs::InputKind;
-        use codeyard_actions::workflow::events::WorkflowTriggers;
-        use codeyard_repos_core::workflows::WorkflowDefinition;
+        use codeyard_git_storage::workflows::WorkflowDefinition;
+        use codeyard_runner::workflow::dispatch_inputs::DispatchInput;
+        use codeyard_runner::workflow::dispatch_inputs::InputKind;
+        use codeyard_runner::workflow::events::WorkflowTriggers;
         let workflow = workflow_view(WorkflowDefinition {
             path: ".github/workflows/ci.yml".into(),
             name: "quote".repeat(100_000),

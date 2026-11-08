@@ -1,7 +1,7 @@
 //! Durable deployment jobs commit their inventory and terminal result in one transaction.
 //! A process that stops mid-job rolls back to pending; another web node can safely resume it.
 
-use codeyard_db_core::DbPool;
+use codeyard_database::DbPool;
 use std::time::Duration;
 use tokio::sync::watch;
 

@@ -2,11 +2,11 @@ use anyhow::Result;
 use chrono::DateTime;
 use chrono::Duration;
 use chrono::Utc;
-use codeyard_db_core::models::BrowserSession;
-use codeyard_db_core::models::OAuthState;
-use codeyard_db_core::models::Session;
-use codeyard_db_core::models::User;
-use codeyard_db_core::pool::SqlitePool;
+use codeyard_database::models::BrowserSession;
+use codeyard_database::models::OAuthState;
+use codeyard_database::models::Session;
+use codeyard_database::models::User;
+use codeyard_database::pool::SqlitePool;
 use codeyard_support::crypto::is_hex_token;
 use subtle::ConstantTimeEq;
 
@@ -28,8 +28,10 @@ pub async fn create_session(
     .bind(session_id)
     .bind(user_id)
     .bind(user_agent)
-    .bind(codeyard_db_core::queries::sqlite::inet::encode(ip_address)?)
-    .bind(codeyard_db_core::queries::sqlite::time::encode(expires_at))
+    .bind(codeyard_database::queries::sqlite::inet::encode(
+        ip_address,
+    )?)
+    .bind(codeyard_database::queries::sqlite::time::encode(expires_at))
     .fetch_one(pool)
     .await?;
 
@@ -175,12 +177,12 @@ pub async fn rotate_authenticated_session(
     ip_address: Option<&str>,
     expires_at: DateTime<Utc>,
 ) -> Result<Option<BrowserSession>> {
-    if codeyard_types::cells::Secret::cookie(fresh).is_err() || old == Some(fresh) {
+    if codeyard_types::cell_ids::Secret::cookie(fresh).is_err() || old == Some(fresh) {
         anyhow::bail!("Authenticated session requires a fresh random identifier");
     }
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let future = sqlx::query_scalar::<_, bool>("SELECT ?1>strftime('%Y-%m-%dT%H:%M:%f000Z','now')")
-        .bind(codeyard_db_core::queries::sqlite::time::encode(expires_at))
+        .bind(codeyard_database::queries::sqlite::time::encode(expires_at))
         .fetch_one(&mut *tx)
         .await?;
     if !future {
@@ -211,7 +213,7 @@ pub async fn rotate_authenticated_session(
         subject,
     } = credential
     {
-        if codeyard_model::oauth_apps::organization_from_oidc_provider(provider)
+        if codeyard_types::oauth_apps::organization_from_oidc_provider(provider)
             != Some(organization)
         {
             return Ok(None);
@@ -224,11 +226,11 @@ pub async fn rotate_authenticated_session(
             return Ok(None);
         };
         if !matches!(
-            codeyard_db_core::queries::sqlite::organizations::authority::authority(
+            codeyard_database::queries::sqlite::organizations::authority::authority(
                 &mut tx, user_id, org
             )
             .await?,
-            codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(_)
+            codeyard_database::queries::organizations::OrganizationOutcome::Applied(_)
         ) {
             return Ok(None);
         }
@@ -315,7 +317,7 @@ pub async fn rotate_authenticated_session(
         anyhow::bail!("Fresh session identifier collision");
     }
     let session = sqlx::query_as::<_, BrowserSession>("INSERT INTO sessions (id,user_id,user_agent,ip_address,expires_at) VALUES (?1,?2,?3,?4,min(?5,strftime('%Y-%m-%dT%H:%M:%f000Z','now','+365 days'))) RETURNING id,user_id,expires_at,created_at")
-        .bind(fresh).bind(user_id).bind(user_agent).bind(ip_address).bind(codeyard_db_core::queries::sqlite::time::encode(expires_at)).fetch_one(&mut *tx).await?;
+        .bind(fresh).bind(user_id).bind(user_agent).bind(ip_address).bind(codeyard_database::queries::sqlite::time::encode(expires_at)).fetch_one(&mut *tx).await?;
     if let Some((org, provider)) = sso {
         sqlx::query("INSERT INTO audit_log(org_id,actor_id,action,target_type,target_id,metadata) VALUES($1,$2,'org.sso_login','user',$2,$3)")
             .bind(org).bind(user_id).bind(serde_json::json!({"provider":provider}).to_string()).execute(&mut *tx).await?;
@@ -331,7 +333,7 @@ pub async fn create_browser_session(
     ip_address: Option<&str>,
     expires_at: DateTime<Utc>,
 ) -> Result<BrowserSession> {
-    if codeyard_types::cells::Secret::cookie(id).is_err() {
+    if codeyard_types::cell_ids::Secret::cookie(id).is_err() {
         anyhow::bail!("Session requires a random identifier");
     }
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
@@ -341,14 +343,14 @@ pub async fn create_browser_session(
         anyhow::bail!("Session identifier collision");
     }
     let future = sqlx::query_scalar::<_, bool>("SELECT ?1>strftime('%Y-%m-%dT%H:%M:%f000Z','now')")
-        .bind(codeyard_db_core::queries::sqlite::time::encode(expires_at))
+        .bind(codeyard_database::queries::sqlite::time::encode(expires_at))
         .fetch_one(&mut *tx)
         .await?;
     if !future {
         anyhow::bail!("Session expiry must be in the future");
     }
     let session = sqlx::query_as::<_, BrowserSession>("INSERT INTO anonymous_sessions (id,user_agent,ip_address,expires_at) VALUES (?1,?2,?3,min(?4,strftime('%Y-%m-%dT%H:%M:%f000Z','now','+365 days'))) RETURNING id,NULL AS user_id,created_at,expires_at")
-        .bind(id).bind(user_agent).bind(codeyard_db_core::queries::sqlite::inet::encode(ip_address)?).bind(codeyard_db_core::queries::sqlite::time::encode(expires_at)).fetch_one(&mut *tx).await?;
+        .bind(id).bind(user_agent).bind(codeyard_database::queries::sqlite::inet::encode(ip_address)?).bind(codeyard_database::queries::sqlite::time::encode(expires_at)).fetch_one(&mut *tx).await?;
     tx.commit().await?;
     Ok(session)
 }
@@ -395,7 +397,7 @@ pub async fn get_or_create_csrf_token(
     candidate: &str,
     ttl_seconds: i64,
 ) -> Result<Option<String>> {
-    if codeyard_types::cells::Secret::cookie(id).is_err()
+    if codeyard_types::cell_ids::Secret::cookie(id).is_err()
         || !is_hex_token(candidate, 64)
         || !(1..=7200).contains(&ttl_seconds)
     {
@@ -431,7 +433,7 @@ pub async fn get_or_create_csrf_token(
     sqlx::query(query)
         .bind(id)
         .bind(candidate)
-        .bind(codeyard_db_core::queries::sqlite::time::encode(expires_at))
+        .bind(codeyard_database::queries::sqlite::time::encode(expires_at))
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
@@ -531,7 +533,7 @@ pub async fn session_page(
     crate::sqlite::users::transitions::require_account(
         &mut tx,
         user,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(current),
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(current),
     )
     .await?;
     let rows = sqlx::query_as("SELECT id,user_id,user_agent,ip_address,expires_at,created_at,ordinal FROM sessions WHERE user_id=?1 AND expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now') AND (?2<=0 OR ordinal<=?2) ORDER BY ordinal DESC LIMIT 101")

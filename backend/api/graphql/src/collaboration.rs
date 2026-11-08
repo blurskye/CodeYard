@@ -6,12 +6,12 @@ use crate::unavailable;
 use crate::url;
 use crate::RequestContext;
 use crate::Result;
-use codeyard_model::node_id;
+use codeyard_types::node_id;
 use serde_json::json;
 use serde_json::Value;
 
 pub(super) async fn milestone(
-    summary: codeyard_db_core::models::MilestoneSummary,
+    summary: codeyard_database::models::MilestoneSummary,
     request: &RequestContext,
 ) -> Result<Value> {
     let row = summary.milestone;
@@ -32,7 +32,7 @@ pub(super) async fn resolve(
     args: &Arguments,
     request: &RequestContext,
     parent: &Value,
-    repo: &codeyard_db_core::models::Repository,
+    repo: &codeyard_database::models::Repository,
 ) -> Result<Value> {
     let id = parent["databaseId"].as_i64().ok_or_else(missing)?;
     let pool = &request.state.pool;

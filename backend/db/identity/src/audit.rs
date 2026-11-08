@@ -1,7 +1,7 @@
 use anyhow::Result;
-use codeyard_db_core::models::AuditEntry;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::AuditEntry;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 
 native_operation!(crate::postgres::audit::page,
     crate::sqlite::audit::page,

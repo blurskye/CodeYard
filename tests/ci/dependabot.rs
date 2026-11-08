@@ -6,7 +6,7 @@ use crate::support::fake_webui_bundle;
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
 use codeyard_ci::config::CiConfig;
-use codeyard_repos_core::repositories::lifecycle::provision;
+use codeyard_git_storage::repositories::lifecycle::provision;
 use codeyard_storage::ObjectStore;
 use codeyard_support::secrets::SecretEncryptor;
 use serde_json::{json, Value};
@@ -157,9 +157,9 @@ async fn repository_secrets(pg: bool) {
         vec![("REGISTRY_TOKEN".into(), "actions-only-value".into())]
     );
     let (encrypted, nonce): (Vec<u8>, Vec<u8>) = match f.pool() {
-        codeyard_db_core::DbPool::Sqlite(pool) => sqlx::query_as("SELECT encrypted_value,nonce FROM repo_dependabot_secrets WHERE repo_id=$1 AND name='REGISTRY_TOKEN'")
+        codeyard_database::DbPool::Sqlite(pool) => sqlx::query_as("SELECT encrypted_value,nonce FROM repo_dependabot_secrets WHERE repo_id=$1 AND name='REGISTRY_TOKEN'")
             .bind(repo.id).fetch_one(pool).await.unwrap(),
-        codeyard_db_core::DbPool::Postgres(pool) => sqlx::query_as("SELECT encrypted_value,nonce FROM repo_dependabot_secrets WHERE repo_id=$1 AND name='REGISTRY_TOKEN'")
+        codeyard_database::DbPool::Postgres(pool) => sqlx::query_as("SELECT encrypted_value,nonce FROM repo_dependabot_secrets WHERE repo_id=$1 AND name='REGISTRY_TOKEN'")
             .bind(repo.id).fetch_one(pool).await.unwrap(),
     };
     assert_ne!(encrypted, b"dependabot-only-value");
@@ -237,7 +237,7 @@ async fn repository_secrets(pg: bool) {
         f.pool(),
         outsider,
         repo.id,
-        codeyard_db_core::models::AccessLevel::Write,
+        codeyard_database::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -369,7 +369,7 @@ async fn repository_secrets(pg: bool) {
 }
 
 async fn organization_secrets(pg: bool) {
-    use codeyard_db_core::queries::organizations::OrganizationOutcome;
+    use codeyard_database::queries::organizations::OrganizationOutcome;
     use codeyard_db_orgs::organizations::profiles::NewOrganization;
     use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
     use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
@@ -397,7 +397,7 @@ async fn organization_secrets(pg: bool) {
             owner,
             org.id,
             member,
-            codeyard_db_core::models::OrgRole::Member
+            codeyard_database::models::OrgRole::Member
         )
         .await
         .unwrap(),
@@ -811,8 +811,8 @@ async fn organization_secrets(pg: bool) {
         .await;
     }
     let (encrypted, nonce): (Vec<u8>, Vec<u8>) = match f.pool() {
-        codeyard_db_core::DbPool::Sqlite(pool) => sqlx::query_as("SELECT encrypted_value,nonce FROM org_dependabot_secrets WHERE org_id=$1 AND name='REGISTRY_TOKEN'").bind(org.id).fetch_one(pool).await.unwrap(),
-        codeyard_db_core::DbPool::Postgres(pool) => sqlx::query_as("SELECT encrypted_value,nonce FROM org_dependabot_secrets WHERE org_id=$1 AND name='REGISTRY_TOKEN'").bind(org.id).fetch_one(pool).await.unwrap(),
+        codeyard_database::DbPool::Sqlite(pool) => sqlx::query_as("SELECT encrypted_value,nonce FROM org_dependabot_secrets WHERE org_id=$1 AND name='REGISTRY_TOKEN'").bind(org.id).fetch_one(pool).await.unwrap(),
+        codeyard_database::DbPool::Postgres(pool) => sqlx::query_as("SELECT encrypted_value,nonce FROM org_dependabot_secrets WHERE org_id=$1 AND name='REGISTRY_TOKEN'").bind(org.id).fetch_one(pool).await.unwrap(),
     };
     assert_ne!(encrypted, b"organization-only-value");
     assert_eq!(

@@ -1,10 +1,10 @@
 use anyhow::Result;
 use chrono::DateTime;
 use chrono::Utc;
-use codeyard_db_core::models::PersonalAccessToken;
-use codeyard_db_core::models::User;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::PersonalAccessToken;
+use codeyard_database::models::User;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 
 native_operation!(crate::postgres::users::tokens::create_token,
     crate::sqlite::users::tokens::create_token,
@@ -28,9 +28,9 @@ pub async fn find_token(pool: &DbPool, hash: &str) -> Result<Option<PersonalAcce
     if let Some(token) = find_native_token(pool, hash).await? {
         return Ok(Some(token));
     }
-    Ok(codeyard_db_core::cells::authorization::lookup(
+    Ok(codeyard_database::cells::authorization::lookup(
         pool,
-        &codeyard_db_core::cells::authorization::Query {
+        &codeyard_database::cells::authorization::Query {
             kind: "token",
             id: None,
             hash: Some(hash),
@@ -56,9 +56,9 @@ pub async fn token_user(pool: &DbPool, token_id: i64, write: bool) -> Result<Opt
     if native.is_some() {
         return Ok(native);
     }
-    Ok(codeyard_db_core::cells::authorization::lookup(
+    Ok(codeyard_database::cells::authorization::lookup(
         pool,
-        &codeyard_db_core::cells::authorization::Query {
+        &codeyard_database::cells::authorization::Query {
             kind: "token",
             id: Some(token_id),
             hash: None,

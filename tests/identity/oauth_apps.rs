@@ -12,7 +12,7 @@ use codeyard_support::token_hash::token_hash;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
-const CLI: &str = codeyard_model::identity::CLI_CLIENT;
+const CLI: &str = codeyard_types::identity::CLI_CLIENT;
 const SECRET: &str = "34ddeff2b558a23d38fba8a6de74f086ede1cc0b";
 const DEVICE: &str = "urn:ietf:params:oauth:grant-type:device_code";
 
@@ -126,7 +126,7 @@ async fn contract(pg: bool) {
     assert_eq!(code["user_code"].as_str().unwrap().len(), 11);
     assert_eq!(
         codeyard_identity::oauth_apps::user_code_cell(code["user_code"].as_str().unwrap()),
-        Some(codeyard_types::cells::Prefix::ZERO)
+        Some(codeyard_types::cell_ids::Prefix::ZERO)
     );
     assert!(code["verification_uri"]
         .as_str()
@@ -225,7 +225,7 @@ async fn contract(pg: bool) {
     .await
     .unwrap();
     let setup = format!("Bearer {}", setup.value);
-    codeyard_repos_core::repositories::lifecycle::provision(
+    codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(actor),

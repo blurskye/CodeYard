@@ -1,6 +1,6 @@
 use anyhow::Result;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 
 /// An issue or a pull request, the two rows that can have assignees.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,19 +29,19 @@ native_operation!(crate::postgres::assignees::assign_users,
     /// Assigns each of `user_ids` in one transaction and returns the ones that were not assigned
     /// before. A user who is already assigned needs no access; a new assignee must be one that
     /// `assignable_user_ids` names.
-    fn assign_users(pool: &DbPool, actor_id: impl Into<codeyard_db_core::queries::credentials::Actor>, repo_id: i64, item: AssignedItem, user_ids: &[i64]) -> Result<Vec<i64>>);
+    fn assign_users(pool: &DbPool, actor_id: impl Into<codeyard_database::queries::credentials::Actor>, repo_id: i64, item: AssignedItem, user_ids: &[i64]) -> Result<Vec<i64>>);
 
 native_operation!(crate::postgres::assignees::unassign_users,
     crate::sqlite::assignees::unassign_users,
     /// Removes each user named in `usernames` in one transaction and returns the names that were
     /// assigned. The write right is checked before the names are looked up, so a name that is no
     /// user is refused the same way for a reader.
-    fn unassign_users(pool: &DbPool, actor_id: impl Into<codeyard_db_core::queries::credentials::Actor>, repo_id: i64, item: AssignedItem, usernames: &[String]) -> Result<Vec<String>>);
+    fn unassign_users(pool: &DbPool, actor_id: impl Into<codeyard_database::queries::credentials::Actor>, repo_id: i64, item: AssignedItem, usernames: &[String]) -> Result<Vec<String>>);
 
 /// Assigns one user. Returns whether that was a new assignment.
 pub async fn assign_user(
     pool: &DbPool,
-    actor_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor_id: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     item: AssignedItem,
     user_id: i64,
@@ -54,7 +54,7 @@ pub async fn assign_user(
 /// Removes the user named `username`. Returns whether an assignment was removed.
 pub async fn unassign_user(
     pool: &DbPool,
-    actor_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor_id: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     item: AssignedItem,
     username: &str,
@@ -82,7 +82,7 @@ native_operation!(crate::postgres::assignees::count_assignable_users,
     fn count_assignable_users(pool: &DbPool, repo_id: i64, query: &str) -> Result<i64>);
 native_operation!(crate::postgres::assignees::list_assignable_users,
     crate::sqlite::assignees::list_assignable_users,
-    fn list_assignable_users(pool: &DbPool, repo_id: i64, query: &str, offset: i64, limit: i64) -> Result<Vec<codeyard_db_core::models::User>>);
+    fn list_assignable_users(pool: &DbPool, repo_id: i64, query: &str, offset: i64, limit: i64) -> Result<Vec<codeyard_database::models::User>>);
 
 // The usernames that may be assigned in a repository: its personal owner and its collaborators.
 native_operation!(crate::postgres::assignees::list_assignable_usernames,

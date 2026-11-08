@@ -97,7 +97,7 @@ fn optional_env(name: &str) -> Result<Option<String>> {
 }
 
 fn public_url_host(value: &str) -> Result<ConfiguredHost> {
-    let url = codeyard_model::http_config::parse_public_url(value)?;
+    let url = codeyard_types::http_config::parse_public_url(value)?;
     ConfiguredHost::from_url(&url).ok_or_else(|| anyhow!("Invalid PUBLIC_URL"))
 }
 
@@ -407,7 +407,7 @@ impl S3Store {
         let Some(public_url) = optional_env("PUBLIC_URL")? else {
             return Ok(());
         };
-        let origin = codeyard_model::http_config::parse_public_url(&public_url)?
+        let origin = codeyard_types::http_config::parse_public_url(&public_url)?
             .origin()
             .ascii_serialization();
         let rule = CorsRule::builder()

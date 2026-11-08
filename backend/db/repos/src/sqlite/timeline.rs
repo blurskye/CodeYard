@@ -4,7 +4,7 @@ use crate::timeline::TimelineEvent;
 use anyhow::Result;
 use chrono::DateTime;
 use chrono::Utc;
-use codeyard_db_core::pool::SqlitePool;
+use codeyard_database::pool::SqlitePool;
 
 pub async fn get_event(pool: &SqlitePool, repo_id: i64, id: i64) -> Result<Option<Event>> {
     Ok(
@@ -110,8 +110,8 @@ pub async fn list_events(
 ) -> Result<Vec<TimelineEvent>> {
     anyhow::ensure!(limit >= 0 && offset >= 0, "Invalid timeline page");
     // Stored times are fixed-width UTC text, so the bounds are written the same way.
-    let after = after.map(codeyard_db_core::queries::sqlite::time::encode);
-    let before = before.map(codeyard_db_core::queries::sqlite::time::encode);
+    let after = after.map(codeyard_database::queries::sqlite::time::encode);
+    let before = before.map(codeyard_database::queries::sqlite::time::encode);
     Ok(sqlx::query_as(
         r#"
         SELECT u.username AS actor, e.kind, e.detail, e.previous, e.created_at

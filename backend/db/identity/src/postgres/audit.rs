@@ -1,6 +1,6 @@
 use anyhow::Result;
-use codeyard_db_core::models::AuditEntry;
-use codeyard_db_core::pool::PgPool;
+use codeyard_database::models::AuditEntry;
+use codeyard_database::pool::PgPool;
 
 pub async fn page(
     pool: &PgPool,

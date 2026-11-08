@@ -47,12 +47,12 @@ async fn suggestions(pg: bool) {
     .await
     .unwrap()
     {
-        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(org) => org,
+        codeyard_database::queries::organizations::OrganizationOutcome::Applied(org) => org,
         _ => panic!("create organization"),
     };
     use codeyard_db_repos::repositories::creation::{RepositoryCreationOwner, RepositoryTarget};
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard_repos_core::repositories::lifecycle::provision(
+    let repo = codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         RepositoryCreationOwner {
@@ -70,7 +70,7 @@ async fn suggestions(pg: bool) {
         f.pool(),
         bob,
         repo.id,
-        codeyard_db_core::models::AccessLevel::Triage,
+        codeyard_database::models::AccessLevel::Triage,
     )
     .await
     .unwrap();
@@ -78,7 +78,7 @@ async fn suggestions(pg: bool) {
         f.pool(),
         carol,
         repo.id,
-        codeyard_db_core::models::AccessLevel::Read,
+        codeyard_database::models::AccessLevel::Read,
     )
     .await
     .unwrap();
@@ -607,7 +607,7 @@ async fn suggestions(pg: bool) {
         f.pool(),
         dave,
         repo.id,
-        codeyard_db_core::models::AccessLevel::Read,
+        codeyard_database::models::AccessLevel::Read,
     )
     .await
     .unwrap();

@@ -9,16 +9,16 @@ use crate::runners::Registration;
 use crate::runners::RegistrationBinding;
 use crate::runners::Selection;
 use anyhow::Result;
-use codeyard_db_core::models::CiRun;
-use codeyard_db_core::models::ClusterNode;
-use codeyard_db_core::pool::SqlitePool as Pool;
-use codeyard_db_core::queries::organizations::administers;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_db_core::queries::runners::Group;
-use codeyard_db_core::queries::runners::Refusal;
-use codeyard_db_core::queries::runners::Runner;
-use codeyard_db_core::queries::runners::RunnerQuery;
-use codeyard_db_core::queries::runners::Scope;
+use codeyard_database::models::CiRun;
+use codeyard_database::models::ClusterNode;
+use codeyard_database::pool::SqlitePool as Pool;
+use codeyard_database::queries::organizations::administers;
+use codeyard_database::queries::organizations::OrganizationOutcome;
+use codeyard_database::queries::runners::Group;
+use codeyard_database::queries::runners::Refusal;
+use codeyard_database::queries::runners::Runner;
+use codeyard_database::queries::runners::RunnerQuery;
+use codeyard_database::queries::runners::Scope;
 use sqlx::Sqlite;
 use sqlx::SqliteConnection as Connection;
 use sqlx::Transaction;
@@ -26,7 +26,7 @@ use sqlx::Transaction;
 async fn authorize(c: &mut Transaction<'_, Sqlite>, actor: i64, scope: Scope) -> Result<()> {
     match scope {
         Scope::Organization(org) => {
-            let role = codeyard_db_core::queries::sqlite::organizations::authority::authority(
+            let role = codeyard_database::queries::sqlite::organizations::authority::authority(
                 c, actor, org,
             )
             .await?;
@@ -36,7 +36,7 @@ async fn authorize(c: &mut Transaction<'_, Sqlite>, actor: i64, scope: Scope) ->
             );
         }
         Scope::Repository(repo) => anyhow::ensure!(
-            codeyard_db_core::queries::sqlite::discussions::lock_admin_authority(c, actor, repo)
+            codeyard_database::queries::sqlite::discussions::lock_admin_authority(c, actor, repo)
                 .await?,
             Refusal::Denied
         ),
@@ -61,7 +61,7 @@ async fn stop_runners(
     group: Option<i64>,
 ) -> Result<()> {
     let ids:Vec<i64>=sqlx::query_scalar("SELECT c.id FROM ci_runs c WHERE c.status='running' AND EXISTS(SELECT 1 FROM action_runners a JOIN nodes n ON n.id=a.node_id WHERE c.worker LIKE n.public_key || '/%' AND (a.id=?1 OR a.group_id=?2))").bind(runner).bind(group).fetch_all(&mut **tx).await?;
-    codeyard_db_core::queries::sqlite::ci::stop_ci_runs(tx, &ids).await
+    codeyard_database::queries::sqlite::ci::stop_ci_runs(tx, &ids).await
 }
 pub async fn authorize_scope(pool: &Pool, actor: i64, scope: Scope) -> Result<()> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
@@ -90,7 +90,7 @@ pub async fn list_groups(
         tx.commit().await?;
     }
     let mut tx = pool.begin().await?;
-    let role = codeyard_db_core::queries::sqlite::organizations::authority::read_authority(
+    let role = codeyard_database::queries::sqlite::organizations::authority::read_authority(
         &mut tx, actor, org,
     )
     .await?;
@@ -296,7 +296,7 @@ pub async fn delete_group(pool: &Pool, actor: i64, org: i64, id: i64) -> Result<
     let default = default_group(&mut tx, org).await?;
     let queued: Vec<i64> = sqlx::query_scalar("SELECT c.id FROM ci_runs c JOIN repositories r ON r.id=c.repo_id WHERE c.status='queued' AND lower(c.runner_group)=lower(?2) AND r.owner_kind='org' AND r.owner_org_id=?1")
         .bind(org).bind(&row.name).fetch_all(&mut *tx).await?;
-    codeyard_db_core::queries::sqlite::ci::stop_ci_runs(&mut tx, &queued).await?;
+    codeyard_database::queries::sqlite::ci::stop_ci_runs(&mut tx, &queued).await?;
     stop_runners(&mut tx, None, Some(id)).await?;
     sqlx::query("UPDATE action_runners SET group_id=?2 WHERE group_id=?1 AND org_id=?3")
         .bind(id)
@@ -331,7 +331,7 @@ pub async fn group_repositories(
     if !removed.is_empty() {
         let runs: Vec<i64> = sqlx::query_scalar("SELECT c.id FROM ci_runs c WHERE c.status='running' AND c.repo_id IN (SELECT value FROM json_each(?2)) AND EXISTS(SELECT 1 FROM action_runners a JOIN nodes n ON n.id=a.node_id WHERE a.group_id=?1 AND c.worker LIKE n.public_key || '/%')")
             .bind(id).bind(serde_json::to_string(&removed)?).fetch_all(&mut *tx).await?;
-        codeyard_db_core::queries::sqlite::ci::stop_ci_runs(&mut tx, &runs).await?;
+        codeyard_database::queries::sqlite::ci::stop_ci_runs(&mut tx, &runs).await?;
     }
     tx.commit().await?;
     Ok(())
@@ -447,7 +447,7 @@ pub async fn registration(
     authorize(&mut tx, actor, scope).await?;
     if let Some(session) = input.session {
         anyhow::ensure!(
-            codeyard_db_core::queries::sqlite::users::transitions::live_session(
+            codeyard_database::queries::sqlite::users::transitions::live_session(
                 &mut tx, actor, session
             )
             .await?,
@@ -485,7 +485,7 @@ pub async fn registration(
     } else {
         None
     };
-    sqlx::query("INSERT INTO join_tokens(token_hash,roles,reusable,requires_approval,expires_at,runner_scoped) VALUES(?1,'[\"runner\"]',?2,false,?3,true)").bind(input.hash).bind(runner_id.is_none()).bind(codeyard_db_core::queries::sqlite::time::encode(input.expires)).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO join_tokens(token_hash,roles,reusable,requires_approval,expires_at,runner_scoped) VALUES(?1,'[\"runner\"]',?2,false,?3,true)").bind(input.hash).bind(runner_id.is_none()).bind(codeyard_database::queries::sqlite::time::encode(input.expires)).execute(&mut *tx).await?;
     sqlx::query("INSERT INTO action_runner_tokens(token_hash,actor_id,org_id,repo_id,group_id,runner_id) VALUES(?1,?2,?3,?4,?5,?6)").bind(input.hash).bind(actor).bind(org).bind(repo).bind(group_id).bind(runner_id).execute(&mut *tx).await?;
     let row = match runner_id {
         Some(id) => Some(runner(&mut tx, scope, id).await?),
@@ -504,7 +504,7 @@ pub async fn remove_token(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     authorize(&mut tx, actor, scope).await?;
     let (org, repo) = scope.ids();
-    sqlx::query("INSERT INTO action_runner_remove_tokens(token_hash,actor_id,org_id,repo_id,expires_at) VALUES(?1,?2,?3,?4,?5)").bind(hash).bind(actor).bind(org).bind(repo).bind(codeyard_db_core::queries::sqlite::time::encode(expires)).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO action_runner_remove_tokens(token_hash,actor_id,org_id,repo_id,expires_at) VALUES(?1,?2,?3,?4,?5)").bind(hash).bind(actor).bind(org).bind(repo).bind(codeyard_database::queries::sqlite::time::encode(expires)).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(())
 }
@@ -651,10 +651,10 @@ pub(super) async fn mark_claimed(c: &mut Connection, key: Option<&str>) -> Resul
     Ok(())
 }
 
-use codeyard_db_core::queries::sqlite::runners::runner;
+use codeyard_database::queries::sqlite::runners::runner;
 
-use codeyard_db_core::queries::sqlite::runners::runner_rows;
+use codeyard_database::queries::sqlite::runners::runner_rows;
 
-use codeyard_db_core::queries::sqlite::runners::group;
+use codeyard_database::queries::sqlite::runners::group;
 
-use codeyard_db_core::queries::sqlite::runners::RUNNER_FILTER;
+use codeyard_database::queries::sqlite::runners::RUNNER_FILTER;

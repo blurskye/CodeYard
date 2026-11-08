@@ -19,14 +19,14 @@ use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::app::AppState;
-use codeyard_db_core::models::Organization;
-use codeyard_db_core::models::Webhook;
+use codeyard_database::models::Organization;
+use codeyard_database::models::Webhook;
 use codeyard_db_repos::webhooks::DeliveryWindow;
 use codeyard_db_repos::webhooks::HookOwner;
 use codeyard_db_repos::webhooks::HookSettings;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
-use codeyard_model::urls::api_url;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
+use codeyard_types::urls::api_url;
 use codeyard_webhooks::settings::HookError;
 use codeyard_webhooks::settings::HookForm;
 use codeyard_webhooks::settings::HookPatch;
@@ -239,7 +239,7 @@ async fn create(
     body: Body,
 ) -> Result<Response> {
     let (org, actor) = actor(&state, &headers, &name, true).await?;
-    let Json(value) = body.map_err(codeyard_model::github_error::json_error)?;
+    let Json(value) = body.map_err(codeyard_types::github_error::json_error)?;
     let object = object(&value)?;
     if text(object, "name")?.as_deref() != Some("web") {
         return Err(Error::validation("Hook", "name", "invalid"));
@@ -290,7 +290,7 @@ async fn update(
     body: Body,
 ) -> Result<Json<Value>> {
     let (org, actor) = actor(&state, &headers, &params["org"], true).await?;
-    let Json(value) = body.map_err(codeyard_model::github_error::json_error)?;
+    let Json(value) = body.map_err(codeyard_types::github_error::json_error)?;
     let patch = parse_patch(&value)?;
     let id = id(&params, "hook_id")?;
     codeyard_webhooks::settings::update(
@@ -319,7 +319,7 @@ async fn update_config(
     body: Body,
 ) -> Result<Json<Value>> {
     let (org, actor) = actor(&state, &headers, &params["org"], true).await?;
-    let Json(value) = body.map_err(codeyard_model::github_error::json_error)?;
+    let Json(value) = body.map_err(codeyard_types::github_error::json_error)?;
     let patch = config(Some(&value))?;
     let id = id(&params, "hook_id")?;
     codeyard_webhooks::settings::update(

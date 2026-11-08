@@ -24,7 +24,7 @@ pub struct Provider {
 /// Provider names fit both engines' existing 50-character OAuth namespace.
 pub fn provider_name(organization: &str) -> Option<String> {
     let provider = format!("oidc-{organization}");
-    codeyard_model::oauth_apps::organization_from_oidc_provider(&provider)?;
+    codeyard_types::oauth_apps::organization_from_oidc_provider(&provider)?;
     Some(provider)
 }
 
@@ -68,14 +68,14 @@ fn valid_subject(value: &str) -> Result<()> {
 /// Local operators obtain the case-sensitive subject from their identity provider.
 /// The database rechecks the named administrator and the target's membership at commit.
 pub async fn enroll(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     administrator: &str,
     username: &str,
     organization: &str,
     subject: &str,
 ) -> Result<()> {
     for name in [administrator, username] {
-        codeyard_model::account_input::validate_namespace(name, 3)
+        codeyard_types::account_input::validate_namespace(name, 3)
             .map_err(|_| anyhow::anyhow!("invalid account name"))?;
     }
     valid_subject(subject)?;
@@ -212,7 +212,7 @@ impl Provider {
 
     pub async fn begin(
         &self,
-        pool: &codeyard_db_core::DbPool,
+        pool: &codeyard_database::DbPool,
         redirect: &str,
         browser: &str,
         state: &str,
@@ -234,7 +234,7 @@ impl Provider {
         )
         .await?;
         let mut url = url::Url::parse(&self.authorize)?;
-        let challenge = codeyard_model::oauth_apps::pkce_challenge(verifier);
+        let challenge = codeyard_types::oauth_apps::pkce_challenge(verifier);
         url.query_pairs_mut()
             .append_pair("client_id", &self.client)
             .append_pair("redirect_uri", redirect)
@@ -249,7 +249,7 @@ impl Provider {
 
     pub async fn complete(
         &self,
-        pool: &codeyard_db_core::DbPool,
+        pool: &codeyard_database::DbPool,
         code: &str,
         state: &str,
         browser: &str,
@@ -333,7 +333,7 @@ impl Provider {
         let value = id.to_owned();
         let issuer = self.issuer.clone();
         let audience = self.client.clone();
-        let nonce = codeyard_model::oauth_apps::pkce_challenge(verifier);
+        let nonce = codeyard_types::oauth_apps::pkce_challenge(verifier);
         let claims = tokio::task::spawn_blocking(move || {
             let _permit = permit;
             verify(&value, &jwks, &issuer, &audience, &nonce, now)

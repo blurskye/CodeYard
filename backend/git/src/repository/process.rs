@@ -198,8 +198,8 @@ pub(crate) async fn read_bounded(reader: impl AsyncRead + Unpin, limit: usize) -
     Ok(bytes)
 }
 
-pub(crate) use codeyard_actions::process::kill_group;
-pub use codeyard_actions::process::ProcessGroup;
+pub(crate) use codeyard_runner::process::kill_group;
+pub use codeyard_runner::process::ProcessGroup;
 
 /// Keep only the last diagnostics when a transport reports stderr at exit.
 #[derive(Default)]

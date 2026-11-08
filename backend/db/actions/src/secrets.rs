@@ -1,8 +1,8 @@
-use codeyard_actions::values::MAX_SCOPE_VALUES as MAX_REPOSITORY_SECRETS;
-use codeyard_actions::values::MAX_SECRET_BYTES as MAX_REPOSITORY_SECRETS_BYTES;
-use codeyard_db_core::models::RepoSecretMeta;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::RepoSecretMeta;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
+use codeyard_runner::values::MAX_SCOPE_VALUES as MAX_REPOSITORY_SECRETS;
+use codeyard_runner::values::MAX_SECRET_BYTES as MAX_REPOSITORY_SECRETS_BYTES;
 use codeyard_support::secrets::SecretEncryptor;
 
 // One bounded sample per encryption domain, from one database snapshot.
@@ -51,8 +51,8 @@ impl SecretKind {
 }
 
 pub fn validate_repository_secret(name: &str, value: &str) -> Result<(), SecretsError> {
-    use codeyard_actions::values::InvalidValue;
-    codeyard_actions::values::validate(name, value).map_err(|error| match error {
+    use codeyard_runner::values::InvalidValue;
+    codeyard_runner::values::validate(name, value).map_err(|error| match error {
         InvalidValue::Name => SecretsError::InvalidName,
         InvalidValue::ReservedName => SecretsError::ReservedName,
         InvalidValue::Nul => SecretsError::ValueContainsNul,
@@ -114,7 +114,7 @@ pub async fn create_or_update_secret(
     name: &str,
     value: &str,
     created_by_id: Option<i64>,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
 ) -> Result<bool, SecretsError> {
     create_or_update_secret_for(
         pool,
@@ -135,7 +135,7 @@ pub async fn create_or_update_secret_for(
     name: &str,
     value: &str,
     created_by_id: Option<i64>,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
 ) -> Result<bool, SecretsError> {
     // Secret names are case-insensitive, as on GitHub, so every writer stores them uppercase.
     let name = &name.to_ascii_uppercase();
@@ -181,7 +181,7 @@ pub async fn delete_secret(
     actor_id: i64,
     repo_id: i64,
     name: &str,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
 ) -> Result<bool, SecretsError> {
     // An upgrade keeps an old lowercase name whose uppercase form was taken, so the exact name
     // is deleted first.
@@ -215,7 +215,7 @@ native_operation!(crate::postgres::secrets::repository_secret_key,
     encryptor: &SecretEncryptor,
     actor_id: i64,
     repo_id: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
 ) -> Result<(String, crypto_box::SecretKey), SecretsError>);
 
 native_operation!(crate::postgres::secrets::list_secrets,
@@ -229,7 +229,7 @@ native_operation!(crate::postgres::secrets::list_secrets,
 
 native_operation!(crate::postgres::secrets::delete_secret,
     crate::sqlite::secrets::delete_secret,
-    fn delete_secret_for(pool: &DbPool, kind: SecretKind, actor_id: i64, repo_id: i64, name: &str, credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>) -> Result<bool, SecretsError>);
+    fn delete_secret_for(pool: &DbPool, kind: SecretKind, actor_id: i64, repo_id: i64, name: &str, credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>) -> Result<bool, SecretsError>);
 
 // A claim with no encryption key must not silently omit configured secrets.
 native_operation!(crate::postgres::secrets::repository_has_secrets,
@@ -246,13 +246,13 @@ native_operation!(crate::postgres::secrets::decrypt_repository_secrets,
     repo_id: i64,
 ) -> Result<Vec<(String, String)>, SecretsError>);
 
-use codeyard_db_core::queries::secrets::SecretsError;
+use codeyard_database::queries::secrets::SecretsError;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codeyard_actions::values::MAX_NAME_BYTES as MAX_SECRET_NAME_BYTES;
-    use codeyard_actions::values::MAX_VALUE_BYTES as MAX_SECRET_VALUE_BYTES;
+    use codeyard_runner::values::MAX_NAME_BYTES as MAX_SECRET_NAME_BYTES;
+    use codeyard_runner::values::MAX_VALUE_BYTES as MAX_SECRET_VALUE_BYTES;
     use codeyard_support::secrets::SecretError;
 
     #[test]
@@ -374,7 +374,7 @@ mod tests {
             SecretsError::Denied
         ));
         let error = anyhow::Error::new(
-            codeyard_db_core::queries::discussions::DiscussionWriteRefusal::Denied,
+            codeyard_database::queries::discussions::DiscussionWriteRefusal::Denied,
         )
         .context("private authority context");
         assert!(matches!(

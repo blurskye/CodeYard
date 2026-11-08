@@ -1,8 +1,8 @@
 use anyhow::Result;
 use chrono::DateTime;
 use chrono::Utc;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -127,10 +127,10 @@ native_operation!(crate::postgres::environments::count,
     fn count(pool: &DbPool, repo: i64) -> Result<i64>);
 native_operation!(crate::postgres::environments::upsert,
     crate::sqlite::environments::upsert,
-    fn upsert(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo: i64, name: &str, input: &Update) -> Result<Environment>);
+    fn upsert(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, repo: i64, name: &str, input: &Update) -> Result<Environment>);
 native_operation!(crate::postgres::environments::delete,
     crate::sqlite::environments::delete,
-    fn delete(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo: i64, name: &str) -> Result<()>);
+    fn delete(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, repo: i64, name: &str) -> Result<()>);
 native_operation!(crate::postgres::environments::branches,
     crate::sqlite::environments::branches,
     fn branches(pool: &DbPool, environment: i64, offset: i64, limit: i64) -> Result<Vec<Branch>>);
@@ -142,7 +142,7 @@ native_operation!(crate::postgres::environments::branch_count,
     fn branch_count(pool: &DbPool, environment: i64) -> Result<i64>);
 native_operation!(crate::postgres::environments::save_branch,
     crate::sqlite::environments::save_branch,
-    fn save_branch(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo: i64, environment: i64, id: Option<i64>, name: &str, kind: &str) -> Result<(Branch, bool)>);
+    fn save_branch(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, repo: i64, environment: i64, id: Option<i64>, name: &str, kind: &str) -> Result<(Branch, bool)>);
 native_operation!(crate::postgres::environments::delete_branch,
     crate::sqlite::environments::delete_branch,
-    fn delete_branch(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo: i64, environment: i64, id: i64) -> Result<()>);
+    fn delete_branch(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, repo: i64, environment: i64, id: i64) -> Result<()>);

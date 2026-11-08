@@ -14,12 +14,12 @@ use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_db_core::models::CommitStatus;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
-use codeyard_model::urls::repo_url;
-use codeyard_repos_core::api_shared::github::contents::store_error;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_database::models::CommitStatus;
+use codeyard_git_storage::api_shared::github::contents::store_error;
+use codeyard_git_storage::repositories::store::repo_store;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
+use codeyard_types::urls::repo_url;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -54,7 +54,7 @@ async fn documents(
             let creator = status.creator_id.and_then(|id| users.get(&id));
             json!({
             "id": status.id,
-            "node_id": codeyard_model::node_id::scoped("CS",status.repo_id,status.id),
+            "node_id": codeyard_types::node_id::scoped("CS",status.repo_id,status.id),
             "avatar_url": creator.as_ref().map(|value| &value["avatar_url"]),
             "url": format!("{}/statuses/{}", repo_url(owner, name), status.sha),
             "state": status.state, "context": status.context, "description": status.description,
@@ -121,7 +121,7 @@ async fn create(
         Some(_) => Error::invalid("Invalid commit status"),
         None => Error::unavailable(()),
     })?;
-    codeyard_repos_core::webhooks::statuses::emit_status(
+    codeyard_git_storage::webhooks::statuses::emit_status(
         &state.pool,
         &store,
         &repo,

@@ -17,11 +17,11 @@ use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
 use codeyard_db_repos::assignees::AssignedItem;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
 use codeyard_repos_pulls::issues::comments::CommentTarget;
 use codeyard_repos_pulls::issues::comments::CreateCommentRequest;
 use codeyard_repos_pulls::repositories::pull_requests::comments::CreatePullRequestCommentRequest;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -77,7 +77,7 @@ fn representation(headers: &HeaderMap) -> Representation {
 async fn represent(
     state: &AppState,
     headers: &HeaderMap,
-    repo: &codeyard_db_core::models::Repository,
+    repo: &codeyard_database::models::Repository,
     owner: &str,
     mut values: Vec<Value>,
 ) -> Result<Vec<Value>> {
@@ -150,7 +150,7 @@ async fn represent(
 async fn response_document(
     state: &AppState,
     headers: &HeaderMap,
-    repo: &codeyard_db_core::models::Repository,
+    repo: &codeyard_database::models::Repository,
     owner: &str,
     comment: &Comment,
 ) -> Result<Value> {
@@ -249,7 +249,7 @@ async fn create(
     let comment = find(
         &state.pool,
         repo.id,
-        codeyard_model::webhook_ids::conversation_comment_id(id, pull),
+        codeyard_types::webhook_ids::conversation_comment_id(id, pull),
     )
     .await?;
     Ok((

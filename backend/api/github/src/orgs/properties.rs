@@ -16,12 +16,12 @@ use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::app::AppState;
-use codeyard_db_core::queries::organizations::properties::DefinitionInput;
-use codeyard_db_core::queries::organizations::properties::Refusal;
-use codeyard_db_core::queries::organizations::properties::ValueInput;
+use codeyard_database::queries::organizations::properties::DefinitionInput;
+use codeyard_database::queries::organizations::properties::Refusal;
+use codeyard_database::queries::organizations::properties::ValueInput;
 use codeyard_db_orgs::organizations::properties::query::RepositoryQuery;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -165,7 +165,7 @@ async fn define_one(
         .ok_or_else(codeyard_identity::github_auth::required)?;
     actor.require_write()?;
     let org = target(&state, &name).await?;
-    let Json(input) = input.map_err(codeyard_model::github_error::json_error)?;
+    let Json(input) = input.map_err(codeyard_types::github_error::json_error)?;
     let input = definition(input, Some(&property))?;
     let definitions = outcome(
         codeyard_db_orgs::organizations::properties::define(
@@ -197,7 +197,7 @@ async fn define_many(
         .ok_or_else(codeyard_identity::github_auth::required)?;
     actor.require_write()?;
     let org = target(&state, &name).await?;
-    let Json(input) = input.map_err(codeyard_model::github_error::json_error)?;
+    let Json(input) = input.map_err(codeyard_types::github_error::json_error)?;
     let inputs = input
         .properties
         .into_iter()
@@ -297,7 +297,7 @@ async fn set_values(
         .ok_or_else(codeyard_identity::github_auth::required)?;
     actor.require_write()?;
     let org = target(&state, &name).await?;
-    let Json(input) = input.map_err(codeyard_model::github_error::json_error)?;
+    let Json(input) = input.map_err(codeyard_types::github_error::json_error)?;
     outcome(
         codeyard_db_orgs::organizations::properties::set_values(
             &state.pool,

@@ -1,8 +1,8 @@
 use anyhow::Result;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_db_core::queries::repository_stats::RepositorySnapshot;
-use codeyard_db_core::DbPool;
+use codeyard_database::native_operation;
+use codeyard_database::queries::organizations::OrganizationOutcome;
+use codeyard_database::queries::repository_stats::RepositorySnapshot;
+use codeyard_database::DbPool;
 
 pub struct Settings {
     pub enforced_repositories: String,

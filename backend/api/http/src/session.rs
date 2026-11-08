@@ -5,7 +5,7 @@ use axum::http::StatusCode;
 use axum::Json;
 use codeyard_support::crypto::is_hex_token;
 use codeyard_support::http_credentials::cookie as named_cookie;
-use codeyard_types::cells::{Prefix, Secret};
+use codeyard_types::cell_ids::{Prefix, Secret};
 
 fn cookie_domain() -> Option<String> {
     std::env::var("COOKIE_DOMAIN")
@@ -24,7 +24,7 @@ fn parse_bool_env(value: &str) -> bool {
 pub fn secure_cookie() -> bool {
     // A pinned HTTPS deployment origin cannot be downgraded by an accidental
     // COOKIE_SECURE=false setting. Never infer transport from forwarded headers.
-    if codeyard_model::http_config::public_url()
+    if codeyard_types::http_config::public_url()
         .ok()
         .flatten()
         .is_some_and(|url| url.scheme() == "https")
@@ -47,7 +47,7 @@ pub fn session_duration_days() -> i64 {
 pub fn build_session_cookie(
     session_id: &str,
     max_age_days: i64,
-) -> Result<String, codeyard_types::cells::Invalid> {
+) -> Result<String, codeyard_types::cell_ids::Invalid> {
     build_session_cookie_for(session_id, max_age_days.clamp(0, 365) * 24 * 60 * 60)
 }
 
@@ -55,7 +55,7 @@ pub fn build_session_cookie(
 pub(crate) fn build_session_cookie_for(
     session_id: &str,
     max_age_seconds: i64,
-) -> Result<String, codeyard_types::cells::Invalid> {
+) -> Result<String, codeyard_types::cell_ids::Invalid> {
     Secret::cookie(session_id)?;
     let name = session_cookie_name();
     let mut cookie = format!(
@@ -128,7 +128,7 @@ pub fn has_session_cookie(headers: &HeaderMap) -> bool {
 }
 
 pub fn oauth_browser_cookie_name() -> &'static str {
-    if codeyard_model::http_config::public_url()
+    if codeyard_types::http_config::public_url()
         .ok()
         .flatten()
         .is_some_and(|url| url.scheme() == "http")
@@ -158,9 +158,9 @@ pub fn extract_user_agent(headers: &HeaderMap) -> Option<String> {
 }
 
 pub async fn get_current_user(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     headers: &HeaderMap,
-) -> Result<codeyard_db_core::models::User, (StatusCode, Json<ApiError>)> {
+) -> Result<codeyard_database::models::User, (StatusCode, Json<ApiError>)> {
     get_optional_user(pool, headers).await?.ok_or_else(|| {
         crate::shared::auth::errors::admin_authority_failure(
             codeyard_identity::sessions::AccountAuthorityError::NotAuthenticated,
@@ -169,9 +169,9 @@ pub async fn get_current_user(
 }
 
 pub async fn get_optional_user(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     headers: &HeaderMap,
-) -> Result<Option<codeyard_db_core::models::User>, (StatusCode, Json<ApiError>)> {
+) -> Result<Option<codeyard_database::models::User>, (StatusCode, Json<ApiError>)> {
     let Some(session_id) = extract_session_id(headers) else {
         return Ok(None);
     };
@@ -188,7 +188,7 @@ pub async fn get_optional_user(
     Ok(user)
 }
 
-fn optional_user_allowed(user: &codeyard_db_core::models::User) -> bool {
+fn optional_user_allowed(user: &codeyard_database::models::User) -> bool {
     !user.is_banned
 }
 
@@ -236,7 +236,7 @@ mod tests {
 
     #[test]
     fn optional_identity_rejects_banned_accounts_including_admins() {
-        let mut user: codeyard_db_core::models::User = serde_json::from_value(serde_json::json!({
+        let mut user: codeyard_database::models::User = serde_json::from_value(serde_json::json!({
             "id": 1,
             "home_cell": 0,
             "is_stub": false,

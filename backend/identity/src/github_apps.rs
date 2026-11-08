@@ -2,7 +2,7 @@
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use chrono::Utc;
-use codeyard_db_core::DbPool;
+use codeyard_database::DbPool;
 use codeyard_db_identity::github_apps::App;
 use rsa::{
     pkcs1v15::{Signature, VerifyingKey},
@@ -25,7 +25,7 @@ pub fn valid_slug(slug: &str) -> bool {
         && slug
             .bytes()
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
-        && format!("{slug}[bot]") != codeyard_db_core::queries::ci_tokens::BOT
+        && format!("{slug}[bot]") != codeyard_database::queries::ci_tokens::BOT
 }
 
 /// Bound expensive key generation, including concurrent replays of a conversion code.
@@ -126,7 +126,7 @@ pub fn manifest(value: &Value) -> Option<Manifest> {
     let events = if chosen.is_empty() {
         String::new()
     } else {
-        codeyard_model::webhook_events::subscription(&chosen).ok()?
+        codeyard_types::webhook_events::subscription(&chosen).ok()?
     };
     // An app cannot subscribe to a repository category it was not granted.
     if chosen
@@ -441,7 +441,7 @@ pub async fn authority(pool: &DbPool, id: i64) -> anyhow::Result<Option<Authorit
     if let Some(grant) = crate::fine_grained::grant(pool, id).await? {
         return Ok(Some(Authority {
             permissions: Value::Object(
-                grant.group(codeyard_model::fine_grained::Group::Repository),
+                grant.group(codeyard_types::fine_grained::Group::Repository),
             ),
             source: Source::Personal(grant),
         }));
@@ -530,7 +530,7 @@ pub fn repository_permission(path: &str, write: bool) -> Option<&'static str> {
     }
 }
 
-use codeyard_model::github_apps::allows;
+use codeyard_types::github_apps::allows;
 
 #[cfg(test)]
 mod tests {

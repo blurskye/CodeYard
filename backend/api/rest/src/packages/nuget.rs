@@ -61,7 +61,7 @@ async fn handle(
 fn root(owner: &str) -> String {
     format!(
         "{}/api/packages/{}/nuget",
-        codeyard_model::http_config::link_origin(),
+        codeyard_types::http_config::link_origin(),
         codeyard_types::paths::encode_component(owner)
     )
 }

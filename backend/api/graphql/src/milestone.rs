@@ -8,7 +8,7 @@ use serde_json::Value;
 pub(super) async fn resolve(
     field: &str,
     args: &Arguments,
-    repo: &codeyard_db_core::models::Repository,
+    repo: &codeyard_database::models::Repository,
     request: &RequestContext,
 ) -> Result<Value> {
     request.authorize(repo.id, "issues", false).await?;

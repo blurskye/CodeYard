@@ -103,7 +103,7 @@ async fn traffic_contract(pg: bool) {
         f.pool(),
         bob,
         repo.id,
-        codeyard_db_core::models::AccessLevel::Read,
+        codeyard_database::models::AccessLevel::Read,
     )
     .await
     .unwrap();
@@ -321,7 +321,7 @@ async fn traffic_contract(pg: bool) {
         f.pool(),
         bob,
         repo.id,
-        codeyard_db_core::models::AccessLevel::Write,
+        codeyard_database::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -526,7 +526,7 @@ async fn traffic_contract(pg: bool) {
         f.pool(),
         bob,
         repo.id,
-        codeyard_db_core::models::AccessLevel::Write,
+        codeyard_database::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -587,7 +587,7 @@ async fn traffic_contract(pg: bool) {
     assert_eq!(data["count"], 1);
     assert_eq!(views(&router, &reader).await["count"], personal);
     assert_eq!(f.scalar("SELECT COUNT(*) FROM repository_traffic_keys a JOIN repository_traffic_keys b ON a.salt=b.salt WHERE a.repo_id=$1 AND b.repo_id=$2",&[repo.id,other["id"].as_i64().unwrap()]).await,0);
-    use codeyard_db_core::queries::organizations::OrganizationOutcome;
+    use codeyard_database::queries::organizations::OrganizationOutcome;
     use codeyard_db_orgs::organizations::membership;
     use codeyard_db_orgs::organizations::profiles;
     let input = profiles::NewOrganization::new(
@@ -607,7 +607,7 @@ async fn traffic_contract(pg: bool) {
             alice,
             org.id,
             bob,
-            codeyard_db_core::models::OrgRole::Member
+            codeyard_database::models::OrgRole::Member
         )
         .await
         .unwrap(),
@@ -627,7 +627,7 @@ async fn traffic_contract(pg: bool) {
         f.pool(),
         bob,
         org_repo["id"].as_i64().unwrap(),
-        codeyard_db_core::models::AccessLevel::Write,
+        codeyard_database::models::AccessLevel::Write,
     )
     .await
     .unwrap();

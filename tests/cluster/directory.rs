@@ -1,10 +1,10 @@
 //! Directory requests use real authenticated node-key TLS and live enrollment.
 use crate::support::native_database::PostgresDatabase;
-use codeyard_cells_router::directory::{Client, Config, Listener, Reply, Request};
 use codeyard_db_directory::Directory;
-use codeyard_model::cells::{Cell, Key, KeyKind, Object, ObjectKind, State};
+use codeyard_router::directory::{Client, Config, Listener, Reply, Request};
 use codeyard_support::node_identity::NodeKey;
-use codeyard_types::cells::Prefix;
+use codeyard_types::cell_ids::Prefix;
+use codeyard_types::cells::{Cell, Key, KeyKind, Object, ObjectKind, State};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 #[tokio::test]
@@ -132,11 +132,11 @@ async fn directory_transport_pins_keys_and_read_only_routers_cannot_claim_names(
         .unwrap();
     assert!(router_client.request(&cell).await.is_err());
     // A hostile body is bounded on the server even when bypassing the client encoder.
-    let mut link = codeyard_cluster_core::tcp::dial(
+    let mut link = codeyard_nodes::tcp::dial(
         &unknown,
         listener.address,
         server.public_key(),
-        codeyard_cells_router::directory::ALPN,
+        codeyard_router::directory::ALPN,
     )
     .await
     .unwrap();
@@ -257,8 +257,7 @@ async fn directory_transport_pins_keys_and_read_only_routers_cannot_claim_names(
     connect(unknown.clone()).request(&forget).await.unwrap();
     assert_eq!(directory.lookup(&email).await.unwrap(), None);
     let routes =
-        codeyard_cells_router::routes::Routes::new(connect(unknown.clone()), Default::default())
-            .unwrap();
+        codeyard_router::routes::Routes::new(connect(unknown.clone()), Default::default()).unwrap();
     assert_eq!(
         routes.by_name("alice").await.unwrap().unwrap().id,
         Prefix::new(1)

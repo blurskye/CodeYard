@@ -1,7 +1,7 @@
 use crate::source_imports::SourceImport;
 use anyhow::Result;
-use codeyard_db_core::pool::SqlitePool;
-use codeyard_db_core::queries::source_imports::ImportRefusal;
+use codeyard_database::pool::SqlitePool;
+use codeyard_database::queries::source_imports::ImportRefusal;
 
 pub async fn get(pool: &SqlitePool, repo: i64) -> Result<Option<SourceImport>> {
     Ok(
@@ -21,7 +21,7 @@ pub async fn start(
 ) -> Result<SourceImport> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::sqlite::discussions::lock_admin_authority(&mut tx, actor, repo)
+        codeyard_database::queries::sqlite::discussions::lock_admin_authority(&mut tx, actor, repo)
             .await?,
         ImportRefusal::Denied
     );
@@ -49,7 +49,7 @@ pub async fn finish(pool: &SqlitePool, repo: i64, generation: &str, success: boo
 pub async fn cancel(pool: &SqlitePool, actor: i64, repo: i64) -> Result<()> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::sqlite::discussions::lock_archive_authority(
+        codeyard_database::queries::sqlite::discussions::lock_archive_authority(
             &mut tx, actor, repo
         )
         .await?,

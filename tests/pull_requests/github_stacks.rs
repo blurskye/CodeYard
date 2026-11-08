@@ -12,7 +12,7 @@ async fn contract(pg: bool) {
     f.complete_setup().await;
     let alice_id = f.actor("alice").await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard_repos_core::repositories::lifecycle::provision(
+    let repo = codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
@@ -92,7 +92,7 @@ async fn contract(pg: bool) {
     assert_eq!(stack["base"]["ref"], "main");
     assert_eq!(
         stack["node_id"],
-        codeyard_model::node_id::scoped("S", repo.id, stack["id"].as_i64().unwrap()).unwrap()
+        codeyard_types::node_id::scoped("S", repo.id, stack["id"].as_i64().unwrap()).unwrap()
     );
     assert_eq!(stack["pull_requests"][1]["number"], bn);
     assert_eq!(stack["open"], true);

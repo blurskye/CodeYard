@@ -5,12 +5,12 @@ use anyhow::Context;
 use anyhow::Result;
 use codeyard_app::app::AppState;
 use codeyard_ci::config::CiConfig;
-use codeyard_db_core::DbPool;
-use codeyard_model::node_roles::NodeRole;
+use codeyard_database::DbPool;
 use codeyard_storage::s3::S3Config;
 use codeyard_storage::ObjectStore;
 use codeyard_support::fs::lock_state_dir;
 use codeyard_support::secrets::SecretEncryptor;
+use codeyard_types::node_roles::NodeRole;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -56,8 +56,8 @@ async fn prepare_application(
     pool: DbPool,
     repos_path: PathBuf,
     state_dir: &Path,
-    roles: &codeyard_model::node_roles::NodeRoles,
-    cluster: Option<codeyard_repos_core::context::NodeContext>,
+    roles: &codeyard_types::node_roles::NodeRoles,
+    cluster: Option<codeyard_git_storage::context::NodeContext>,
     s3: Option<S3Config>,
 ) -> Result<AppState> {
     let serves_web = roles.contains(NodeRole::Web);
@@ -68,11 +68,11 @@ async fn prepare_application(
         Err(std::env::VarError::NotPresent) => 1024 * 1024 * 1024,
         Err(_) => anyhow::bail!("STORAGE_MIN_FREE_BYTES must be an unsigned byte count"),
     };
-    codeyard_model::http_config::public_url()?;
+    codeyard_types::http_config::public_url()?;
     if cluster.is_none() {
         let (state_dir, repos) = (state_dir.to_owned(), repos_path.clone());
         tokio::task::spawn_blocking(move || {
-            codeyard_repos_core::repositories::releases::immutable::configure_local_identity(
+            codeyard_git_storage::repositories::releases::immutable::configure_local_identity(
                 &state_dir, &repos,
             )
         })
@@ -93,12 +93,12 @@ async fn prepare_application(
     }
     // Single-node installations also open node transport for remote runners.
     // Only persisted cluster mode moves acknowledged objects off the local disk.
-    let clustered = codeyard_db_cluster::cluster::cluster_enabled(&pool).await?;
+    let clustered = codeyard_db_placement::cluster::cluster_enabled(&pool).await?;
     let storage = Arc::new(match (s3, cluster.as_ref().filter(|_| clustered)) {
         (None, Some(context)) => {
             ObjectStore::on_nodes(
                 state_dir,
-                codeyard_repos_core::objects::Store::new(context.clone()),
+                codeyard_git_storage::objects::Store::new(context.clone()),
             )
             .await?
         }
@@ -114,7 +114,7 @@ async fn prepare_application(
         cluster.as_ref().map(|n| n.node_id),
     )
     .await?;
-    codeyard_db_core::read_routing::configure(&pool).await?;
+    codeyard_database::read_routing::configure(&pool).await?;
     let mut state = AppState::new(
         pool,
         repos_path,
@@ -156,7 +156,7 @@ const USER_MOVE_LIMIT: std::time::Duration = std::time::Duration::from_secs(2 * 
 /// updates organization presence and plans at most one automatic user move, which runs in
 /// its own task here. A stop aborts the move; the next evaluation continues it.
 async fn count_regions(
-    pool: codeyard_db_core::pool::PgPool,
+    pool: codeyard_database::pool::PgPool,
     mover: Arc<crate::backend::cli::cells::UserMover>,
     mut stop: tokio::sync::watch::Receiver<bool>,
 ) {
@@ -171,7 +171,7 @@ async fn count_regions(
         // Counts gathered before a stop are still written.
         let flushed = tokio::time::timeout(
             std::time::Duration::from_secs(30),
-            codeyard_db_core::cells::regions::flush(&pool),
+            codeyard_database::cells::regions::flush(&pool),
         )
         .await;
         if !matches!(flushed, Ok(Ok(()))) {
@@ -183,10 +183,10 @@ async fn count_regions(
         // A move still running here holds the cell's move lease; the next one waits.
         let idle = moving.as_ref().is_none_or(|task| task.is_finished());
         let evaluation = tokio::time::timeout(std::time::Duration::from_secs(600), async {
-            let Some(policy) = codeyard_db_cluster::regions::due(&pool).await? else {
+            let Some(policy) = codeyard_db_placement::regions::due(&pool).await? else {
                 return Ok(None);
             };
-            match codeyard_db_cluster::regions::evaluate(&pool, &policy).await {
+            match codeyard_db_placement::regions::evaluate(&pool, &policy).await {
                 Ok(changes) => {
                     for change in changes {
                         info!(
@@ -267,11 +267,12 @@ async fn remove_expired_rows(
         }
         if let Some(root) = repos_path.clone() {
             let window = std::time::Duration::from_secs(
-                codeyard_db_core::queries::files::RESTORE_WINDOW_SECONDS as u64,
+                codeyard_database::queries::files::RESTORE_WINDOW_SECONDS as u64,
             );
             let sweep = tokio::task::spawn_blocking(move || {
-                let mirrors = root.join(codeyard_repos_core::cluster::replicas::MIRRORS);
-                let quarantines = mirrors.join(codeyard_repos_core::cluster::replicas::QUARANTINES);
+                let mirrors = root.join(codeyard_git_storage::cluster::replicas::MIRRORS);
+                let quarantines =
+                    mirrors.join(codeyard_git_storage::cluster::replicas::QUARANTINES);
                 let mut removed = 0;
                 for root in [root, mirrors, quarantines] {
                     removed += codeyard_git::mirror::remove_expired_deleted(&root, window)?;
@@ -356,17 +357,17 @@ async fn remove_expired_web_rows(pool: &DbPool, storage: &codeyard_storage::Obje
     }
 }
 
-fn select_transport(config: &ServeConfig) -> Result<codeyard_support::ssh_mode::Selection> {
+fn select_transport(config: &ServeConfig) -> Result<codeyard_types::ssh_mode::Selection> {
     if !config.roles.contains(NodeRole::Ssh) {
-        return Ok(codeyard_support::ssh_mode::Selection {
-            mode: codeyard_support::ssh_mode::SshMode::Disabled,
+        return Ok(codeyard_types::ssh_mode::Selection {
+            mode: codeyard_types::ssh_mode::SshMode::Disabled,
             setup_required: false,
             git_user: "git".into(),
-            socket: PathBuf::from(codeyard_support::ssh_mode::DEFAULT_SOCKET),
+            socket: PathBuf::from(codeyard_types::ssh_mode::DEFAULT_SOCKET),
             builtin_port: config.ssh_addr.port(),
         });
     }
-    codeyard_support::ssh_mode::select(
+    codeyard_types::ssh_mode::select(
         config.ssh_mode,
         config.ssh_socket.clone(),
         config.ssh_git_user.clone(),
@@ -378,7 +379,7 @@ fn select_transport(config: &ServeConfig) -> Result<codeyard_support::ssh_mode::
 /// A worker-only process has no application state, database or inbound listeners.
 pub async fn serve_worker(state_dir: &std::path::Path) -> Result<()> {
     let _state_dir_lock = lock_state_dir(state_dir)?;
-    let settings = codeyard_cluster_core::settings::Settings::from_lookup(&|key| {
+    let settings = codeyard_nodes::settings::Settings::from_lookup(&|key| {
         // Empty counts as unset, as in `Settings::from_lookup`, so the fallback below applies.
         std::env::var(key)
             .ok()
@@ -393,7 +394,7 @@ pub async fn serve_worker(state_dir: &std::path::Path) -> Result<()> {
     let (context, peers) = tokio::select! {
         biased;
         result = &mut signal => return result,
-        result = codeyard_cluster::worker::worker_context(state_dir, settings) => result?,
+        result = codeyard_placement::worker::worker_context(state_dir, settings) => result?,
     };
     let config = std::sync::Arc::new(codeyard_ci::config::CiConfig::from_env()?);
     let workers = codeyard_ci_engine::workers::CiWorkers::new(
@@ -430,15 +431,15 @@ pub async fn serve_worker(state_dir: &std::path::Path) -> Result<()> {
 pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
     let signal = shutdown_signal();
     tokio::pin!(signal);
-    let clustered = codeyard_db_cluster::cluster::cluster_enabled(&pool).await?;
+    let clustered = codeyard_db_placement::cluster::cluster_enabled(&pool).await?;
     let _installation_lock = if !clustered {
-        Some(codeyard_db_cluster::cluster::serving_lock(&pool, "installation").await?)
+        Some(codeyard_db_placement::cluster::serving_lock(&pool, "installation").await?)
     } else {
         None
     };
     if !config.roles.single_node() && !clustered {
         pool.close().await;
-        anyhow::bail!(codeyard_model::node_roles::SINGLE_NODE_ROLES);
+        anyhow::bail!(codeyard_types::node_roles::SINGLE_NODE_ROLES);
     }
     let s3 = S3Config::optional_from_env()?;
     let move_targets = crate::backend::cli::cells::MoveTarget::from_env()?;
@@ -457,7 +458,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
     // Git receive sockets live in the private state directory, not the shared /tmp.
     #[cfg(target_os = "linux")]
     if let Err(error) =
-        codeyard_repos_core::repositories::git_sessions::private_files::prepare_run_dir(
+        codeyard_git_storage::repositories::git_sessions::private_files::prepare_run_dir(
             &config.state_dir,
         )
     {
@@ -466,15 +467,15 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
     }
     // The cluster transport is opt-in. Without cluster settings no cluster socket is
     // opened. With them, single-node mode still admits only runners.
-    let member = match codeyard_cluster_core::settings::Settings::from_env()? {
+    let member = match codeyard_nodes::settings::Settings::from_env()? {
         Some(settings) => Some(tokio::select! {
             biased;
             result = &mut signal => { pool.close().await; return result; }
-            result = codeyard_cluster::start(&pool, &config.state_dir, &repos_path, &config.roles, settings) => result?,
+            result = codeyard_placement::start(&pool, &config.state_dir, &repos_path, &config.roles, settings) => result?,
         }),
         None => None,
     };
-    if member.is_none() && codeyard_db_cluster::cluster::cluster_enabled(&pool).await? {
+    if member.is_none() && codeyard_db_placement::cluster::cluster_enabled(&pool).await? {
         pool.close().await;
         anyhow::bail!(
             "this database is in cluster mode; set the CLUSTER_* settings so this node can serve it"
@@ -493,7 +494,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
         "A node without web or ssh only serves other nodes: join a cluster first (see `codeyard cluster join`)"
     );
         let transport = select_transport(&config)?;
-        codeyard_support::ssh_mode::publish(transport.clone())?;
+        codeyard_types::ssh_mode::publish(transport.clone())?;
         info!(ssh_mode = transport.mode.as_str(), roles = ?config.roles, "starting codeyard");
         if transport.setup_required {
             warn!("SSH setup required: no SSH listener will be opened. Run the OpenSSH installer, or set SSH_MODE=builtin or SSH_MODE=disabled.");
@@ -510,28 +511,28 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
         let (cell_rpc, capacity_client) = match (&config.directory, config.cell_rpc_address) {
             (None, None) => {
                 anyhow::ensure!(
-                    pool.cell_id() == codeyard_types::cells::Prefix::ZERO,
+                    pool.cell_id() == codeyard_types::cell_ids::Prefix::ZERO,
                     "A nonzero cell requires directory settings and CELL_RPC_ADDRESS"
                 );
                 anyhow::ensure!(
                     config.search.is_none(),
                     "A search index needs a cell with directory settings"
                 );
-                codeyard_db_core::cells::search::enable(&pool, false).await?;
+                codeyard_database::cells::search::enable(&pool, false).await?;
                 (None, None)
             }
             (Some(settings), Some(address)) => {
                 anyhow::ensure!(
-                    matches!(&pool, codeyard_db_core::DbPool::Postgres(_)),
+                    matches!(&pool, codeyard_database::DbPool::Postgres(_)),
                     "Copy this SQLite cell to PostgreSQL before enrolling it in the directory"
                 );
                 anyhow::ensure!(
-                    transport.mode != codeyard_support::ssh_mode::SshMode::Openssh,
+                    transport.mode != codeyard_types::ssh_mode::SshMode::Openssh,
                     "Cells behind a router use builtin SSH or disabled SSH"
                 );
                 let directory = super::router::Directory::new(settings, &config.state_dir)?;
                 let key = codeyard_support::node_identity::load_or_create(&config.state_dir)?;
-                let listener = codeyard_cells_router::accounts::listen(
+                let listener = codeyard_router::accounts::listen(
                     directory.client.clone(),
                     Arc::new(codeyard_app::cells::Native {
                         state: state.clone(),
@@ -544,10 +545,11 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
                 pool.set_directory(Arc::new(directory.client.clone()))?;
                 let search = config.search.as_ref().unwrap_or(settings);
                 pool.set_search(Arc::new(search.client(&config.state_dir)?))?;
-                codeyard_db_core::cells::search::enable(&pool, true).await?;
-                pool.set_foreign_authorization(Arc::new(
-                    codeyard_cells_router::accounts::Remote::new(key, directory.client)?,
-                ));
+                codeyard_database::cells::search::enable(&pool, true).await?;
+                pool.set_foreign_authorization(Arc::new(codeyard_router::accounts::Remote::new(
+                    key,
+                    directory.client,
+                )?));
                 (Some(listener), Some(capacity_client))
             }
             _ => anyhow::bail!("A cell requires both directory settings and CELL_RPC_ADDRESS"),
@@ -691,7 +693,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
         .clone()
         .filter(|_| config.roles.contains(NodeRole::Web))
         .map(|directory| {
-            tokio::spawn(codeyard_cells_router::capacity::run(
+            tokio::spawn(codeyard_router::capacity::run(
                 pool.clone(),
                 directory,
                 Default::default(),
@@ -700,7 +702,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
         });
     let (stop_outbox, outbox_stop) = tokio::sync::watch::channel(false);
     let outbox = (config.roles.contains(NodeRole::Web) && pool.directory().is_some()).then(|| {
-        tokio::spawn(codeyard_db_core::cells::outbox::run(
+        tokio::spawn(codeyard_database::cells::outbox::run(
             pool.clone(),
             Arc::new(codeyard_app::cells::Refreshes {
                 state: state.clone(),
@@ -744,7 +746,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
         .as_ref()
         .filter(|_| config.roles.contains(NodeRole::Storage))
         .map(|member| {
-            tokio::spawn(codeyard_cluster::replicas::run(
+            tokio::spawn(codeyard_placement::replicas::run(
                 member.context.clone(),
                 replica_stop,
             ))
@@ -765,7 +767,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
     };
     let servers = async {
         match transport.mode {
-            codeyard_support::ssh_mode::SshMode::Builtin => {
+            codeyard_types::ssh_mode::SshMode::Builtin => {
                 let host_key = config
                     .host_key
                     .to_str()
@@ -785,9 +787,9 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
                 tokio::try_join!(server.run(config.ssh_addr, stop.clone()), web_server).map(|_| ())
             }
             #[cfg(unix)]
-            codeyard_support::ssh_mode::SshMode::Openssh if !transport.setup_required => {
+            codeyard_types::ssh_mode::SshMode::Openssh if !transport.setup_required => {
                 info!("using host OpenSSH for Git over SSH");
-                let gateway = codeyard_repos_core::repositories::git_sessions::run_gateway(
+                let gateway = codeyard_git_storage::repositories::git_sessions::run_gateway(
                     transport.socket,
                     repos_path,
                     pool.clone(),
@@ -907,13 +909,13 @@ mod tests {
     #[tokio::test]
     async fn expiry_sweep_reclaims_transfer_accounting() {
         let directory = tempfile::tempdir().unwrap();
-        let pool = codeyard_db_core::init_db(&format!(
+        let pool = codeyard_database::init_db(&format!(
             "sqlite://{}",
             directory.path().join("test.db").display()
         ))
         .await
         .unwrap();
-        codeyard_db_core::run_migrations(&pool).await.unwrap();
+        codeyard_database::run_migrations(&pool).await.unwrap();
         let owner = codeyard_db_identity::users::accounts::create_user(&pool, "owner", None)
             .await
             .unwrap();
@@ -975,7 +977,7 @@ mod tests {
         // The withdrawal runs twice: before the drain, and again in `Cluster::shutdown`.
         let phases = SHUTDOWN_GRACE
             + codeyard_ci_engine::workers::SHUTDOWN_GRACE
-            + codeyard_cluster_core::settings::WITHDRAW_TIMEOUT * 2;
+            + codeyard_nodes::settings::WITHDRAW_TIMEOUT * 2;
         assert!(
             phases < MAX_SHUTDOWN,
             "the shutdown phases add up to {phases:?}"

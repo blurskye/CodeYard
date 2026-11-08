@@ -163,7 +163,7 @@ async fn contract(pg: bool) {
     let owner = f.actor("alice").await;
     let outsider = f.actor("bob").await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard_repos_core::repositories::lifecycle::provision(
+    let repo = codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),
@@ -174,7 +174,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    let second = codeyard_repos_core::repositories::lifecycle::provision(
+    let second = codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),
@@ -455,7 +455,7 @@ async fn contract(pg: bool) {
         f.pool(),
         outsider,
         repo.id,
-        codeyard_db_core::models::AccessLevel::Write,
+        codeyard_database::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -486,14 +486,14 @@ async fn contract(pg: bool) {
     )
     .await;
     let stored: Vec<u8> = match f.pool() {
-        codeyard_db_core::DbPool::Sqlite(pool) => sqlx::query_scalar(
+        codeyard_database::DbPool::Sqlite(pool) => sqlx::query_scalar(
             "SELECT encrypted_value FROM repo_secrets WHERE repo_id=$1 AND name='DEPLOY_TOKEN'",
         )
         .bind(repo.id)
         .fetch_one(pool)
         .await
         .unwrap(),
-        codeyard_db_core::DbPool::Postgres(pool) => sqlx::query_scalar(
+        codeyard_database::DbPool::Postgres(pool) => sqlx::query_scalar(
             "SELECT encrypted_value FROM repo_secrets WHERE repo_id=$1 AND name='DEPLOY_TOKEN'",
         )
         .bind(repo.id)

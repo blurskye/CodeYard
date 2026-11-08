@@ -1,20 +1,20 @@
 //! Discussions anchored to immutable commits, shared by REST and native forms.
-use codeyard_db_core::models::CommitComment;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::models::User;
+use codeyard_database::models::CommitComment;
+use codeyard_database::models::Repository;
+use codeyard_database::models::User;
 use codeyard_db_repos::repositories::commit_comments::CommentCreate;
 use codeyard_db_repos::repositories::commit_comments::CommentEdit;
 use codeyard_db_repos::repositories::commit_comments::CommentRefusal;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
+use codeyard_git_storage::context::NodeContext;
+use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_notifications::create::create_and_broadcast_notification;
 use codeyard_notifications::create::NotificationRequest;
 use codeyard_notifications::mentions::notify_mentions;
 use codeyard_notifications::mentions::MentionComment;
 use codeyard_notifications::mentions::MentionSource;
-use codeyard_repos_core::context::NodeContext;
-use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_webhooks::payloads::Person;
 use codeyard_webhooks::payloads::Scope;
 use serde::Deserialize;
@@ -78,7 +78,7 @@ struct Author {
 }
 
 async fn authors(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     cluster: Option<&NodeContext>,
     repo: &Repository,
     ids: &[i64],
@@ -134,7 +134,7 @@ async fn authors(
 /// Shared repository-discussion associations, including read collaborators and Git contributors.
 /// The repository has already passed the caller's read check; no comment row is required.
 pub async fn author_associations(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     cluster: Option<&NodeContext>,
     repo: &Repository,
     ids: &[i64],
@@ -157,7 +157,7 @@ fn details(comment: CommitComment, authors: &HashMap<i64, Author>) -> CommentDet
 
 /// The repository has already passed the caller's read check. Missing accounts stay null.
 pub async fn comment_details(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     cluster: Option<&NodeContext>,
     repo: &Repository,
     comments: Vec<CommitComment>,
@@ -174,7 +174,7 @@ pub async fn comment_details(
 }
 
 async fn writable(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     actor: i64,
     repo: i64,
 ) -> Result<(User, Repository, String)> {
@@ -205,17 +205,17 @@ async fn writable(
 }
 
 async fn emit(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     repo: &Repository,
     actor: i64,
     action: &'static str,
     entry: &CommentDetails,
 ) {
     let (repo_for_hook, entry) = (repo.clone(), entry.clone());
-    codeyard_repos_core::webhooks::emit(
+    codeyard_git_storage::webhooks::emit(
         pool,
         repo,
-        codeyard_model::webhook_events::COMMIT_COMMENT,
+        codeyard_types::webhook_events::COMMIT_COMMENT,
         vec![actor],
         move |owner, people| {
             let sender = people.get(actor);
@@ -246,7 +246,7 @@ async fn emit(
     reason = "A comment notice needs the storage, actor, repository and saved text snapshots."
 )]
 async fn notify(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     cluster: Option<&NodeContext>,
     broadcaster: &NotificationBroadcaster,
     user: &User,
@@ -267,7 +267,7 @@ async fn notify(
     if previous.is_none() {
         let recipient = async {
             let commit = repo_store(repo, cluster).commit(&comment.sha).await.ok()?;
-            let author = codeyard_repos_core::repositories::reads::commit_authors(
+            let author = codeyard_git_storage::repositories::reads::commit_authors(
                 pool,
                 std::slice::from_ref(&commit.author_email),
             )
@@ -340,10 +340,10 @@ async fn notify(
 }
 
 pub async fn create(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     cluster: Option<&NodeContext>,
     broadcaster: &NotificationBroadcaster,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo: i64,
     reference: &str,
     mut input: CreateComment,
@@ -451,7 +451,7 @@ pub async fn create(
 }
 
 pub async fn edit(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     cluster: Option<&NodeContext>,
     broadcaster: &NotificationBroadcaster,
     input: CommentEdit<'_>,
@@ -492,8 +492,8 @@ pub async fn edit(
 }
 
 pub async fn delete(
-    pool: &codeyard_db_core::DbPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    pool: &codeyard_database::DbPool,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo: i64,
     id: i64,
     revision: Option<&str>,

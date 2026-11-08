@@ -9,7 +9,7 @@ use axum::{
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
 
-use codeyard_db_core::models::OrgRole;
+use codeyard_database::models::OrgRole;
 use codeyard_storage::ObjectStore;
 use codeyard_webui::app::Page;
 use codeyard_webui::app::PageEnvelope;
@@ -160,14 +160,14 @@ impl Fixture {
             _root: root,
         }
     }
-    pub async fn actor(pool: &codeyard_db_core::DbPool, username: &str) -> Actor {
+    pub async fn actor(pool: &codeyard_database::DbPool, username: &str) -> Actor {
         let id = codeyard_db_identity::users::accounts::create_user(pool, username, None)
             .await
             .unwrap()
             .id;
         Self::session(pool, id).await
     }
-    async fn session(pool: &codeyard_db_core::DbPool, id: i64) -> Actor {
+    async fn session(pool: &codeyard_database::DbPool, id: i64) -> Actor {
         let session = native::token();
         let csrf = native::token();
         codeyard_db_identity::users::sessions::create_session(
@@ -194,7 +194,7 @@ impl Fixture {
         );
         Actor { id, session, csrf }
     }
-    pub async fn organization(pool: &codeyard_db_core::DbPool, actor: i64, slug: &str) -> i64 {
+    pub async fn organization(pool: &codeyard_database::DbPool, actor: i64, slug: &str) -> i64 {
         applied(
             codeyard_db_orgs::organizations::profiles::create_organization(
                 pool,
@@ -295,7 +295,7 @@ impl Fixture {
         actor: i64,
         org: Option<i64>,
         private: bool,
-    ) -> codeyard_db_core::models::Repository {
+    ) -> codeyard_database::models::Repository {
         let repository = codeyard_db_repos::repositories::records::get_repository(
             self.database.pool(),
             owner,

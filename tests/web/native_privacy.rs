@@ -304,8 +304,8 @@ async fn direct_sqlite_urls_secure_main_and_created_sidecars_without_touching_me
     let root = tempfile::tempdir().unwrap();
     let database = root.path().join("query.sqlite");
     let url = format!("sqlite://{}?mode=rwc", database.display());
-    let pool = codeyard_db_core::init_db(&url).await.unwrap();
-    codeyard_db_core::run_migrations(&pool).await.unwrap();
+    let pool = codeyard_database::init_db(&url).await.unwrap();
+    codeyard_database::run_migrations(&pool).await.unwrap();
     assert_sqlite_files_private(&database);
     pool.close().await;
 
@@ -318,7 +318,7 @@ async fn direct_sqlite_urls_secure_main_and_created_sidecars_without_touching_me
             .collect::<std::collections::BTreeSet<_>>()
     };
     let before_memory = generated_memory_files();
-    let memory = codeyard_db_core::init_db("sqlite::memory:").await.unwrap();
+    let memory = codeyard_database::init_db("sqlite::memory:").await.unwrap();
     memory.ping().await.unwrap();
     memory.close().await;
     assert_eq!(generated_memory_files(), before_memory);
@@ -326,7 +326,7 @@ async fn direct_sqlite_urls_secure_main_and_created_sidecars_without_touching_me
         "sqlite://{}?mode=memory&cache=shared",
         root.path().join("private-memory").display()
     );
-    let named_memory = codeyard_db_core::init_db(&memory_url).await.unwrap();
+    let named_memory = codeyard_database::init_db(&memory_url).await.unwrap();
     named_memory.ping().await.unwrap();
     named_memory.close().await;
     assert!(!root.path().join("private-memory").exists());

@@ -1,10 +1,10 @@
 use crate::organizations::OrganizationPage;
 use anyhow::Result;
-use codeyard_db_core::models::AccessLevel;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::AccessLevel;
+use codeyard_database::models::Repository;
+use codeyard_database::native_operation;
+use codeyard_database::queries::organizations::OrganizationOutcome;
+use codeyard_database::DbPool;
 
 // Display only; effectful callers recheck access in their native transaction.
 native_operation!(crate::postgres::organizations::access::get_organization_repo_access, crate::sqlite::organizations::access::get_organization_repo_access,

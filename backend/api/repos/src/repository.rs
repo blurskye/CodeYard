@@ -137,7 +137,7 @@ pub async fn get_repo(
 async fn repository_response(
     state: &AppState,
     headers: &HeaderMap,
-    repository: &codeyard_db_core::models::Repository,
+    repository: &codeyard_database::models::Repository,
 ) -> Result<RepoResponse, (StatusCode, Json<ApiError>)> {
     let owner = repository_owner(&state.pool, repository).await?;
     let default_branch = repository_default_branch_or_db(state, repository).await;
@@ -205,7 +205,7 @@ pub async fn rename_repo(
     Json(req): Json<RenameRepoRequest>,
 ) -> Result<Json<RepoResponse>, (StatusCode, Json<ApiError>)> {
     let user = get_current_user(&state.pool, &headers).await?;
-    codeyard_repos_core::repositories::lifecycle::validate_name(&req.new_name)
+    codeyard_git_storage::repositories::lifecycle::validate_name(&req.new_name)
         .map_err(lifecycle_error)?;
     let repository = find_repository(&state.pool, &owner, &repo).await?;
     check_repo_admin_access(&state.pool, &repository, &user).await?;
@@ -214,7 +214,7 @@ pub async fn rename_repo(
     // DB alias; stable operation-owned storage is never moved or compensated.
     let updated = codeyard_db_repos::repositories::records::rename_repository(
         &state.pool,
-        codeyard_db_core::queries::credentials::Actor::from((
+        codeyard_database::queries::credentials::Actor::from((
             user.id,
             codeyard_api_http::session::extract_session_id(&headers).unwrap_or_default(),
         )),
@@ -241,10 +241,10 @@ pub async fn transfer_repo(
     let user = get_current_user(&state.pool, &headers).await?;
     let repository = find_repository(&state.pool, &owner, &repo).await?;
     check_repo_admin_access(&state.pool, &repository, &user).await?;
-    let updated = codeyard_repos_core::repositories::lifecycle::transfer(
+    let updated = codeyard_git_storage::repositories::lifecycle::transfer(
         &state.pool,
         state.cluster.as_ref(),
-        codeyard_db_core::queries::credentials::Actor::from((
+        codeyard_database::queries::credentials::Actor::from((
             user.id,
             codeyard_api_http::session::extract_session_id(&headers).unwrap_or_default(),
         )),
@@ -276,7 +276,7 @@ pub async fn about_repo(
     let repository = find_repository(&state.pool, &owner, &repo).await?;
     check_repo_write_access(&state.pool, &repository, &user).await?;
     let description = req.description.unwrap_or_default();
-    codeyard_repos_core::repositories::lifecycle::validate_description(&description)
+    codeyard_git_storage::repositories::lifecycle::validate_description(&description)
         .map_err(lifecycle_error)?;
     let website = codeyard_db_repos::repositories::topics::parse_website(
         req.website.as_deref().unwrap_or_default(),
@@ -319,18 +319,21 @@ pub async fn update_repo(
     let repository = find_repository(&state.pool, &owner, &repo).await?;
     check_repo_admin_access(&state.pool, &repository, &user).await?;
     if let Some(Some(description)) = &req.description {
-        codeyard_repos_core::repositories::lifecycle::validate_description(description)
+        codeyard_git_storage::repositories::lifecycle::validate_description(description)
             .map_err(lifecycle_error)?;
     }
     if req.is_private == Some(false)
-        && codeyard_repos_core::repositories::lifecycle::visibility_locked(&state.pool, &repository)
-            .await
-            .map_err(|error| {
-                (
-                    lifecycle_status(&error),
-                    Json(ApiError::new("storage_unavailable", error.message)),
-                )
-            })?
+        && codeyard_git_storage::repositories::lifecycle::visibility_locked(
+            &state.pool,
+            &repository,
+        )
+        .await
+        .map_err(|error| {
+            (
+                lifecycle_status(&error),
+                Json(ApiError::new("storage_unavailable", error.message)),
+            )
+        })?
     {
         return Err((
             StatusCode::FORBIDDEN,
@@ -344,7 +347,7 @@ pub async fn update_repo(
     // failed write leaves all of them unchanged.
     let updated = codeyard_db_repos::repositories::records::patch_repository(
         &state.pool,
-        codeyard_db_core::queries::credentials::Actor::from((
+        codeyard_database::queries::credentials::Actor::from((
             user.id,
             codeyard_api_http::session::extract_session_id(&headers).unwrap_or_default(),
         )),
@@ -374,10 +377,10 @@ pub async fn delete_repo(
     let actor = get_current_user(&state.pool, &headers).await?;
     let repository = find_repository(&state.pool, &owner, &repo).await?;
     check_repo_admin_access(&state.pool, &repository, &actor).await?;
-    codeyard_repos_core::repositories::lifecycle::delete(
+    codeyard_git_storage::repositories::lifecycle::delete(
         &state.pool,
         state.cluster.as_ref(),
-        codeyard_db_core::queries::credentials::Actor::from((
+        codeyard_database::queries::credentials::Actor::from((
             actor.id,
             codeyard_api_http::session::extract_session_id(&headers).unwrap_or_default(),
         )),
@@ -460,7 +463,7 @@ pub(super) async fn settings_model(
         let oidc = codeyard_db_actions::oidc::settings(
             pool,
             viewer.id,
-            codeyard_db_core::queries::oidc::Scope::Repository(loaded.repository.id),
+            codeyard_database::queries::oidc::Scope::Repository(loaded.repository.id),
         )
         .await
         .map_err(|_| unavailable(ctx))?;
@@ -519,8 +522,9 @@ pub(super) async fn settings_model(
                 Ok(patterns) => patterns,
                 Err(error)
                     if matches!(
-                        error.downcast_ref::<codeyard_db_core::queries::secret_scanning::Refusal>(),
-                        Some(codeyard_db_core::queries::secret_scanning::Refusal::Denied)
+                        error
+                            .downcast_ref::<codeyard_database::queries::secret_scanning::Refusal>(),
+                        Some(codeyard_database::queries::secret_scanning::Refusal::Denied)
                     ) =>
                 {
                     continue
@@ -619,7 +623,7 @@ pub(super) async fn settings_model(
             settings.variables = codeyard_db_actions::variables::list(
                 &ctx.state.pool,
                 viewer.id,
-                &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+                &codeyard_database::queries::users::accounts::AccountCredential::Session(
                     &codeyard_api_http::session::extract_session_id(&ctx.headers)
                         .unwrap_or_default(),
                 ),
@@ -686,7 +690,7 @@ pub(super) async fn settings_model(
                 .ok_or_else(|| unavailable(ctx))?;
             settings.collaborators.push(view::settings::Collaborator {
                 username: user.username,
-                access: codeyard_db_core::models::AccessLevel::from(access.access_level)
+                access: codeyard_database::models::AccessLevel::from(access.access_level)
                     .as_str()
                     .into(),
             });
@@ -723,7 +727,7 @@ pub(super) async fn settings_model(
                 .push(view::settings::PendingInvitation {
                     id: invitation.id,
                     username: user.username.clone(),
-                    access: codeyard_db_core::models::AccessLevel::from(invitation.permission)
+                    access: codeyard_database::models::AccessLevel::from(invitation.permission)
                         .as_str()
                         .to_owned(),
                 });
@@ -770,7 +774,7 @@ pub(super) async fn settings_model(
         let built = codeyard_webhooks::panel::build(
             &ctx.state.pool,
             viewer,
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+            &codeyard_database::queries::users::accounts::AccountCredential::Session(
                 &codeyard_api_http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
             ),
             &place,
@@ -1080,7 +1084,7 @@ async fn webhook_form(
         pool,
         ctx.state.secret_encryptor.as_deref(),
         actor,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &codeyard_api_http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
         ),
         owner,
@@ -1598,12 +1602,12 @@ async fn fork_form(
         Ok(None) => (),
         Err(error) => return ctx.error(error.0, &error.1),
     }
-    match codeyard_repos_core::repositories::lifecycle::fork_into(
+    match codeyard_git_storage::repositories::lifecycle::fork_into(
         &ctx.state.pool,
         ctx.state.cluster.as_ref(),
         &ctx.state.repos_path,
         &ctx.state.notification_broadcaster,
-        codeyard_repos_core::repositories::lifecycle::ForkOptions {
+        codeyard_git_storage::repositories::lifecycle::ForkOptions {
             owner: codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(
                 actor.id,
             ),
@@ -1634,7 +1638,7 @@ fn label_fields(form: &HashMap<String, String>) -> ApiResult<(String, String, St
     let color = parse_label_color(&field(form, "color"));
     match color {
         Some(color)
-            if codeyard_model::issue_input::validate_label(&name, Some(description.as_str()))
+            if codeyard_types::issue_input::validate_label(&name, Some(description.as_str()))
                 .is_ok() =>
         {
             Ok((name, color, description))
@@ -1661,7 +1665,7 @@ fn label_id(form: &HashMap<String, String>) -> ApiResult<i64> {
 
 async fn mutate(
     ctx: &PageContext,
-    repository: &codeyard_db_core::models::Repository,
+    repository: &codeyard_database::models::Repository,
     owner: &str,
     name: &str,
     action: &str,
@@ -1794,16 +1798,18 @@ async fn mutate(
             codeyard_identity::repository_access::check_admin(pool, repository.id, actor.id)
                 .await
                 .map_err(access_error)?;
-            codeyard_repos_core::repositories::lifecycle::validate_description(&field(
+            codeyard_git_storage::repositories::lifecycle::validate_description(&field(
                 form,
                 "description",
             ))
             .map_err(lifecycle_error)?;
             let private = field(form, "visibility") == "private";
             if !private
-                && codeyard_repos_core::repositories::lifecycle::visibility_locked(pool, repository)
-                    .await
-                    .map_err(lifecycle_error)?
+                && codeyard_git_storage::repositories::lifecycle::visibility_locked(
+                    pool, repository,
+                )
+                .await
+                .map_err(lifecycle_error)?
             {
                 return Err((
                     StatusCode::FORBIDDEN,
@@ -1870,7 +1876,7 @@ async fn mutate(
             codeyard_db_security::secret_scanning::publish_pattern(
                 pool,
                 actor.id,
-                &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+                &codeyard_database::queries::users::accounts::AccountCredential::Session(
                     &codeyard_api_http::session::extract_session_id(&ctx.headers)
                         .unwrap_or_default(),
                 ),
@@ -1878,36 +1884,36 @@ async fn mutate(
                 id,
             )
             .await
-            .map_err(|error| match error
-                .downcast_ref::<codeyard_db_core::queries::secret_scanning::Refusal>(
-            ) {
-                _ if error.is::<codeyard_types::credentials::AccountRestricted>() => {
-                    ApiError::failure(
-                        StatusCode::FORBIDDEN,
-                        "forbidden",
-                        "A live unrestricted credential is required.",
-                    )
+            .map_err(|error| {
+                match error.downcast_ref::<codeyard_database::queries::secret_scanning::Refusal>() {
+                    _ if error.is::<codeyard_types::credentials::AccountRestricted>() => {
+                        ApiError::failure(
+                            StatusCode::FORBIDDEN,
+                            "forbidden",
+                            "A live unrestricted credential is required.",
+                        )
+                    }
+                    Some(codeyard_database::queries::secret_scanning::Refusal::Denied) => {
+                        ApiError::failure(
+                            StatusCode::FORBIDDEN,
+                            "forbidden",
+                            "Pattern administration required",
+                        )
+                    }
+                    Some(codeyard_database::queries::secret_scanning::Refusal::Missing) => {
+                        ApiError::failure(StatusCode::NOT_FOUND, "not_found", "Pattern not found")
+                    }
+                    _ => ApiError::failure(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "unavailable",
+                        "Custom patterns unavailable",
+                    ),
                 }
-                Some(codeyard_db_core::queries::secret_scanning::Refusal::Denied) => {
-                    ApiError::failure(
-                        StatusCode::FORBIDDEN,
-                        "forbidden",
-                        "Pattern administration required",
-                    )
-                }
-                Some(codeyard_db_core::queries::secret_scanning::Refusal::Missing) => {
-                    ApiError::failure(StatusCode::NOT_FOUND, "not_found", "Pattern not found")
-                }
-                _ => ApiError::failure(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "unavailable",
-                    "Custom patterns unavailable",
-                ),
             })?;
             Ok(settings_section_url(&base, action))
         }
         "code-security" => {
-            let settings = codeyard_db_core::queries::secret_scanning::Settings {
+            let settings = codeyard_database::queries::secret_scanning::Settings {
                 enabled: checkbox(form, "secret_scanning"),
                 push_protection: checkbox(form, "push_protection"),
             };
@@ -1925,40 +1931,40 @@ async fn mutate(
                 &settings,
             )
             .await
-            .map_err(|error| match error
-                .downcast_ref::<codeyard_db_core::queries::secret_scanning::Refusal>(
-            ) {
-                Some(codeyard_db_core::queries::secret_scanning::Refusal::Invalid) => {
-                    ApiError::failure(
-                        StatusCode::UNPROCESSABLE_ENTITY,
-                        "validation_error",
-                        "Push protection requires secret scanning",
-                    )
+            .map_err(|error| {
+                match error.downcast_ref::<codeyard_database::queries::secret_scanning::Refusal>() {
+                    Some(codeyard_database::queries::secret_scanning::Refusal::Invalid) => {
+                        ApiError::failure(
+                            StatusCode::UNPROCESSABLE_ENTITY,
+                            "validation_error",
+                            "Push protection requires secret scanning",
+                        )
+                    }
+                    Some(codeyard_database::queries::secret_scanning::Refusal::Denied) => {
+                        ApiError::failure(
+                            StatusCode::FORBIDDEN,
+                            "forbidden",
+                            "Repository administration required",
+                        )
+                    }
+                    _ => ApiError::failure(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "unavailable",
+                        "Secret scanning settings unavailable",
+                    ),
                 }
-                Some(codeyard_db_core::queries::secret_scanning::Refusal::Denied) => {
-                    ApiError::failure(
-                        StatusCode::FORBIDDEN,
-                        "forbidden",
-                        "Repository administration required",
-                    )
-                }
-                _ => ApiError::failure(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "unavailable",
-                    "Secret scanning settings unavailable",
-                ),
             })?;
             Ok(settings_section_url(&base, action))
         }
         "oidc-settings" => {
-            let settings = codeyard_db_core::queries::oidc::Settings::from_keys(
+            let settings = codeyard_database::queries::oidc::Settings::from_keys(
                 checkbox(form, "use_default"),
                 &field(form, "include_claim_keys"),
             );
             codeyard_db_actions::oidc::save_settings(
                 pool,
                 ctx.database_actor(actor.id),
-                codeyard_db_core::queries::oidc::Scope::Repository(repository.id),
+                codeyard_database::queries::oidc::Scope::Repository(repository.id),
                 &settings,
             )
             .await
@@ -2052,7 +2058,7 @@ async fn mutate(
         }
         "about" => {
             let description = field(form, "description");
-            codeyard_repos_core::repositories::lifecycle::validate_description(&description)
+            codeyard_git_storage::repositories::lifecycle::validate_description(&description)
                 .map_err(lifecycle_error)?;
             let website =
                 codeyard_db_repos::repositories::topics::parse_website(&field(form, "website"))
@@ -2091,7 +2097,7 @@ async fn mutate(
             Ok(codeyard_types::paths::repository_path(owner, &updated.name))
         }
         "transfer" => {
-            let updated = codeyard_repos_core::repositories::lifecycle::transfer(
+            let updated = codeyard_git_storage::repositories::lifecycle::transfer(
                 pool,
                 ctx.state.cluster.as_ref(),
                 authority(),
@@ -2122,7 +2128,7 @@ async fn mutate(
             Ok(settings_section_url(&base, action))
         }
         "delete" => {
-            codeyard_repos_core::repositories::lifecycle::delete(
+            codeyard_git_storage::repositories::lifecycle::delete(
                 pool,
                 cluster,
                 ctx.database_actor(actor.id),
@@ -2143,7 +2149,7 @@ async fn mutate(
                 },
             )
             .await
-            .map_err(codeyard_repos_core::repositories::lifecycle::storage_error)
+            .map_err(codeyard_git_storage::repositories::lifecycle::storage_error)
             .map_err(lifecycle_error)?;
             Ok(settings_section_url(&base, action))
         }
@@ -2166,7 +2172,7 @@ async fn mutate(
                     message,
                 )
             })?;
-            codeyard_repos_core::repositories::releases::immutable::set_enabled(
+            codeyard_git_storage::repositories::releases::immutable::set_enabled(
                 pool,
                 actor.id,
                 repository.id,
@@ -2255,7 +2261,7 @@ async fn mutate(
             let permission = if action == "remove-collaborator" {
                 None
             } else {
-                let level = codeyard_db_core::models::AccessLevel::parse_collaborator(&field(
+                let level = codeyard_database::models::AccessLevel::parse_collaborator(&field(
                     form, "access",
                 ));
                 Some(level.ok_or_else(|| {

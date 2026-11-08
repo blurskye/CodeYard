@@ -15,7 +15,7 @@ use codeyard_api_http::shared::repos::chrome::store_error;
 use codeyard_api_http::shared::repos::chrome::Loaded;
 use codeyard_app::app::AppState;
 use codeyard_git::MAX_BRANCH_STATUSES;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_webui::pages::repos as view;
 use serde::Deserialize;
 use serde::Serialize;
@@ -55,7 +55,7 @@ pub async fn list_branches(
         .collect();
     branches.sort();
 
-    let default_branch = codeyard_repos_core::repositories::reads::default_branch(
+    let default_branch = codeyard_git_storage::repositories::reads::default_branch(
         &refs,
         &repository_default_branch(&state, &repository).await?,
         &repository.default_branch,
@@ -88,7 +88,7 @@ pub async fn create_branch(
         &state.pool,
         state.cluster.as_ref(),
         &state.ci_runs,
-        codeyard_db_core::queries::credentials::Actor::from((
+        codeyard_database::queries::credentials::Actor::from((
             actor.id,
             codeyard_api_http::session::extract_session_id(&headers).unwrap_or_default(),
         )),
@@ -115,7 +115,7 @@ pub async fn delete_branch(
         &state.pool,
         state.cluster.as_ref(),
         &state.ci_runs,
-        codeyard_db_core::queries::credentials::Actor::from((
+        codeyard_database::queries::credentials::Actor::from((
             actor.id,
             codeyard_api_http::session::extract_session_id(&headers).unwrap_or_default(),
         )),

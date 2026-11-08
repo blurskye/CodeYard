@@ -6,13 +6,12 @@ license = "LGPL-3.0-or-later"
 
 [dependencies]
 anyhow.workspace = true
-codeyard-db-cluster.workspace = true
-codeyard-db-core.workspace = true
+codeyard-db-placement.workspace = true
+codeyard-database.workspace = true
 codeyard-db-identity.workspace = true
 codeyard-db-orgs.workspace = true
 codeyard-db-repos.workspace = true
 codeyard-identity.workspace = true
-codeyard-model.workspace = true
 codeyard-support.workspace = true
 codeyard-webui.workspace = true
 lettre.workspace = true

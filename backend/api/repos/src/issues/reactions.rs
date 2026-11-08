@@ -105,7 +105,7 @@ pub(crate) async fn native_react(
     codeyard_db_repos::reactions::toggle_reaction(
         pool,
         ctx.require_user()?.id,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &codeyard_api_http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
         ),
         repo.record.id,

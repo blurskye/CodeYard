@@ -3,17 +3,17 @@ use crate::ci::CiReplaySelection;
 use crate::ci::NewCiAttempt;
 use anyhow::ensure;
 use anyhow::Result;
-use codeyard_actions::progress::Replay;
-use codeyard_actions::progress::State;
-use codeyard_db_core::ci_policy::CiAdmissionRefusal as Refusal;
-use codeyard_db_core::models::CiRun;
+use codeyard_database::ci_policy::CiAdmissionRefusal as Refusal;
+use codeyard_database::models::CiRun;
+use codeyard_runner::progress::Replay;
+use codeyard_runner::progress::State;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
 /// A claim carries its replay across a cluster RPC frame together with the run, workflow and
 /// event payload, so the replay may use at most half of one frame. Admitting more would fail
 /// the claim after the attempt was queued.
-const MAX_REPLAY_BYTES: usize = codeyard_db_core::limits::MAX_JSON / 2;
+const MAX_REPLAY_BYTES: usize = codeyard_database::limits::MAX_JSON / 2;
 
 pub(crate) fn compose(previous: Option<Replay>, fresh: State) -> State {
     let mut state = if let Some(previous) = previous {
@@ -76,8 +76,8 @@ pub fn build(
         unchanged,
         Refusal::Conflict("Rerun workflow snapshot changed")
     );
-    let workflow = codeyard_actions::workflow::parse(yaml).map_err(|_| unavailable())?;
-    let order = codeyard_actions::workflow::job_order(&workflow).map_err(|_| unavailable())?;
+    let workflow = codeyard_runner::workflow::parse(yaml).map_err(|_| unavailable())?;
+    let order = codeyard_runner::workflow::job_order(&workflow).map_err(|_| unavailable())?;
     let raw: serde_yaml::Value = serde_yaml::from_str(yaml).map_err(|_| unavailable())?;
     let mut latest = BTreeMap::new();
     for job in observations {

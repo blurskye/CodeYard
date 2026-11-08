@@ -1,21 +1,21 @@
 use crate::actions::ActionsSettings;
 use crate::actions::RepoActionsSettings;
 use anyhow::Result;
-use codeyard_db_core::pool::PgPool;
+use codeyard_database::pool::PgPool;
 use codeyard_db_repos::repositories::records::RepositorySettingsRefusal as Refusal;
 
 pub async fn set_cache_limit(
     pool: &PgPool,
     actor: i64,
     repo: i64,
-    kind: codeyard_db_core::queries::actions::CacheLimit,
+    kind: codeyard_database::queries::actions::CacheLimit,
     value: i32,
 ) -> Result<()> {
-    use codeyard_db_core::queries::actions::CacheLimit;
-    use codeyard_db_core::queries::actions::CachePolicyError;
+    use codeyard_database::queries::actions::CacheLimit;
+    use codeyard_database::queries::actions::CachePolicyError;
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::postgres::discussions::lock_admin_authority(
+        codeyard_database::queries::postgres::discussions::lock_admin_authority(
             &mut tx, actor, repo
         )
         .await?,
@@ -34,7 +34,7 @@ pub async fn set_cache_limit(
         .bind(repo).bind(value).execute(&mut *tx).await?;
     match kind {
         CacheLimit::Storage => {
-            codeyard_db_core::queries::postgres::action_objects::enforce_cache_limit(
+            codeyard_database::queries::postgres::action_objects::enforce_cache_limit(
                 &mut tx,
                 repo,
                 i64::from(value) * 1024 * 1024 * 1024,
@@ -81,13 +81,13 @@ pub async fn save_actions_settings(
     settings.validate_engines()?;
     let mut tx = pool.begin().await?;
     crate::postgres::action_objects::lock_site_cache_policy(&mut tx, true).await?;
-    codeyard_db_core::queries::postgres::users::transitions::lock_accounts_shared(
+    codeyard_database::queries::postgres::users::transitions::lock_accounts_shared(
         &mut tx,
         &[actor],
     )
     .await?;
     if !codeyard_db_identity::postgres::users::transitions::active_admin(&mut tx, actor).await?
-        || !codeyard_db_core::queries::postgres::users::transitions::live_session(
+        || !codeyard_database::queries::postgres::users::transitions::live_session(
             &mut tx, actor, session,
         )
         .await?
@@ -161,20 +161,20 @@ pub async fn get_repo_actions_settings(pool: &PgPool, repo_id: i64) -> Result<Re
 
 pub async fn set_repo_enabled(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo: i64,
     enabled: bool,
 ) -> Result<()> {
     let actor = actor.into();
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::postgres::discussions::lock_repository_mutation_authority(
+        codeyard_database::queries::postgres::discussions::lock_repository_mutation_authority(
             &mut tx,
             actor.user_id,
             repo
         )
         .await?
-            && codeyard_db_core::queries::postgres::credentials::repository(
+            && codeyard_database::queries::postgres::credentials::repository(
                 &mut tx,
                 &actor,
                 repo,
@@ -195,20 +195,20 @@ pub async fn set_repo_enabled(
 
 pub async fn save_repo_actions_settings(
     pool: &PgPool,
-    actor_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor_id: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     settings: &RepoActionsSettings,
 ) -> Result<()> {
     let actor = actor_id.into();
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::postgres::discussions::lock_repository_mutation_authority(
+        codeyard_database::queries::postgres::discussions::lock_repository_mutation_authority(
             &mut tx,
             actor.user_id,
             repo_id
         )
         .await?
-            && codeyard_db_core::queries::postgres::credentials::repository(
+            && codeyard_database::queries::postgres::credentials::repository(
                 &mut tx,
                 &actor,
                 repo_id,

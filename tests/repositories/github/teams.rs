@@ -1,7 +1,7 @@
 use super::*;
 
 async fn teams_contract(pg: bool) {
-    use codeyard_db_core::queries::organizations::OrganizationOutcome;
+    use codeyard_database::queries::organizations::OrganizationOutcome;
     use codeyard_db_orgs::organizations::membership;
     use codeyard_db_orgs::organizations::profiles;
     crate::support::fake_webui_bundle::install();
@@ -33,7 +33,7 @@ async fn teams_contract(pg: bool) {
             alice,
             org.id,
             bob,
-            codeyard_db_core::models::OrgRole::Member
+            codeyard_database::models::OrgRole::Member
         )
         .await
         .unwrap(),
@@ -99,7 +99,7 @@ async fn teams_contract(pg: bool) {
             f.pool(),
             user,
             id,
-            codeyard_db_core::models::AccessLevel::Admin,
+            codeyard_database::models::AccessLevel::Admin,
         )
         .await
         .unwrap();

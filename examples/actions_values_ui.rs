@@ -6,7 +6,7 @@ use codeyard_ci::config::CiConfig;
 use codeyard_db_actions::environment_values as environments;
 use codeyard_db_actions::environment_values::Save;
 use codeyard_db_orgs::organization_values::Kind;
-use codeyard_repos_core::repositories::lifecycle;
+use codeyard_git_storage::repositories::lifecycle;
 use codeyard_storage::ObjectStore;
 use codeyard_support::secrets::SecretEncryptor;
 use std::{path::Path, sync::Arc, time::Duration};
@@ -19,11 +19,11 @@ async fn main() {
         std::env::var("CODEYARD_BROWSER_PYTHON").expect("the pinned browser Python is required");
     let root = tempfile::tempdir().unwrap();
     let pool =
-        codeyard_db_core::init_db(&format!("sqlite://{}", root.path().join("ui.db").display()))
+        codeyard_database::init_db(&format!("sqlite://{}", root.path().join("ui.db").display()))
             .await
             .unwrap();
-    codeyard_db_core::run_migrations(&pool).await.unwrap();
-    codeyard_db_cluster::node_config::upsert_node_configuration(&pool, "public", true)
+    codeyard_database::run_migrations(&pool).await.unwrap();
+    codeyard_db_placement::node_config::upsert_node_configuration(&pool, "public", true)
         .await
         .unwrap();
     let owner = codeyard_db_identity::users::accounts::create_user(&pool, "alice", None)
@@ -53,7 +53,7 @@ async fn main() {
     .await
     .unwrap();
     let credential =
-        codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session);
+        codeyard_database::queries::users::accounts::AccountCredential::Session(&session);
     let encryptor = Arc::new(SecretEncryptor::new(&[0x63; 32]));
     codeyard_db_actions::secrets::create_or_update_secret(
         &pool,
@@ -118,7 +118,7 @@ async fn main() {
     )
     .await
     .unwrap();
-    let codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(org) = org else {
+    let codeyard_database::queries::organizations::OrganizationOutcome::Applied(org) = org else {
         panic!("browser organization must be created")
     };
     for (kind, name, value) in [

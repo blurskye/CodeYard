@@ -387,7 +387,7 @@ async fn contract(pg: bool) {
         codeyard_db_orgs::organizations::profiles::create_organization(f.pool(), owner, &input)
             .await
             .unwrap(),
-        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(_)
+        codeyard_database::queries::organizations::OrganizationOutcome::Applied(_)
     ));
     for private in [false, true] {
         let name = if private { "private" } else { "public" };

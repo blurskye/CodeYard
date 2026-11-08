@@ -1,8 +1,8 @@
 use anyhow::Result;
-use codeyard_db_core::models::DeployKey;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::queries::users::accounts::OwnedAccountCredential as Credential;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::DeployKey;
+use codeyard_database::native_operation;
+use codeyard_database::queries::users::accounts::OwnedAccountCredential as Credential;
+use codeyard_database::DbPool;
 
 /// A deploy key to store. The fingerprint and key type come from the validated public key.
 #[derive(Debug, Clone)]

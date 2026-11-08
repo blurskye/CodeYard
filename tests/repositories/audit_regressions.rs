@@ -6,9 +6,9 @@ use axum::http::StatusCode;
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
 use codeyard_ci::config::CiConfig;
-use codeyard_repos_core::repositories::languages;
-use codeyard_repos_core::repositories::lifecycle;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_git_storage::repositories::languages;
+use codeyard_git_storage::repositories::lifecycle;
+use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_storage::ObjectStore;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -72,7 +72,7 @@ async fn contract(pg: bool) {
             )
             .await
             .unwrap(),
-            codeyard_db_core::models::AccessLevel::Write
+            codeyard_database::models::AccessLevel::Write
         );
     }
 

@@ -7,21 +7,21 @@ pub mod outbox;
 pub mod send;
 
 use codeyard_db_identity::mail_config as config;
-use codeyard_model::http_config::public_origin;
+use codeyard_types::http_config::public_origin;
 
-use codeyard_db_core::DbPool;
+use codeyard_database::DbPool;
 use tracing::warn;
 
 /// Mails a notification to its recipient, if the site has a mail server and the recipient has a
 /// verified address and wants email.
-pub async fn notify_user(pool: &DbPool, notification: &codeyard_db_core::models::Notification) {
+pub async fn notify_user(pool: &DbPool, notification: &codeyard_database::models::Notification) {
     if !config::is_configured(pool).await {
         return;
     }
     match codeyard_db_identity::email::notification_email_address(pool, notification.user_id).await
     {
         Ok(Some(to)) => {
-            let mail = codeyard_model::mail_messages::notification(
+            let mail = codeyard_types::mail_messages::notification(
                 &public_origin(),
                 &notification.title,
                 notification.body.as_deref(),
@@ -59,13 +59,13 @@ mod tests {
 
     async fn fixture() -> Fixture {
         let directory = tempfile::tempdir().unwrap();
-        let pool = codeyard_db_core::init_db(&format!(
+        let pool = codeyard_database::init_db(&format!(
             "sqlite://{}",
             directory.path().join("test.db").display()
         ))
         .await
         .unwrap();
-        codeyard_db_core::run_migrations(&pool).await.unwrap();
+        codeyard_database::run_migrations(&pool).await.unwrap();
         let admin = codeyard_db_identity::users::accounts::create_user(
             &pool,
             "admin",
@@ -127,11 +127,11 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(source, codeyard_model::mail_config::Source::Database);
+        assert_eq!(source, codeyard_types::mail_config::Source::Database);
         assert_eq!(saved.host, "mail.example.com");
         assert_eq!(
             (saved.port, saved.security),
-            (2525, codeyard_model::mail_config::Security::Tls)
+            (2525, codeyard_types::mail_config::Security::Tls)
         );
         assert_eq!(saved.password.as_deref(), Some("s3cret"));
         assert!(config::is_configured(&f.pool).await);
@@ -206,14 +206,14 @@ mod tests {
         assert!(codeyard_db_identity::email::get_email_notifications(
             &f.pool,
             f.admin,
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session("live")
+            &codeyard_database::queries::users::accounts::AccountCredential::Session("live")
         )
         .await
         .unwrap());
         codeyard_db_identity::email::set_email_notifications(
             &f.pool,
             f.admin,
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session("live"),
+            &codeyard_database::queries::users::accounts::AccountCredential::Session("live"),
             false,
         )
         .await
@@ -221,7 +221,7 @@ mod tests {
         assert!(!codeyard_db_identity::email::get_email_notifications(
             &f.pool,
             f.admin,
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session("live")
+            &codeyard_database::queries::users::accounts::AccountCredential::Session("live")
         )
         .await
         .unwrap());
@@ -240,7 +240,7 @@ mod tests {
         let notification = |body: Option<&'static str>, link: Option<&'static str>| {
             codeyard_db_repos::notifications::records::create_notification(
                 &f.pool,
-                codeyard_db_core::queries::notifications::records::NewNotification {
+                codeyard_database::queries::notifications::records::NewNotification {
                     user_id: f.admin,
                     actor_id: None,
                     repo_id: None,
@@ -254,7 +254,7 @@ mod tests {
         };
         notify_user(&f.pool, &notification(None, None).await.unwrap()).await;
         // Signup review needs a finished setup and a live administrator session.
-        codeyard_db_cluster::node_config::upsert_node_configuration(&f.pool, "public", true)
+        codeyard_db_placement::node_config::upsert_node_configuration(&f.pool, "public", true)
             .await
             .unwrap();
         let early = codeyard_db_identity::users::signup_requests::create_signup_request(

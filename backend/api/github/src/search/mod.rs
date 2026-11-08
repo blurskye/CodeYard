@@ -13,8 +13,8 @@ use codeyard_app::app::AppState;
 use codeyard_db_repos::assignees::AssignedItem;
 use codeyard_db_repos::discussion_search::Search;
 use codeyard_db_repos::discussion_search::Sort;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde_json::json;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -67,7 +67,7 @@ async fn search_issues(
     if let Some(found) = global::search(
         &state,
         auth.as_ref(),
-        codeyard_db_core::cells::search::Kind::Issues,
+        codeyard_database::cells::search::Kind::Issues,
         query.search_filter(),
         q.get("sort").filter(|sort| !sort.is_empty()).cloned(),
         ascending,

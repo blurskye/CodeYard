@@ -2,7 +2,7 @@ use crate::events::EventEntry;
 use crate::events::EventScope;
 use crate::events::EventViewer;
 use anyhow::Result;
-use codeyard_db_core::pool::SqlitePool;
+use codeyard_database::pool::SqlitePool;
 use serde_json::Value;
 
 pub async fn record_event(
@@ -57,8 +57,8 @@ pub async fn list_events(
         None => (None, None, None),
     };
     let offset = offset.max(0);
-    let readable = codeyard_db_core::queries::sqlite::repositories::access::readable_condition();
-    let issuer = codeyard_db_core::queries::oauth_apps::token_issuer_condition("t", "?9");
+    let readable = codeyard_database::queries::sqlite::repositories::access::readable_condition();
+    let issuer = codeyard_database::queries::oauth_apps::token_issuer_condition("t", "?9");
     Ok(sqlx::query_as(&format!("WITH RECURSIVE ancestors(id,parent) AS (
         SELECT id,forked_from_id FROM repositories WHERE ?2='network' AND id=?3
         UNION SELECT r.id,r.forked_from_id FROM repositories r JOIN ancestors a ON r.id=a.parent
@@ -82,15 +82,15 @@ pub async fn list_events(
            OR (?2='received' AND (EXISTS(SELECT 1 FROM follows f WHERE f.follower_id=?3 AND f.following_id=e.actor_id)
                  OR EXISTS(SELECT 1 FROM watches w WHERE w.user_id=?3 AND w.repo_id=r.id AND w.level IN ('watching','custom')))))
     ORDER BY e.created_at DESC,e.id DESC LIMIT ?5 OFFSET ?6"))
-        .bind(viewer).bind(kind).bind(id).bind(public_only).bind(limit.clamp(1,101).min((300-offset).max(0))).bind(offset.max(0)).bind(token).bind(feed).bind(codeyard_model::identity::CLI_CLIENT).fetch_all(pool).await?)
+        .bind(viewer).bind(kind).bind(id).bind(public_only).bind(limit.clamp(1,101).min((300-offset).max(0))).bind(offset.max(0)).bind(token).bind(feed).bind(codeyard_types::identity::CLI_CLIENT).fetch_all(pool).await?)
 }
 pub async fn activity_feed_token(
     pool: &SqlitePool,
     token_id: i64,
     value: &str,
 ) -> Result<Option<String>> {
-    let issuer = codeyard_db_core::queries::oauth_apps::token_issuer_condition("t", "?3");
-    Ok(sqlx::query_scalar(&format!("INSERT INTO activity_feed_tokens(api_token_id,value) SELECT t.id,?2 FROM personal_access_tokens t JOIN users u ON u.id=t.user_id WHERE t.id=?1 AND NOT u.is_banned AND NOT u.must_change_password AND (t.expires_at IS NULL OR julianday(t.expires_at)>julianday('now')) AND {issuer} ON CONFLICT(api_token_id) DO UPDATE SET api_token_id=excluded.api_token_id RETURNING value")).bind(token_id).bind(value).bind(codeyard_model::identity::CLI_CLIENT).fetch_optional(pool).await?)
+    let issuer = codeyard_database::queries::oauth_apps::token_issuer_condition("t", "?3");
+    Ok(sqlx::query_scalar(&format!("INSERT INTO activity_feed_tokens(api_token_id,value) SELECT t.id,?2 FROM personal_access_tokens t JOIN users u ON u.id=t.user_id WHERE t.id=?1 AND NOT u.is_banned AND NOT u.must_change_password AND (t.expires_at IS NULL OR julianday(t.expires_at)>julianday('now')) AND {issuer} ON CONFLICT(api_token_id) DO UPDATE SET api_token_id=excluded.api_token_id RETURNING value")).bind(token_id).bind(value).bind(codeyard_types::identity::CLI_CLIENT).fetch_optional(pool).await?)
 }
 pub async fn activity_feed_token_id(pool: &SqlitePool, value: &str) -> Result<Option<i64>> {
     Ok(

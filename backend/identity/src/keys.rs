@@ -1,7 +1,7 @@
 //! SSH key management shared by browser forms, JSON and operator commands.
 
-use codeyard_db_core::models::SshKey;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::SshKey;
+use codeyard_database::DbPool;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum KeyError {
@@ -43,15 +43,15 @@ pub async fn enroll(
     )
     .await
     .map_err(|error| {
-        match error.downcast_ref::<codeyard_model::identity::SshKeyWriteRefusal>() {
-            Some(codeyard_model::identity::SshKeyWriteRefusal::InvalidKey) => KeyError::InvalidKey,
-            Some(codeyard_model::identity::SshKeyWriteRefusal::AlreadyUsed) => {
+        match error.downcast_ref::<codeyard_types::identity::SshKeyWriteRefusal>() {
+            Some(codeyard_types::identity::SshKeyWriteRefusal::InvalidKey) => KeyError::InvalidKey,
+            Some(codeyard_types::identity::SshKeyWriteRefusal::AlreadyUsed) => {
                 KeyError::AlreadyUsed
             }
-            Some(codeyard_model::identity::SshKeyWriteRefusal::InvalidSession) => {
+            Some(codeyard_types::identity::SshKeyWriteRefusal::InvalidSession) => {
                 KeyError::InvalidSession
             }
-            Some(codeyard_model::identity::SshKeyWriteRefusal::AccountRestricted) => {
+            Some(codeyard_types::identity::SshKeyWriteRefusal::AccountRestricted) => {
                 KeyError::AccountRestricted
             }
             None => KeyError::Unavailable,
@@ -62,18 +62,18 @@ pub async fn enroll(
 pub async fn delete(
     pool: &DbPool,
     actor: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     key: i64,
 ) -> Result<(), KeyError> {
     let deleted =
         codeyard_db_identity::users::ssh_keys::delete_user_ssh_key(pool, actor, credential, key)
             .await
             .map_err(|error| {
-                match error.downcast_ref::<codeyard_model::identity::SshKeyWriteRefusal>() {
-                    Some(codeyard_model::identity::SshKeyWriteRefusal::AccountRestricted) => {
+                match error.downcast_ref::<codeyard_types::identity::SshKeyWriteRefusal>() {
+                    Some(codeyard_types::identity::SshKeyWriteRefusal::AccountRestricted) => {
                         KeyError::AccountRestricted
                     }
-                    Some(codeyard_model::identity::SshKeyWriteRefusal::InvalidSession) => {
+                    Some(codeyard_types::identity::SshKeyWriteRefusal::InvalidSession) => {
                         KeyError::InvalidSession
                     }
                     _ => KeyError::Unavailable,
@@ -90,9 +90,9 @@ fn signing_error(error: anyhow::Error) -> KeyError {
     if error.is::<codeyard_types::credentials::AccountRestricted>() {
         return KeyError::AccountRestricted;
     }
-    match error.downcast_ref::<codeyard_model::identity::SshKeyWriteRefusal>() {
-        Some(codeyard_model::identity::SshKeyWriteRefusal::InvalidKey) => KeyError::InvalidKey,
-        Some(codeyard_model::identity::SshKeyWriteRefusal::AlreadyUsed) => KeyError::AlreadyUsed,
+    match error.downcast_ref::<codeyard_types::identity::SshKeyWriteRefusal>() {
+        Some(codeyard_types::identity::SshKeyWriteRefusal::InvalidKey) => KeyError::InvalidKey,
+        Some(codeyard_types::identity::SshKeyWriteRefusal::AlreadyUsed) => KeyError::AlreadyUsed,
         _ => KeyError::Unavailable,
     }
 }
@@ -100,7 +100,7 @@ fn signing_error(error: anyhow::Error) -> KeyError {
 pub async fn enroll_signing(
     pool: &DbPool,
     actor: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     title: &str,
     public_key: &str,
 ) -> Result<codeyard_db_identity::users::signing_keys::SigningKey, KeyError> {
@@ -115,7 +115,7 @@ pub async fn enroll_signing(
 pub async fn delete_signing(
     pool: &DbPool,
     actor: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     id: i64,
 ) -> Result<(), KeyError> {
     if codeyard_db_identity::users::signing_keys::delete_signing_key(pool, actor, credential, id)

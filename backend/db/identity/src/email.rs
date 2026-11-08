@@ -1,8 +1,8 @@
 use anyhow::Result;
-use codeyard_db_core::models::EmailSettings;
-use codeyard_db_core::models::OutboxMessage;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::EmailSettings;
+use codeyard_database::models::OutboxMessage;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 
 /// Settings from the admin form. `password` is the encrypted password and its nonce; `None`
 /// keeps the one already saved.
@@ -121,11 +121,11 @@ native_operation!(crate::postgres::email::remove_old_email,
 native_operation!(crate::postgres::email::get_email_notifications,
     crate::sqlite::email::get_email_notifications,
     /// The account's own setting, read while `credential` is still live.
-    fn get_email_notifications(pool: &DbPool, user_id: i64, credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>) -> Result<bool>);
+    fn get_email_notifications(pool: &DbPool, user_id: i64, credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>) -> Result<bool>);
 
 native_operation!(crate::postgres::email::set_email_notifications,
     crate::sqlite::email::set_email_notifications,
-    fn set_email_notifications(pool: &DbPool, user_id: i64, credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>, enabled: bool) -> Result<()>);
+    fn set_email_notifications(pool: &DbPool, user_id: i64, credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>, enabled: bool) -> Result<()>);
 
 native_operation!(crate::postgres::email::notification_email_address,
     crate::sqlite::email::notification_email_address,

@@ -22,9 +22,9 @@ use codeyard_db_actions::environments::Environment;
 use codeyard_db_actions::environments::Refusal;
 use codeyard_db_actions::environments::Reviewer;
 use codeyard_db_actions::environments::Update;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
-use codeyard_model::urls::repo_url;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
+use codeyard_types::urls::repo_url;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -151,7 +151,7 @@ async fn administer(
     params: &Params,
     write: bool,
 ) -> Result<(
-    codeyard_db_core::models::Repository,
+    codeyard_database::models::Repository,
     codeyard_identity::github_auth::Authentication,
 )> {
     let (repo, auth) = repository(state, headers, &params["owner"], &params["repo"], write).await?;
@@ -222,7 +222,7 @@ async fn environment(
 }
 
 fn branch_document(branch: &Branch, repo: i64) -> Value {
-    json!({"id": branch.id, "node_id": codeyard_model::node_id::scoped("GBP", repo, branch.id), "name": branch.name, "type": branch.kind})
+    json!({"id": branch.id, "node_id": codeyard_types::node_id::scoped("GBP", repo, branch.id), "name": branch.name, "type": branch.kind})
 }
 
 #[derive(Deserialize)]

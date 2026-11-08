@@ -14,13 +14,13 @@ use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_db_core::models::BranchProtectionRule;
+use codeyard_database::models::BranchProtectionRule;
 use codeyard_db_repos::repositories::protection::ProtectionUpdate;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
-use codeyard_model::urls::repo_url;
-use codeyard_repos_core::api_shared::github::contents::store_error;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_git_storage::api_shared::github::contents::store_error;
+use codeyard_git_storage::repositories::store::repo_store;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
+use codeyard_types::urls::repo_url;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -50,7 +50,7 @@ pub(super) async fn protected(
     write: bool,
 ) -> Result<(
     BranchProtectionRule,
-    codeyard_db_core::queries::credentials::Actor,
+    codeyard_database::queries::credentials::Actor,
     String,
 )> {
     let (repo, auth) = repository(state, headers, owner, name, write).await?;
@@ -285,7 +285,7 @@ async fn status_checks(
     if method == Method::PATCH {
         let Json(input) = Json::<StatusChecks>::from_request(request, &state)
             .await
-            .map_err(codeyard_model::github_error::json_error)?;
+            .map_err(codeyard_types::github_error::json_error)?;
         let mut contexts = input.contexts;
         let checks = input.checks.unwrap_or_default();
         let bindings = crate::repos::protection_operations::check_bindings(
@@ -358,7 +358,7 @@ async fn contexts(
     if !read_method(&method) {
         let Json(input) = Json::<Contexts>::from_request(request, &state)
             .await
-            .map_err(codeyard_model::github_error::json_error)?;
+            .map_err(codeyard_types::github_error::json_error)?;
         let values = match input {
             Contexts::Array(values) | Contexts::Object { contexts: values } => values,
         };
@@ -493,7 +493,7 @@ async fn users(
     if !read_method(&method) {
         let Json(input) = Json::<Users>::from_request(request, &state)
             .await
-            .map_err(codeyard_model::github_error::json_error)?;
+            .map_err(codeyard_types::github_error::json_error)?;
         let names = match input {
             Users::Array(names) | Users::Object { users: names } => names,
         };

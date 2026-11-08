@@ -1,9 +1,9 @@
 use super::profiles::OrganizationProfile;
 use anyhow::Result;
-use codeyard_db_core::models::Organization;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::Organization;
+use codeyard_database::native_operation;
+use codeyard_database::queries::organizations::OrganizationOutcome;
+use codeyard_database::DbPool;
 use serde_json::Map;
 use serde_json::Value;
 
@@ -119,7 +119,7 @@ impl Changes {
             if value
                 .as_ref()
                 .and_then(|value| value.as_ref())
-                .is_some_and(|value| codeyard_model::account_input::validate_email(value).is_err())
+                .is_some_and(|value| codeyard_types::account_input::validate_email(value).is_err())
             {
                 return Err(invalid(field, "Enter a valid email address"));
             }
@@ -304,7 +304,7 @@ native_operation!(crate::postgres::organizations::settings::repository_requires_
 native_operation!(crate::postgres::organizations::settings::owned,crate::sqlite::organizations::settings::owned,
     fn owned(pool:&DbPool,actor:i64,org:i64)->Result<OrganizationOutcome<Updated>>);
 native_operation!(crate::postgres::organizations::settings::change,crate::sqlite::organizations::settings::change,
-    fn change(pool:&DbPool,actor:impl Into<codeyard_db_core::queries::credentials::Actor>,org:i64,input:&Changes)->Result<OrganizationOutcome<Updated>>);
+    fn change(pool:&DbPool,actor:impl Into<codeyard_database::queries::credentials::Actor>,org:i64,input:&Changes)->Result<OrganizationOutcome<Updated>>);
 
 #[cfg(test)]
 mod tests {

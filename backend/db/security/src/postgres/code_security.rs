@@ -3,22 +3,22 @@ use crate::code_security::SettingsPage;
 use crate::code_security::SETTINGS_PAGE_SIZE;
 use anyhow::ensure;
 use anyhow::Result;
-use codeyard_db_core::models::OrgRole;
-use codeyard_db_core::pool::PgPool;
-use codeyard_db_core::queries::code_security::Configuration;
-use codeyard_db_core::queries::code_security::Refusal;
-use codeyard_db_core::queries::code_security::RepositorySettings;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
+use codeyard_database::models::OrgRole;
+use codeyard_database::pool::PgPool;
+use codeyard_database::queries::code_security::Configuration;
+use codeyard_database::queries::code_security::Refusal;
+use codeyard_database::queries::code_security::RepositorySettings;
+use codeyard_database::queries::organizations::OrganizationOutcome;
 use sqlx::Postgres;
 use sqlx::Transaction;
 
 async fn write<'a>(
     pool: &'a PgPool,
-    actor: &codeyard_db_core::queries::credentials::Actor,
+    actor: &codeyard_database::queries::credentials::Actor,
     org: i64,
 ) -> Result<Transaction<'a, Postgres>> {
     let mut tx = pool.begin().await?;
-    match codeyard_db_core::queries::postgres::organizations::authority::authority(
+    match codeyard_database::queries::postgres::organizations::authority::authority(
         &mut tx,
         actor.user_id,
         org,
@@ -27,7 +27,7 @@ async fn write<'a>(
     {
         OrganizationOutcome::Applied(OrgRole::Owner | OrgRole::Admin) => {}
         OrganizationOutcome::Applied(OrgRole::Member)
-            if codeyard_db_core::queries::postgres::organizations::roles::manages_security(
+            if codeyard_database::queries::postgres::organizations::roles::manages_security(
                 &mut tx,
                 actor.user_id,
                 org,
@@ -37,7 +37,7 @@ async fn write<'a>(
         _ => return Err(Refusal::Denied.into()),
     }
     ensure!(
-        codeyard_db_core::queries::postgres::credentials::organization(
+        codeyard_database::queries::postgres::credentials::organization(
             &mut tx,
             actor,
             org,
@@ -122,7 +122,7 @@ pub async fn list_window(
 }
 pub async fn save(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     org: i64,
     id: Option<i64>,
     patch: &serde_json::Value,
@@ -153,7 +153,7 @@ pub async fn save(
 }
 pub async fn delete(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     org: i64,
     id: i64,
 ) -> Result<()> {
@@ -170,7 +170,7 @@ pub async fn delete(
 }
 pub async fn set_default(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     org: i64,
     id: i64,
     scope: &str,
@@ -213,7 +213,7 @@ pub async fn set_default(
 }
 pub async fn attach(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     org: i64,
     id: Option<i64>,
     scope: &str,
@@ -267,8 +267,8 @@ pub async fn repository_settings(pool: &PgPool, repo: i64) -> Result<Option<Repo
     )
 }
 
-use codeyard_db_core::queries::postgres::code_security::apply_repository;
+use codeyard_database::queries::postgres::code_security::apply_repository;
 
-use codeyard_db_core::queries::postgres::code_security::readable;
+use codeyard_database::queries::postgres::code_security::readable;
 
-use codeyard_db_core::queries::postgres::code_security::configuration;
+use codeyard_database::queries::postgres::code_security::configuration;

@@ -23,7 +23,7 @@ const MUTATIONS: [Mutation; 4] = [
     Mutation::MergeMethods,
 ];
 async fn mutate(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     actor: i64,
     repo: i64,
     mutation: Mutation,
@@ -171,7 +171,7 @@ async fn accepted(
             f.database.pool(),
             actor,
             target,
-            codeyard_db_core::models::AccessLevel::Admin,
+            codeyard_database::models::AccessLevel::Admin,
         )
         .await
         .unwrap();
@@ -278,7 +278,7 @@ async fn authority_matrix(pg: bool) {
             f.database.pool(),
             collaborator,
             repo,
-            codeyard_db_core::models::AccessLevel::Admin,
+            codeyard_database::models::AccessLevel::Admin,
         )
         .await
         .unwrap();
@@ -286,7 +286,7 @@ async fn authority_matrix(pg: bool) {
             f.database.pool(),
             writer,
             repo,
-            codeyard_db_core::models::AccessLevel::Write,
+            codeyard_database::models::AccessLevel::Write,
         )
         .await
         .unwrap();
@@ -321,7 +321,7 @@ async fn authority_matrix(pg: bool) {
         f.database.pool(),
         collaborator,
         organization,
-        codeyard_db_core::models::AccessLevel::Admin,
+        codeyard_database::models::AccessLevel::Admin,
     )
     .await
     .unwrap();
@@ -362,7 +362,7 @@ async fn authority_matrix(pg: bool) {
         f.database.pool(),
         collaborator,
         personal,
-        codeyard_db_core::models::AccessLevel::Admin,
+        codeyard_database::models::AccessLevel::Admin,
     )
     .await
     .unwrap();
@@ -429,7 +429,7 @@ async fn authority_matrix(pg: bool) {
                         f.database.pool(),
                         actor,
                         target,
-                        codeyard_db_core::models::AccessLevel::Admin,
+                        codeyard_database::models::AccessLevel::Admin,
                     )
                     .await
                     .unwrap();
@@ -817,7 +817,7 @@ async fn postgres_collaborator_change_observes_a_ban_that_commits_first() {
             owner,
             repo,
             "collaborator_ban_target",
-            Some(codeyard_db_core::models::AccessLevel::Write),
+            Some(codeyard_database::models::AccessLevel::Write),
         )
         .await
     });

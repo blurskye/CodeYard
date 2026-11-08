@@ -10,9 +10,9 @@ use axum::http::Uri;
 use axum::response::Response;
 use codeyard_api_http::context::PageContext;
 use codeyard_app::app::AppState;
+use codeyard_database::queries::secrets::SecretsError;
 use codeyard_db_actions::private_registries::Configuration;
 use codeyard_db_actions::private_registries::RegistryError;
-use codeyard_db_core::queries::secrets::SecretsError;
 use codeyard_webui::pages::orgs::private_registries as view;
 use serde_json::json;
 use serde_json::Value;
@@ -159,7 +159,7 @@ pub(super) async fn post(
         });
     let session = codeyard_api_http::session::extract_session_id(&ctx.headers).unwrap_or_default();
     let credential =
-        codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session);
+        codeyard_database::queries::users::accounts::AccountCredential::Session(&session);
     let result = if !bounded {
         Err(RegistryError::Invalid("configuration"))
     } else {

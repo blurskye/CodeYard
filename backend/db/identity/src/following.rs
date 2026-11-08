@@ -1,7 +1,7 @@
 use anyhow::Result;
-use codeyard_db_core::models::User;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::User;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 
 pub(crate) fn connections_sql(followers: bool) -> &'static str {
     if followers {
@@ -21,11 +21,11 @@ pub struct FollowRestricted;
 
 native_operation!(crate::postgres::following::follow_user,
     crate::sqlite::following::follow_user,
-    fn follow_user(pool: &DbPool, follower_id: i64, following_id: i64, credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>) -> Result<bool>);
+    fn follow_user(pool: &DbPool, follower_id: i64, following_id: i64, credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>) -> Result<bool>);
 
 native_operation!(crate::postgres::following::unfollow_user,
     crate::sqlite::following::unfollow_user,
-    fn unfollow_user(pool: &DbPool, follower_id: i64, following_id: i64, credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>) -> Result<bool>);
+    fn unfollow_user(pool: &DbPool, follower_id: i64, following_id: i64, credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>) -> Result<bool>);
 
 native_operation!(crate::postgres::following::is_user_following,
     crate::sqlite::following::is_user_following,

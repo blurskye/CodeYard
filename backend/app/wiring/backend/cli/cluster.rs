@@ -5,29 +5,29 @@ use anyhow::Context;
 use anyhow::Result;
 use chrono::DateTime;
 use chrono::Utc;
-use codeyard_cluster::adopt_repositories;
-use codeyard_cluster::replicas::promote::Promotion;
-use codeyard_cluster_core::pairing::approve;
-use codeyard_cluster_core::pairing::create_invite;
-use codeyard_cluster_core::pairing::join;
-use codeyard_cluster_core::pairing::parse_duration;
-use codeyard_cluster_core::pairing::revoke;
-use codeyard_cluster_core::pairing::InviteOptions;
-use codeyard_cluster_core::pairing::JoinTicket;
-use codeyard_cluster_core::pairing::Membership;
-use codeyard_cluster_core::settings::hostname;
-use codeyard_cluster_core::settings::require_postgres;
-use codeyard_cluster_core::settings::NEEDS_POSTGRES;
-use codeyard_cluster_core::transport::NodeAddress;
-use codeyard_cluster_core::transport::Relay;
-use codeyard_db_cluster::cluster::Authority;
-use codeyard_db_core::models::NodeStatusChange;
-use codeyard_db_core::models::ReplicaSetting;
-use codeyard_db_core::DbPool;
-use codeyard_model::node_roles::NodeRoles;
+use codeyard_database::models::NodeStatusChange;
+use codeyard_database::models::ReplicaSetting;
+use codeyard_database::DbPool;
+use codeyard_db_placement::cluster::Authority;
+use codeyard_nodes::pairing::approve;
+use codeyard_nodes::pairing::create_invite;
+use codeyard_nodes::pairing::join;
+use codeyard_nodes::pairing::parse_duration;
+use codeyard_nodes::pairing::revoke;
+use codeyard_nodes::pairing::InviteOptions;
+use codeyard_nodes::pairing::JoinTicket;
+use codeyard_nodes::pairing::Membership;
+use codeyard_nodes::settings::hostname;
+use codeyard_nodes::settings::require_postgres;
+use codeyard_nodes::settings::NEEDS_POSTGRES;
+use codeyard_nodes::transport::NodeAddress;
+use codeyard_nodes::transport::Relay;
+use codeyard_placement::adopt_repositories;
+use codeyard_placement::replicas::promote::Promotion;
 use codeyard_support::node_identity::load_existing;
 use codeyard_support::node_identity::load_or_create;
 use codeyard_support::node_identity::NodeKey;
+use codeyard_types::node_roles::NodeRoles;
 use std::path::Path;
 use std::time::Duration;
 
@@ -36,7 +36,7 @@ pub async fn own_address(pool: &DbPool, key: &NodeKey) -> Result<NodeAddress> {
     let not_serving = || {
         anyhow!("this node is not serving in cluster mode yet; start `codeyard serve` with cluster settings (for example IROH_BIND=0.0.0.0:7444) and try again")
     };
-    let node = codeyard_db_cluster::cluster::get_node_by_public_key(pool, &key.public_hex())
+    let node = codeyard_db_placement::cluster::get_node_by_public_key(pool, &key.public_hex())
         .await?
         .ok_or_else(not_serving)?;
     let hint = node.addr_hint.as_deref().ok_or_else(not_serving)?;
@@ -179,7 +179,7 @@ pub async fn run_offline(
             };
             let key = load_or_create(state_dir)?;
             let membership = join(&ticket, &key, &relay, &name, None).await?;
-            codeyard_cluster::worker::save_core(state_dir, &ticket)?;
+            codeyard_placement::worker::save_core(state_dir, &ticket)?;
             if let Some(config) = jit {
                 codeyard_ci_engine::runner_credentials::save_work_folder(
                     state_dir,
@@ -225,7 +225,9 @@ pub async fn run(
     require_postgres(pool)?;
     match command {
         Command::Enable { write_quorum } => {
-            if codeyard_db_cluster::cluster::enable_cluster_with_quorum(pool, write_quorum).await? {
+            if codeyard_db_placement::cluster::enable_cluster_with_quorum(pool, write_quorum)
+                .await?
+            {
                 println!("Cluster mode is on: machines can now join with the web, storage and ssh roles (see docs/CLUSTER.md).");
             } else {
                 println!("Cluster mode was already on.");
@@ -239,7 +241,7 @@ pub async fn run(
             approve,
         } => {
             ensure!(
-                roles.worker_only() || codeyard_db_cluster::cluster::cluster_enabled(pool).await?,
+                roles.worker_only() || codeyard_db_placement::cluster::cluster_enabled(pool).await?,
                 "this installation is in single-node mode, where an invite admits only runners (`--roles runner`); run `codeyard cluster enable` first to invite web, storage or ssh machines"
             );
             let key = load_existing(state_dir)?.ok_or_else(|| {
@@ -282,7 +284,7 @@ pub async fn run(
         Command::Invites => invites(pool).await,
         Command::CancelInvite { id } => {
             ensure!(
-                codeyard_db_cluster::cluster::delete_join_token(pool, *id).await?,
+                codeyard_db_placement::cluster::delete_join_token(pool, *id).await?,
                 "no invite with id {id}"
             );
             println!("Invite {id} cancelled; nodes that joined with it stay.");
@@ -307,7 +309,7 @@ pub async fn run(
             _ => bail!("no node is named '{name}'; `codeyard cluster list` shows the names"),
         },
         Command::Drain { name, cancel } => {
-            let node = codeyard_cluster::drain::change(pool, None, name, *cancel, None).await?;
+            let node = codeyard_placement::drain::change(pool, None, name, *cancel, None).await?;
             println!(
                 "{}: {} ({}/{} repositories)",
                 node.name, node.state, node.drain_completed, node.drain_total
@@ -316,7 +318,7 @@ pub async fn run(
         }
         Command::Adopt => {
             ensure!(
-                codeyard_db_cluster::cluster::cluster_enabled(pool).await?,
+                codeyard_db_placement::cluster::cluster_enabled(pool).await?,
                 "enable cluster mode before adopting repositories"
             );
             let key = load_existing(state_dir)?.ok_or_else(|| {
@@ -324,7 +326,7 @@ pub async fn run(
                     "this node has no key yet; start `codeyard serve` with cluster settings first"
                 )
             })?;
-            let node = codeyard_db_cluster::cluster::get_node_by_public_key(pool, &key.public_hex())
+            let node = codeyard_db_placement::cluster::get_node_by_public_key(pool, &key.public_hex())
                 .await?
                 .ok_or_else(|| {
                     anyhow!("this node is not registered; start `codeyard serve` with cluster settings first")
@@ -374,12 +376,12 @@ fn describe(setting: ReplicaSetting) -> String {
 }
 
 async fn replicas_status(pool: &DbPool) -> Result<()> {
-    let setting: ReplicaSetting = codeyard_db_cluster::cluster::get_replicas(pool)
+    let setting: ReplicaSetting = codeyard_db_placement::cluster::get_replicas(pool)
         .await?
         .parse()?;
     println!("Each repository keeps {}.", describe(setting));
-    let nodes = codeyard_db_cluster::cluster::list_nodes(pool).await?;
-    let counts = codeyard_db_cluster::cluster::replica_counts(pool).await?;
+    let nodes = codeyard_db_placement::cluster::list_nodes(pool).await?;
+    let counts = codeyard_db_placement::cluster::replica_counts(pool).await?;
     println!(
         "{:<20} {:<8} {:<10} {:<8} {:<8} Behind",
         "Node", "Status", "Primaries", "Copies", "Current"
@@ -407,19 +409,19 @@ async fn replicas_status(pool: &DbPool) -> Result<()> {
 async fn set_replicas(pool: &DbPool, value: &str) -> Result<()> {
     let setting: ReplicaSetting = value.parse()?;
     ensure!(
-        codeyard_db_cluster::cluster::set_replicas(pool, &setting.to_string()).await?,
+        codeyard_db_placement::cluster::set_replicas(pool, &setting.to_string()).await?,
         "this installation has no configuration yet; finish its setup first"
     );
     println!(
         "Each repository keeps {}. Copies follow within {} seconds.",
         describe(setting),
-        codeyard_cluster::replicas::INTERVAL.as_secs()
+        codeyard_placement::replicas::INTERVAL.as_secs()
     );
     Ok(())
 }
 
 async fn node_id(pool: &DbPool, name: &str) -> Result<i64> {
-    codeyard_db_cluster::cluster::get_node_by_name(pool, name)
+    codeyard_db_placement::cluster::get_node_by_name(pool, name)
         .await?
         .map(|node| node.id)
         .ok_or_else(|| {
@@ -428,7 +430,7 @@ async fn node_id(pool: &DbPool, name: &str) -> Result<i64> {
 }
 
 async fn node_name(pool: &DbPool, id: i64) -> Result<String> {
-    Ok(codeyard_db_cluster::cluster::get_node_by_id(pool, id)
+    Ok(codeyard_db_placement::cluster::get_node_by_id(pool, id)
         .await?
         .map_or_else(|| format!("node {id}"), |node| node.name))
 }
@@ -444,10 +446,10 @@ async fn is_primary(pool: &DbPool, repository: i64, node: i64) -> Result<bool> {
 
 async fn report_promotion(pool: &DbPool, promotion: Promotion) -> Result<()> {
     let repository =
-        codeyard_cluster::replicas::promote::repository_name(pool, promotion.repository).await?;
+        codeyard_placement::replicas::promote::repository_name(pool, promotion.repository).await?;
     let from = node_name(pool, promotion.from).await?;
     let to = node_name(pool, promotion.to).await?;
-    if codeyard_db_cluster::cluster::writes::write_settings(pool)
+    if codeyard_db_placement::cluster::writes::write_settings(pool)
         .await?
         .write_quorum
         .is_some()
@@ -457,7 +459,7 @@ async fn report_promotion(pool: &DbPool, promotion: Promotion) -> Result<()> {
     }
     println!(
         "{repository}: '{to}' is the primary now. '{from}' keeps a copy and catches up within {} seconds.",
-        codeyard_cluster::replicas::INTERVAL.as_secs()
+        codeyard_placement::replicas::INTERVAL.as_secs()
     );
     if promotion.lost_writes > 0 {
         eprintln!(
@@ -481,12 +483,12 @@ async fn promote_with_recovery(
         .and_then(|row| row.storage_node_id)
         .context("repository has no primary")?;
     let error =
-        match codeyard_cluster::replicas::promote::promote(pool, repository, to, force).await {
+        match codeyard_placement::replicas::promote::promote(pool, repository, to, force).await {
             Ok(promotions) => return Ok(promotions),
             Err(error) => error,
         };
     let Some(target) = error
-        .downcast_ref::<codeyard_cluster::replicas::promote::RecoveryPending>()
+        .downcast_ref::<codeyard_placement::replicas::promote::RecoveryPending>()
         .map(|pending| pending.target)
     else {
         return Err(error);
@@ -495,17 +497,19 @@ async fn promote_with_recovery(
         return Err(error);
     };
     let Some(local) =
-        codeyard_db_cluster::cluster::get_node_by_public_key(pool, &key.public_hex()).await?
+        codeyard_db_placement::cluster::get_node_by_public_key(pool, &key.public_hex()).await?
     else {
         return Err(error);
     };
-    if !codeyard_cluster::replicas::promote::recover_family(pool, repository, local.id, repos_path)
-        .await?
+    if !codeyard_placement::replicas::promote::recover_family(
+        pool, repository, local.id, repos_path,
+    )
+    .await?
     {
         return Err(error);
     }
     Ok(
-        codeyard_db_cluster::cluster::writes::write_family(pool, repository)
+        codeyard_db_placement::cluster::writes::write_family(pool, repository)
             .await?
             .into_iter()
             .map(|(repository, _, _)| Promotion {
@@ -549,7 +553,7 @@ async fn promote_command(
         (None, Some(node)) => {
             let primary = node_id(pool, node).await?;
             let repositories: Vec<i64> =
-                codeyard_db_cluster::cluster::list_primary_paths(pool, primary)
+                codeyard_db_placement::cluster::list_primary_paths(pool, primary)
                     .await?
                     .into_iter()
                     .map(|(id, _)| id)
@@ -578,22 +582,25 @@ async fn promote_command(
             }
             // Check every remaining family member, including one whose root moved before
             // a later member failed. Successful later retries are not counted as failures.
-            let remaining = codeyard_db_cluster::cluster::list_primary_paths(pool, primary).await?;
+            let remaining =
+                codeyard_db_placement::cluster::list_primary_paths(pool, primary).await?;
             let mut fenced = 0;
-            if codeyard_db_cluster::cluster::writes::write_settings(pool)
+            if codeyard_db_placement::cluster::writes::write_settings(pool)
                 .await?
                 .write_quorum
                 .is_some()
             {
                 for (repository, error) in &failures {
                     if !remaining.iter().any(|(id, _)| id == repository)
-                        && !codeyard_db_cluster::cluster::writes::recovery_view(pool, *repository)
+                        && !codeyard_db_placement::cluster::writes::recovery_view(pool, *repository)
                             .await?
                             .serving
                     {
-                        let name =
-                            codeyard_cluster::replicas::promote::repository_name(pool, *repository)
-                                .await?;
+                        let name = codeyard_placement::replicas::promote::repository_name(
+                            pool,
+                            *repository,
+                        )
+                        .await?;
                         eprintln!("{name}: {error:#}");
                         fenced += 1;
                     }
@@ -601,8 +608,8 @@ async fn promote_command(
             }
             let failed = remaining.len() + fenced;
             for (repository, _) in remaining {
-                let name =
-                    codeyard_cluster::replicas::promote::repository_name(pool, repository).await?;
+                let name = codeyard_placement::replicas::promote::repository_name(pool, repository)
+                    .await?;
                 if let Some((_, error)) = failures.iter().find(|(id, _)| *id == repository) {
                     eprintln!("{name}: {error:#}");
                 } else {
@@ -622,7 +629,7 @@ async fn promote_command(
 }
 
 async fn list(pool: &DbPool) -> Result<()> {
-    let nodes = codeyard_db_cluster::cluster::list_nodes(pool).await?;
+    let nodes = codeyard_db_placement::cluster::list_nodes(pool).await?;
     if nodes.is_empty() {
         println!("No nodes yet. `codeyard serve` with cluster settings adds this one.");
         return Ok(());
@@ -636,7 +643,7 @@ async fn list(pool: &DbPool) -> Result<()> {
             "{:<20} {:<8} {:<28} {:<10} {:<10} {}",
             node.name,
             node.status,
-            codeyard_model::node_roles::describe_roles(&node.roles),
+            codeyard_types::node_roles::describe_roles(&node.roles),
             node.last_seen.map_or("never".to_owned(), ago),
             node.version.as_deref().unwrap_or("-"),
             node.public_key,
@@ -646,7 +653,7 @@ async fn list(pool: &DbPool) -> Result<()> {
 }
 
 async fn invites(pool: &DbPool) -> Result<()> {
-    let invites = codeyard_db_cluster::cluster::list_join_tokens(pool).await?;
+    let invites = codeyard_db_placement::cluster::list_join_tokens(pool).await?;
     if invites.is_empty() {
         println!("No open invites. `codeyard cluster invite` creates one.");
         return Ok(());
@@ -659,7 +666,7 @@ async fn invites(pool: &DbPool) -> Result<()> {
         println!(
             "{:<6} {:<28} {:<9} {:<9} {:<5} {}",
             invite.id,
-            codeyard_model::node_roles::describe_roles(&invite.roles),
+            codeyard_types::node_roles::describe_roles(&invite.roles),
             if invite.reusable {
                 "reusable"
             } else {

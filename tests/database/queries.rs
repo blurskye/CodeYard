@@ -1,7 +1,7 @@
 //! Database layer tests
 
 use crate::support::native_database as native;
-use codeyard_db_core::DbPool;
+use codeyard_database::DbPool;
 
 use uuid::Uuid;
 
@@ -20,7 +20,7 @@ async fn test_repeated_migration_preserves_populated_fixture() {
     let user = codeyard_db_identity::users::accounts::create_user(&fixture.pool, &username, None)
         .await
         .expect("create preexisting fixture account");
-    codeyard_db_core::run_migrations(&fixture.pool)
+    codeyard_database::run_migrations(&fixture.pool)
         .await
         .expect("repeat migration on populated isolated schema");
     let preserved = codeyard_db_identity::users::accounts::get_user_by_id(&fixture.pool, user.id)
@@ -328,7 +328,7 @@ async fn test_access_control() {
     )
     .await
     .expect("Query failed");
-    assert_eq!(owner_access, codeyard_db_core::models::AccessLevel::Owner);
+    assert_eq!(owner_access, codeyard_database::models::AccessLevel::Owner);
 
     let stranger_public = codeyard_db_repos::repositories::access::get_user_repo_access(
         &pool,
@@ -337,7 +337,10 @@ async fn test_access_control() {
     )
     .await
     .expect("Query failed");
-    assert_eq!(stranger_public, codeyard_db_core::models::AccessLevel::Read);
+    assert_eq!(
+        stranger_public,
+        codeyard_database::models::AccessLevel::Read
+    );
 
     let stranger_private = codeyard_db_repos::repositories::access::get_user_repo_access(
         &pool,
@@ -348,7 +351,7 @@ async fn test_access_control() {
     .expect("Query failed");
     assert_eq!(
         stranger_private,
-        codeyard_db_core::models::AccessLevel::None
+        codeyard_database::models::AccessLevel::None
     );
 }
 
@@ -395,7 +398,7 @@ async fn test_private_repository_grants_are_scoped_and_revocable() {
         &fixture.pool,
         collaborator.id,
         repositories[0].id,
-        codeyard_db_core::models::AccessLevel::Write,
+        codeyard_database::models::AccessLevel::Write,
     )
     .await
     .expect("grant fixture access");
@@ -407,7 +410,7 @@ async fn test_private_repository_grants_are_scoped_and_revocable() {
         )
         .await
         .unwrap(),
-        codeyard_db_core::models::AccessLevel::Write
+        codeyard_database::models::AccessLevel::Write
     );
     assert_eq!(
         codeyard_db_repos::repositories::access::get_user_repo_access(
@@ -417,7 +420,7 @@ async fn test_private_repository_grants_are_scoped_and_revocable() {
         )
         .await
         .unwrap(),
-        codeyard_db_core::models::AccessLevel::None
+        codeyard_database::models::AccessLevel::None
     );
     assert_eq!(
         codeyard_db_repos::repositories::access::get_user_repo_access(
@@ -427,7 +430,7 @@ async fn test_private_repository_grants_are_scoped_and_revocable() {
         )
         .await
         .unwrap(),
-        codeyard_db_core::models::AccessLevel::None
+        codeyard_database::models::AccessLevel::None
     );
     assert!(codeyard_db_repos::repositories::access::revoke_repo_access(
         &fixture.pool,
@@ -444,7 +447,7 @@ async fn test_private_repository_grants_are_scoped_and_revocable() {
         )
         .await
         .unwrap(),
-        codeyard_db_core::models::AccessLevel::None
+        codeyard_database::models::AccessLevel::None
     );
     assert_eq!(
         codeyard_db_repos::repositories::access::get_user_repo_access(
@@ -454,7 +457,7 @@ async fn test_private_repository_grants_are_scoped_and_revocable() {
         )
         .await
         .unwrap(),
-        codeyard_db_core::models::AccessLevel::Owner
+        codeyard_database::models::AccessLevel::Owner
     );
 }
 
@@ -687,13 +690,13 @@ async fn test_ci_queue_claim_heartbeat_finish_cancel_and_stale() {
         "node-a/1",
         0,
         &[
-            codeyard_model::ci::LogLine {
+            codeyard_types::ci::LogLine {
                 stage: "ci.yml".into(),
                 line: "running tests".into(),
                 level: "info".into(),
                 ..Default::default()
             },
-            codeyard_model::ci::LogLine {
+            codeyard_types::ci::LogLine {
                 stage: "ci.yml".into(),
                 line: "warning: flaky test".into(),
                 level: "warn".into(),
@@ -829,7 +832,7 @@ async fn test_ci_queue_claim_heartbeat_finish_cancel_and_stale() {
         &pool,
         stranger.id,
         repo.id,
-        codeyard_db_core::models::AccessLevel::Write,
+        codeyard_database::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -861,29 +864,32 @@ async fn test_fingerprint_calculation() {
 #[tokio::test]
 async fn test_access_level_ordering() {
     assert!(
-        codeyard_db_core::models::AccessLevel::Read > codeyard_db_core::models::AccessLevel::None
+        codeyard_database::models::AccessLevel::Read > codeyard_database::models::AccessLevel::None
     );
     assert!(
-        codeyard_db_core::models::AccessLevel::Write > codeyard_db_core::models::AccessLevel::Read
+        codeyard_database::models::AccessLevel::Write
+            > codeyard_database::models::AccessLevel::Read
     );
     assert!(
-        codeyard_db_core::models::AccessLevel::Admin > codeyard_db_core::models::AccessLevel::Write
+        codeyard_database::models::AccessLevel::Admin
+            > codeyard_database::models::AccessLevel::Write
     );
     assert!(
-        codeyard_db_core::models::AccessLevel::Owner > codeyard_db_core::models::AccessLevel::Admin
+        codeyard_database::models::AccessLevel::Owner
+            > codeyard_database::models::AccessLevel::Admin
     );
 
-    assert!(codeyard_db_core::models::AccessLevel::Read.can_read());
-    assert!(!codeyard_db_core::models::AccessLevel::Read.can_write());
+    assert!(codeyard_database::models::AccessLevel::Read.can_read());
+    assert!(!codeyard_database::models::AccessLevel::Read.can_write());
 
-    assert!(codeyard_db_core::models::AccessLevel::Write.can_read());
-    assert!(codeyard_db_core::models::AccessLevel::Write.can_write());
-    assert!(!codeyard_db_core::models::AccessLevel::Write.can_admin());
+    assert!(codeyard_database::models::AccessLevel::Write.can_read());
+    assert!(codeyard_database::models::AccessLevel::Write.can_write());
+    assert!(!codeyard_database::models::AccessLevel::Write.can_admin());
 
-    assert!(codeyard_db_core::models::AccessLevel::Owner.can_read());
-    assert!(codeyard_db_core::models::AccessLevel::Owner.can_write());
-    assert!(codeyard_db_core::models::AccessLevel::Owner.can_admin());
-    assert!(codeyard_db_core::models::AccessLevel::Owner.is_owner());
+    assert!(codeyard_database::models::AccessLevel::Owner.can_read());
+    assert!(codeyard_database::models::AccessLevel::Owner.can_write());
+    assert!(codeyard_database::models::AccessLevel::Owner.can_admin());
+    assert!(codeyard_database::models::AccessLevel::Owner.is_owner());
 }
 
 #[tokio::test]
@@ -892,7 +898,7 @@ async fn test_node_configuration_upsert_and_get() {
     let pool = fixture.pool.clone();
 
     let initial =
-        codeyard_db_cluster::node_config::upsert_node_configuration(&pool, "private", true)
+        codeyard_db_placement::node_config::upsert_node_configuration(&pool, "private", true)
             .await
             .expect("Failed to upsert node config");
     assert_eq!(initial.id, 1);
@@ -900,13 +906,13 @@ async fn test_node_configuration_upsert_and_get() {
     assert!(initial.setup_completed);
 
     let updated =
-        codeyard_db_cluster::node_config::upsert_node_configuration(&pool, "public", true)
+        codeyard_db_placement::node_config::upsert_node_configuration(&pool, "public", true)
             .await
             .expect("Failed to update node config");
     assert_eq!(updated.id, 1);
     assert_eq!(updated.node_mode, "public");
 
-    let fetched = codeyard_db_cluster::node_config::get_node_configuration(&pool)
+    let fetched = codeyard_db_placement::node_config::get_node_configuration(&pool)
         .await
         .expect("Failed to fetch node config")
         .expect("Node config should exist");
@@ -1062,7 +1068,7 @@ async fn test_signup_requests_flow() {
     )
     .await
     .expect("Failed to create reviewer");
-    codeyard_db_cluster::node_config::upsert_node_configuration(&pool, "private", true)
+    codeyard_db_placement::node_config::upsert_node_configuration(&pool, "private", true)
         .await
         .expect("review requires a configured private node and current administrator");
 
@@ -2267,7 +2273,7 @@ async fn public_repository_search_contract(pool: &DbPool) {
         pool,
         viewer.id,
         by_name.id,
-        codeyard_db_core::models::AccessLevel::Write,
+        codeyard_database::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -2276,7 +2282,7 @@ async fn public_repository_search_contract(pool: &DbPool) {
     assert_eq!(shared[0].repository.id, by_name.id);
     assert_eq!(
         shared[0].access_level,
-        codeyard_db_core::models::AccessLevel::Write as i16
+        codeyard_database::models::AccessLevel::Write as i16
     );
     assert!(list_shared_repositories(pool, owner.id)
         .await
@@ -2358,7 +2364,7 @@ async fn viewer_work_contract(pool: &DbPool) {
         pool,
         viewer.id,
         public.id,
-        codeyard_db_core::models::AccessLevel::Write,
+        codeyard_database::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -2421,7 +2427,7 @@ async fn viewer_work_contract(pool: &DbPool) {
         pool,
         viewer.id,
         private.id,
-        codeyard_db_core::models::AccessLevel::Write,
+        codeyard_database::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -2480,7 +2486,7 @@ async fn viewer_work_contract(pool: &DbPool) {
         pool,
         viewer.id,
         private.id,
-        codeyard_db_core::models::AccessLevel::Write,
+        codeyard_database::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -2597,7 +2603,7 @@ async fn viewer_work_contract(pool: &DbPool) {
         pool,
         viewer.id,
         private.id,
-        codeyard_db_core::models::AccessLevel::Read,
+        codeyard_database::models::AccessLevel::Read,
     )
     .await
     .unwrap();

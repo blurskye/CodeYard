@@ -16,8 +16,8 @@ use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::app::AppState;
 use codeyard_db_actions::private_registries::RegistryError;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde_json::json;
 use serde_json::Value;
 use std::sync::Arc;
@@ -156,13 +156,13 @@ async fn create(
     body: std::result::Result<Json<Value>, JsonRejection>,
 ) -> Result<Response> {
     let (org, actor) = crate::dependabot::organization(&state, &headers, &org, true).await?;
-    let Json(body) = body.map_err(codeyard_model::github_error::json_error)?;
+    let Json(body) = body.map_err(codeyard_types::github_error::json_error)?;
     let (body, value) = input(&state, actor.user.id, org, body).await?;
     let registry = codeyard_db_actions::private_registries::save(
         &state.pool,
         state.secret_encryptor.as_deref(),
         actor.user.id,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Token(
+        &codeyard_database::queries::users::accounts::AccountCredential::Token(
             actor.token.id,
             &actor.token.token_hash,
         ),
@@ -187,13 +187,13 @@ async fn update(
     body: std::result::Result<Json<Value>, JsonRejection>,
 ) -> Result<StatusCode> {
     let (org, actor) = crate::dependabot::organization(&state, &headers, &org, true).await?;
-    let Json(body) = body.map_err(codeyard_model::github_error::json_error)?;
+    let Json(body) = body.map_err(codeyard_types::github_error::json_error)?;
     let (body, value) = input(&state, actor.user.id, org, body).await?;
     codeyard_db_actions::private_registries::save(
         &state.pool,
         state.secret_encryptor.as_deref(),
         actor.user.id,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Token(
+        &codeyard_database::queries::users::accounts::AccountCredential::Token(
             actor.token.id,
             &actor.token.token_hash,
         ),
@@ -216,7 +216,7 @@ async fn remove(
     codeyard_db_actions::private_registries::delete(
         &state.pool,
         actor.user.id,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Token(
+        &codeyard_database::queries::users::accounts::AccountCredential::Token(
             actor.token.id,
             &actor.token.token_hash,
         ),

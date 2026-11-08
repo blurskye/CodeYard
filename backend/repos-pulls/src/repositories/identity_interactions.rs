@@ -3,15 +3,15 @@
 use crate::services::RepositoryServices;
 use anyhow::Result;
 use codeyard_git::CommitFilter;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_git_storage::repositories::store::repo_store;
 use std::time::Instant;
 
 static PROOF_WORK: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
 
 pub async fn prepare(
     state: &dyn RepositoryServices,
-    actor: &codeyard_db_core::models::User,
-    repository: &codeyard_db_core::models::Repository,
+    actor: &codeyard_database::models::User,
+    repository: &codeyard_database::models::Repository,
 ) -> Result<()> {
     if !codeyard_db_identity::interactions::proof_required(state.pool(), actor.id, repository.id)
         .await?

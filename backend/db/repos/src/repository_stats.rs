@@ -1,7 +1,7 @@
 use anyhow::Result;
-use codeyard_db_core::models::RepoLanguage;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::RepoLanguage;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 
 native_operation!(crate::postgres::repository_stats::readable_snapshots,
     crate::sqlite::repository_stats::readable_snapshots,
@@ -101,6 +101,6 @@ native_operation!(crate::postgres::repository_stats::list_workflow_usage,
     crate::sqlite::repository_stats::list_workflow_usage,
     fn list_workflow_usage(pool: &DbPool, repo_id: i64, days: i32) -> Result<Vec<WorkflowUsage>>);
 
-use codeyard_db_core::queries::repository_stats::RepositoryDocumentFacts;
+use codeyard_database::queries::repository_stats::RepositoryDocumentFacts;
 
-use codeyard_db_core::queries::repository_stats::RepositorySnapshot;
+use codeyard_database::queries::repository_stats::RepositorySnapshot;

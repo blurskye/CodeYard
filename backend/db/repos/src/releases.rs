@@ -1,10 +1,10 @@
 use anyhow::Result;
-use codeyard_db_core::models::File;
-use codeyard_db_core::models::Release;
-use codeyard_db_core::models::ReleaseAsset;
-use codeyard_db_core::models::ReleaseRow;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::File;
+use codeyard_database::models::Release;
+use codeyard_database::models::ReleaseAsset;
+use codeyard_database::models::ReleaseRow;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 use uuid::Uuid;
 
 pub mod notes;
@@ -52,7 +52,7 @@ pub enum ReleaseSelection<'a> {
 }
 
 pub struct ReleaseSnapshot {
-    pub repository: codeyard_db_core::models::Repository,
+    pub repository: codeyard_database::models::Repository,
     pub releases: Vec<ReleaseRow>,
     pub assets: Vec<ReleaseAsset>,
     pub total: i64,
@@ -222,7 +222,7 @@ native_operation!(crate::postgres::releases::delete_release,
 pub async fn add_release_asset(
     pool: &DbPool,
     actor: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     repo: i64,
     release: i64,
     asset: &NewReleaseAsset<'_>,
@@ -232,7 +232,7 @@ pub async fn add_release_asset(
 
 native_operation!(crate::postgres::releases::add_release_asset,
     crate::sqlite::releases::add_release_asset,
-    fn add_release_asset_with_token(pool: &DbPool, actor_id: i64, credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>, repo_id: i64, release_id: i64, asset: &NewReleaseAsset<'_>, token: Option<i64>) -> Result<ReleaseAsset>);
+    fn add_release_asset_with_token(pool: &DbPool, actor_id: i64, credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>, repo_id: i64, release_id: i64, asset: &NewReleaseAsset<'_>, token: Option<i64>) -> Result<ReleaseAsset>);
 
 // Removes an asset and its unused file, with durable object cleanup in the same transaction.
 native_operation!(crate::postgres::releases::delete_release_asset,

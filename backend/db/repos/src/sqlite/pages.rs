@@ -10,7 +10,7 @@ use crate::repositories::credentials::repository_condition;
 use crate::repositories::credentials::Access;
 use crate::repositories::credentials::Reader;
 use anyhow::Result;
-use codeyard_db_core::pool::SqlitePool;
+use codeyard_database::pool::SqlitePool;
 
 async fn begin_read<'a>(
     pool: &'a SqlitePool,
@@ -18,7 +18,7 @@ async fn begin_read<'a>(
     repo: i64,
 ) -> Result<sqlx::Transaction<'a, sqlx::Sqlite>> {
     let mut tx = pool.begin().await?;
-    let allowed: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=$1 WHERE r.id=$2 AND ({}) AND ({}))", codeyard_db_core::queries::sqlite::repositories::access::readable_condition(), repository_condition(false, "pages", Access::PublicRead, "$3", "$4", "$5")))
+    let allowed: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=$1 WHERE r.id=$2 AND ({}) AND ({}))", codeyard_database::queries::sqlite::repositories::access::readable_condition(), repository_condition(false, "pages", Access::PublicRead, "$3", "$4", "$5")))
         .bind(reader.user).bind(repo).bind(reader.token()).bind(reader.session()).bind(reader.hash()).fetch_one(&mut *tx).await?;
     anyhow::ensure!(allowed, Refusal::Missing);
     Ok(tx)
@@ -27,26 +27,26 @@ async fn begin_read<'a>(
 async fn authorize_write(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     actor: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     repo: i64,
     role: Role,
 ) -> Result<()> {
     let allowed = match role {
         Role::Admin => {
-            codeyard_db_core::queries::sqlite::discussions::lock_admin_authority(tx, actor, repo)
+            codeyard_database::queries::sqlite::discussions::lock_admin_authority(tx, actor, repo)
                 .await?
         }
         Role::Maintain => {
             crate::sqlite::discussions::lock_maintain_authority(tx, actor, repo).await?
         }
         Role::Write => {
-            codeyard_db_core::queries::sqlite::discussions::lock_write_authority(tx, actor, repo)
+            codeyard_database::queries::sqlite::discussions::lock_write_authority(tx, actor, repo)
                 .await?
         }
     };
     anyhow::ensure!(
         allowed
-            && codeyard_db_core::queries::sqlite::users::transitions::credential_live(
+            && codeyard_database::queries::sqlite::users::transitions::credential_live(
                 tx, actor, credential, true
             )
             .await?,
@@ -67,7 +67,7 @@ pub async fn site(pool: &SqlitePool, reader: &Reader<'_>, repo: i64) -> Result<O
 pub async fn save(
     pool: &SqlitePool,
     actor: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     repo: i64,
     input: &Update,
     create: bool,
@@ -124,7 +124,7 @@ pub async fn save(
 pub async fn delete(
     pool: &SqlitePool,
     actor: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     repo: i64,
 ) -> Result<()> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
@@ -179,7 +179,7 @@ pub async fn build(
 pub async fn request_build(
     pool: &SqlitePool,
     actor: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     repo: i64,
     sha: &str,
 ) -> Result<Build> {
@@ -199,7 +199,7 @@ pub async fn request_build(
 pub async fn request_deployment(
     pool: &SqlitePool,
     actor: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     repo: i64,
     input: Attempt<'_>,
 ) -> Result<Deployment> {
@@ -240,7 +240,7 @@ pub async fn deployment(
 pub async fn cancel(
     pool: &SqlitePool,
     actor: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     repo: i64,
     id: i64,
 ) -> Result<()> {

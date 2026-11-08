@@ -1,7 +1,7 @@
 //! The global directory owns a separate PostgreSQL database; cells never use its credentials.
 use anyhow::{ensure, Result};
-use codeyard_db_core::{pool::PgPool, DbPool};
-use codeyard_types::cells::Prefix;
+use codeyard_database::{pool::PgPool, DbPool};
+use codeyard_types::cell_ids::Prefix;
 use sqlx::{Postgres, Transaction};
 use std::{collections::BTreeMap, future::Future, time::Duration};
 
@@ -96,7 +96,7 @@ impl Directory {
         for pool in std::iter::once(&self.pool).chain(self.clusters.values()) {
             self.run_for(
                 self.config.migration_seconds,
-                codeyard_db_core::postgres::migrations::run_baseline(
+                codeyard_database::postgres::migrations::run_baseline(
                     pool,
                     "directory",
                     include_str!("../../../../schema/directory/0001.schema.sql"),
@@ -165,7 +165,7 @@ async fn open(url: &str, config: Config) -> Result<PgPool> {
     );
     let pool = tokio::time::timeout(
         Duration::from_secs(config.request_seconds),
-        codeyard_db_core::init_db(url),
+        codeyard_database::init_db(url),
     )
     .await
     .map_err(|_| Refusal::Unavailable)?

@@ -3,10 +3,10 @@ use crate::support::database::Database;
 use crate::support::git_server;
 use crate::support::github_spec::assert_github_schema;
 
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_db_core::queries::rulesets::records::Owner;
-use codeyard_db_core::queries::rulesets::Definition;
-use codeyard_repos_core::repositories::lifecycle;
+use codeyard_database::queries::organizations::OrganizationOutcome;
+use codeyard_database::queries::rulesets::records::Owner;
+use codeyard_database::queries::rulesets::Definition;
+use codeyard_git_storage::repositories::lifecycle;
 use serde_json::{json, Value};
 use std::{path::Path, process::Output};
 

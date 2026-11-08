@@ -13,13 +13,13 @@ use codeyard_api_http::shared::github::code_scanning::failure;
 use codeyard_api_http::shared::github::code_scanning::scope;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
-use codeyard_model::urls::repo_url;
 use codeyard_storage::attachment_disposition;
 use codeyard_storage::Download;
 use codeyard_storage::Upload;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use codeyard_types::object_limits::MAX_OBJECT_BYTES;
+use codeyard_types::urls::repo_url;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -66,7 +66,7 @@ async fn readable(
     headers: &HeaderMap,
     owner: &str,
     name: &str,
-) -> Result<(i64, codeyard_db_core::queries::credentials::Actor)> {
+) -> Result<(i64, codeyard_database::queries::credentials::Actor)> {
     let (repo, auth) = repository(state, headers, owner, name, false).await?;
     let auth = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     Ok((repo.id, auth.database_actor()))

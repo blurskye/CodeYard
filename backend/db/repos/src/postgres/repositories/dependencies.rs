@@ -9,8 +9,8 @@ use crate::repositories::dependencies::COLUMNS;
 use crate::repositories::dependencies::LEASE_SECONDS;
 use anyhow::ensure;
 use anyhow::Result;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::pool::PgPool;
+use codeyard_database::models::Repository;
+use codeyard_database::pool::PgPool;
 use sqlx::Postgres;
 use sqlx::Transaction;
 
@@ -21,12 +21,12 @@ async fn admin(
     write: bool,
 ) -> Result<Repository> {
     let allowed = if write {
-        codeyard_db_core::queries::postgres::discussions::lock_repository_mutation_authority(
+        codeyard_database::queries::postgres::discussions::lock_repository_mutation_authority(
             tx, actor, repo,
         )
         .await?
     } else {
-        codeyard_db_core::queries::postgres::discussions::lock_archive_authority(tx, actor, repo)
+        codeyard_database::queries::postgres::discussions::lock_archive_authority(tx, actor, repo)
             .await?
     };
     ensure!(allowed, Refusal::Denied);
@@ -59,7 +59,7 @@ async fn document(tx: &mut Transaction<'_, Postgres>, repo: i64) -> Result<Snaps
             .await?;
     let sha: Option<String> = sqlx::query_scalar(&format!(
         "SELECT {}",
-        codeyard_db_core::queries::dependency_graph::DEFAULT_SNAPSHOT_SHA_SQL
+        codeyard_database::queries::dependency_graph::DEFAULT_SNAPSHOT_SHA_SQL
     ))
     .bind(repo)
     .fetch_one(&mut **tx)
@@ -72,7 +72,7 @@ async fn document(tx: &mut Transaction<'_, Postgres>, repo: i64) -> Result<Snaps
                     .bind(repo)
                     .fetch_one(&mut **tx)
                     .await?;
-            codeyard_db_core::queries::postgres::dependency_graph::snapshots_in(
+            codeyard_database::queries::postgres::dependency_graph::snapshots_in(
                 tx,
                 repo,
                 Some(&format!("refs/heads/{branch}")),
@@ -82,7 +82,7 @@ async fn document(tx: &mut Transaction<'_, Postgres>, repo: i64) -> Result<Snaps
         }
         None => Vec::new(),
     };
-    codeyard_db_core::queries::postgres::dependabot_alerts::refresh(tx, repo, sha.as_deref())
+    codeyard_database::queries::postgres::dependabot_alerts::refresh(tx, repo, sha.as_deref())
         .await?;
     let rows = sqlx::query_as("SELECT * FROM dependabot_alerts WHERE repo_id=$1 ORDER BY number")
         .bind(repo)
@@ -100,7 +100,7 @@ async fn save(tx: &mut Transaction<'_, Postgres>, repo: i64, snapshot: &Snapshot
 }
 pub async fn configure(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo: i64,
     feature: Feature,
     enabled: bool,
@@ -111,7 +111,7 @@ pub async fn configure(
     let mut tx = pool.begin().await?;
     let repository = admin(&mut tx, actor, repo, true).await?;
     ensure!(
-        codeyard_db_core::queries::postgres::credentials::repository(
+        codeyard_database::queries::postgres::credentials::repository(
             &mut tx,
             &authority,
             repo,
@@ -138,11 +138,11 @@ pub async fn configure(
         .bind(repo).fetch_optional(&mut *tx).await?;
     if let Some(configured) = configured {
         ensure!(
-            codeyard_db_core::queries::code_security::permits_toggle(
+            codeyard_database::queries::code_security::permits_toggle(
                 &configured,
                 "dependabot_alerts",
                 policy.alerts
-            )? && codeyard_db_core::queries::code_security::permits_toggle(
+            )? && codeyard_database::queries::code_security::permits_toggle(
                 &configured,
                 "dependabot_security_updates",
                 policy.updates
@@ -153,7 +153,7 @@ pub async fn configure(
     if matches!(feature, Feature::Updates) && enabled {
         let authorized = match policy.alerts_actor {
             Some(id) => {
-                codeyard_db_core::queries::postgres::discussions::lock_admin_authority(
+                codeyard_database::queries::postgres::discussions::lock_admin_authority(
                     &mut tx, id, repo,
                 )
                 .await?
@@ -260,7 +260,7 @@ pub async fn check_job(pool: &PgPool, job: &Job, feature: Feature) -> Result<()>
 }
 pub async fn page_snapshot(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo: i64,
 ) -> Result<crate::repositories::dependencies::PageSnapshot> {
     let authority = actor.into();
@@ -315,7 +315,7 @@ pub async fn complete_scan(pool: &PgPool, job: &Job, sha: &str) -> Result<()> {
     ensure!(crate::repositories::dependencies::sha(sha), Refusal::Stale);
     let mut tx = pool.begin().await?;
     active(&mut tx, job, Feature::Alerts).await?;
-    let current: Option<String> = sqlx::query_scalar(&format!("SELECT s.sha FROM dependency_snapshots s JOIN repositories r ON r.id=s.repo_id WHERE s.repo_id=$1 AND s.reference='refs/heads/'||r.default_branch AND s.detector='Codeyard' AND s.correlator='lockfiles' AND s.sha={} ORDER BY s.scanned DESC,s.id DESC LIMIT 1", codeyard_db_core::queries::dependency_graph::DEFAULT_SNAPSHOT_SHA_SQL))
+    let current: Option<String> = sqlx::query_scalar(&format!("SELECT s.sha FROM dependency_snapshots s JOIN repositories r ON r.id=s.repo_id WHERE s.repo_id=$1 AND s.reference='refs/heads/'||r.default_branch AND s.detector='Codeyard' AND s.correlator='lockfiles' AND s.sha={} ORDER BY s.scanned DESC,s.id DESC LIMIT 1", codeyard_database::queries::dependency_graph::DEFAULT_SNAPSHOT_SHA_SQL))
         .bind(job.repo_id).fetch_optional(&mut *tx).await?;
     ensure!(current.as_deref() == Some(sha), Refusal::Stale);
     sqlx::query("UPDATE repository_dependency_security SET last_scan_sha=$2,last_scan_at=NOW(),last_status='complete',last_error=NULL WHERE repo_id=$1").bind(job.repo_id).bind(sha).execute(&mut *tx).await?;

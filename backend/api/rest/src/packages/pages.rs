@@ -325,7 +325,7 @@ async fn model(
         } else {
             None
         };
-        let origin = codeyard_model::http_config::link_origin();
+        let origin = codeyard_types::http_config::link_origin();
         let host = origin
             .strip_prefix("https://")
             .or_else(|| origin.strip_prefix("http://"))

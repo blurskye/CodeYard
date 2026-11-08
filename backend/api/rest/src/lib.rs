@@ -47,7 +47,7 @@ pub(crate) mod users;
 
 pub fn create_router(state: AppState) -> Router {
     let state = Arc::new(state);
-    let config = Arc::new(codeyard_model::http_config::WebConfig::from_env());
+    let config = Arc::new(codeyard_types::http_config::WebConfig::from_env());
     let origins = config
         .cors_origins
         .iter()
@@ -224,8 +224,8 @@ async fn wait_for_stop(stop: &mut tokio::sync::watch::Receiver<bool>) {
 
 pub mod avatar_ops;
 /// The public router uses exactly the paths installed by these constructors.
-pub fn routing_catalog() -> Result<Vec<codeyard_model::cell_routes::Route>, String> {
-    codeyard_model::cell_routes::collect(resources).map(|(_, routes)| routes)
+pub fn routing_catalog() -> Result<Vec<codeyard_types::cell_routes::Route>, String> {
+    codeyard_types::cell_routes::collect(resources).map(|(_, routes)| routes)
 }
 
 fn resources() -> Router<Arc<AppState>> {

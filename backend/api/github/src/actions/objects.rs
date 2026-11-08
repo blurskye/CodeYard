@@ -21,8 +21,8 @@ use codeyard_db_actions::action_objects as objects;
 use codeyard_db_actions::action_objects::ActionObject;
 use codeyard_db_actions::action_objects::ObjectOrder;
 use codeyard_db_actions::action_objects::ObjectQuery;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -288,7 +288,7 @@ async fn download_artifact(
             header::LOCATION,
             format!(
                 "{}/twirp/blobs/{}?sig={token}",
-                codeyard_model::http_config::link_origin(),
+                codeyard_types::http_config::link_origin(),
                 object.id
             ),
         )],

@@ -44,7 +44,7 @@ async fn set_engagement(
     change(
         &state.pool,
         &state.notification_broadcaster,
-        codeyard_db_core::queries::credentials::Actor::from((
+        codeyard_database::queries::credentials::Actor::from((
             actor.id,
             codeyard_api_http::session::extract_session_id(headers).unwrap_or_default(),
         )),
@@ -63,7 +63,7 @@ async fn viewer_engagement(
     owner: &str,
     repo: &str,
     kind: Engagement,
-) -> ApiResult<(bool, codeyard_db_core::models::Repository)> {
+) -> ApiResult<(bool, codeyard_database::models::Repository)> {
     let repository = readable_repository(&state.pool, owner, repo, headers).await?;
     let Some(user) = get_optional_user(&state.pool, headers).await? else {
         return Ok((false, repository));

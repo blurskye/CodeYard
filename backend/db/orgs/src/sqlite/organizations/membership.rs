@@ -3,16 +3,16 @@ use crate::organizations::OrganizationPage;
 use crate::sqlite::organizations::authority::cancel_actor;
 use crate::sqlite::organizations::authority::credential;
 use anyhow::Result;
-use codeyard_db_core::models::OrgMembership;
-use codeyard_db_core::models::OrgRole;
-use codeyard_db_core::pool::SqlitePool;
-use codeyard_db_core::queries::organizations::administers;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_db_core::queries::sqlite::organizations::authority::active;
-use codeyard_db_core::queries::sqlite::organizations::authority::begin_read;
-use codeyard_db_core::queries::sqlite::organizations::authority::membership_role;
-use codeyard_db_core::queries::sqlite::organizations::authority::remaining_active_owner;
-use codeyard_db_core::require_read_org_sqlite;
+use codeyard_database::models::OrgMembership;
+use codeyard_database::models::OrgRole;
+use codeyard_database::pool::SqlitePool;
+use codeyard_database::queries::organizations::administers;
+use codeyard_database::queries::organizations::OrganizationOutcome;
+use codeyard_database::queries::sqlite::organizations::authority::active;
+use codeyard_database::queries::sqlite::organizations::authority::begin_read;
+use codeyard_database::queries::sqlite::organizations::authority::membership_role;
+use codeyard_database::queries::sqlite::organizations::authority::remaining_active_owner;
+use codeyard_database::require_read_org_sqlite;
 use OrganizationOutcome::Applied;
 use OrganizationOutcome::Conflict;
 use OrganizationOutcome::Denied;
@@ -101,7 +101,7 @@ pub async fn add_organization_member(
 }
 pub async fn update_organization_member_role(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     org: i64,
     target: i64,
     role: OrgRole,
@@ -111,7 +111,7 @@ pub async fn update_organization_member_role(
 
 pub async fn update_organization_member_role_by_owner(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     org: i64,
     target: i64,
     role: OrgRole,
@@ -121,7 +121,7 @@ pub async fn update_organization_member_role_by_owner(
 
 async fn update_member_role(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     org: i64,
     target: i64,
     role: OrgRole,
@@ -180,7 +180,7 @@ async fn update_member_role(
 }
 pub async fn remove_organization_member(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     org: i64,
     target: i64,
 ) -> Result<OrganizationOutcome<()>> {
@@ -191,7 +191,7 @@ pub async fn remove_organization_member(
 /// not a member, in one transaction so an acceptance cannot slip between the two.
 pub async fn remove_member_or_invitation_by_owner(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     org: i64,
     target: i64,
 ) -> Result<OrganizationOutcome<()>> {
@@ -200,7 +200,7 @@ pub async fn remove_member_or_invitation_by_owner(
 
 pub async fn convert_to_outside_collaborator(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     org: i64,
     target: i64,
 ) -> Result<OrganizationOutcome<()>> {
@@ -216,7 +216,7 @@ enum Removal {
 
 async fn remove_member(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     org: i64,
     target: i64,
     owner_only: bool,

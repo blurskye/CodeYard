@@ -5,11 +5,11 @@
 use codeyard_support::token_hash::token_hash;
 
 use chrono::{DateTime, Utc};
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::queries::fine_grained_tokens::within;
-use codeyard_db_core::queries::fine_grained_tokens::Bounds;
-use codeyard_db_core::queries::fine_grained_tokens::Policy;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::Repository;
+use codeyard_database::queries::fine_grained_tokens::within;
+use codeyard_database::queries::fine_grained_tokens::Bounds;
+use codeyard_database::queries::fine_grained_tokens::Policy;
+use codeyard_database::DbPool;
 use codeyard_db_identity::fine_grained_tokens::NewToken;
 use serde_json::{Map, Value};
 
@@ -443,9 +443,9 @@ pub async fn grant(pool: &DbPool, token: i64) -> anyhow::Result<Option<Grant>> {
     if let Some(bounds) = codeyard_db_identity::fine_grained_tokens::bounds(pool, token).await? {
         return Ok(Some(Grant::from_bounds(bounds)?));
     }
-    let cached = codeyard_db_core::cells::authorization::lookup(
+    let cached = codeyard_database::cells::authorization::lookup(
         pool,
-        &codeyard_db_core::cells::authorization::Query {
+        &codeyard_database::cells::authorization::Query {
             kind: "token",
             id: Some(token),
             hash: None,
@@ -455,7 +455,7 @@ pub async fn grant(pool: &DbPool, token: i64) -> anyhow::Result<Option<Grant>> {
     .await?;
     Ok(
         cached.and_then(|credential| match credential.answer.authority {
-            codeyard_db_core::cells::authorization::Authority::FineGrained {
+            codeyard_database::cells::authorization::Authority::FineGrained {
                 owner_user,
                 owner_org,
                 repositories,
@@ -694,13 +694,13 @@ pub fn repository_permission(path: &str, write: bool) -> Option<&'static str> {
     }
 }
 
-use codeyard_model::fine_grained::Group;
+use codeyard_types::fine_grained::Group;
 
-use codeyard_model::fine_grained::PERMISSIONS;
+use codeyard_types::fine_grained::PERMISSIONS;
 
-use codeyard_model::fine_grained::allows;
+use codeyard_types::fine_grained::allows;
 
-use codeyard_model::fine_grained::catalog;
+use codeyard_types::fine_grained::catalog;
 
 #[cfg(test)]
 mod tests {

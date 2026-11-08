@@ -67,10 +67,10 @@ fn gauge(body: &mut String, name: &str) {
 }
 
 async fn collect(state: &AppState) -> anyhow::Result<String> {
-    let nodes = codeyard_db_cluster::metrics::storage_nodes(&state.pool).await?;
-    let lag = codeyard_db_cluster::metrics::replica_lag(&state.pool).await?;
-    let ci = codeyard_db_cluster::metrics::ci_queue(&state.pool).await?;
-    let counts = codeyard_db_cluster::metrics::node_counts(&state.pool).await?;
+    let nodes = codeyard_db_placement::metrics::storage_nodes(&state.pool).await?;
+    let lag = codeyard_db_placement::metrics::replica_lag(&state.pool).await?;
+    let ci = codeyard_db_placement::metrics::ci_queue(&state.pool).await?;
+    let counts = codeyard_db_placement::metrics::node_counts(&state.pool).await?;
     let mut body = String::new();
     gauge(&mut body, "repository_bytes");
     for node in &nodes {
@@ -100,7 +100,7 @@ async fn collect(state: &AppState) -> anyhow::Result<String> {
         gauge(&mut body, name);
         writeln!(body, "codeyard_{name} {value}")?;
     }
-    let drains = codeyard_db_cluster::metrics::drains(&state.pool).await?;
+    let drains = codeyard_db_placement::metrics::drains(&state.pool).await?;
     for name in ["drain_total", "drain_completed"] {
         gauge(&mut body, name);
         for node in &drains {
@@ -120,7 +120,7 @@ async fn collect(state: &AppState) -> anyhow::Result<String> {
     writeln!(
         body,
         "codeyard_quorum_failures_total {}",
-        codeyard_cluster_core::writes::quorum_failures()
+        codeyard_nodes::writes::quorum_failures()
     )?;
     gauge(&mut body, "database_pool_waiters");
     writeln!(

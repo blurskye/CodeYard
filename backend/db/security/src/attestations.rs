@@ -1,6 +1,6 @@
 use anyhow::Result;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 use std::collections::BTreeSet;
 
 pub const MAX_BUNDLE_BYTES: usize = 1024 * 1024;
@@ -95,7 +95,7 @@ pub struct Filter<'a> {
 native_operation!(crate::postgres::attestations::collect, crate::sqlite::attestations::collect,
     fn collect(pool: &DbPool) -> Result<u64>);
 native_operation!(crate::postgres::attestations::create, crate::sqlite::attestations::create,
-    fn create(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo: i64, bundle: &Bundle, initiator: &str) -> Result<i64>);
+    fn create(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, repo: i64, bundle: &Bundle, initiator: &str) -> Result<i64>);
 native_operation!(crate::postgres::attestations::list, crate::sqlite::attestations::list,
     fn list(pool: &DbPool, filter: &Filter<'_>) -> Result<Vec<Attestation>>);
 native_operation!(crate::postgres::attestations::summaries, crate::sqlite::attestations::summaries,
@@ -103,11 +103,11 @@ native_operation!(crate::postgres::attestations::summaries, crate::sqlite::attes
 native_operation!(crate::postgres::attestations::repositories, crate::sqlite::attestations::repositories,
     fn repositories(pool: &DbPool, filter: &Filter<'_>) -> Result<Vec<(i64, String)>>);
 native_operation!(crate::postgres::attestations::delete, crate::sqlite::attestations::delete,
-    fn delete(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, owner: Owner, ids: &[i64], digests: &[String]) -> Result<u64>);
+    fn delete(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, owner: Owner, ids: &[i64], digests: &[String]) -> Result<u64>);
 
 #[cfg(test)]
 mod tests {
-    use codeyard_db_core::queries::attestations::valid_digest;
+    use codeyard_database::queries::attestations::valid_digest;
 
     #[test]
     fn digests_are_lowercase_hex_of_the_named_length() {

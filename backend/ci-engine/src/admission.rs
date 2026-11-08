@@ -1,21 +1,21 @@
 use anyhow::Result;
-use codeyard_actions::workflow::dispatch_inputs;
 use codeyard_ci::config::CiConfig;
 use codeyard_ci::config::CiPipelineKind;
-use codeyard_db_core::ci_admission::AdmissionError;
+use codeyard_database::ci_admission::AdmissionError;
 use codeyard_git::error::ErrorKind;
-use codeyard_repos_core::receive_ci::CiRunRequest;
-use codeyard_repos_core::repositories::store::repo_store;
-use codeyard_repos_core::workflows::infer_pipeline_from_workflow_path;
-use codeyard_repos_core::workflows::workflow_definition_from_yaml;
-use codeyard_repos_core::workflows::{is_safe_ref, is_safe_workflow_path};
+use codeyard_git_storage::receive_ci::CiRunRequest;
+use codeyard_git_storage::repositories::store::repo_store;
+use codeyard_git_storage::workflows::infer_pipeline_from_workflow_path;
+use codeyard_git_storage::workflows::workflow_definition_from_yaml;
+use codeyard_git_storage::workflows::{is_safe_ref, is_safe_workflow_path};
+use codeyard_runner::workflow::dispatch_inputs;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
 pub fn is_safe_owner(value: &str) -> bool {
-    codeyard_model::account_input::validate_namespace(value, 3).is_ok()
+    codeyard_types::account_input::validate_namespace(value, 3).is_ok()
         // Also accept the names the repository rules allow, such as short or dotted namespaces.
-        || codeyard_repos_core::repositories::lifecycle::validate_name(value).is_ok()
+        || codeyard_git_storage::repositories::lifecycle::validate_name(value).is_ok()
 }
 
 pub(super) struct AdmittedRevision {
@@ -35,8 +35,8 @@ pub fn is_supported_event(event: &str) -> bool {
 
 /// An instance admin acts as the owner of personal repositories only, not of organization ones.
 pub(super) fn is_personal_admin(
-    actor: &codeyard_db_core::models::User,
-    repo: &codeyard_db_core::models::Repository,
+    actor: &codeyard_database::models::User,
+    repo: &codeyard_database::models::Repository,
 ) -> bool {
     actor.is_admin
         && repo.owner_kind == "user"
@@ -48,9 +48,9 @@ pub(super) fn is_personal_admin(
 /// read and again when a run is admitted.
 pub(super) fn check_actor(
     config: &CiConfig,
-    actor: &codeyard_db_core::models::User,
-    repo: &codeyard_db_core::models::Repository,
-    access: codeyard_db_core::models::AccessLevel,
+    actor: &codeyard_database::models::User,
+    repo: &codeyard_database::models::Repository,
+    access: codeyard_database::models::AccessLevel,
 ) -> Result<(), AdmissionError> {
     if actor.is_banned || actor.must_change_password {
         return Err(AdmissionError::Denied("CI actor is restricted"));
@@ -72,7 +72,7 @@ pub(super) fn check_actor(
 }
 
 pub(crate) async fn fork_approval_required(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     request: &CiRunRequest,
 ) -> Result<bool, AdmissionError> {
     if request.event != "pull_request" || request.manual {
@@ -96,9 +96,9 @@ pub(crate) async fn fork_approval_required(
 }
 
 pub(super) async fn resolve(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     config: &CiConfig,
-    context: Option<&codeyard_repos_core::context::NodeContext>,
+    context: Option<&codeyard_git_storage::context::NodeContext>,
     mut request: CiRunRequest,
     rerun: bool,
     event_payload: Option<&serde_json::Value>,
@@ -144,7 +144,7 @@ pub(super) async fn resolve(
     .await??
     .ok_or(AdmissionError::Unavailable)?;
     if !rerun
-        && actor.username == codeyard_db_core::queries::ci_tokens::BOT
+        && actor.username == codeyard_database::queries::ci_tokens::BOT
         && !matches!(
             request.event.as_str(),
             "workflow_dispatch" | "repository_dispatch"
@@ -408,25 +408,25 @@ pub(super) async fn resolve(
             if let Some(payload) = event_payload {
                 github["event"] = payload.clone();
             }
-            let contexts = codeyard_actions::expressions::Contexts {
+            let contexts = codeyard_runner::expressions::Contexts {
                 values: BTreeMap::from([
                     (
                         "github".into(),
-                        codeyard_actions::expressions::Value::from_json(&github),
+                        codeyard_runner::expressions::Value::from_json(&github),
                     ),
                     (
                         "inputs".into(),
-                        codeyard_actions::expressions::Value::from_json(
-                            &serde_json::Value::Object(typed_inputs),
-                        ),
+                        codeyard_runner::expressions::Value::from_json(&serde_json::Value::Object(
+                            typed_inputs,
+                        )),
                     ),
                     (
                         "vars".into(),
-                        codeyard_actions::expressions::Value::Object(
+                        codeyard_runner::expressions::Value::Object(
                             variables
                                 .into_iter()
                                 .map(|(key, value)| {
-                                    (key, codeyard_actions::expressions::Value::String(value))
+                                    (key, codeyard_runner::expressions::Value::String(value))
                                 })
                                 .collect(),
                         ),
@@ -560,7 +560,7 @@ pub(super) fn merge_scheduling(
 }
 
 pub(super) struct ParsedWorkflow {
-    pub definition: codeyard_repos_core::workflows::WorkflowDefinition,
+    pub definition: codeyard_git_storage::workflows::WorkflowDefinition,
     pub environment: Option<String>,
     pub scheduling: codeyard_db_actions::runners::Scheduling,
     pub(super) concurrency: Option<serde_yaml::Value>,
@@ -572,13 +572,13 @@ pub(super) async fn parse_admission_workflow(
     content: String,
     mut environment: Option<String>,
 ) -> Result<ParsedWorkflow, AdmissionError> {
-    let permit = codeyard_model::workflow_yaml::PARSING_SLOTS
+    let permit = codeyard_types::workflow_yaml::PARSING_SLOTS
         .acquire()
         .await
         .map_err(|_| AdmissionError::Unavailable)?;
     tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        let yaml = codeyard_model::workflow_yaml::parse_yaml(content.as_bytes())
+        let yaml = codeyard_types::workflow_yaml::parse_yaml(content.as_bytes())
             .map_err(|_| AdmissionError::Invalid("CI workflow YAML is invalid"))?;
         let jobs = yaml
             .get("jobs")
@@ -592,7 +592,7 @@ pub(super) async fn parse_admission_workflow(
         for id in jobs.keys() {
             if !id
                 .as_str()
-                .is_some_and(codeyard_actions::workflow::valid_identifier)
+                .is_some_and(codeyard_runner::workflow::valid_identifier)
             {
                 return Err(AdmissionError::Invalid("CI job identifier is invalid"));
             }
@@ -601,7 +601,7 @@ pub(super) async fn parse_admission_workflow(
             if job
                 .get("steps")
                 .and_then(serde_yaml::Value::as_sequence)
-                .is_some_and(|steps| steps.len() > codeyard_actions::workflow::MAX_JOB_STEPS)
+                .is_some_and(|steps| steps.len() > codeyard_runner::workflow::MAX_JOB_STEPS)
             {
                 return Err(AdmissionError::Invalid("CI job has too many steps"));
             }
@@ -661,19 +661,19 @@ mod tests {
         ));
         for (refusal, expected) in [
             (
-                codeyard_db_core::ci_policy::CiAdmissionRefusal::Missing("missing"),
+                codeyard_database::ci_policy::CiAdmissionRefusal::Missing("missing"),
                 "missing",
             ),
             (
-                codeyard_db_core::ci_policy::CiAdmissionRefusal::Denied("denied"),
+                codeyard_database::ci_policy::CiAdmissionRefusal::Denied("denied"),
                 "denied",
             ),
             (
-                codeyard_db_core::ci_policy::CiAdmissionRefusal::Conflict("conflict"),
+                codeyard_database::ci_policy::CiAdmissionRefusal::Conflict("conflict"),
                 "conflict",
             ),
             (
-                codeyard_db_core::ci_policy::CiAdmissionRefusal::Invalid("invalid"),
+                codeyard_database::ci_policy::CiAdmissionRefusal::Invalid("invalid"),
                 "invalid",
             ),
         ] {
@@ -755,7 +755,7 @@ mod tests {
 
     #[tokio::test]
     async fn admission_waits_for_shared_parsing_capacity() {
-        let permits = codeyard_model::workflow_yaml::PARSING_SLOTS
+        let permits = codeyard_types::workflow_yaml::PARSING_SLOTS
             .acquire_many(2)
             .await
             .unwrap();

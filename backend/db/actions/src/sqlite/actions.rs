@@ -1,21 +1,21 @@
 use crate::actions::ActionsSettings;
 use crate::actions::RepoActionsSettings;
 use anyhow::Result;
-use codeyard_db_core::pool::SqlitePool;
+use codeyard_database::pool::SqlitePool;
 use codeyard_db_repos::repositories::records::RepositorySettingsRefusal as Refusal;
 
 pub async fn set_cache_limit(
     pool: &SqlitePool,
     actor: i64,
     repo: i64,
-    kind: codeyard_db_core::queries::actions::CacheLimit,
+    kind: codeyard_database::queries::actions::CacheLimit,
     value: i32,
 ) -> Result<()> {
-    use codeyard_db_core::queries::actions::CacheLimit;
-    use codeyard_db_core::queries::actions::CachePolicyError;
+    use codeyard_database::queries::actions::CacheLimit;
+    use codeyard_database::queries::actions::CachePolicyError;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::sqlite::discussions::lock_admin_authority(&mut tx, actor, repo)
+        codeyard_database::queries::sqlite::discussions::lock_admin_authority(&mut tx, actor, repo)
             .await?,
         CachePolicyError::Denied
     );
@@ -32,7 +32,7 @@ pub async fn set_cache_limit(
         .bind(repo).bind(value).execute(&mut *tx).await?;
     match kind {
         CacheLimit::Storage => {
-            codeyard_db_core::queries::sqlite::action_objects::enforce_cache_limit(
+            codeyard_database::queries::sqlite::action_objects::enforce_cache_limit(
                 &mut tx,
                 repo,
                 i64::from(value) * 1024 * 1024 * 1024,
@@ -79,7 +79,7 @@ pub async fn save_actions_settings(
     settings.validate_engines()?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     if !codeyard_db_identity::sqlite::users::transitions::active_admin(&mut tx, actor).await?
-        || !codeyard_db_core::queries::sqlite::users::transitions::live_session(
+        || !codeyard_database::queries::sqlite::users::transitions::live_session(
             &mut tx, actor, session,
         )
         .await?
@@ -157,20 +157,20 @@ pub async fn get_repo_actions_settings(
 
 pub async fn set_repo_enabled(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo: i64,
     enabled: bool,
 ) -> Result<()> {
     let actor = actor.into();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::sqlite::discussions::lock_admin_authority(
+        codeyard_database::queries::sqlite::discussions::lock_admin_authority(
             &mut tx,
             actor.user_id,
             repo
         )
         .await?
-            && codeyard_db_core::queries::sqlite::credentials::repository(
+            && codeyard_database::queries::sqlite::credentials::repository(
                 &mut tx,
                 &actor,
                 repo,
@@ -191,20 +191,20 @@ pub async fn set_repo_enabled(
 
 pub async fn save_repo_actions_settings(
     pool: &SqlitePool,
-    actor_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor_id: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     settings: &RepoActionsSettings,
 ) -> Result<()> {
     let actor = actor_id.into();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::sqlite::discussions::lock_admin_authority(
+        codeyard_database::queries::sqlite::discussions::lock_admin_authority(
             &mut tx,
             actor.user_id,
             repo_id
         )
         .await?
-            && codeyard_db_core::queries::sqlite::credentials::repository(
+            && codeyard_database::queries::sqlite::credentials::repository(
                 &mut tx,
                 &actor,
                 repo_id,

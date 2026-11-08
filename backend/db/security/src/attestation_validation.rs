@@ -1,7 +1,7 @@
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 use serde_json::Value;
 
 fn valid_verification_material(material: &Value) -> bool {
@@ -154,7 +154,7 @@ impl PreparedBundle {
 
 pub async fn create(
     pool: &DbPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo: i64,
     bundle: &PreparedBundle,
 ) -> Result<i64, AttestationError> {
@@ -175,7 +175,7 @@ pub async fn create(
         actor,
         repo,
         &bundle,
-        if user.username == codeyard_db_core::queries::ci_tokens::BOT {
+        if user.username == codeyard_database::queries::ci_tokens::BOT {
             "workflow"
         } else {
             "user"
@@ -190,20 +190,20 @@ pub async fn create(
         },
     )
 }
-native_operation!(codeyard_db_core::queries::postgres::repository_attestations::list,
-    codeyard_db_core::queries::sqlite::repository_attestations::list,
+native_operation!(codeyard_database::queries::postgres::repository_attestations::list,
+    codeyard_database::queries::sqlite::repository_attestations::list,
     fn list(pool: &DbPool, actor: Option<i64>, repo: i64, digest: &str, page: &Page<'_>) -> Result<(Vec<Attestation>, bool), AttestationError>);
-native_operation!(codeyard_db_core::queries::postgres::repository_attestations::get,
-    codeyard_db_core::queries::sqlite::repository_attestations::get,
+native_operation!(codeyard_database::queries::postgres::repository_attestations::get,
+    codeyard_database::queries::sqlite::repository_attestations::get,
     fn get(pool: &DbPool, actor: Option<i64>, repo: i64, id: i64) -> Result<Attestation, AttestationError>);
 
-use codeyard_db_core::queries::attestation_validation::Attestation;
+use codeyard_database::queries::attestation_validation::Attestation;
 
-use codeyard_db_core::queries::attestation_validation::subject_digest;
+use codeyard_database::queries::attestation_validation::subject_digest;
 
-use codeyard_db_core::queries::attestation_validation::Page;
+use codeyard_database::queries::attestation_validation::Page;
 
-use codeyard_db_core::queries::attestation_validation::AttestationError;
+use codeyard_database::queries::attestation_validation::AttestationError;
 
 #[cfg(test)]
 mod tests {

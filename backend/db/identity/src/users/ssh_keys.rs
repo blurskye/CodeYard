@@ -1,9 +1,9 @@
 use anyhow::Result;
-use codeyard_db_core::models::SshKey;
-use codeyard_db_core::models::UserWithKey;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
-use codeyard_model::identity::SshKeyWriteRefusal;
+use codeyard_database::models::SshKey;
+use codeyard_database::models::UserWithKey;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
+use codeyard_types::identity::SshKeyWriteRefusal;
 use ssh_key::HashAlg;
 use ssh_key::PublicKey;
 
@@ -19,10 +19,10 @@ pub struct SshKeySummary {
 native_operation!(crate::postgres::users::ssh_keys::list_user_key_summaries,
     crate::sqlite::users::ssh_keys::list_user_key_summaries,
     /// The account's own settings listing, read while `credential` is still live.
-    fn list_user_key_summaries(pool: &DbPool, user_id: i64, credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>, after: i64) -> Result<Vec<SshKeySummary>>);
+    fn list_user_key_summaries(pool: &DbPool, user_id: i64, credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>, after: i64) -> Result<Vec<SshKeySummary>>);
 
 fn parse_key_parts(key_type: &str, blob: &str) -> Result<PublicKey, SshKeyWriteRefusal> {
-    use codeyard_model::identity::SshKeyWriteRefusal::InvalidKey;
+    use codeyard_types::identity::SshKeyWriteRefusal::InvalidKey;
     if !matches!(
         key_type,
         "ssh-ed25519"
@@ -51,7 +51,7 @@ pub const MAX_PUBLIC_KEY_BYTES: usize = 32768;
 
 /// One complete-key policy for enrollment and both SSH transports; comments are labels only.
 pub fn parse_public_key(public_key: &str) -> Result<PublicKey, SshKeyWriteRefusal> {
-    use codeyard_model::identity::SshKeyWriteRefusal::InvalidKey;
+    use codeyard_types::identity::SshKeyWriteRefusal::InvalidKey;
     let public_key = public_key.trim();
     if public_key.len() > MAX_PUBLIC_KEY_BYTES || public_key.contains(['\r', '\n', '\0']) {
         return Err(InvalidKey);
@@ -233,7 +233,7 @@ native_operation!(crate::postgres::users::ssh_keys::delete_user_ssh_key_for_toke
 
 native_operation!(crate::postgres::users::ssh_keys::delete_user_ssh_key,
     crate::sqlite::users::ssh_keys::delete_user_ssh_key,
-    fn delete_user_ssh_key(pool: &DbPool, user_id: i64, credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>, key_id: i64) -> Result<bool>);
+    fn delete_user_ssh_key(pool: &DbPool, user_id: i64, credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>, key_id: i64) -> Result<bool>);
 
 native_operation!(crate::postgres::users::ssh_keys::delete_ssh_key,
     crate::sqlite::users::ssh_keys::delete_ssh_key,

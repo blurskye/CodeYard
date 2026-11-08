@@ -107,7 +107,7 @@ async fn comment_reaches_connected_clients(pg: bool) {
     let alice = database.actor("alice").await;
     let bob = database.actor("bob").await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard_repos_core::repositories::lifecycle::provision(
+    let repo = codeyard_git_storage::repositories::lifecycle::provision(
         (database.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),

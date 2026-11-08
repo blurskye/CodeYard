@@ -1,7 +1,7 @@
 //! Read selection is shared by native pages and APIs; credentials and writes stay primary.
 use axum::{extract::Request, http::Method, middleware::Next, response::Response, Extension};
 use codeyard_app::app::AppState;
-use codeyard_db_core::read_routing::{self, Credential};
+use codeyard_database::read_routing::{self, Credential};
 use std::sync::Arc;
 
 fn credential(headers: &axum::http::HeaderMap) -> Option<(bool, String)> {

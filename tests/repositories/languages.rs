@@ -16,7 +16,7 @@ use axum::{
 };
 
 use codeyard_db_identity::users::transitions::SetupClaim;
-use codeyard_repos_core::repositories::lifecycle;
+use codeyard_git_storage::repositories::lifecycle;
 use serde_json::{json, Value};
 use std::{path::Path, time::Duration};
 use tower::ServiceExt;
@@ -43,7 +43,7 @@ async fn get_json(router: &Router, session: Option<&str>) -> (StatusCode, Value)
     (status, serde_json::from_slice(&body).unwrap())
 }
 
-async fn languages_contract(pool: &codeyard_db_core::DbPool) {
+async fn languages_contract(pool: &codeyard_database::DbPool) {
     let owner = match codeyard_db_identity::users::transitions::complete_setup(
         pool,
         "language_owner",
@@ -230,10 +230,10 @@ async fn first_language_reader_retries_when_the_default_changes_during_publicati
     git.set_head("refs/heads/main").unwrap();
     let tx = fixture.raw.begin_with("BEGIN IMMEDIATE").await.unwrap();
     let pool = fixture.pool.clone();
-    let store = codeyard_repos_core::repositories::store::repo_store(&record, None);
+    let store = codeyard_git_storage::repositories::store::repo_store(&record, None);
     let repository_id = record.id;
     let task = tokio::spawn(async move {
-        codeyard_repos_core::repositories::languages::compute_and_store(
+        codeyard_git_storage::repositories::languages::compute_and_store(
             &pool, &store, &record, "main",
         )
         .await
@@ -347,9 +347,9 @@ fn commit_and_push(
 
 /// The stored languages of `repo_id`, once a background refresh has written them.
 async fn stored_languages(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     repo_id: i64,
-) -> Vec<codeyard_db_core::models::RepoLanguage> {
+) -> Vec<codeyard_database::models::RepoLanguage> {
     for _ in 0..100 {
         let rows = codeyard_db_repos::repository_stats::get_repo_languages(pool, repo_id)
             .await
@@ -378,9 +378,9 @@ async fn page(router: &Router, path: &str) -> (StatusCode, String) {
 
 /// Pushes to a public repository over smart HTTP, the way a client does, and checks what the
 /// database, the repository page and Explore show of the languages it stores.
-async fn push_contract(pool: &codeyard_db_core::DbPool, database_url: &str) {
+async fn push_contract(pool: &codeyard_database::DbPool, database_url: &str) {
     bundle::install();
-    codeyard_db_cluster::node_config::upsert_node_configuration(pool, "public", true)
+    codeyard_db_placement::node_config::upsert_node_configuration(pool, "public", true)
         .await
         .unwrap();
     let owner = codeyard_db_identity::users::accounts::create_user(pool, "language_owner", None)

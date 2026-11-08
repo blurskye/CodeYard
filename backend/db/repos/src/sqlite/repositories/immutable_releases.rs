@@ -1,12 +1,12 @@
+use crate::release_integrity::Artifact;
 use crate::releases::ReleaseRefusal;
 use crate::repositories::immutable_releases::Publication;
 use crate::repositories::immutable_releases::Refusal;
 use crate::repositories::immutable_releases::Reservation;
 use anyhow::ensure;
 use anyhow::Result;
-use codeyard_db_core::models::Release;
-use codeyard_db_core::pool::SqlitePool;
-use codeyard_model::release_integrity::Artifact;
+use codeyard_database::models::Release;
+use codeyard_database::pool::SqlitePool;
 use sqlx::Sqlite;
 use sqlx::Transaction;
 
@@ -28,7 +28,7 @@ pub async fn enabled(pool: &SqlitePool, repo: i64) -> Result<bool> {
 }
 pub async fn set_enabled(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo: i64,
     enabled: bool,
 ) -> Result<()> {
@@ -36,14 +36,14 @@ pub async fn set_enabled(
     let actor = credential.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     ensure!(
-        codeyard_db_core::queries::sqlite::discussions::lock_archive_authority(
+        codeyard_database::queries::sqlite::discussions::lock_archive_authority(
             &mut tx, actor, repo
         )
         .await?,
         Refusal::Denied
     );
     ensure!(
-        codeyard_db_core::queries::sqlite::credentials::writes(
+        codeyard_database::queries::sqlite::credentials::writes(
             &mut tx,
             &credential,
             Some(repo),
@@ -127,7 +127,7 @@ pub(crate) async fn freeze(
         release.repo_id,
         &release.tag_name,
         &assets,
-        &codeyard_model::urls::namespace_url(&owner, &name),
+        &codeyard_types::urls::namespace_url(&owner, &name),
     )?;
     let inactive:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM release_assets a JOIN files f ON f.id=a.file_id WHERE a.release_id=?1 AND NOT f.is_active)").bind(release.id).fetch_one(&mut **tx).await?;
     ensure!(!inactive, ReleaseRefusal::Conflict);

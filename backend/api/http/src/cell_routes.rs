@@ -7,11 +7,11 @@ pub trait CellRoutes<S> {
 }
 impl<S: Clone + Send + Sync + 'static> CellRoutes<S> for Router<S> {
     fn cell_route(self, path: &str, route: MethodRouter<S>) -> Self {
-        codeyard_model::cell_routes::record(path);
+        codeyard_types::cell_routes::record(path);
         self.route(path, route)
     }
     fn cell_nest(self, path: &str, build: impl FnOnce() -> Router<S>) -> Self {
-        let router = codeyard_model::cell_routes::under(path, build);
+        let router = codeyard_types::cell_routes::under(path, build);
         self.nest(path, router)
     }
 }

@@ -1,10 +1,10 @@
 //! Revert through the normal branch publication and pull request creation paths.
 use codeyard_ci_engine::runs::CiRuns;
+use codeyard_git_storage::repositories::pull_requests::database_error;
+use codeyard_git_storage::repositories::pull_requests::OperationError;
+use codeyard_git_storage::repositories::store::repo_store;
+use codeyard_git_storage::store_types::RevertRequest as RevertCommit;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
-use codeyard_repos_core::repositories::pull_requests::database_error;
-use codeyard_repos_core::repositories::pull_requests::OperationError;
-use codeyard_repos_core::repositories::store::repo_store;
-use codeyard_repos_core::store_types::RevertRequest as RevertCommit;
 
 pub struct RevertRequest {
     pub title: Option<String>,
@@ -13,14 +13,14 @@ pub struct RevertRequest {
 }
 
 pub async fn revert_pull_request(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     ci: &CiRuns,
     broadcaster: &NotificationBroadcaster,
     actor: i64,
     (owner, name, number): (String, String, i32),
     request: RevertRequest,
-) -> Result<codeyard_db_core::models::PullRequest, OperationError> {
-    let user = codeyard_repos_core::repositories::pull_requests::actor(pool, actor).await?;
+) -> Result<codeyard_database::models::PullRequest, OperationError> {
+    let user = codeyard_git_storage::repositories::pull_requests::actor(pool, actor).await?;
     let repo = codeyard_db_repos::repositories::records::get_repository(pool, &owner, &name)
         .await
         .map_err(database_error)?
@@ -28,7 +28,7 @@ pub async fn revert_pull_request(
             code: "not_found",
             message: "Repository not found".into(),
         })?;
-    codeyard_repos_core::repositories::pull_requests::require_write(pool, &user, &repo).await?;
+    codeyard_git_storage::repositories::pull_requests::require_write(pool, &user, &repo).await?;
     let pull = codeyard_db_repos::pull_requests::records::get_pull_request(pool, repo.id, number)
         .await
         .map_err(database_error)?
@@ -78,8 +78,8 @@ pub async fn revert_pull_request(
     let body = request
         .body
         .unwrap_or_else(|| format!("Reverts {owner}/{name}#{number}"));
-    codeyard_model::issue_input::validate_title(&title)
-        .and_then(|_| codeyard_model::issue_input::validate_body(&body, false))
+    codeyard_types::issue_input::validate_title(&title)
+        .and_then(|_| codeyard_types::issue_input::validate_body(&body, false))
         .map_err(|message| OperationError::Invalid {
             code: "validation_error",
             message: message.into(),
@@ -114,15 +114,15 @@ pub async fn revert_pull_request(
     )
     .await
     .map_err(|error| match error {
-        codeyard_repos_core::ref_errors::RefError::Git(error) => {
+        codeyard_git_storage::ref_errors::RefError::Git(error) => {
             crate::repositories::pull_requests::merge::prepare_error(error)
         }
-        codeyard_repos_core::ref_errors::RefError::Access(_)
-        | codeyard_repos_core::ref_errors::RefError::Protected(_) => OperationError::Denied {
+        codeyard_git_storage::ref_errors::RefError::Access(_)
+        | codeyard_git_storage::ref_errors::RefError::Protected(_) => OperationError::Denied {
             code: "write_denied",
             message: "Revert branch creation denied".into(),
         },
-        codeyard_repos_core::ref_errors::RefError::Invalid(message) => OperationError::Invalid {
+        codeyard_git_storage::ref_errors::RefError::Invalid(message) => OperationError::Invalid {
             code: "validation_error",
             message: message.into(),
         },

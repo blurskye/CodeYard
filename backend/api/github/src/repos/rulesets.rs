@@ -19,16 +19,16 @@ use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_db_core::queries::rulesets::records::ListFilter;
-use codeyard_db_core::queries::rulesets::records::Owner;
-use codeyard_db_core::queries::rulesets::records::Page;
-use codeyard_db_core::queries::rulesets::records::Ruleset;
-use codeyard_db_core::queries::rulesets::records::Version;
-use codeyard_db_core::queries::rulesets::Definition;
-use codeyard_db_core::queries::rulesets::Invalid;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
-use codeyard_model::urls::api_url;
+use codeyard_database::queries::rulesets::records::ListFilter;
+use codeyard_database::queries::rulesets::records::Owner;
+use codeyard_database::queries::rulesets::records::Page;
+use codeyard_database::queries::rulesets::records::Ruleset;
+use codeyard_database::queries::rulesets::records::Version;
+use codeyard_database::queries::rulesets::Definition;
+use codeyard_database::queries::rulesets::Invalid;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
+use codeyard_types::urls::api_url;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -190,9 +190,9 @@ impl List {
         let mut targets = Vec::new();
         for target in self.targets.iter().flat_map(|s| s.split(',')) {
             match target {
-                "branch" => targets.push(codeyard_db_core::queries::rulesets::Target::Branch),
-                "tag" => targets.push(codeyard_db_core::queries::rulesets::Target::Tag),
-                "push" => targets.push(codeyard_db_core::queries::rulesets::Target::Push),
+                "branch" => targets.push(codeyard_database::queries::rulesets::Target::Branch),
+                "tag" => targets.push(codeyard_database::queries::rulesets::Target::Tag),
+                "push" => targets.push(codeyard_database::queries::rulesets::Target::Push),
                 // The documented repository target has no native policy type yet.
                 "repository" => {}
                 _ => return Err(Error::validation("RepositoryRuleset", "targets", "invalid")),
@@ -275,7 +275,7 @@ async fn create(
     input: std::result::Result<Json<Value>, JsonRejection>,
 ) -> Result<(StatusCode, Json<Value>)> {
     let scope = Scope::resolve(&state, &headers, &params, true).await?;
-    let Json(input) = input.map_err(codeyard_model::github_error::json_error)?;
+    let Json(input) = input.map_err(codeyard_types::github_error::json_error)?;
     let input = Definition::parse(&input).map_err(|e| error(e.into()))?;
     let row = outcome(
         codeyard_db_repos::rulesets::operations::create_ruleset(
@@ -302,7 +302,7 @@ async fn update(
     let input = if body.is_empty() {
         json!({})
     } else {
-        serde_json::from_slice(&body).map_err(codeyard_model::github_error::json_parse_error)?
+        serde_json::from_slice(&body).map_err(codeyard_types::github_error::json_parse_error)?
     };
     let row = outcome(
         codeyard_db_repos::rulesets::operations::change_ruleset(

@@ -5,8 +5,8 @@ use crate::checks::Run;
 use crate::checks::Suite;
 use anyhow::ensure;
 use anyhow::Result;
-use codeyard_db_core::pool::SqlitePool;
-use codeyard_db_core::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
+use codeyard_database::pool::SqlitePool;
+use codeyard_database::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
 use sqlx::types::Json;
 
 pub async fn page_snapshot(

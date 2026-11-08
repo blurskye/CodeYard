@@ -2,7 +2,7 @@
 //! repositories, so a new advisory raises Dependabot alerts in both cells.
 use super::cells_frontend::Server;
 use crate::support::native_database::PostgresDatabase;
-use codeyard_types::cells::Prefix;
+use codeyard_types::cell_ids::Prefix;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
@@ -16,7 +16,7 @@ struct Cell {
 }
 
 async fn cell(database: &PostgresDatabase, name: &str) -> Cell {
-    codeyard_db_cluster::node_config::upsert_node_configuration(&database.pool, "public", true)
+    codeyard_db_placement::node_config::upsert_node_configuration(&database.pool, "public", true)
         .await
         .unwrap();
     let user = codeyard_db_identity::users::accounts::create_user(&database.pool, name, None)
@@ -99,7 +99,7 @@ async fn a_new_advisory_raises_alerts_in_both_cells() {
     use base64::Engine;
     let zero_database = PostgresDatabase::new().await;
     let one_database = PostgresDatabase::new().await;
-    codeyard_db_core::cells::initialize(&one_database.pool, Prefix::new(1))
+    codeyard_database::cells::initialize(&one_database.pool, Prefix::new(1))
         .await
         .unwrap();
     let cells = [

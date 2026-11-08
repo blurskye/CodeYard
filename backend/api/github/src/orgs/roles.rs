@@ -19,8 +19,8 @@ use codeyard_app::app::AppState;
 use codeyard_db_orgs::organizations::roles::OrganizationRole;
 use codeyard_db_orgs::organizations::roles::RoleTarget;
 use codeyard_db_repos::repositories::push_teams::TeamAccess;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde_json::json;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -205,7 +205,7 @@ async fn change(
     .map_err(Error::unavailable)?;
     if matches!(
         result,
-        codeyard_db_core::queries::organizations::OrganizationOutcome::Conflict
+        codeyard_database::queries::organizations::OrganizationOutcome::Conflict
     ) {
         return Err(Error::invalid(
             "Only organization members can be assigned organization roles",

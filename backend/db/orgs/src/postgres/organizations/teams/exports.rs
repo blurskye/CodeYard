@@ -3,7 +3,7 @@ use crate::organizations::teams::TeamRepositoryGrant;
 use crate::organizations::OrganizationPage;
 use crate::postgres::organizations::teams::list_members;
 use crate::postgres::organizations::teams::list_repositories;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
+use codeyard_database::queries::organizations::OrganizationOutcome;
 
 pub async fn list_direct_organization_team_members(
     pool: &PgPool,

@@ -1,14 +1,14 @@
 use crate::repositories::engagement::StarSort;
 use anyhow::Result;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::models::Star;
-use codeyard_db_core::models::User;
-use codeyard_db_core::models::Watch;
-use codeyard_db_core::pool::PgPool;
-use codeyard_db_core::queries::discussions::contains_pattern;
-use codeyard_db_core::queries::postgres::repositories::access::lock_readable_repository_in_transaction;
-use codeyard_db_core::queries::postgres::repositories::access::readable_condition;
-use codeyard_db_core::queries::postgres::repositories::access::RepositoryRowLock;
+use codeyard_database::models::Repository;
+use codeyard_database::models::Star;
+use codeyard_database::models::User;
+use codeyard_database::models::Watch;
+use codeyard_database::pool::PgPool;
+use codeyard_database::queries::discussions::contains_pattern;
+use codeyard_database::queries::postgres::repositories::access::lock_readable_repository_in_transaction;
+use codeyard_database::queries::postgres::repositories::access::readable_condition;
+use codeyard_database::queries::postgres::repositories::access::RepositoryRowLock;
 use codeyard_db_identity::users::blocks::InteractionBlocked;
 use sqlx::Postgres;
 use sqlx::Transaction;
@@ -43,7 +43,7 @@ async fn lock_repository(tx: &mut Transaction<'_, Postgres>, repo_id: i64) -> Re
 /// Removing one's own star or watch needs a live credential, not read access or interaction rights.
 async fn begin_removal(
     pool: &PgPool,
-    actor: codeyard_db_core::queries::credentials::Actor,
+    actor: codeyard_database::queries::credentials::Actor,
     repo_id: i64,
 ) -> Result<Option<(Transaction<'_, Postgres>, i64)>> {
     let mut tx = pool.begin().await?;
@@ -63,7 +63,7 @@ async fn begin_removal(
 
 async fn begin_change(
     pool: &PgPool,
-    actor: codeyard_db_core::queries::credentials::Actor,
+    actor: codeyard_database::queries::credentials::Actor,
     repo_id: i64,
 ) -> Result<(Transaction<'_, Postgres>, i64)> {
     let mut tx = pool.begin().await?;
@@ -141,7 +141,7 @@ pub async fn list_watched_repositories(
 
 pub async fn watch_repo(
     pool: &PgPool,
-    user_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    user_id: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
 ) -> Result<bool> {
     let (mut tx, user_id) = begin_change(pool, user_id.into(), repo_id).await?;
@@ -165,7 +165,7 @@ pub async fn watch_repo(
 
 pub async fn unwatch_repo(
     pool: &PgPool,
-    user_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    user_id: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
 ) -> Result<bool> {
     let Some((mut tx, user_id)) = begin_removal(pool, user_id.into(), repo_id).await? else {
@@ -195,7 +195,7 @@ pub async fn is_repo_watched(pool: &PgPool, user_id: i64, repo_id: i64) -> Resul
 
 pub async fn star_repo(
     pool: &PgPool,
-    user_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    user_id: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
 ) -> Result<bool> {
     let (mut tx, user_id) = begin_change(pool, user_id.into(), repo_id).await?;
@@ -211,7 +211,7 @@ pub async fn star_repo(
 
 pub async fn unstar_repo(
     pool: &PgPool,
-    user_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    user_id: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
 ) -> Result<bool> {
     let Some((mut tx, user_id)) = begin_removal(pool, user_id.into(), repo_id).await? else {
@@ -341,7 +341,7 @@ pub async fn count_starred_repositories(
 /// Saves a watch level. `custom` keeps `events`; the other levels clear them.
 pub async fn set_watch_level(
     pool: &PgPool,
-    user_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    user_id: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     level: &str,
     events: &str,

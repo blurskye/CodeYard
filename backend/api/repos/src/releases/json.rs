@@ -14,13 +14,13 @@ use codeyard_api_http::error::ApiError;
 use codeyard_api_http::session::get_current_user;
 use codeyard_api_http::session::get_optional_user;
 use codeyard_app::app::AppState;
-use codeyard_db_core::models::ReleaseAsset;
-use codeyard_db_core::models::ReleaseRow;
+use codeyard_database::models::ReleaseAsset;
+use codeyard_database::models::ReleaseRow;
 use codeyard_db_repos::releases::ReleaseChanges;
 use codeyard_db_repos::releases::ReleaseFields;
-use codeyard_model::http_config::public_origin;
-use codeyard_repos_core::repositories::releases::ReleaseError;
+use codeyard_git_storage::repositories::releases::ReleaseError;
 use codeyard_repos_pulls::repositories::releases::ReleaseInput;
+use codeyard_types::http_config::public_origin;
 use serde::Deserialize;
 use serde::Serialize;
 use std::sync::Arc;
@@ -126,7 +126,7 @@ fn asset_response(origin: &str, base: &str, tag: &str, asset: &ReleaseAsset) -> 
 /// What the source archives of a release are cut from: the tag's full ref, so a branch with the
 /// same name is not downloaded. A draft whose tag does not exist yet keeps the commit it was
 /// saved for.
-pub(super) fn archive_revision(release: &codeyard_db_core::models::Release) -> String {
+pub(super) fn archive_revision(release: &codeyard_database::models::Release) -> String {
     if release.is_draft && codeyard_git::is_full_commit_id(&release.target_commitish) {
         release.target_commitish.clone()
     } else {

@@ -7,10 +7,10 @@ use crate::files::DOWNLOAD_CHARGE_DAYS;
 use crate::files::SWEEP_BATCH;
 use crate::files::SWEEP_BATCHES;
 use crate::files::UPLOAD_CHARGE_DAYS;
-use codeyard_db_core::models::File;
-use codeyard_db_core::models::FileReasonLimit;
-use codeyard_db_core::pool::PgPool;
-use codeyard_db_core::queries::files::PUT_LIFETIME_SECONDS;
+use codeyard_database::models::File;
+use codeyard_database::models::FileReasonLimit;
+use codeyard_database::pool::PgPool;
+use codeyard_database::queries::files::PUT_LIFETIME_SECONDS;
 use sqlx::PgConnection;
 use sqlx::Postgres;
 use sqlx::Transaction;
@@ -223,7 +223,7 @@ async fn require_file_actor(
         match codeyard_db_identity::postgres::users::transitions::require_account(
             tx,
             user,
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(session),
+            &codeyard_database::queries::users::accounts::AccountCredential::Session(session),
         )
         .await
         {
@@ -234,7 +234,7 @@ async fn require_file_actor(
             Err(error) => return Err(file_authority_error(error)),
         }
     }
-    codeyard_db_core::queries::postgres::users::transitions::lock_accounts_shared(tx, &[user])
+    codeyard_database::queries::postgres::users::transitions::lock_accounts_shared(tx, &[user])
         .await
         .map_err(file_authority_error)?;
     Ok(sqlx::query_scalar::<_, bool>(
@@ -353,7 +353,7 @@ pub async fn delete_file(
     let mut tx = pool.begin().await?;
     // Organization assignment and account transitions take membership, organizations,
     // accounts, then files. File deletion must not invert that order.
-    codeyard_db_core::queries::postgres::users::transitions::lock_accounts_shared(
+    codeyard_database::queries::postgres::users::transitions::lock_accounts_shared(
         &mut tx,
         &user_id.into_iter().collect::<Vec<_>>(),
     )
@@ -562,7 +562,7 @@ pub async fn get_user_total_storage(pool: &PgPool, user_id: i64) -> Result<i64, 
 pub async fn get_user_file_stats(
     pool: &PgPool,
     user_id: i64,
-) -> Result<Option<codeyard_db_core::models::UserFileStats>, sqlx::Error> {
+) -> Result<Option<codeyard_database::models::UserFileStats>, sqlx::Error> {
     // Aggregate each relation separately. Joining the relations first would multiply
     // the storage and upload sums by the join counts.
     sqlx::query_as(r#"SELECT u.id AS user_id, u.username, f.*,
@@ -586,6 +586,6 @@ pub async fn get_user_file_stats(
         ) uploads WHERE u.id = $1"#).bind(user_id).fetch_optional(pool).await
 }
 
-use codeyard_db_core::queries::postgres::files::delete_if_unselected;
+use codeyard_database::queries::postgres::files::delete_if_unselected;
 
-use codeyard_db_core::queries::postgres::files::queue_deletion;
+use codeyard_database::queries::postgres::files::queue_deletion;

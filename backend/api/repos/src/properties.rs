@@ -48,7 +48,7 @@ pub(super) async fn panel(
             .iter()
             .find(|row| row.property_name.eq_ignore_ascii_case(name))
             .and_then(|row| row.value.as_ref())
-            .map(codeyard_db_core::queries::organizations::properties::PropertyValue::form_value);
+            .map(codeyard_database::queries::organizations::properties::PropertyValue::form_value);
         Some(view::Property {
             id: definition.id,
             field: RepositoryPropertyField {
@@ -59,7 +59,7 @@ pub(super) async fn panel(
                 required: fields.needs_explicit_value(),
                 editable: metadata.organization_owner
                     || (metadata.repository_admin
-                        && fields.values_editable_by == codeyard_db_core::queries::organizations::properties::EditableBy::OrgAndRepoActors),
+                        && fields.values_editable_by == codeyard_database::queries::organizations::properties::EditableBy::OrgAndRepoActors),
                 default_preview: None,
             },
             draft: value.clone().unwrap_or_default(),
@@ -102,7 +102,7 @@ pub(super) async fn form(
     }
     let name = form.get("property_name").map(String::as_str).unwrap_or("");
     let raw = form.get("value").map(String::as_str).unwrap_or("");
-    if !codeyard_db_core::queries::organizations::properties::valid_name(name)
+    if !codeyard_database::queries::organizations::properties::valid_name(name)
         || raw.len() > codeyard_db_orgs::organizations::properties::MAX_FORM_VALUE_BYTES
     {
         return ctx.repo_error(
@@ -171,13 +171,13 @@ pub(super) async fn form(
             );
         }
         Some(
-            codeyard_db_core::queries::organizations::properties::PropertyValue::from_form(
+            codeyard_database::queries::organizations::properties::PropertyValue::from_form(
                 definition.fields.value_type,
                 raw,
             ),
         )
     };
-    let input = codeyard_db_core::queries::organizations::properties::ValueInput {
+    let input = codeyard_database::queries::organizations::properties::ValueInput {
         property_name: name.to_owned(),
         value,
     };
@@ -199,17 +199,17 @@ pub(super) async fn form(
         }
         Err(error) => {
             match error
-                .downcast_ref::<codeyard_db_core::queries::organizations::properties::Refusal>()
+                .downcast_ref::<codeyard_database::queries::organizations::properties::Refusal>()
             {
-                Some(codeyard_db_core::queries::organizations::properties::Refusal::Invalid {
+                Some(codeyard_database::queries::organizations::properties::Refusal::Invalid {
                     message,
                     ..
                 }) => (StatusCode::BAD_REQUEST, *message),
-                Some(codeyard_db_core::queries::organizations::properties::Refusal::Denied) => (
+                Some(codeyard_database::queries::organizations::properties::Refusal::Denied) => (
                     StatusCode::FORBIDDEN,
                     "Organization policy does not allow editing this property.",
                 ),
-                Some(codeyard_db_core::queries::organizations::properties::Refusal::Missing) => (
+                Some(codeyard_database::queries::organizations::properties::Refusal::Missing) => (
                     StatusCode::CONFLICT,
                     "The repository property changed. Reload before retrying.",
                 ),

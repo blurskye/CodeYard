@@ -1,14 +1,14 @@
 //! The global search index over the real pinned directory transport: each cell writes only
 //! its own repositories, later versions win, and private documents reach only named readers.
 use crate::support::native_database::PostgresDatabase;
-use codeyard_cells_router::directory::{Client, Listener};
-use codeyard_db_core::cells::search::{
+use codeyard_database::cells::search::{
     Batch, File, Filter, Index, Kind, Package, Query, Refusal, Results, Version,
 };
 use codeyard_db_directory::Directory;
-use codeyard_model::cells::{Cell, State};
+use codeyard_router::directory::{Client, Listener};
 use codeyard_support::node_identity::NodeKey;
-use codeyard_types::cells::Prefix;
+use codeyard_types::cell_ids::Prefix;
+use codeyard_types::cells::{Cell, State};
 use serde_json::json;
 
 fn cell(prefix: Prefix, key: &NodeKey) -> Cell {
@@ -77,7 +77,7 @@ fn query(kind: Kind, viewer: Option<i64>, filter: Filter) -> Query {
 fn text(word: &str) -> Filter {
     Filter::Term("text".into(), word.into())
 }
-async fn blobs(pool: &codeyard_db_core::pool::PgPool) -> Vec<String> {
+async fn blobs(pool: &codeyard_database::pool::PgPool) -> Vec<String> {
     sqlx::query_scalar("SELECT content FROM search_blobs ORDER BY content")
         .fetch_all(pool)
         .await

@@ -2,8 +2,8 @@ use crate::discussion_search::Expr;
 use crate::discussion_search::Statement;
 use chrono::DateTime;
 use chrono::Utc;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -125,7 +125,7 @@ impl Search {
         has(&self.expr, "user", Some("@me"))
     }
     /// The query for the cells' shared index, with the text fields it searches.
-    pub fn search_filter(&self) -> codeyard_db_core::cells::search::Filter {
+    pub fn search_filter(&self) -> codeyard_database::cells::search::Filter {
         crate::discussion_search::with_fields(&self.expr, self.fields.iter().map(String::as_str))
     }
     pub fn from_expression(kind: Kind, mut expr: Expr) -> Result<Self, &'static str> {
@@ -193,7 +193,7 @@ impl Search {
             UNION ALL SELECT 'o:'||CAST(o.id AS TEXT),o.name,o.display_name,o.description,NULL,o.created_at,o.updated_at,'org',NULL,0,
             (SELECT COUNT(*) FROM repositories x WHERE x.owner_kind='org' AND x.owner_org_id=o.id AND NOT x.is_stub AND NOT x.is_private AND NOT x.is_gist)
             FROM organizations o WHERE NOT o.is_stub AND EXISTS(SELECT 1 FROM org_memberships m JOIN users own ON own.id=m.user_id WHERE m.org_id=o.id AND m.role='owner' AND NOT own.is_banned AND NOT own.must_change_password))"#,
-                bot = codeyard_db_core::queries::ci_tokens::BOT
+                bot = codeyard_database::queries::ci_tokens::BOT
             )
         } else {
             String::new()

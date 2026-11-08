@@ -11,7 +11,7 @@ use axum::{
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
 use codeyard_ci::config::CiConfig;
-use codeyard_repos_core::repositories::lifecycle;
+use codeyard_git_storage::repositories::lifecycle;
 use codeyard_storage::ObjectStore;
 use codeyard_webui::app::Page;
 use codeyard_webui::app::PageEnvelope;
@@ -27,12 +27,12 @@ struct World {
     database: Database,
     _root: tempfile::TempDir,
     alice: Client,
-    repository: codeyard_db_core::models::Repository,
+    repository: codeyard_database::models::Repository,
     alice_id: i64,
     bob_id: i64,
     base: String,
     head: String,
-    pull: codeyard_db_core::models::PullRequest,
+    pull: codeyard_database::models::PullRequest,
 }
 
 impl World {
@@ -58,7 +58,7 @@ impl World {
             database.pool(),
             bob_id,
             repository.id,
-            codeyard_db_core::models::AccessLevel::Write,
+            codeyard_database::models::AccessLevel::Write,
         )
         .await
         .unwrap();
@@ -362,7 +362,7 @@ async fn review_page_budgets(pg: bool) {
             w.database.pool(),
             w.pull.id,
             w.bob_id,
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+            &codeyard_database::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(w.database.pool(), w.bob_id).await,
             ),
             "commented",
@@ -726,7 +726,7 @@ async fn published_reviews_and_delayed_notices(pg: bool) {
         w.database.pool(),
         w.pull.id,
         w.bob_id,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(w.database.pool(), w.bob_id).await,
         ),
         "changes_requested",
@@ -739,7 +739,7 @@ async fn published_reviews_and_delayed_notices(pg: bool) {
         w.database.pool(),
         w.pull.id,
         w.bob_id,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(w.database.pool(), w.bob_id).await,
         ),
         "commented",
@@ -866,7 +866,7 @@ async fn published_reviews_and_delayed_notices(pg: bool) {
     ] {
         let delayed = codeyard_db_repos::notifications::records::create_notification(
             w.database.pool(),
-            codeyard_db_core::queries::notifications::records::NewNotification {
+            codeyard_database::queries::notifications::records::NewNotification {
                 user_id: w.alice_id,
                 actor_id: Some(w.bob_id),
                 repo_id: Some(w.repository.id),
@@ -880,7 +880,7 @@ async fn published_reviews_and_delayed_notices(pg: bool) {
         .await;
         assert!(delayed
             .unwrap_err()
-            .downcast_ref::<codeyard_db_core::queries::notifications::records::NotificationSuppressed>()
+            .downcast_ref::<codeyard_database::queries::notifications::records::NotificationSuppressed>()
             .is_some());
     }
     w.database.finish().await;

@@ -4,8 +4,8 @@ use axum::http::HeaderMap;
 use axum::http::Method;
 use axum::http::StatusCode;
 use codeyard_app::app::AppState;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 
 use codeyard_identity::github_auth::REQUEST_CONTEXT;
 
@@ -92,7 +92,7 @@ pub(super) async fn referenced_repository(
     state: &AppState,
     auth: Option<&Authentication>,
     id: i64,
-) -> Result<Option<codeyard_db_core::models::Repository>> {
+) -> Result<Option<codeyard_database::models::Repository>> {
     let Some(repo) =
         codeyard_db_repos::repositories::records::get_repository_by_id(&state.pool, id)
             .await
@@ -242,7 +242,7 @@ pub(super) async fn authorize_request(
                 ["user", "installations", ..] => {
                     !write
                         || (bounds.installation().is_none()
-                            && codeyard_model::github_apps::allows(
+                            && codeyard_types::github_apps::allows(
                                 &bounds.permissions,
                                 "administration",
                                 true,
@@ -291,13 +291,13 @@ pub(super) async fn authorize_request(
                     ["repos", _, _]
                 );
             let allowed = if deleting_repo {
-                codeyard_model::oauth_apps::has_scope(&token.scopes, "delete_repo")
+                codeyard_types::oauth_apps::has_scope(&token.scopes, "delete_repo")
             } else {
-                codeyard_model::oauth_apps::allows(&token.scopes, path, write)
+                codeyard_types::oauth_apps::allows(&token.scopes, path, write)
             };
             // Without the repo scope a token still reads public repositories and their
             // networks' events, as an anonymous request does.
-            if !allowed && !write && !codeyard_model::oauth_apps::has_scope(&token.scopes, "repo") {
+            if !allowed && !write && !codeyard_types::oauth_apps::has_scope(&token.scopes, "repo") {
                 if let ["repos" | "networks", owner, name, ..] = path
                     .trim_start_matches('/')
                     .split('/')
@@ -337,7 +337,7 @@ pub(super) async fn authorize_request(
                         }));
             if !allowed
                 || (workflow_write
-                    && !codeyard_model::oauth_apps::has_scope(&token.scopes, "workflow"))
+                    && !codeyard_types::oauth_apps::has_scope(&token.scopes, "workflow"))
             {
                 return Err(Error::new(
                     StatusCode::FORBIDDEN,
@@ -346,7 +346,7 @@ pub(super) async fn authorize_request(
             }
             return Ok(Some(token.scopes));
         }
-        if auth.user.username != codeyard_db_core::queries::ci_tokens::BOT {
+        if auth.user.username != codeyard_database::queries::ci_tokens::BOT {
             classic_policy(&state, auth.token.id, params.as_ref(), path).await?;
             return Ok(Some("repo,read:org,gist,workflow".to_owned()));
         }
@@ -485,7 +485,7 @@ fn level(write: bool) -> &'static str {
 async fn bound_repository(
     state: &AppState,
     params: &std::collections::HashMap<String, String>,
-) -> Result<codeyard_db_core::models::Repository> {
+) -> Result<codeyard_database::models::Repository> {
     let repo = if let Some(id) = params.get("repository_id") {
         codeyard_db_repos::repositories::records::get_repository_by_id(
             &state.pool,
@@ -504,7 +504,11 @@ async fn bound_repository(
 }
 
 /// Numbered collections and individual comment routes address the same PR conversation.
-async fn pull_conversation(pool: &codeyard_db_core::DbPool, repo: i64, path: &str) -> Result<bool> {
+async fn pull_conversation(
+    pool: &codeyard_database::DbPool,
+    repo: i64,
+    path: &str,
+) -> Result<bool> {
     let segments: Vec<_> = path.trim_start_matches('/').split('/').collect();
     match segments.as_slice() {
         ["repos", _, _, "issues", number, "comments"] => match number.parse() {
@@ -545,7 +549,7 @@ async fn repository_bounds(
     deleting: bool,
     permission: &str,
 ) -> Result<Option<bool>> {
-    use codeyard_model::github_apps::allows;
+    use codeyard_types::github_apps::allows;
     let repo = bound_repository(state, params).await?;
     let segments: Vec<_> = path.trim_start_matches('/').split('/').collect();
     let pull_conversation = pull_conversation(&state.pool, repo.id, path).await?;
@@ -601,7 +605,7 @@ async fn personal(
 ) -> Result<bool> {
     use codeyard_identity::fine_grained::Need;
     use codeyard_identity::fine_grained::Owner;
-    use codeyard_model::fine_grained::allows;
+    use codeyard_types::fine_grained::allows;
     let denied = || {
         Error::new(
             StatusCode::FORBIDDEN,

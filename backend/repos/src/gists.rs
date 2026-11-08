@@ -1,4 +1,4 @@
-use codeyard_db_core::queries::users::accounts::AccountCredential;
+use codeyard_database::queries::users::accounts::AccountCredential;
 use serde::Deserialize;
 use serde::Serialize;
 

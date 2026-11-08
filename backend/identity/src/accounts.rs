@@ -3,8 +3,8 @@ use crate::credentials::validate_new_account_name;
 use crate::credentials::validate_new_password;
 use crate::credentials::PasswordAccount;
 use codeyard_db_identity::auth_admission::AdmissionError;
-use codeyard_model::account_input::validate_email;
-use codeyard_model::account_input::AccountInputError;
+use codeyard_types::account_input::validate_email;
+use codeyard_types::account_input::AccountInputError;
 
 use crate::passwords::CurrentPasswordError;
 use crate::passwords::PasswordError;
@@ -18,8 +18,8 @@ use codeyard_db_identity::users::transitions::BanChange;
 use codeyard_db_identity::users::transitions::EmailChange;
 use codeyard_db_identity::users::transitions::RoleChange;
 
-use codeyard_db_core::models::User;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::User;
+use codeyard_database::DbPool;
 
 pub struct PasswordChange<'a> {
     pub current_password: &'a str,

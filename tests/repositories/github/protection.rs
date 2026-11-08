@@ -35,7 +35,7 @@ async fn branch_operations_contract(pg: bool) {
     let alice = f.actor("alice").await;
     let bob = f.actor("bob").await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard_repos_core::repositories::lifecycle::provision(
+    let repo = codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
@@ -161,7 +161,7 @@ async fn postgres_github_branch_operations() {
 
 async fn extended(
     router: &Router,
-    scope: (&codeyard_db_core::DbPool, i64, i64),
+    scope: (&codeyard_database::DbPool, i64, i64),
     base: &str,
     tokens: (&str, &str, &str),
     sha: &str,
@@ -619,7 +619,7 @@ async fn extended(
 
 pub(super) async fn run(
     router: &Router,
-    resource: (&codeyard_db_core::DbPool, i64, i64),
+    resource: (&codeyard_database::DbPool, i64, i64),
     base: &str,
     tokens: (&str, &str, &str),
     sha: &str,

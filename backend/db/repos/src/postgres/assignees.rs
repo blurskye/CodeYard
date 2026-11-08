@@ -2,8 +2,8 @@ use crate::assignees::AssignedItem;
 use crate::assignees::AssignmentRefusal;
 use crate::assignees::MAX_ASSIGNEES;
 use anyhow::Result;
-use codeyard_db_core::models::User;
-use codeyard_db_core::pool::PgPool;
+use codeyard_database::models::User;
+use codeyard_database::pool::PgPool;
 use sqlx::Postgres;
 use sqlx::Transaction;
 
@@ -46,12 +46,12 @@ fn item_id(item: AssignedItem) -> i64 {
 
 async fn begin_write<'a>(
     pool: &'a PgPool,
-    authority: &codeyard_db_core::queries::credentials::Actor,
+    authority: &codeyard_database::queries::credentials::Actor,
     repo_id: i64,
 ) -> Result<Transaction<'a, Postgres>> {
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::postgres::discussions::lock_triage_authority(
+        codeyard_database::queries::postgres::discussions::lock_triage_authority(
             &mut tx,
             authority.user_id,
             repo_id
@@ -100,7 +100,7 @@ async fn locate_item(
 /// Assigns each of `user_ids` in one transaction. Returns the ones that were not assigned before.
 pub async fn assign_users(
     pool: &PgPool,
-    actor_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor_id: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     item: AssignedItem,
     user_ids: &[i64],
@@ -126,7 +126,7 @@ pub(crate) async fn candidate(
     let assignable: bool = sqlx::query_scalar(&format!(
         "SELECT EXISTS (SELECT 1 FROM repositories r JOIN users u ON u.id=$2
          WHERE r.id=$1 AND {CANDIDATES} AND ({})>=1)",
-        codeyard_db_core::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL
+        codeyard_database::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL
     ))
     .bind(repo_id)
     .bind(user_id)
@@ -191,7 +191,7 @@ pub(crate) async fn assign_in_transaction(
 /// assigned. A name that is no user, or is not assigned, removes nothing.
 pub async fn unassign_users(
     pool: &PgPool,
-    actor_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor_id: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     item: AssignedItem,
     usernames: &[String],
@@ -273,7 +273,7 @@ pub async fn list_assignable_usernames(pool: &PgPool, repo_id: i64) -> Result<Ve
     Ok(sqlx::query_scalar(&format!(
         "SELECT u.username FROM repositories r JOIN users u ON {CANDIDATES}
          WHERE r.id=$1 AND ({})>=1 ORDER BY u.username",
-        codeyard_db_core::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL
+        codeyard_database::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL
     ))
     .bind(repo_id)
     .fetch_all(pool)
@@ -281,7 +281,7 @@ pub async fn list_assignable_usernames(pool: &PgPool, repo_id: i64) -> Result<Ve
 }
 
 fn matching_candidates() -> String {
-    format!("FROM repositories r JOIN users u ON {CANDIDATES} WHERE r.id=$1 AND ({})>=1 AND (strpos(lower(u.username),lower($2))>0 OR strpos(lower(COALESCE(u.display_name,'')),lower($2))>0)", codeyard_db_core::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL)
+    format!("FROM repositories r JOIN users u ON {CANDIDATES} WHERE r.id=$1 AND ({})>=1 AND (strpos(lower(u.username),lower($2))>0 OR strpos(lower(COALESCE(u.display_name,'')),lower($2))>0)", codeyard_database::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL)
 }
 
 pub async fn count_assignable_users(pool: &PgPool, repo_id: i64, query: &str) -> Result<i64> {
@@ -325,7 +325,7 @@ pub async fn assignable_user_ids(
     Ok(sqlx::query_scalar(&format!(
         "SELECT u.id FROM repositories r JOIN users u ON {CANDIDATES}
          WHERE r.id=$1 AND u.id = ANY($2) AND ({})>=1",
-        codeyard_db_core::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL
+        codeyard_database::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL
     ))
     .bind(repo_id)
     .bind(user_ids)

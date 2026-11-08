@@ -29,7 +29,7 @@ use codeyard_ci_engine::code_owners::resolve_owners;
 use codeyard_db_repos::discussions::comment_revision;
 use codeyard_db_repos::pull_requests::reviews::PullRequestCommentEntry;
 use codeyard_db_repos::pull_requests::reviews::PullRequestReviewEntry;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_repos_pulls::issues::discussion_link;
 use codeyard_repos_pulls::issues::discussion_link_at;
 use codeyard_repos_pulls::issues::discussion_page;
@@ -55,7 +55,7 @@ pub(crate) fn conversation(
     repo: &RepositoryData,
     pull_author_id: i64,
     head: &str,
-    comment: &codeyard_db_core::models::PullRequestComment,
+    comment: &codeyard_database::models::PullRequestComment,
 ) -> pulls::Conversation {
     let viewer = ctx.user.as_ref();
     pulls::Conversation {
@@ -106,7 +106,7 @@ pub(crate) fn comment_view(
 pub(crate) fn discussion_comment(
     ctx: &PageContext,
     repo: &RepositoryData,
-    pull: &codeyard_db_core::models::PullRequest,
+    pull: &codeyard_database::models::PullRequest,
     entry: PullRequestCommentEntry,
 ) -> view::Comment {
     let conversation = (entry.comment.path.is_some()
@@ -121,7 +121,7 @@ pub(crate) fn discussion_comment(
 pub(crate) fn threads(
     ctx: &PageContext,
     repo: &RepositoryData,
-    pull: &codeyard_db_core::models::PullRequest,
+    pull: &codeyard_database::models::PullRequest,
     entries: Vec<PullRequestCommentEntry>,
     pending: &HashSet<i64>,
 ) -> Vec<pulls::Thread> {
@@ -196,7 +196,7 @@ fn review_view(entry: PullRequestReviewEntry, head: &str) -> pulls::Review {
 pub(crate) async fn page_reviews(
     ctx: &PageContext,
     repo: &RepositoryData,
-    pull: &codeyard_db_core::models::PullRequest,
+    pull: &codeyard_database::models::PullRequest,
     entries: Vec<PullRequestReviewEntry>,
     rights: &crate::discussion::CommentRights,
 ) -> ResultPage<Vec<pulls::Review>> {
@@ -381,7 +381,7 @@ async fn review_location(
     ctx: &PageContext,
     repo: &RepositoryData,
     number: i32,
-    review: &codeyard_db_core::models::PullRequestReview,
+    review: &codeyard_database::models::PullRequestReview,
 ) -> String {
     let position = codeyard_db_repos::pull_requests::reviews::count_discussion_items_through(
         &ctx.state.pool,
@@ -499,7 +499,7 @@ pub(crate) async fn native_review(
         ctx.state.cluster.as_ref(),
         &ctx.state.notification_broadcaster,
         user,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &codeyard_api_http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
         ),
         codeyard_repos_pulls::repositories::pull_requests::reviews::ReviewTarget {
@@ -740,7 +740,7 @@ pub(crate) async fn native_pull_comment(
         .ok_or_else(|| ctx.error(StatusCode::CONFLICT, "Comparison data is unavailable."))?;
     let head = compare.head_sha.as_str();
     let inline = !line.path.is_empty();
-    if let Err(message) = codeyard_model::issue_input::validate_body(&line.body, true) {
+    if let Err(message) = codeyard_types::issue_input::validate_body(&line.body, true) {
         return refuse_comment(
             &ctx,
             &repo,

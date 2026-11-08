@@ -22,11 +22,11 @@ use codeyard_api_http::session::get_current_user;
 use codeyard_api_http::shared::repos::chrome::Loaded;
 use codeyard_api_http::shared::repos::forms::field;
 use codeyard_app::app::AppState;
-use codeyard_db_core::models::DeployKey;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::models::User;
-use codeyard_model::identity::SshKeyWriteRefusal;
-use codeyard_model::repositories::DeployKeyError;
+use codeyard_database::models::DeployKey;
+use codeyard_database::models::Repository;
+use codeyard_database::models::User;
+use codeyard_types::identity::SshKeyWriteRefusal;
+use codeyard_types::repositories::DeployKeyError;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -180,7 +180,7 @@ pub(super) async fn settings_section(
         base: &base,
         action: &action,
         csrf_token: &loaded.chrome.csrf_token,
-        credential: codeyard_db_core::queries::users::accounts::OwnedAccountCredential::Session(
+        credential: codeyard_database::queries::users::accounts::OwnedAccountCredential::Session(
             extract_session_id(&ctx.headers).unwrap_or_default(),
         ),
     };

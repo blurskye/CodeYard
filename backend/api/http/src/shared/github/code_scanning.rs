@@ -13,9 +13,9 @@ use axum::response::Response;
 use axum::Json;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
-use codeyard_model::urls::repo_url;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
+use codeyard_types::urls::repo_url;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -32,7 +32,7 @@ pub async fn scope(
     write: bool,
     admin: bool,
 ) -> Result<(
-    codeyard_db_core::models::Repository,
+    codeyard_database::models::Repository,
     codeyard_identity::github_auth::Authentication,
 )> {
     let (repo, auth) = repository(state, headers, owner, name, write).await?;
@@ -304,7 +304,7 @@ pub async fn alert_repository(
     headers: &HeaderMap,
     owner: &str,
     name: &str,
-) -> Result<codeyard_db_core::models::Repository> {
+) -> Result<codeyard_database::models::Repository> {
     let (repo, _) = repository(state, headers, owner, name, false).await?;
     if repo.is_private {
         scope(state, headers, owner, name, false, false).await?;
@@ -400,7 +400,7 @@ pub async fn alerts(
 async fn listed_alert(
     state: &AppState,
     row: &codeyard_db_security::code_scanning::Alert,
-    repo: &codeyard_db_core::models::Repository,
+    repo: &codeyard_database::models::Repository,
     owner: &str,
     reference: Option<&str>,
     pull_request: Option<i32>,

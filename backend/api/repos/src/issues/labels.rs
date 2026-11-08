@@ -102,12 +102,12 @@ pub async fn remove_issue_label(
 /// Adds labels to an issue or pull request and records a "labeled" event for each one that was
 /// not on it yet. Returns every label the item has afterwards.
 async fn add_labels(
-    pool: &codeyard_db_core::DbPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    pool: &codeyard_database::DbPool,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     subject: AssignedItem,
     ids: &[i64],
-) -> anyhow::Result<Vec<codeyard_db_core::models::Label>> {
+) -> anyhow::Result<Vec<codeyard_database::models::Label>> {
     let labels = match subject {
         AssignedItem::Issue(item_id) => {
             codeyard_db_repos::labels::add_issue_labels(pool, actor, repo_id, item_id, ids).await?
@@ -123,8 +123,8 @@ async fn add_labels(
 /// Removes a label from an issue or pull request and records an "unlabeled" event when it was on
 /// it. Returns whether it was.
 async fn remove_label(
-    pool: &codeyard_db_core::DbPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    pool: &codeyard_database::DbPool,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     subject: AssignedItem,
     label_id: i64,

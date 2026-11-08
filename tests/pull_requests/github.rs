@@ -94,7 +94,7 @@ async fn contract(pg: bool) {
     let bob_id = f.actor("bob").await;
     let root = tempfile::tempdir().unwrap();
     for (name, private) in [("proj", false), ("secret", true)] {
-        codeyard_repos_core::repositories::lifecycle::provision(
+        codeyard_git_storage::repositories::lifecycle::provision(
             (f.pool(), None),
             root.path(),
             codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
@@ -367,7 +367,7 @@ async fn contract(pg: bool) {
         .await
         .unwrap()
         .unwrap();
-    let store = codeyard_repos_core::repositories::store::repo_store(&repo, None);
+    let store = codeyard_git_storage::repositories::store::repo_store(&repo, None);
     let commit = store.commit(body["sha"].as_str().unwrap()).await.unwrap();
     assert_eq!(commit.message, "Custom merge\n\nCustom description");
     assert_eq!(commit.parents.len(), 2);

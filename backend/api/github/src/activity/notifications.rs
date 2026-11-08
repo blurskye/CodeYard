@@ -27,9 +27,9 @@ use codeyard_db_repos::notifications::records::NotificationInboxAction;
 use codeyard_db_repos::notifications::threads::ThreadAction;
 use codeyard_db_repos::notifications::threads::ThreadFilter;
 use codeyard_db_repos::notifications::threads::ThreadInbox;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
 use codeyard_notifications::inbox::InboxError;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde::Deserialize;
 use std::sync::Arc;
 

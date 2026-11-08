@@ -19,10 +19,10 @@ use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
 use codeyard_git::DiffFileInfo;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_repos_pulls::issues::comments::CommentTarget;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -30,7 +30,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 fn operation_error(
-    error: codeyard_repos_core::repositories::pull_requests::OperationError,
+    error: codeyard_git_storage::repositories::pull_requests::OperationError,
 ) -> Error {
     crate::pulls::mutations::operation_error(error)
 }
@@ -38,11 +38,11 @@ fn operation_error(
 pub(super) async fn visible(
     state: &AppState,
     headers: &HeaderMap,
-    repo: &codeyard_db_core::models::Repository,
+    repo: &codeyard_database::models::Repository,
     id: i64,
 ) -> Result<(
-    codeyard_db_core::models::PullRequest,
-    codeyard_db_core::models::PullRequestComment,
+    codeyard_database::models::PullRequest,
+    codeyard_database::models::PullRequestComment,
 )> {
     let comment =
         codeyard_db_repos::pull_requests::reviews::get_pull_request_comment_by_id(&state.pool, id)
@@ -80,9 +80,9 @@ pub(super) async fn visible(
 pub(super) async fn document(
     state: &AppState,
     owner: &str,
-    repo: &codeyard_db_core::models::Repository,
-    pull: &codeyard_db_core::models::PullRequest,
-    comment: &codeyard_db_core::models::PullRequestComment,
+    repo: &codeyard_database::models::Repository,
+    pull: &codeyard_database::models::PullRequest,
+    comment: &codeyard_database::models::PullRequestComment,
 ) -> Result<Value> {
     document_cached(state, owner, repo, pull, comment, &mut HashMap::new()).await
 }
@@ -94,9 +94,9 @@ const MAX_CACHED_DIFFS: usize = 8;
 async fn document_cached(
     state: &AppState,
     owner: &str,
-    repo: &codeyard_db_core::models::Repository,
-    pull: &codeyard_db_core::models::PullRequest,
-    comment: &codeyard_db_core::models::PullRequestComment,
+    repo: &codeyard_database::models::Repository,
+    pull: &codeyard_database::models::PullRequest,
+    comment: &codeyard_database::models::PullRequestComment,
     diffs: &mut HashMap<(String, String, String), Vec<DiffFileInfo>>,
 ) -> Result<Value> {
     let user =
@@ -114,7 +114,7 @@ async fn document_cached(
     value["user"] = codeyard_webhooks::payloads::user(&user);
     value["author_association"] = json!(association(&state.pool, repo, user.id).await?);
     let reactions =
-        codeyard_repos_core::webhooks::documents::review_comment_reactions(&state.pool, &value)
+        codeyard_git_storage::webhooks::documents::review_comment_reactions(&state.pool, &value)
             .await
             .map_err(Error::unavailable)?;
     value["reactions"] = reactions;
@@ -131,7 +131,7 @@ async fn document_cached(
         let diff = repo_store(repo, state.cluster.as_ref())
             .diff_file(&key.0, &key.1, &key.2)
             .await
-            .map_err(codeyard_repos_core::api_shared::github::contents::store_error)?;
+            .map_err(codeyard_git_storage::api_shared::github::contents::store_error)?;
         diffs.insert(key.clone(), diff.files);
     }
     codeyard_webhooks::payloads::review_comment_diff(&mut value, comment, pull, &diffs[&key]);
@@ -155,8 +155,8 @@ pub(super) struct Create {
 pub(super) async fn prepare(
     state: &AppState,
     headers: &HeaderMap,
-    repo: &codeyard_db_core::models::Repository,
-    pull: &codeyard_db_core::models::PullRequest,
+    repo: &codeyard_database::models::Repository,
+    pull: &codeyard_database::models::PullRequest,
     input: Create,
     pending: bool,
 ) -> Result<
@@ -168,8 +168,8 @@ pub(super) async fn prepare(
 pub(super) async fn prepare_with_diff(
     state: &AppState,
     headers: &HeaderMap,
-    repo: &codeyard_db_core::models::Repository,
-    pull: &codeyard_db_core::models::PullRequest,
+    repo: &codeyard_database::models::Repository,
+    pull: &codeyard_database::models::PullRequest,
     input: Create,
     pending: bool,
     cached: Option<&codeyard_git::DiffInfo>,
@@ -228,7 +228,7 @@ pub(super) async fn prepare_with_diff(
                         path,
                     )
                     .await
-                    .map_err(codeyard_repos_core::api_shared::github::contents::store_error)?;
+                    .map_err(codeyard_git_storage::api_shared::github::contents::store_error)?;
                 &loaded
             };
             let row = diff
@@ -289,7 +289,7 @@ async fn create(
         .user;
     let (_, pull) = target(&state, &headers, &owner, &name, number).await?;
     let input =
-        serde_json::from_slice(&body).map_err(codeyard_model::github_error::json_parse_error)?;
+        serde_json::from_slice(&body).map_err(codeyard_types::github_error::json_parse_error)?;
     let request = prepare(&state, &headers, &repo, &pull, input, false).await?;
     let comment =
         codeyard_repos_pulls::repositories::pull_requests::comments::create_pull_request_comment(
@@ -322,7 +322,7 @@ async fn reply(
     body: Bytes,
 ) -> Result<Response> {
     let input: Body =
-        serde_json::from_slice(&body).map_err(codeyard_model::github_error::json_parse_error)?;
+        serde_json::from_slice(&body).map_err(codeyard_types::github_error::json_parse_error)?;
     create(
         State(state),
         headers,
@@ -355,7 +355,7 @@ async fn update(
         .user;
     let (pull, _) = visible(&state, &headers, &repo, id).await?;
     let input: Body =
-        serde_json::from_slice(&body).map_err(codeyard_model::github_error::json_parse_error)?;
+        serde_json::from_slice(&body).map_err(codeyard_types::github_error::json_parse_error)?;
     let comment =
         codeyard_repos_pulls::repositories::pull_requests::comments::edit_pull_request_comment(
             &state.pool,

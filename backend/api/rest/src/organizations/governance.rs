@@ -11,7 +11,7 @@ use axum::http::Uri;
 use axum::response::Response;
 use codeyard_api_http::context::PageContext;
 use codeyard_app::app::AppState;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
+use codeyard_database::queries::organizations::OrganizationOutcome;
 use codeyard_db_orgs::organizations::recovery::list_ownerless_organizations;
 use codeyard_db_orgs::organizations::recovery::recover_suspended_organization_owner;
 use std::sync::Arc;

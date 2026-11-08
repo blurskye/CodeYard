@@ -4,7 +4,7 @@ use crate::shared::repos::chrome::ApiResult;
 use axum::http::HeaderMap;
 use axum::http::StatusCode;
 use axum::Json;
-use codeyard_db_core::models::Repository;
+use codeyard_database::models::Repository;
 use codeyard_identity::repository_access::AccessError;
 pub fn access_error(error: AccessError) -> (StatusCode, Json<ApiError>) {
     let (status, code, message) = match error {
@@ -33,7 +33,10 @@ pub fn access_error(error: AccessError) -> (StatusCode, Json<ApiError>) {
     (status, Json(ApiError::new(code, message)))
 }
 
-pub async fn current_repository(pool: &codeyard_db_core::DbPool, id: i64) -> ApiResult<Repository> {
+pub async fn current_repository(
+    pool: &codeyard_database::DbPool,
+    id: i64,
+) -> ApiResult<Repository> {
     codeyard_identity::repository_access::current_repository(pool, id)
         .await
         .map_err(|error| {
@@ -52,7 +55,7 @@ pub async fn current_repository(pool: &codeyard_db_core::DbPool, id: i64) -> Api
 }
 
 pub async fn check_repo_read_access(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     repository: &Repository,
     headers: &HeaderMap,
 ) -> ApiResult<()> {
@@ -61,7 +64,7 @@ pub async fn check_repo_read_access(
 }
 
 pub async fn read_access(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     repository: &Repository,
     headers: &HeaderMap,
 ) -> ApiResult<()> {

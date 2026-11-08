@@ -17,8 +17,8 @@ use codeyard_api_http::session::get_current_user;
 use codeyard_api_http::shared::repos::responses::repository_fork_counts;
 use codeyard_api_http::shared::repos::responses::repository_unavailable;
 use codeyard_app::app::AppState;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::Repository;
+use codeyard_database::DbPool;
 use serde::Serialize;
 use std::sync::Arc;
 
@@ -49,8 +49,9 @@ pub async fn fork_repo(
     let pool = state.pool.clone();
     let user = get_current_user(&pool, &headers).await?;
     let session = codeyard_api_http::session::extract_session_id(&headers).unwrap_or_default();
-    let authority = codeyard_db_core::queries::credentials::Actor::from((user.id, session.clone()));
-    let public_error = |error: codeyard_model::github_error::Error| {
+    let authority =
+        codeyard_database::queries::credentials::Actor::from((user.id, session.clone()));
+    let public_error = |error: codeyard_types::github_error::Error| {
         (error.0, Json(ApiError::new("fork_failed", &error.1)))
     };
     let source = codeyard_app::cells::fork_source(&state, &authority, &session, &owner, &repo)
@@ -69,12 +70,12 @@ pub async fn fork_repo(
         return Ok(response);
     }
     let source_repo = source.repository;
-    let forked_repo = codeyard_repos_core::repositories::lifecycle::fork_into(
+    let forked_repo = codeyard_git_storage::repositories::lifecycle::fork_into(
         &pool,
         state.cluster.as_ref(),
         &state.repos_path,
         &state.notification_broadcaster,
-        codeyard_repos_core::repositories::lifecycle::ForkOptions {
+        codeyard_git_storage::repositories::lifecycle::ForkOptions {
             owner: codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(
                 user.id,
             ),

@@ -21,7 +21,7 @@ use codeyard_api_http::shared::repos::forms::authorize_post;
 use codeyard_api_http::shared::repos::forms::field;
 use codeyard_api_http::shared::repos::forms::with_status;
 use codeyard_app::app::AppState;
-use codeyard_repos_core::ref_errors::RefError;
+use codeyard_git_storage::ref_errors::RefError;
 use codeyard_repos_pulls::repositories::merges::BranchMerge;
 use codeyard_webui::components::SelectOption;
 use codeyard_webui::pages::repos::merge::MergeForm;
@@ -51,7 +51,7 @@ pub(super) async fn merge_json(
         &state.pool,
         state.cluster.as_ref(),
         &state.ci_runs,
-        codeyard_db_core::queries::credentials::Actor::from((
+        codeyard_database::queries::credentials::Actor::from((
             actor.id,
             codeyard_api_http::session::extract_session_id(&headers).unwrap_or_default(),
         )),

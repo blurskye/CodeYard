@@ -7,24 +7,24 @@ use codeyard_ci::config::CiConfig;
 use codeyard_ci_engine::queue::RunQueue;
 use codeyard_ci_engine::runs::CiRuns;
 
-use codeyard_repos_core::context::term_path;
+use codeyard_git_storage::context::term_path;
 
-use codeyard_cluster_core::pairing::PairingHandler;
-use codeyard_cluster_core::transport::IrohDialer;
-use codeyard_cluster_core::transport::NodeAddress;
-use codeyard_cluster_core::transport::Relay;
-use codeyard_repos_core::context::NodeContext;
+use codeyard_git_storage::context::NodeContext;
+use codeyard_nodes::pairing::PairingHandler;
+use codeyard_nodes::transport::IrohDialer;
+use codeyard_nodes::transport::NodeAddress;
+use codeyard_nodes::transport::Relay;
 
-use codeyard_db_core::models::RefValue;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::RefValue;
+use codeyard_database::DbPool;
+use codeyard_git_storage::repositories::git_sessions::receive_session;
+use codeyard_git_storage::repositories::git_sessions::ReceiveCredential;
+use codeyard_git_storage::repositories::git_sessions::ReceiveSession;
+use codeyard_git_storage::repositories::store::RepoStore;
+use codeyard_git_storage::store_types::GitService;
+use codeyard_git_storage::store_types::GitSession;
+use codeyard_git_storage::store_types::GitStreams;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
-use codeyard_repos_core::repositories::git_sessions::receive_session;
-use codeyard_repos_core::repositories::git_sessions::ReceiveCredential;
-use codeyard_repos_core::repositories::git_sessions::ReceiveSession;
-use codeyard_repos_core::repositories::store::RepoStore;
-use codeyard_repos_core::store_types::GitService;
-use codeyard_repos_core::store_types::GitSession;
-use codeyard_repos_core::store_types::GitStreams;
 use std::{path::PathBuf, sync::Arc, time::Duration};
 use tokio::time::{timeout, Instant};
 
@@ -46,7 +46,7 @@ fn commit(repo: &git2::Repository, message: &str, parent: Option<git2::Oid>) -> 
 pub(super) struct Stores {
     pub(super) fixture: Fixture,
     pub(super) contexts: Vec<NodeContext>,
-    listeners: Vec<codeyard_cluster::tcp::Listener>,
+    listeners: Vec<codeyard_placement::tcp::Listener>,
     paths: Vec<PathBuf>,
     _roots: Vec<tempfile::TempDir>,
     pub(super) old: String,
@@ -88,7 +88,7 @@ impl Stores {
                 .await
                 .unwrap()
                 .unwrap();
-        let uuid = codeyard_repos_core::wire::repository_uuid(&repository.disk_path).unwrap();
+        let uuid = codeyard_git_storage::wire::repository_uuid(&repository.disk_path).unwrap();
         let mut roots = Vec::new();
         let mut paths = Vec::new();
         let mut contexts = Vec::new();
@@ -130,14 +130,14 @@ impl Stores {
                 context: Some(context.clone()),
                 notifications: Arc::new(NotificationBroadcaster::new(pool)),
             };
-            let listener = codeyard_cluster::tcp::bind(
+            let listener = codeyard_placement::tcp::bind(
                 "127.0.0.1:0".parse().unwrap(),
                 &context.key,
-                codeyard_cluster::tcp::Services {
+                codeyard_placement::tcp::Services {
                     pool: pool.clone(),
                     pairing: PairingHandler::new(pool.clone()),
                     rpc: Some(codeyard_repos_rpc::RpcHandler::new(context.clone())),
-                    events: codeyard_cluster::ci::CiHandler::new(context.clone(), queue),
+                    events: codeyard_placement::ci::CiHandler::new(context.clone(), queue),
                 },
             )
             .await
@@ -146,7 +146,7 @@ impl Stores {
                 tcp: vec![listener.addr()],
                 ..Default::default()
             };
-            codeyard_db_cluster::cluster::record_node_heartbeat(
+            codeyard_db_placement::cluster::record_node_heartbeat(
                 pool,
                 &context.key.public_hex(),
                 "test",
@@ -268,7 +268,7 @@ impl Stores {
 
     async fn rpc_refs(&self, pool: &DbPool) -> std::collections::HashMap<String, String> {
         let key = codeyard_support::node_identity::NodeKey::generate();
-        let web = codeyard_db_cluster::cluster::register_own_node(
+        let web = codeyard_db_placement::cluster::register_own_node(
             pool,
             &key.public_hex(),
             "web",
@@ -289,10 +289,10 @@ impl Stores {
         let (reply, _) = context
             .call(
                 self.fixture.primary,
-                codeyard_repos_core::wire::Request {
-                    repository: codeyard_repos_core::wire::repository_uuid(&repository.disk_path)
+                codeyard_git_storage::wire::Request {
+                    repository: codeyard_git_storage::wire::repository_uuid(&repository.disk_path)
                         .unwrap(),
-                    operation: codeyard_repos_core::wire::Operation::Refs,
+                    operation: codeyard_git_storage::wire::Operation::Refs,
                     actor: None,
                     ci_run: None,
                 },
@@ -342,7 +342,7 @@ impl Stores {
     }
 }
 
-async fn last_write(pool: &DbPool, repo: i64) -> codeyard_db_core::models::WriteRecord {
+async fn last_write(pool: &DbPool, repo: i64) -> codeyard_database::models::WriteRecord {
     let query = "SELECT id FROM repository_writes WHERE repository_id=$1 ORDER BY base_version DESC LIMIT 1";
     let id: String = match pool {
         DbPool::Postgres(raw) => sqlx::query_scalar(query)
@@ -356,7 +356,7 @@ async fn last_write(pool: &DbPool, repo: i64) -> codeyard_db_core::models::Write
             .await
             .unwrap(),
     };
-    codeyard_db_cluster::cluster::writes::load_write(pool, &id)
+    codeyard_db_placement::cluster::writes::load_write(pool, &id)
         .await
         .unwrap()
         .unwrap()
@@ -390,7 +390,7 @@ async fn both_voters_publish(pool: &DbPool) {
     assert_eq!(write.decision, "commit");
     assert_eq!(write.votes.len(), 2);
     assert!(write.finished);
-    let view = codeyard_db_cluster::cluster::writes::recovery_view(pool, stores.fixture.repo)
+    let view = codeyard_db_placement::cluster::writes::recovery_view(pool, stores.fixture.repo)
         .await
         .unwrap();
     assert_eq!(
@@ -473,7 +473,7 @@ async fn refusing_voter_keeps_refs(pool: &DbPool) {
     assert_eq!(write.decision, "abort");
     assert_eq!(write.votes.len(), 1);
     assert_eq!(write.votes[0].node_id, stores.fixture.primary);
-    let view = codeyard_db_cluster::cluster::writes::recovery_view(pool, stores.fixture.repo)
+    let view = codeyard_db_placement::cluster::writes::recovery_view(pool, stores.fixture.repo)
         .await
         .unwrap();
     assert_eq!(view.committed_version, 0);
@@ -497,7 +497,7 @@ async fn unreachable_voter_times_out(pool: &DbPool) {
         tcp: vec![stalled.local_addr().unwrap()],
         ..Default::default()
     };
-    codeyard_db_cluster::cluster::record_node_heartbeat(
+    codeyard_db_placement::cluster::record_node_heartbeat(
         pool,
         &stores.contexts[1].key.public_hex(),
         "test",
@@ -534,7 +534,7 @@ async fn unreachable_voter_times_out(pool: &DbPool) {
         "abort"
     );
     assert_eq!(
-        codeyard_db_cluster::cluster::writes::recovery_view(pool, stores.fixture.repo)
+        codeyard_db_placement::cluster::writes::recovery_view(pool, stores.fixture.repo)
             .await
             .unwrap()
             .committed_version,
@@ -555,7 +555,7 @@ async fn stale_writer_is_refused(pool: &DbPool) {
         .await
         .unwrap();
     assert_eq!(stale.refs().await.unwrap()[MAIN], stores.old);
-    assert!(codeyard_db_cluster::cluster::writes::switch_write_family(
+    assert!(codeyard_db_placement::cluster::writes::switch_write_family(
         pool,
         f.repo,
         f.primary,
@@ -566,7 +566,7 @@ async fn stale_writer_is_refused(pool: &DbPool) {
     .await
     .unwrap());
     for context in &stores.contexts {
-        codeyard_cluster::replicas::promote::recover_family(
+        codeyard_placement::replicas::promote::recover_family(
             pool,
             f.repo,
             context.node_id,
@@ -576,7 +576,7 @@ async fn stale_writer_is_refused(pool: &DbPool) {
         .unwrap();
     }
     assert!(
-        codeyard_db_cluster::cluster::writes::recovery_view(pool, f.repo)
+        codeyard_db_placement::cluster::writes::recovery_view(pool, f.repo)
             .await
             .unwrap()
             .serving
@@ -589,7 +589,7 @@ async fn stale_writer_is_refused(pool: &DbPool) {
     assert!(status.is_err() || !status.unwrap().success());
     assert!(!String::from_utf8_lossy(&output).contains("ok refs/heads/main"));
     assert!(
-        codeyard_db_cluster::cluster::writes::recovery_view(pool, f.repo)
+        codeyard_db_placement::cluster::writes::recovery_view(pool, f.repo)
             .await
             .unwrap()
             .unfinished
@@ -603,7 +603,7 @@ async fn stale_writer_is_refused(pool: &DbPool) {
         .create_branch_as(pool, f.repo, f.owner, "current", &stores.old)
         .await
         .unwrap();
-    let uuid = codeyard_repos_core::wire::repository_uuid(&row.disk_path).unwrap();
+    let uuid = codeyard_git_storage::wire::repository_uuid(&row.disk_path).unwrap();
     for context in &stores.contexts {
         let repo = git2::Repository::open_bare(term_path(&context.repos_path, uuid, 2)).unwrap();
         assert!(repo.find_reference("refs/heads/stale").is_err());
@@ -672,7 +672,7 @@ async fn rename_is_one_write(pool: &DbPool) {
 
     stores.listeners[1].stop().await;
     set_timeout(pool, 1).await.unwrap();
-    let before = codeyard_db_cluster::cluster::writes::recovery_view(pool, f.repo)
+    let before = codeyard_db_placement::cluster::writes::recovery_view(pool, f.repo)
         .await
         .unwrap();
     let error = timeout(
@@ -688,7 +688,7 @@ async fn rename_is_one_write(pool: &DbPool) {
     let write = last_write(pool, f.repo).await;
     assert_eq!(write.decision, "abort");
     assert_eq!(write.votes.len(), 1);
-    let after = codeyard_db_cluster::cluster::writes::recovery_view(pool, f.repo)
+    let after = codeyard_db_placement::cluster::writes::recovery_view(pool, f.repo)
         .await
         .unwrap();
     assert_eq!(after.refs, before.refs);
@@ -795,7 +795,7 @@ async fn default_branch_uses_both_stores(pool: &DbPool) {
         .unwrap_err();
     assert_eq!(error.kind, codeyard_git::error::ErrorKind::Invalid);
     assert_eq!(stores.heads(), vec![other; 2]);
-    let restored = codeyard_db_cluster::cluster::writes::recovery_view(pool, f.repo)
+    let restored = codeyard_db_placement::cluster::writes::recovery_view(pool, f.repo)
         .await
         .unwrap();
     assert_eq!(
@@ -825,7 +825,7 @@ async fn default_branch_uses_both_stores(pool: &DbPool) {
     let write = last_write(pool, f.repo).await;
     assert_eq!(write.decision, "abort");
     assert_eq!(write.votes.len(), 1);
-    let after = codeyard_db_cluster::cluster::writes::recovery_view(pool, f.repo)
+    let after = codeyard_db_placement::cluster::writes::recovery_view(pool, f.repo)
         .await
         .unwrap();
     assert_eq!(after.refs, restored.refs);
@@ -843,7 +843,7 @@ async fn default_branch_uses_both_stores(pool: &DbPool) {
 
 async fn new_repositories_use_all_voters(pool: &DbPool) {
     use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
-    use codeyard_repos_core::repositories::lifecycle;
+    use codeyard_git_storage::repositories::lifecycle;
     let stores = Stores::with_voters(pool, 3).await;
     let f = &stores.fixture;
     let source = codeyard_db_repos::repositories::records::get_repository_by_id(pool, f.repo)
@@ -866,7 +866,7 @@ async fn new_repositories_use_all_voters(pool: &DbPool) {
         .await
         .expect("repository creation deadline")
         .unwrap();
-        let view = codeyard_db_cluster::cluster::writes::recovery_view(pool, repo.id)
+        let view = codeyard_db_placement::cluster::writes::recovery_view(pool, repo.id)
             .await
             .unwrap();
         assert!(view.serving);
@@ -878,14 +878,14 @@ async fn new_repositories_use_all_voters(pool: &DbPool) {
                 .count()
                 >= 2
         );
-        let uuid = codeyard_repos_core::wire::repository_uuid(&repo.disk_path).unwrap();
+        let uuid = codeyard_git_storage::wire::repository_uuid(&repo.disk_path).unwrap();
         for context in &stores.contexts {
             let store = RepoStore::from_disk_path(
                 term_path(&context.repos_path, uuid, 1).to_str().unwrap(),
             );
             assert_eq!(store.head_target().await.unwrap().as_deref(), Some(MAIN));
             if source.is_some() {
-                codeyard_cluster::replicas::promote::catch_up_voter(
+                codeyard_placement::replicas::promote::catch_up_voter(
                     context,
                     repo.id,
                     &tokio_util::sync::CancellationToken::new(),
@@ -898,7 +898,7 @@ async fn new_repositories_use_all_voters(pool: &DbPool) {
             }
         }
         // Initialization cannot reset a serving term, including a replay from a voter.
-        assert!(codeyard_repos_core::repositories::store::repo_store(
+        assert!(codeyard_git_storage::repositories::store::repo_store(
             &repo,
             Some(&stores.contexts[0])
         )
@@ -908,9 +908,9 @@ async fn new_repositories_use_all_voters(pool: &DbPool) {
         let reply = stores.contexts[1]
             .call(
                 stores.contexts[0].node_id,
-                codeyard_repos_core::wire::Request {
+                codeyard_git_storage::wire::Request {
                     repository: uuid,
-                    operation: codeyard_repos_core::wire::Operation::Initialize {
+                    operation: codeyard_git_storage::wire::Operation::Initialize {
                         source: None,
                         default_branch: "other".into(),
                     },
@@ -1093,14 +1093,14 @@ async fn three_voters_keep_a_majority_and_recover_a_missed_write(pool: &DbPool) 
     // prepares and the vote poll was missed under a full parallel test run.
     let stores = Stores::with_voters(pool, 3).await;
     for voter in &stores.fixture.voters {
-        let held = codeyard_db_cluster::cluster::writes::held_voters(pool, *voter)
+        let held = codeyard_db_placement::cluster::writes::held_voters(pool, *voter)
             .await
             .unwrap();
         assert_eq!(held.len(), 1);
         assert_eq!(held[0].repository_id, stores.fixture.repo);
     }
     assert_eq!(
-        codeyard_db_cluster::cluster::writes::write_family_terms(pool, stores.fixture.repo)
+        codeyard_db_placement::cluster::writes::write_family_terms(pool, stores.fixture.repo)
             .await
             .unwrap(),
         vec![(stores.fixture.repo, 1)]
@@ -1127,16 +1127,16 @@ async fn three_voters_keep_a_majority_and_recover_a_missed_write(pool: &DbPool) 
 
     // The missed voter fetches acknowledged objects from a current copy. Its own
     // outbound connection works while its inbound listener is stopped.
-    codeyard_cluster::replicas::pass(
+    codeyard_placement::replicas::pass(
         &stores.contexts[2],
-        &mut codeyard_cluster::replicas::Retry::default(),
-        &mut codeyard_cluster::replicas::promote::Silent::default(),
-        &mut codeyard_cluster::replicas::Copying::default(),
+        &mut codeyard_placement::replicas::Retry::default(),
+        &mut codeyard_placement::replicas::promote::Silent::default(),
+        &mut codeyard_placement::replicas::Copying::default(),
     )
     .await
     .unwrap();
     assert_eq!(stores.refs().await[2][MAIN], stores.new);
-    let view = codeyard_db_cluster::cluster::writes::recovery_view(pool, stores.fixture.repo)
+    let view = codeyard_db_placement::cluster::writes::recovery_view(pool, stores.fixture.repo)
         .await
         .unwrap();
     assert!(view
@@ -1191,11 +1191,11 @@ async fn three_voter_recovery_refills_a_stale_survivor_while_public_reads_stay_f
     let repo = stores.fixture.repo;
     let target = stores.fixture.voters[1];
     let result =
-        codeyard_cluster::replicas::promote::promote(pool, repo, Some(target), false).await;
+        codeyard_placement::replicas::promote::promote(pool, repo, Some(target), false).await;
     assert!(result
         .unwrap_err()
-        .is::<codeyard_cluster::replicas::promote::RecoveryPending>());
-    assert!(!codeyard_cluster::replicas::promote::recover_family(
+        .is::<codeyard_placement::replicas::promote::RecoveryPending>());
+    assert!(!codeyard_placement::replicas::promote::recover_family(
         pool,
         repo,
         target,
@@ -1217,7 +1217,7 @@ async fn three_voter_recovery_refills_a_stale_survivor_while_public_reads_stay_f
     // Even an active storage peer cannot obtain a fenced repository's objects
     // without being one of that term's assigned voters.
     let outsider_key = codeyard_support::node_identity::NodeKey::generate();
-    let outsider = codeyard_db_cluster::cluster::register_own_node(
+    let outsider = codeyard_db_placement::cluster::register_own_node(
         pool,
         &outsider_key.public_hex(),
         "outsider",
@@ -1235,9 +1235,9 @@ async fn three_voter_recovery_refills_a_stale_survivor_while_public_reads_stay_f
         WAIT,
         foreign.git_session(
             target,
-            codeyard_repos_core::wire::Request {
-                repository: codeyard_repos_core::wire::repository_uuid(&row.disk_path).unwrap(),
-                operation: codeyard_repos_core::wire::Operation::ReplicaPack {
+            codeyard_git_storage::wire::Request {
+                repository: codeyard_git_storage::wire::repository_uuid(&row.disk_path).unwrap(),
+                operation: codeyard_git_storage::wire::Operation::ReplicaPack {
                     have: Vec::new(),
                     want: Vec::new(),
                 },
@@ -1259,14 +1259,14 @@ async fn three_voter_recovery_refills_a_stale_survivor_while_public_reads_stay_f
 
     let cancelled = tokio_util::sync::CancellationToken::new();
     cancelled.cancel();
-    assert!(codeyard_cluster::replicas::promote::catch_up_voter(
+    assert!(codeyard_placement::replicas::promote::catch_up_voter(
         &stores.contexts[2],
         repo,
         &cancelled,
     )
     .await
     .is_err());
-    let interrupted = codeyard_db_cluster::cluster::writes::recovery_view(pool, repo)
+    let interrupted = codeyard_db_placement::cluster::writes::recovery_view(pool, repo)
         .await
         .unwrap();
     assert_eq!(
@@ -1278,7 +1278,7 @@ async fn three_voter_recovery_refills_a_stale_survivor_while_public_reads_stay_f
             .applied_version,
         -1
     );
-    codeyard_cluster::replicas::promote::catch_up_voter(
+    codeyard_placement::replicas::promote::catch_up_voter(
         &stores.contexts[2],
         repo,
         &tokio_util::sync::CancellationToken::new(),
@@ -1286,16 +1286,16 @@ async fn three_voter_recovery_refills_a_stale_survivor_while_public_reads_stay_f
     .await
     .unwrap();
     // Already-current voters must still retry enabling a fenced family.
-    codeyard_cluster::replicas::pass(
+    codeyard_placement::replicas::pass(
         &stores.contexts[2],
-        &mut codeyard_cluster::replicas::Retry::default(),
-        &mut codeyard_cluster::replicas::promote::Silent::default(),
-        &mut codeyard_cluster::replicas::Copying::default(),
+        &mut codeyard_placement::replicas::Retry::default(),
+        &mut codeyard_placement::replicas::promote::Silent::default(),
+        &mut codeyard_placement::replicas::Copying::default(),
     )
     .await
     .unwrap();
     assert!(
-        codeyard_db_cluster::cluster::writes::recovery_view(pool, repo)
+        codeyard_db_placement::cluster::writes::recovery_view(pool, repo)
             .await
             .unwrap()
             .serving

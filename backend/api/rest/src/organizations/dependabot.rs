@@ -10,7 +10,7 @@ use axum::http::Uri;
 use axum::response::Response;
 use codeyard_api_http::context::PageContext;
 use codeyard_app::app::AppState;
-use codeyard_db_core::queries::secrets::SecretsError;
+use codeyard_database::queries::secrets::SecretsError;
 use std::sync::Arc;
 
 pub(super) async fn post(

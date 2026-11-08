@@ -4,13 +4,13 @@ use crate::organizations::settings::Updated;
 use crate::postgres::organizations::authority::credential;
 use anyhow::Context;
 use anyhow::Result;
-use codeyard_db_core::models::OrgRole;
-use codeyard_db_core::models::Organization;
-use codeyard_db_core::pool::PgPool;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_db_core::queries::postgres::organizations::authority::begin;
-use codeyard_db_core::queries::postgres::organizations::authority::begin_read;
-use codeyard_db_core::require_read_org_postgres;
+use codeyard_database::models::OrgRole;
+use codeyard_database::models::Organization;
+use codeyard_database::pool::PgPool;
+use codeyard_database::queries::organizations::OrganizationOutcome;
+use codeyard_database::queries::postgres::organizations::authority::begin;
+use codeyard_database::queries::postgres::organizations::authority::begin_read;
+use codeyard_database::require_read_org_postgres;
 use sqlx::PgConnection;
 use OrganizationOutcome::Applied;
 use OrganizationOutcome::Denied;
@@ -46,7 +46,7 @@ pub async fn owned(pool: &PgPool, actor: i64, org: i64) -> Result<OrganizationOu
 }
 pub async fn change(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     org: i64,
     input: &Changes,
 ) -> Result<OrganizationOutcome<Updated>> {
@@ -70,9 +70,9 @@ pub async fn change(
         .bind(org).bind(input.profile.display_name.is_some()).bind(input.profile.display_name.clone().flatten()).bind(input.profile.description.is_some()).bind(input.profile.description.clone().flatten()).bind(input.billing_email.is_some()).bind(input.billing_email.clone().flatten()).fetch_one(&mut *tx).await?;
     if settings.default_repository_permission < previous {
         let access =
-            codeyard_db_core::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL;
+            codeyard_database::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL;
         let runs:Vec<i64>=sqlx::query_scalar(&format!("SELECT c.id FROM ci_runs c JOIN repositories r ON r.id=c.repo_id JOIN users u ON u.id=c.triggered_by_id JOIN org_memberships m ON m.org_id=r.owner_org_id AND m.user_id=u.id AND m.role='member' WHERE r.owner_kind='org' AND r.owner_org_id=$1 AND r.owner_user_id IS NULL AND (c.status IN ('queued','running') OR c.completed_at > NOW() - INTERVAL '1 hour') AND ({access}) < CASE WHEN c.pipeline IN ('cd','full') OR c.environment IS NOT NULL THEN 5 ELSE 3 END ORDER BY c.id")).bind(org).fetch_all(&mut *tx).await?;
-        codeyard_db_core::queries::postgres::ci::stop_ci_runs(&mut tx, &runs).await?;
+        codeyard_database::queries::postgres::ci::stop_ci_runs(&mut tx, &runs).await?;
     }
     tx.commit().await?;
     Ok(Applied(Updated {

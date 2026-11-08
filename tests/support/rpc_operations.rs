@@ -1,12 +1,12 @@
 //! Every repository operation, with whether a worker may read it while claimed.
+use codeyard_git_storage::repositories::git_sessions::ReceiveCredential;
+use codeyard_git_storage::store_types::GitService;
+use codeyard_git_storage::store_types::GitSession;
+use codeyard_git_storage::store_types::MergeMethod;
+use codeyard_git_storage::store_types::MergeRequest;
+use codeyard_git_storage::store_types::RestackMove;
+use codeyard_git_storage::wire::Operation;
 use codeyard_repos::editor::FileWrite;
-use codeyard_repos_core::repositories::git_sessions::ReceiveCredential;
-use codeyard_repos_core::store_types::GitService;
-use codeyard_repos_core::store_types::GitSession;
-use codeyard_repos_core::store_types::MergeMethod;
-use codeyard_repos_core::store_types::MergeRequest;
-use codeyard_repos_core::store_types::RestackMove;
-use codeyard_repos_core::wire::Operation;
 use codeyard_storage::range::ByteRange as BlobRange;
 use uuid::Uuid;
 
@@ -92,7 +92,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
         ),
         (
             Operation::ConfigureDependencySecurity {
-                credential: codeyard_db_core::queries::users::accounts::OwnedAccountCredential::Token(1, "hash".into()),
+                credential: codeyard_database::queries::users::accounts::OwnedAccountCredential::Token(1, "hash".into()),
                 feature: codeyard_db_repos::repositories::dependencies::Feature::Alerts,
                 enabled: true,
                 private_consent: false,
@@ -509,7 +509,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
         (
             Operation::UpdatePullBranch {
                 source: Uuid::nil(),
-                request: codeyard_repos_core::store_types::PullBranchUpdate {
+                request: codeyard_git_storage::store_types::PullBranchUpdate {
                     pull_request_id: 1,
                     base_branch: "main".into(),
                     branch: "feature".into(),
@@ -525,7 +525,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
         ),
         (
             Operation::PublishAsyncMerge {
-                request: codeyard_repos_core::store_types::AsyncMergePublication {
+                request: codeyard_git_storage::store_types::AsyncMergePublication {
                     policy: None,
                     uuid: uuid::Uuid::nil().to_string(),
                     token_id: 1,
@@ -554,13 +554,13 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
         ),
         (
             Operation::PublishBranchMerge {
-                publication: codeyard_repos_core::store_types::BranchMergePublication {
+                publication: codeyard_git_storage::store_types::BranchMergePublication {
                     base_branch: "main".into(),
                     base: sha.into(),
                     head_branch: Some("topic".into()),
                     head: sha.into(),
                     result: sha.into(),
-                    authority: codeyard_db_core::queries::credentials::Actor::from(1),
+                    authority: codeyard_database::queries::credentials::Actor::from(1),
                 },
             },
             false,

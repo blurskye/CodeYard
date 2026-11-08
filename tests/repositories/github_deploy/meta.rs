@@ -190,7 +190,7 @@ async fn contract(pg: bool) {
     .await;
     assert!(svg.starts_with("<svg"));
     assert!(svg.contains('🚀'));
-    let private_repo = codeyard_repos_core::repositories::lifecycle::provision(
+    let private_repo = codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
@@ -273,7 +273,7 @@ async fn contract(pg: bool) {
         f.pool(),
         bob,
         private_repo.id,
-        codeyard_db_core::models::AccessLevel::Read,
+        codeyard_database::models::AccessLevel::Read,
     )
     .await
     .unwrap();

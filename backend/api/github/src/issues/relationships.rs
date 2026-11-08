@@ -21,8 +21,8 @@ use codeyard_db_identity::relationships::Kind;
 use codeyard_db_identity::relationships::Mutation;
 use codeyard_db_identity::relationships::Refusal;
 use codeyard_db_repos::assignees::AssignedItem;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -37,7 +37,7 @@ pub(super) fn error(error: anyhow::Error) -> Error {
         None => Error::unavailable(error),
     }
 }
-async fn root(pool: &codeyard_db_core::DbPool, repo: i64, p: &Params) -> Result<i64> {
+async fn root(pool: &codeyard_database::DbPool, repo: i64, p: &Params) -> Result<i64> {
     crate::issues::required_issue(pool, repo, &p["issue_number"]).await
 }
 /// A linked issue may sit in another repository, which the credential must reach as well.
@@ -171,7 +171,7 @@ struct Input {
     after_id: Option<i64>,
 }
 fn input(body: &[u8]) -> Result<Input> {
-    serde_json::from_slice(body).map_err(codeyard_model::github_error::json_parse_error)
+    serde_json::from_slice(body).map_err(codeyard_types::github_error::json_parse_error)
 }
 async fn apply(
     state: &AppState,
@@ -231,7 +231,7 @@ async fn add(
         axum::http::header::LOCATION,
         format!(
             "{}{}",
-            codeyard_model::http_config::link_origin(),
+            codeyard_types::http_config::link_origin(),
             uri.path()
         )
         .parse()

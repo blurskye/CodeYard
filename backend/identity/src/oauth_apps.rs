@@ -1,19 +1,19 @@
 //! OAuth clients authorize through native forms; only hashes of codes, secrets and tokens persist.
 
-use codeyard_db_core::DbPool;
+use codeyard_database::DbPool;
 use codeyard_db_identity::oauth_apps::Application;
-use codeyard_model::identity::CLI_CLIENT;
 use codeyard_support::token_hash::token_hash;
+use codeyard_types::identity::CLI_CLIENT;
 use subtle::ConstantTimeEq;
 
 const CLI_SECRET: &str = "34ddeff2b558a23d38fba8a6de74f086ede1cc0b";
 
-pub fn user_code(cell: codeyard_types::cells::Prefix) -> String {
+pub fn user_code(cell: codeyard_types::cell_ids::Prefix) -> String {
     let value = codeyard_support::crypto::random_hex();
     format!("{cell}-{}-{}", &value[..4], &value[4..8]).to_uppercase()
 }
 
-pub use codeyard_types::cells::{
+pub use codeyard_types::cell_ids::{
     device_code_prefix as user_code_cell, normalize_device_code as normalize_code,
 };
 
@@ -126,7 +126,7 @@ pub async fn allows_git(
             return Ok(true);
         }
         return Ok(
-            !gist && codeyard_model::github_apps::allows(&bounds.permissions, "contents", false)
+            !gist && codeyard_types::github_apps::allows(&bounds.permissions, "contents", false)
         );
     }
     let scope = if gist { "gist" } else { "repo" };
@@ -147,10 +147,10 @@ pub async fn allows_workflows(pool: &DbPool, token_id: i64) -> anyhow::Result<bo
     }
     if let Some(grant) = crate::fine_grained::grant(pool, token_id).await? {
         return Ok(grant.active
-            && codeyard_model::fine_grained::allows(&grant.permissions, "workflows", true));
+            && codeyard_types::fine_grained::allows(&grant.permissions, "workflows", true));
     }
     if let Some(bounds) = crate::github_apps::authority(pool, token_id).await? {
-        return Ok(codeyard_model::github_apps::allows(
+        return Ok(codeyard_types::github_apps::allows(
             &bounds.permissions,
             "workflows",
             true,
@@ -161,13 +161,13 @@ pub async fn allows_workflows(pool: &DbPool, token_id: i64) -> anyhow::Result<bo
         .is_none_or(|token| has_scope(&token.scopes, "workflow")))
 }
 
-use codeyard_model::oauth_apps::has_scope;
+use codeyard_types::oauth_apps::has_scope;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codeyard_model::oauth_apps::allows;
-    use codeyard_model::oauth_apps::write_scope;
+    use codeyard_types::oauth_apps::allows;
+    use codeyard_types::oauth_apps::write_scope;
 
     #[test]
     fn code_scanning_and_security_configuration_scopes_are_narrow() {

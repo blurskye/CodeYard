@@ -1,8 +1,8 @@
 use crate::secrets::SecretKind;
-use codeyard_db_core::models::RepoSecret;
-use codeyard_db_core::models::RepoSecretMeta;
-use codeyard_db_core::pool::PgPool;
-use codeyard_db_core::queries::secrets::SecretsError;
+use codeyard_database::models::RepoSecret;
+use codeyard_database::models::RepoSecretMeta;
+use codeyard_database::pool::PgPool;
+use codeyard_database::queries::secrets::SecretsError;
 use codeyard_support::secrets::SecretEncryptor;
 
 pub async fn encryption_samples(pool: &PgPool) -> anyhow::Result<Vec<(Vec<u8>, Vec<u8>)>> {
@@ -18,14 +18,14 @@ pub async fn create_or_update_secret(
     name: &str,
     value: &str,
     created_by_id: Option<i64>,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
 ) -> Result<bool, SecretsError> {
     let actor_id = created_by_id.ok_or(SecretsError::Denied)?;
     let (encrypted_value, nonce) = encryptor.encrypt(value.as_bytes())?;
     let mut tx = pool.begin().await?;
     // The repository row is locked exclusively, so two writes cannot both count the same
     // number of secrets and together pass the limit.
-    if !codeyard_db_core::queries::postgres::discussions::lock_repository_mutation_authority(
+    if !codeyard_database::queries::postgres::discussions::lock_repository_mutation_authority(
         &mut tx, actor_id, repo_id,
     )
     .await
@@ -33,7 +33,7 @@ pub async fn create_or_update_secret(
     {
         return Err(SecretsError::Denied);
     }
-    if !codeyard_db_core::queries::postgres::users::transitions::credential_live(
+    if !codeyard_database::queries::postgres::users::transitions::credential_live(
         &mut tx, actor_id, credential, true,
     )
     .await
@@ -91,10 +91,10 @@ pub async fn repository_secret_key(
     encryptor: &SecretEncryptor,
     actor_id: i64,
     repo_id: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
 ) -> Result<(String, crypto_box::SecretKey), SecretsError> {
     let mut tx = pool.begin().await?;
-    if !codeyard_db_core::queries::postgres::discussions::lock_repository_mutation_authority(
+    if !codeyard_database::queries::postgres::discussions::lock_repository_mutation_authority(
         &mut tx, actor_id, repo_id,
     )
     .await
@@ -102,7 +102,7 @@ pub async fn repository_secret_key(
     {
         return Err(SecretsError::Denied);
     }
-    if !codeyard_db_core::queries::postgres::users::transitions::credential_live(
+    if !codeyard_database::queries::postgres::users::transitions::credential_live(
         &mut tx, actor_id, credential, false,
     )
     .await
@@ -148,7 +148,7 @@ pub async fn list_secrets(
     repo_id: i64,
 ) -> Result<Vec<RepoSecretMeta>, SecretsError> {
     let mut tx = pool.begin().await?;
-    if !codeyard_db_core::queries::postgres::discussions::lock_settings_read_authority(
+    if !codeyard_database::queries::postgres::discussions::lock_settings_read_authority(
         &mut tx, actor_id, repo_id, true,
     )
     .await
@@ -188,10 +188,10 @@ pub async fn delete_secret(
     actor_id: i64,
     repo_id: i64,
     name: &str,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
 ) -> Result<bool, SecretsError> {
     let mut tx = pool.begin().await?;
-    if !codeyard_db_core::queries::postgres::discussions::lock_repository_mutation_authority(
+    if !codeyard_database::queries::postgres::discussions::lock_repository_mutation_authority(
         &mut tx, actor_id, repo_id,
     )
     .await
@@ -199,7 +199,7 @@ pub async fn delete_secret(
     {
         return Err(SecretsError::Denied);
     }
-    if !codeyard_db_core::queries::postgres::users::transitions::credential_live(
+    if !codeyard_database::queries::postgres::users::transitions::credential_live(
         &mut tx, actor_id, credential, true,
     )
     .await
@@ -245,4 +245,4 @@ pub async fn decrypt_repository_secrets(
     Ok(result)
 }
 
-use codeyard_db_core::queries::postgres::secrets::delivery_budget;
+use codeyard_database::queries::postgres::secrets::delivery_budget;

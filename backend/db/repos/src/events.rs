@@ -1,8 +1,8 @@
 use anyhow::Result;
 use chrono::DateTime;
 use chrono::Utc;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 use serde_json::Value;
 use sqlx::FromRow;
 
@@ -23,7 +23,7 @@ pub struct EventEntry {
     #[sqlx(flatten)]
     pub event: Event,
     #[sqlx(flatten)]
-    pub repository: codeyard_db_core::models::Repository,
+    pub repository: codeyard_database::models::Repository,
     pub owner: String,
 }
 /// The originating credential remains part of private activity selection.

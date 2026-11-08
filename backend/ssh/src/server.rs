@@ -5,7 +5,7 @@ use crate::rate_limit::RateLimiter;
 use anyhow::Context;
 use anyhow::Result;
 use codeyard_ci_engine::runs::CiRuns;
-use codeyard_db_core::DbPool;
+use codeyard_database::DbPool;
 use rand::rngs::OsRng;
 use rand::RngCore;
 use russh::keys::ssh_key::private::Ed25519Keypair;
@@ -39,8 +39,8 @@ fn new_host_key() -> PrivateKey {
 fn open_host_key_file(path: &str) -> Result<std::fs::File> {
     use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
     let path = std::path::absolute(path)?;
-    let uid = codeyard_repos_core::repositories::git_sessions::private_files::effective_uid();
-    codeyard_repos_core::repositories::git_sessions::private_files::ancestors(
+    let uid = codeyard_git_storage::repositories::git_sessions::private_files::effective_uid();
+    codeyard_git_storage::repositories::git_sessions::private_files::ancestors(
         path.parent().context("Host key parent required")?,
         uid,
     )?;
@@ -70,8 +70,8 @@ fn write_host_key_file(path: &str, key_pem: &str) -> Result<()> {
 
     let path_ref = std::path::absolute(path_ref)?;
     let parent = path_ref.parent().context("Host key parent required")?;
-    let uid = codeyard_repos_core::repositories::git_sessions::private_files::effective_uid();
-    codeyard_repos_core::repositories::git_sessions::private_files::ancestors(parent, uid)?;
+    let uid = codeyard_git_storage::repositories::git_sessions::private_files::effective_uid();
+    codeyard_git_storage::repositories::git_sessions::private_files::ancestors(parent, uid)?;
     match open_host_key_file(path) {
         Ok(_) => {}
         Err(error)
@@ -495,7 +495,7 @@ impl SshServer {
         ci_service: Arc<CiRuns>,
     ) -> Result<Self> {
         let cluster_key_pem = if let Some(key_pem) =
-            codeyard_db_cluster::node_config::get_cluster_ssh_host_key(&pool).await?
+            codeyard_db_placement::node_config::get_cluster_ssh_host_key(&pool).await?
         {
             info!("Loaded cluster SSH host key from database");
             key_pem
@@ -535,9 +535,9 @@ impl SshServer {
                     .any(|algorithm| *algorithm == key.algorithm()),
                 "Unsupported SSH host key algorithm"
             );
-            codeyard_db_cluster::node_config::insert_cluster_ssh_host_key(&pool, &bootstrap_key)
+            codeyard_db_placement::node_config::insert_cluster_ssh_host_key(&pool, &bootstrap_key)
                 .await?;
-            let stored_key = codeyard_db_cluster::node_config::get_cluster_ssh_host_key(&pool)
+            let stored_key = codeyard_db_placement::node_config::get_cluster_ssh_host_key(&pool)
                 .await?
                 .context("Cluster SSH host key missing after initialization")?;
             info!("Loaded initialized cluster SSH host key from database");
@@ -756,10 +756,10 @@ mod tests {
             .max_connections(1)
             .connect("sqlite::memory:")
             .await
-            .map(codeyard_db_core::pool::Pool::from)
+            .map(codeyard_database::pool::Pool::from)
             .unwrap();
         let pool = DbPool::from(native);
-        codeyard_db_core::run_migrations(&pool).await.unwrap();
+        codeyard_database::run_migrations(&pool).await.unwrap();
         let ci = Arc::new(CiRuns::new(
             pool.clone(),
             Arc::new(codeyard_ci::config::CiConfig::default()),

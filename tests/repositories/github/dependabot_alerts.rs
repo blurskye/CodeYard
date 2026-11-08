@@ -7,7 +7,7 @@ use super::TokenInput;
 use super::Value;
 use codeyard_identity::tokens;
 
-use codeyard_db_core::DbPool;
+use codeyard_database::DbPool;
 use serde_json::json;
 
 fn advisory() -> Value {
@@ -17,7 +17,7 @@ fn snapshot(
     version: &str,
     branch: &str,
     scanned: &str,
-) -> codeyard_model::dependency_graph::Snapshot {
+) -> codeyard_types::dependency_graph::Snapshot {
     serde_json::from_value(json!({"version":0,"sha":"a".repeat(40),"ref":branch,"scanned":scanned,"job":{"id":"1","correlator":"test"},"detector":{"name":"fixture","version":"1","url":"https://example.test"},"manifests":{"package-lock.json":{"name":"package-lock.json","resolved":{"example":{"package_url":format!("pkg:npm/example@{version}"),"scope":"runtime","relationship":"direct"}}}}})).unwrap()
 }
 async fn token(f: &Database, client: &Client, actor: i64, scope: &str) -> String {
@@ -346,7 +346,7 @@ async fn contract(pg: bool) {
     .unwrap();
     assert!(matches!(
         created,
-        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(_)
+        codeyard_database::queries::organizations::OrganizationOutcome::Applied(_)
     ));
     let (status, _, org_repo) = request(
         &router,

@@ -80,9 +80,9 @@ pub struct IssueResponse {
 
 impl IssueResponse {
     pub fn from_issue(
-        issue: codeyard_db_core::models::Issue,
+        issue: codeyard_database::models::Issue,
         author: Option<UserResponse>,
-        labels: Vec<codeyard_db_core::models::Label>,
+        labels: Vec<codeyard_database::models::Label>,
         comments_count: i64,
     ) -> Self {
         Self {
@@ -105,8 +105,8 @@ impl IssueResponse {
 /// The response for one issue, with its labels and comment count read from storage.
 /// Lists load the same data in batches instead.
 pub(crate) async fn load_issue_response(
-    pool: &codeyard_db_core::DbPool,
-    issue: codeyard_db_core::models::Issue,
+    pool: &codeyard_database::DbPool,
+    issue: codeyard_database::models::Issue,
     author: Option<UserResponse>,
 ) -> anyhow::Result<IssueResponse> {
     let labels = codeyard_db_repos::labels::get_issue_labels(pool, issue.repo_id, issue.id).await?;
@@ -403,8 +403,8 @@ pub(crate) async fn native_edit(
         )
         .await;
     }
-    if let Err(message) = codeyard_model::issue_input::validate_title(&title)
-        .and_then(|_| codeyard_model::issue_input::validate_body(&body, false))
+    if let Err(message) = codeyard_types::issue_input::validate_title(&title)
+        .and_then(|_| codeyard_types::issue_input::validate_body(&body, false))
     {
         return render_detail(
             &ctx,

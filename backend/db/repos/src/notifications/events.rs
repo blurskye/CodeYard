@@ -1,4 +1,4 @@
-use codeyard_db_core::DbPool;
+use codeyard_database::DbPool;
 
 pub const BATCH_SIZE: usize = 256;
 const MAX_ACTIVE_TRANSACTIONS: usize = 4096;

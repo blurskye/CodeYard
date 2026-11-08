@@ -1,6 +1,6 @@
 use crate::pull_requests::cells::Refresh;
 use anyhow::{ensure, Result};
-use codeyard_db_core::{
+use codeyard_database::{
     cells::pulls::{Admission, Binding, Event},
     models::PullRequest,
     pool::SqlitePool,
@@ -12,9 +12,9 @@ async fn readable(
     actor: &Actor,
     head: i64,
 ) -> Result<bool> {
-    Ok(actor.credential.is_some() && codeyard_db_core::queries::sqlite::repositories::access::lock_readable_repository_in_transaction(
+    Ok(actor.credential.is_some() && codeyard_database::queries::sqlite::repositories::access::lock_readable_repository_in_transaction(
         tx, actor.user_id, head,
-    ).await? && codeyard_db_core::queries::sqlite::credentials::repository(tx, actor, head, "contents", false).await?)
+    ).await? && codeyard_database::queries::sqlite::credentials::repository(tx, actor, head, "contents", false).await?)
 }
 pub async fn subscribe(
     pool: &SqlitePool,
@@ -107,7 +107,7 @@ pub async fn receive_push(
 }
 /// Runs after the branch moved, so the base never fetches a head older than the event.
 pub async fn queue_push(pool: &SqlitePool, head: i64) -> Result<bool> {
-    codeyard_types::cells::Prefix::for_id(head)?;
+    codeyard_types::cell_ids::Prefix::for_id(head)?;
     let queued = sqlx::query("INSERT INTO cell_outbox(root_kind,root_id,topic,payload) SELECT 'repository',r.id,'repository.push',json_object('base_repo_id',r.forked_from_id,'head_repo_id',r.id,'version',r.contribution_version) FROM repositories r JOIN repositories p ON p.id=r.forked_from_id AND p.is_stub AND p.home_cell<>r.home_cell WHERE r.id=$1 AND NOT r.is_stub AND NOT r.is_gist AND r.home_cell=COALESCE((SELECT cell_id FROM node_configuration WHERE id=1),0) AND EXISTS(SELECT 1 FROM remote_pull_requests c WHERE c.head_repo_id=r.id AND c.base_repo_id=r.forked_from_id)")
         .bind(head).execute(pool).await?;
     Ok(queued.rows_affected() > 0)
@@ -132,7 +132,7 @@ pub async fn bindings(
     after: i32,
     limit: i64,
 ) -> Result<Vec<Binding>> {
-    codeyard_types::cells::Prefix::for_id(head)?;
+    codeyard_types::cell_ids::Prefix::for_id(head)?;
     ensure!(
         after >= 0 && (1..=100).contains(&limit),
         "Pull permission batch exceeds its limit"

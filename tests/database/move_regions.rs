@@ -6,16 +6,16 @@ use axum::{
     http::{Request, StatusCode},
 };
 use codeyard::backend::cli::cells::{MoveTarget, UserMover};
-use codeyard_db_cluster::regions;
-use codeyard_model::cells::{Cell, Key, KeyKind, Object, ObjectKind, State};
+use codeyard_db_placement::regions;
 use codeyard_support::node_identity::{self, NodeKey};
-use codeyard_types::{cells::Prefix, cluster::RegionPolicy};
+use codeyard_types::cells::{Cell, Key, KeyKind, Object, ObjectKind, State};
+use codeyard_types::{cell_ids::Prefix, cluster::RegionPolicy};
 use std::{sync::Arc, time::Duration};
 use tower::ServiceExt;
 
 /// Sets one account's counted requests from `region` on each of the last `days` days.
 async fn set_counts(
-    pool: &codeyard_db_core::pool::PgPool,
+    pool: &codeyard_database::pool::PgPool,
     user: i64,
     region: &str,
     requests: i64,
@@ -38,7 +38,7 @@ async fn set_counts(
 }
 
 /// The users audited with `action`, in order.
-async fn audited(pool: &codeyard_db_core::pool::PgPool, action: &str) -> Vec<i64> {
+async fn audited(pool: &codeyard_database::pool::PgPool, action: &str) -> Vec<i64> {
     sqlx::query_scalar("SELECT target_id FROM audit_log WHERE action=$1 ORDER BY id")
         .bind(action)
         .fetch_all(pool)
@@ -46,7 +46,7 @@ async fn audited(pool: &codeyard_db_core::pool::PgPool, action: &str) -> Vec<i64
         .unwrap()
 }
 
-async fn cooling(pool: &codeyard_db_core::pool::PgPool, user: i64) -> bool {
+async fn cooling(pool: &codeyard_database::pool::PgPool, user: i64) -> bool {
     sqlx::query_scalar("SELECT region_moved_at IS NOT NULL FROM users WHERE id=$1")
         .bind(user)
         .fetch_one(pool)
@@ -60,10 +60,12 @@ async fn hourly_evaluation_moves_a_user_to_the_region_its_requests_come_from() {
     let mut source = PostgresDatabase::new().await;
     let mut target = PostgresDatabase::new().await;
     for (database, prefix) in [(&source, 1), (&target, 2)] {
-        codeyard_db_core::cells::initialize(&database.pool, Prefix::new(prefix))
+        codeyard_database::cells::initialize(&database.pool, Prefix::new(prefix))
             .await
             .unwrap();
-        codeyard_db_core::cells::load(&database.pool).await.unwrap();
+        codeyard_database::cells::load(&database.pool)
+            .await
+            .unwrap();
     }
     let mut registry = PostgresDatabase::unmigrated().await;
     let directory =
@@ -105,7 +107,7 @@ async fn hourly_evaluation_moves_a_user_to_the_region_its_requests_come_from() {
         .register_cell(cell(2, "b", &target_key, State::Open))
         .await
         .unwrap();
-    let listener = codeyard_cells_router::directory::Listener::bind(
+    let listener = codeyard_router::directory::Listener::bind(
         directory.clone(),
         &server_key,
         "127.0.0.1:0".parse().unwrap(),
@@ -189,7 +191,7 @@ async fn hourly_evaluation_moves_a_user_to_the_region_its_requests_come_from() {
     }
     let token = crate::move_http::token(&source, alice.id).await;
     let client = || {
-        codeyard_cells_router::directory::Client::new(
+        codeyard_router::directory::Client::new(
             source_key.clone(),
             listener.address,
             server_key.public_key(),
@@ -198,7 +200,7 @@ async fn hourly_evaluation_moves_a_user_to_the_region_its_requests_come_from() {
         .unwrap()
     };
     source.pool.set_directory(Arc::new(client())).unwrap();
-    let codeyard_db_core::DbPool::Postgres(pool) = &source.pool else {
+    let codeyard_database::DbPool::Postgres(pool) = &source.pool else {
         unreachable!()
     };
     let mover = UserMover {
@@ -247,7 +249,7 @@ async fn hourly_evaluation_moves_a_user_to_the_region_its_requests_come_from() {
     for token in [None, None, Some(&token)] {
         let request = Request::builder()
             .uri("/")
-            .header(codeyard_model::cells::REGION_HEADER, "b");
+            .header(codeyard_types::cells::REGION_HEADER, "b");
         let request = match token {
             Some(token) => request.header("authorization", format!("Bearer {token}")),
             None => request,
@@ -259,7 +261,9 @@ async fn hourly_evaluation_moves_a_user_to_the_region_its_requests_come_from() {
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
     }
-    codeyard_db_core::cells::regions::flush(pool).await.unwrap();
+    codeyard_database::cells::regions::flush(pool)
+        .await
+        .unwrap();
     let counted: Vec<(i64, String, i64)> =
         sqlx::query_as("SELECT user_id,region,requests FROM cell_request_counts")
             .fetch_all(pool)
@@ -310,7 +314,7 @@ async fn hourly_evaluation_moves_a_user_to_the_region_its_requests_come_from() {
     // Another move holds either cell's move lease: this one does not start, and Alice's
     // cooldown does not begin.
     for database in [&source.pool, &target.pool] {
-        let lease = codeyard_db_cluster::cluster::serving_lock(database, "account-move")
+        let lease = codeyard_db_placement::cluster::serving_lock(database, "account-move")
             .await
             .unwrap();
         assert!(mover.run(&planned).await.is_err());
@@ -387,7 +391,7 @@ async fn hourly_evaluation_moves_a_user_to_the_region_its_requests_come_from() {
             .target(),
         Some(commit)
     );
-    codeyard_db_cluster::node_config::upsert_node_configuration(&target.pool, "public", true)
+    codeyard_db_placement::node_config::upsert_node_configuration(&target.pool, "public", true)
         .await
         .unwrap();
     let app = codeyard_api_rest::create_router(codeyard_app::app::AppState::new(

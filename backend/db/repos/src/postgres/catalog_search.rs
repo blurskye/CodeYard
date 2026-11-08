@@ -4,7 +4,7 @@ use crate::catalog_search::Results;
 use crate::catalog_search::Search;
 use crate::catalog_search::Topic;
 use anyhow::Result;
-use codeyard_db_core::pool::PgPool;
+use codeyard_database::pool::PgPool;
 
 pub async fn search(
     pool: &PgPool,
@@ -19,7 +19,7 @@ pub async fn search(
     let statement = query
         .statement(
             true,
-            &codeyard_db_core::queries::postgres::repositories::access::readable_condition(),
+            &codeyard_database::queries::postgres::repositories::access::readable_condition(),
             options.repository,
         )
         .map_err(anyhow::Error::msg)?;
@@ -58,7 +58,7 @@ pub async fn topic(
     let mut tx = crate::postgres::repositories::discovery::search_connection(pool).await?;
     let mut statement = crate::discussion_search::Statement::new(true);
     let readable = statement.repository_policy(
-        &codeyard_db_core::queries::postgres::repositories::access::readable_condition(),
+        &codeyard_database::queries::postgres::repositories::access::readable_condition(),
         policy_token,
     );
     let name = statement.bind(name);

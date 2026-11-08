@@ -5,11 +5,11 @@ use crate::unavailable;
 use crate::url;
 use crate::RequestContext;
 use crate::Result;
-use codeyard_model::node_id;
+use codeyard_types::node_id;
 use serde_json::json;
 use serde_json::Value;
 
-pub(super) fn object(user: &codeyard_db_core::models::User, viewer: i64) -> Value {
+pub(super) fn object(user: &codeyard_database::models::User, viewer: i64) -> Value {
     json!({"__typename":"User","id":node_id::encode("U",user.id),"databaseId":user.id,
         "login":user.username,"name":user.display_name,
         "url":url(&codeyard_types::paths::profile_path(&user.username)),"avatarUrl":url(&format!("/avatars/{}",user.username)),"createdAt":user.created_at,
@@ -17,7 +17,7 @@ pub(super) fn object(user: &codeyard_db_core::models::User, viewer: i64) -> Valu
         "isViewer":viewer==user.id})
 }
 
-pub(super) fn organization(org: &codeyard_db_core::models::Organization) -> Value {
+pub(super) fn organization(org: &codeyard_database::models::Organization) -> Value {
     json!({"__typename":"Organization","id":node_id::encode("O",org.id),"databaseId":org.id,
         "login":org.name,"name":org.display_name,"email":null,"url":url(&codeyard_types::paths::profile_path(&org.name)),
         "avatarUrl":url(&format!("/avatars/{}",org.name)),"createdAt":org.created_at,
@@ -42,7 +42,7 @@ fn actor_value(mut value: Value) -> Value {
     }
     value
 }
-pub(super) fn actor_object(user: &codeyard_db_core::models::User, viewer: i64) -> Value {
+pub(super) fn actor_object(user: &codeyard_database::models::User, viewer: i64) -> Value {
     actor_value(object(user, viewer))
 }
 pub(super) async fn actor_by_id(id: i64, request: &RequestContext) -> Result<Value> {
@@ -163,7 +163,7 @@ pub(super) async fn query(field: &str, ctx: &Arguments, request: &RequestContext
         .map_err(unavailable)?
         .filter(|user| !user.is_banned)
         .ok_or_else(|| {
-            codeyard_model::graphql_error::error(
+            codeyard_types::graphql_error::error(
                 format!("Could not resolve to a User with the login of '{login}'."),
                 "NOT_FOUND",
             )
@@ -198,7 +198,7 @@ pub(super) async fn query(field: &str, ctx: &Arguments, request: &RequestContext
         .await
         .map_err(unavailable)?
         .ok_or_else(|| {
-            codeyard_model::graphql_error::error(
+            codeyard_types::graphql_error::error(
                 format!("Could not resolve to an Organization with the login of '{login}'."),
                 "NOT_FOUND",
             )

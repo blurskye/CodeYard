@@ -18,12 +18,12 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_db_core::queries::dependabot_alerts::Alert;
+use codeyard_database::queries::dependabot_alerts::Alert;
 use codeyard_db_security::dependabot_alerts as store;
 use codeyard_db_security::dependabot_alerts::Update;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
-use codeyard_model::urls::repo_url;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
+use codeyard_types::urls::repo_url;
 use serde_json::json;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -353,7 +353,7 @@ fn page_response(
                 .finish();
             links.push(format!(
                 "<{}{}?{}>; rel=\"{rel}\"",
-                codeyard_model::http_config::link_origin(),
+                codeyard_types::http_config::link_origin(),
                 uri.path(),
                 query
             ));
@@ -400,7 +400,7 @@ pub(crate) async fn document(
         None
     };
     Ok(
-        json!({"number":row.number,"state":row.state,"dependency":{"package":{"ecosystem":row.ecosystem,"name":row.package},"manifest_path":row.manifest,"version_requirement":row.version,"scope":if row.scope=="unknown" {None} else {Some(&row.scope)},"relationship":"unknown"},"security_advisory":advisory,"security_vulnerability":vulnerability(&v),"url":format!("{}/dependabot/alerts/{}",repo_url(owner,name),row.number),"html_url":format!("{}/{}/{}/security/dependabot",codeyard_model::http_config::link_origin(),codeyard_types::paths::encode_component(owner),codeyard_types::paths::encode_component(name)),"created_at":row.created_at,"updated_at":row.updated_at,"fixed_at":row.fixed_at,"dismissed_at":row.dismissed_at,"dismissed_by":dismissed_by,"dismissed_reason":row.dismissed_reason,"dismissed_comment":row.dismissed_comment,"auto_dismissed_at":null,"assignees":[]}),
+        json!({"number":row.number,"state":row.state,"dependency":{"package":{"ecosystem":row.ecosystem,"name":row.package},"manifest_path":row.manifest,"version_requirement":row.version,"scope":if row.scope=="unknown" {None} else {Some(&row.scope)},"relationship":"unknown"},"security_advisory":advisory,"security_vulnerability":vulnerability(&v),"url":format!("{}/dependabot/alerts/{}",repo_url(owner,name),row.number),"html_url":format!("{}/{}/{}/security/dependabot",codeyard_types::http_config::link_origin(),codeyard_types::paths::encode_component(owner),codeyard_types::paths::encode_component(name)),"created_at":row.created_at,"updated_at":row.updated_at,"fixed_at":row.fixed_at,"dismissed_at":row.dismissed_at,"dismissed_by":dismissed_by,"dismissed_reason":row.dismissed_reason,"dismissed_comment":row.dismissed_comment,"auto_dismissed_at":null,"assignees":[]}),
     )
 }
 fn alert_matches(v: &Value, q: &Params) -> bool {
@@ -460,8 +460,8 @@ async fn list(
             Err(error)
                 if org.is_some()
                     && matches!(
-                        error.downcast_ref::<codeyard_model::advisories::Refusal>(),
-                        Some(codeyard_model::advisories::Refusal::Missing)
+                        error.downcast_ref::<codeyard_types::advisories::Refusal>(),
+                        Some(codeyard_types::advisories::Refusal::Missing)
                     ) =>
             {
                 continue

@@ -137,7 +137,7 @@ async fn load_users(ctx: &PageContext, listing: &Listing<'_>) -> Result<AdminUse
         })
         .collect();
     let managed_accounts =
-        codeyard_db_cluster::node_config::get_node_configuration(&ctx.state.pool)
+        codeyard_db_placement::node_config::get_node_configuration(&ctx.state.pool)
             .await
             .map_err(|_| {
                 ctx.error(
@@ -311,7 +311,7 @@ pub(crate) async fn new_user_get(
     if let Err(response) = require_account(&ctx, true) {
         return response;
     }
-    match codeyard_db_cluster::node_config::get_node_configuration(&ctx.state.pool).await {
+    match codeyard_db_placement::node_config::get_node_configuration(&ctx.state.pool).await {
         Ok(config) if config.as_ref().is_some_and(|config| config.is_private()) => {
             new_user_response(&ctx, &Fields::new(), StatusCode::OK, None)
         }

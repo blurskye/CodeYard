@@ -402,7 +402,7 @@ mod tests {
     #[test]
     fn public_profile_page_serializes_presentation_not_private_account_records() {
         let now = chrono::Utc::now();
-        let user = codeyard_db_core::models::User {
+        let user = codeyard_database::models::User {
             home_cell: 0,
             is_stub: false,
             id: 11,

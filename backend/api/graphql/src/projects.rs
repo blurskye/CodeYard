@@ -10,17 +10,17 @@ use crate::Result;
 use async_graphql::Error;
 use async_graphql::ErrorExtensions;
 use chrono::Datelike;
-use codeyard_model::node_id;
+use codeyard_types::node_id;
 use serde_json::json;
 use serde_json::Value;
 
 fn operation(error: anyhow::Error) -> Error {
-    match error.downcast_ref::<codeyard_model::project_query::Refusal>() {
-        Some(codeyard_model::project_query::Refusal::Missing) => missing(),
+    match error.downcast_ref::<codeyard_types::project_query::Refusal>() {
+        Some(codeyard_types::project_query::Refusal::Missing) => missing(),
         Some(refusal) => Error::new(refusal.to_string()).extend_with(|_, ext| {
             ext.set(
                 "type",
-                if matches!(refusal, codeyard_model::project_query::Refusal::Denied) {
+                if matches!(refusal, codeyard_types::project_query::Refusal::Denied) {
                     "FORBIDDEN"
                 } else {
                     "UNPROCESSABLE"
@@ -639,7 +639,7 @@ pub(super) async fn resource(ctx: &Arguments, request: &RequestContext) -> Resul
     let raw: String = ctx.args.try_get("url")?.deserialize()?;
     let parsed = reqwest::Url::parse(&raw).map_err(|_| missing())?;
     let origin =
-        reqwest::Url::parse(&codeyard_model::http_config::link_origin()).map_err(unavailable)?;
+        reqwest::Url::parse(&codeyard_types::http_config::link_origin()).map_err(unavailable)?;
     if parsed.origin() != origin.origin() {
         return Err(missing());
     }
@@ -1135,7 +1135,7 @@ pub(super) async fn mutation(
     match field {
         "updateProjectV2" => {
             if let Some(readme) = input["readme"].as_str() {
-                codeyard_model::issue_input::validate_body(readme, false).map_err(Error::new)?;
+                codeyard_types::issue_input::validate_body(readme, false).map_err(Error::new)?;
             }
             let settings = codeyard_db_repos::projects::Settings {
                 title: input["title"].as_str().map(str::to_owned),

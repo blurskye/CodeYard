@@ -7,12 +7,12 @@ use super::Value;
 use crate::support::organizations::applied;
 use axum::http::StatusCode;
 
-use codeyard_db_core::models::AccessLevel;
-use codeyard_db_core::models::OrgRole;
+use codeyard_database::models::AccessLevel;
+use codeyard_database::models::OrgRole;
 
 pub(super) async fn run(
     router: &Router,
-    scope: (&codeyard_db_core::DbPool, i64, i64),
+    scope: (&codeyard_database::DbPool, i64, i64),
     tokens: (&str, &str, &str),
     session: &Client,
 ) {

@@ -17,10 +17,10 @@ use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::app::AppState;
-use codeyard_db_core::models::User;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
-use codeyard_model::urls::api_url;
+use codeyard_database::models::User;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
+use codeyard_types::urls::api_url;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -132,13 +132,13 @@ async fn update(
     headers: HeaderMap,
     input: std::result::Result<Json<Value>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<Value>> {
-    use codeyard_db_core::queries::users::accounts::AccountCredential;
+    use codeyard_database::queries::users::accounts::AccountCredential;
     use codeyard_db_identity::users::profiles::ProfilePatch;
     let actor = codeyard_identity::github_auth::authenticate(&state, &headers, true)
         .await?
         .ok_or_else(codeyard_identity::github_auth::required)?;
     actor.require_write()?;
-    let Json(input) = input.map_err(codeyard_model::github_error::json_error)?;
+    let Json(input) = input.map_err(codeyard_types::github_error::json_error)?;
     let object = input
         .as_object()
         .ok_or_else(|| Error::validation("User", "body", "invalid"))?;
@@ -659,7 +659,7 @@ async fn hovercard_subject(
 }
 
 // gh compares the key without its optional OpenSSH comment when avoiding duplicate uploads.
-fn key_text(key: &codeyard_db_core::models::SshKey) -> String {
+fn key_text(key: &codeyard_database::models::SshKey) -> String {
     key.public_key
         .split_whitespace()
         .take(2)
@@ -667,7 +667,7 @@ fn key_text(key: &codeyard_db_core::models::SshKey) -> String {
         .join(" ")
 }
 
-fn key_document(key: &codeyard_db_core::models::SshKey) -> Value {
+fn key_document(key: &codeyard_database::models::SshKey) -> Value {
     json!({"id":key.id,"key":key_text(key),"url":api_url(&format!("/user/keys/{}", key.id)),"title":key.name,"created_at":key.created_at,"verified":key.last_used_at.is_some(),"read_only":false,"last_used":key.last_used_at})
 }
 
@@ -742,7 +742,7 @@ async fn create_key(
         .await?
         .ok_or_else(codeyard_identity::github_auth::required)?;
     actor.require_write()?;
-    let Json(input) = input.map_err(codeyard_model::github_error::json_error)?;
+    let Json(input) = input.map_err(codeyard_types::github_error::json_error)?;
     let title = input
         .title
         .as_deref()
@@ -760,11 +760,11 @@ async fn create_key(
     )
     .await
     .map_err(|error| {
-        match error.downcast_ref::<codeyard_model::identity::SshKeyWriteRefusal>() {
-            Some(codeyard_model::identity::SshKeyWriteRefusal::InvalidKey) => {
+        match error.downcast_ref::<codeyard_types::identity::SshKeyWriteRefusal>() {
+            Some(codeyard_types::identity::SshKeyWriteRefusal::InvalidKey) => {
                 Error::validation("Key", "key", "invalid")
             }
-            Some(codeyard_model::identity::SshKeyWriteRefusal::AlreadyUsed) => {
+            Some(codeyard_types::identity::SshKeyWriteRefusal::AlreadyUsed) => {
                 Error::validation("Key", "key", "already_exists")
             }
             Some(_) => Error::new(StatusCode::FORBIDDEN, "Account is restricted"),
@@ -796,8 +796,8 @@ async fn delete_key(
     )
     .await
     .map_err(|error| {
-        match error.downcast_ref::<codeyard_model::identity::SshKeyWriteRefusal>() {
-            Some(codeyard_model::identity::SshKeyWriteRefusal::AccountRestricted) => {
+        match error.downcast_ref::<codeyard_types::identity::SshKeyWriteRefusal>() {
+            Some(codeyard_types::identity::SshKeyWriteRefusal::AccountRestricted) => {
                 Error::new(StatusCode::FORBIDDEN, "Account is restricted")
             }
             _ => Error::unavailable(error),

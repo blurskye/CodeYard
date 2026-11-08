@@ -5,8 +5,8 @@ use crate::users::gpg_keys::NewGpgKey;
 use crate::users::gpg_keys::StoredGpgKey;
 use crate::users::gpg_keys::StoredGpgKeySummary;
 use anyhow::Result;
-use codeyard_db_core::pool::PgPool;
-use codeyard_db_core::queries::users::accounts::AccountCredential;
+use codeyard_database::pool::PgPool;
+use codeyard_database::queries::users::accounts::AccountCredential;
 use sqlx::Postgres;
 use sqlx::Transaction;
 

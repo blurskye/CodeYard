@@ -13,8 +13,8 @@ use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_app::app::AppState;
 use codeyard_db_repos::events::EventScope;
 use codeyard_db_repos::events::EventViewer;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use codeyard_types::paths::encode_component;
 use codeyard_webui::components::escape_html;
 use serde::Deserialize;
@@ -25,7 +25,7 @@ use std::fmt::Write;
 use std::sync::Arc;
 
 fn origin() -> String {
-    codeyard_model::http_config::link_origin()
+    codeyard_types::http_config::link_origin()
 }
 async fn discovery(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Result<Response> {
     let viewer = codeyard_identity::github_auth::authenticate(&state, &headers, false).await?;
@@ -169,7 +169,7 @@ async fn feed(
     Query(query): Query<FeedQuery>,
 ) -> Result<Response> {
     let params = params.map(|Path(p)| p).unwrap_or_default();
-    let config = codeyard_db_cluster::node_config::get_node_configuration(&state.pool)
+    let config = codeyard_db_placement::node_config::get_node_configuration(&state.pool)
         .await
         .map_err(Error::unavailable)?
         .filter(|c| c.setup_completed)
@@ -207,7 +207,7 @@ async fn feed(
                 )
                 .await
                 .map_err(Error::unavailable)?,
-                codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(_)
+                codeyard_database::queries::organizations::OrganizationOutcome::Applied(_)
             ) {
                 return Err(Error::missing());
             }

@@ -11,11 +11,11 @@ async fn remote_imports_attest_the_importer_and_reject_foreign_provenance() {
     crate::support::native_database::enable_cluster(&database.pool)
         .await
         .unwrap();
-    codeyard_db_cluster::node_config::upsert_node_configuration(&database.pool, "public", true)
+    codeyard_db_placement::node_config::upsert_node_configuration(&database.pool, "public", true)
         .await
         .unwrap();
     let root = tempfile::tempdir().unwrap();
-    let web = codeyard_cluster::start(
+    let web = codeyard_placement::start(
         &database.pool,
         &root.path().join("web-state"),
         &root.path().join("web-repos"),
@@ -25,7 +25,7 @@ async fn remote_imports_attest_the_importer_and_reject_foreign_provenance() {
     .await
     .unwrap();
     web.publish().await.unwrap();
-    let storage = codeyard_cluster::start(
+    let storage = codeyard_placement::start(
         &database.pool,
         &root.path().join("storage-state"),
         &root.path().join("storage-repos"),
@@ -42,7 +42,7 @@ async fn remote_imports_attest_the_importer_and_reject_foreign_provenance() {
     )
     .await
     .unwrap();
-    let repository = codeyard_repos_core::repositories::lifecycle::provision(
+    let repository = codeyard_git_storage::repositories::lifecycle::provision(
         (&database.pool, Some(&web.context)),
         &web.context.repos_path,
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner.id),

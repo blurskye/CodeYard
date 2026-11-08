@@ -3,9 +3,9 @@ use crate::repositories::records::MergeMethodUpdate;
 use crate::repositories::records::RepositoryFilter;
 use crate::repositories::records::RepositorySort;
 use anyhow::Result;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::models::SharedRepository;
-use codeyard_db_core::pool::PgPool;
+use codeyard_database::models::Repository;
+use codeyard_database::models::SharedRepository;
+use codeyard_database::pool::PgPool;
 use sqlx::Postgres;
 use sqlx::Transaction;
 
@@ -32,7 +32,7 @@ pub async fn create_repository(
         INSERT INTO repositories (home_cell,owner_kind, owner_user_id, name, description, is_private, disk_path, created_by_id)
         VALUES ({cell_home},'user', $1, $2, $3, $4, $5, $1)
         RETURNING *
-        "#, cell_home = codeyard_db_core::cells::LOCAL_HOME_SQL),
+        "#, cell_home = codeyard_database::cells::LOCAL_HOME_SQL),
     )
     .bind(owner_id)
     .bind(name)
@@ -42,7 +42,7 @@ pub async fn create_repository(
     .fetch_one(&mut *tx)
     .await?;
 
-    codeyard_db_core::cells::directory::postgres::repository(pool, &mut tx, &result).await?;
+    codeyard_database::cells::directory::postgres::repository(pool, &mut tx, &result).await?;
     tx.commit().await?;
     Ok(result)
 }
@@ -201,14 +201,14 @@ pub async fn list_trending_repositories(
          ORDER BY stars_count DESC, created_at DESC, id DESC LIMIT $3",
     )
     .bind(viewer)
-    .bind(codeyard_db_core::queries::discussions::contains_pattern(text.trim()))
+    .bind(codeyard_database::queries::discussions::contains_pattern(text.trim()))
     .bind(limit.min(100))
     .fetch_all(pool)
     .await?)
 }
 
 fn shared_repository_condition() -> String {
-    format!("NOT r.is_stub AND NOT r.is_gist AND NOT (r.owner_kind='user' AND r.owner_user_id=u.id) AND ({})>=1 AND (EXISTS(SELECT 1 FROM org_memberships m JOIN organization_settings s ON s.org_id=m.org_id AND s.default_repository_permission IN (1,3,5) WHERE m.org_id=r.owner_org_id AND m.user_id=u.id AND m.role IN ('owner','admin','member')) OR EXISTS(SELECT 1 FROM org_memberships m JOIN organization_role_assignments assigned ON assigned.org_id=m.org_id JOIN organization_roles role ON role.id=assigned.role_id AND role.base_level BETWEEN 1 AND 5 WHERE m.org_id=r.owner_org_id AND m.user_id=u.id AND m.role IN ('owner','admin','member') AND ((assigned.user_id=u.id AND assigned.team_id IS NULL) OR (assigned.user_id IS NULL AND EXISTS(SELECT 1 FROM teams t JOIN effective_team_memberships tm ON tm.team_id=t.id AND tm.user_id=u.id AND tm.role IN ('member','maintainer') WHERE t.id=assigned.team_id AND t.org_id=assigned.org_id AND t.privacy IN ('visible','secret'))))) OR EXISTS(SELECT 1 FROM repo_access a WHERE a.repo_id=r.id AND a.user_id=u.id AND a.access_level BETWEEN 1 AND 5) OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=r.owner_org_id AND m.user_id=u.id AND (m.role IN ('owner','admin') OR (m.role='member' AND EXISTS(SELECT 1 FROM teams t JOIN effective_team_memberships tm ON tm.team_id=t.id AND tm.user_id=u.id AND tm.role IN ('member','maintainer') JOIN team_repo_access a ON a.team_id=t.id AND a.repo_id=r.id AND a.permission BETWEEN 1 AND 5 WHERE t.org_id=m.org_id AND t.privacy IN ('visible','secret'))))))", codeyard_db_core::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL)
+    format!("NOT r.is_stub AND NOT r.is_gist AND NOT (r.owner_kind='user' AND r.owner_user_id=u.id) AND ({})>=1 AND (EXISTS(SELECT 1 FROM org_memberships m JOIN organization_settings s ON s.org_id=m.org_id AND s.default_repository_permission IN (1,3,5) WHERE m.org_id=r.owner_org_id AND m.user_id=u.id AND m.role IN ('owner','admin','member')) OR EXISTS(SELECT 1 FROM org_memberships m JOIN organization_role_assignments assigned ON assigned.org_id=m.org_id JOIN organization_roles role ON role.id=assigned.role_id AND role.base_level BETWEEN 1 AND 5 WHERE m.org_id=r.owner_org_id AND m.user_id=u.id AND m.role IN ('owner','admin','member') AND ((assigned.user_id=u.id AND assigned.team_id IS NULL) OR (assigned.user_id IS NULL AND EXISTS(SELECT 1 FROM teams t JOIN effective_team_memberships tm ON tm.team_id=t.id AND tm.user_id=u.id AND tm.role IN ('member','maintainer') WHERE t.id=assigned.team_id AND t.org_id=assigned.org_id AND t.privacy IN ('visible','secret'))))) OR EXISTS(SELECT 1 FROM repo_access a WHERE a.repo_id=r.id AND a.user_id=u.id AND a.access_level BETWEEN 1 AND 5) OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=r.owner_org_id AND m.user_id=u.id AND (m.role IN ('owner','admin') OR (m.role='member' AND EXISTS(SELECT 1 FROM teams t JOIN effective_team_memberships tm ON tm.team_id=t.id AND tm.user_id=u.id AND tm.role IN ('member','maintainer') JOIN team_repo_access a ON a.team_id=t.id AND a.repo_id=r.id AND a.permission BETWEEN 1 AND 5 WHERE t.org_id=m.org_id AND t.privacy IN ('visible','secret'))))))", codeyard_database::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL)
 }
 
 /// Repositories shared directly or through organization and team authority.
@@ -217,7 +217,7 @@ pub async fn list_shared_repositories(
     user_id: i64,
 ) -> Result<Vec<SharedRepository>> {
     Ok(sqlx::query_as::<_, SharedRepository>(
-        &format!("SELECT r.*, ({}) AS access_level FROM repositories r JOIN users u ON u.id=$1 WHERE {} ORDER BY r.name,r.id", codeyard_db_core::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL, shared_repository_condition()),
+        &format!("SELECT r.*, ({}) AS access_level FROM repositories r JOIN users u ON u.id=$1 WHERE {} ORDER BY r.name,r.id", codeyard_database::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL, shared_repository_condition()),
     )
     .bind(user_id)
     .fetch_all(pool)
@@ -242,7 +242,7 @@ pub async fn list_user_repository_page(
             " AND NOT is_archived"
         }
     );
-    let needle = codeyard_db_core::queries::discussions::contains_pattern(text.trim());
+    let needle = codeyard_database::queries::discussions::contains_pattern(text.trim());
     let count = sqlx::query_scalar(&format!(
         "SELECT COUNT(*) FROM repositories WHERE {condition}"
     ))
@@ -278,7 +278,7 @@ pub async fn list_shared_repository_page(
         shared_repository_condition(),
         if include_archived { "" } else { " AND NOT r.is_archived" }
     );
-    let needle = codeyard_db_core::queries::discussions::contains_pattern(text.trim());
+    let needle = codeyard_database::queries::discussions::contains_pattern(text.trim());
     let count = sqlx::query_scalar(&format!(
         "SELECT COUNT(*) FROM repositories r JOIN users u ON u.id=$1 WHERE {condition}"
     ))
@@ -286,7 +286,7 @@ pub async fn list_shared_repository_page(
     .bind(&needle)
     .fetch_one(pool)
     .await?;
-    let rows = sqlx::query_as(&format!("SELECT r.*, ({}) AS access_level FROM repositories r JOIN users u ON u.id=$1 WHERE {condition} ORDER BY r.name,r.id LIMIT $3 OFFSET $4", codeyard_db_core::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL))
+    let rows = sqlx::query_as(&format!("SELECT r.*, ({}) AS access_level FROM repositories r JOIN users u ON u.id=$1 WHERE {condition} ORDER BY r.name,r.id LIMIT $3 OFFSET $4", codeyard_database::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL))
         .bind(user).bind(&needle).bind(limit.clamp(1,100)).bind(offset.max(0)).fetch_all(pool).await?;
     Ok((rows, count))
 }
@@ -303,7 +303,7 @@ pub async fn search_public_repositories(
 ) -> Result<Vec<Repository>> {
     anyhow::ensure!(limit >= 0, "Result limit must be nonnegative");
     anyhow::ensure!(offset >= 0, "Result offset must be nonnegative");
-    let pattern = codeyard_db_core::queries::discussions::contains_pattern(text);
+    let pattern = codeyard_database::queries::discussions::contains_pattern(text);
     let order: std::borrow::Cow<'_, str> = match sort {
         RepositorySort::Recent => "created_at DESC, id DESC".into(),
         RepositorySort::Stars => "stars_count DESC, created_at DESC, id DESC".into(),
@@ -346,7 +346,7 @@ pub async fn public_languages(pool: &PgPool, limit: i64) -> Result<Vec<String>> 
 
 async fn require_settings_actor(
     tx: &mut Transaction<'_, Postgres>,
-    actor: &codeyard_db_core::queries::credentials::Actor,
+    actor: &codeyard_database::queries::credentials::Actor,
 ) -> Result<()> {
     if let Some(credential) = actor.credential() {
         codeyard_db_identity::postgres::users::transitions::require_account(
@@ -361,7 +361,7 @@ async fn require_settings_actor(
 
 pub async fn update_repository(
     pool: &PgPool,
-    actor_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor_id: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     description: Option<&str>,
     is_private: impl Into<crate::repositories::records::VisibilityUpdate>,
@@ -386,7 +386,7 @@ pub async fn update_repository(
 
 pub async fn patch_repository(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     changes: &crate::repositories::records::RepositoryChanges<&str>,
 ) -> Result<Repository> {
@@ -394,7 +394,7 @@ pub async fn patch_repository(
 }
 pub async fn patch_repository_and_default(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     changes: &crate::repositories::records::RepositoryChanges<&str>,
     name: &str,
@@ -412,7 +412,7 @@ pub async fn patch_repository_and_default(
 }
 async fn patch_core(
     pool: &PgPool,
-    authority: codeyard_db_core::queries::credentials::Actor,
+    authority: codeyard_database::queries::credentials::Actor,
     repo_id: i64,
     changes: &crate::repositories::records::RepositoryChanges<&str>,
     default_branch: Option<&str>,
@@ -427,7 +427,7 @@ async fn patch_core(
     }
     require_settings_actor(&mut tx, &authority).await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::postgres::discussions::lock_archive_authority(
+        codeyard_database::queries::postgres::discussions::lock_archive_authority(
             &mut tx, actor, repo_id
         )
         .await?,
@@ -514,7 +514,7 @@ async fn patch_core(
     let updated=sqlx::query_as::<_,Repository>("UPDATE repositories SET name=COALESCE($2,name),description=CASE WHEN $3 THEN $4 ELSE description END,website=CASE WHEN $5 THEN $6 ELSE website END,is_private=$7,is_archived=$8,is_template=COALESCE($9,is_template),default_branch=COALESCE($10,default_branch),is_internal=$11,updated_at=NOW() WHERE id=$1 AND NOT is_archived RETURNING *")
         .bind(repo_id).bind(changes.name).bind(changes.description.is_some()).bind(changes.description.flatten()).bind(website.is_some()).bind(website.as_ref().and_then(|value|value.as_deref())).bind(private).bind(changes.archived.unwrap_or(previous.is_archived)).bind(changes.is_template).bind(default_branch).bind(internal).fetch_one(&mut *tx).await.map_err(name_conflict_error)?;
     if private != previous.is_private {
-        codeyard_db_core::queries::postgres::secrets::delivery_budget(&mut tx, repo_id).await?;
+        codeyard_database::queries::postgres::secrets::delivery_budget(&mut tx, repo_id).await?;
     }
     tx.commit().await?;
     Ok(updated)
@@ -522,7 +522,7 @@ async fn patch_core(
 
 pub async fn set_merge_methods(
     pool: &PgPool,
-    actor_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor_id: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     update: MergeMethodUpdate,
 ) -> Result<()> {
@@ -532,7 +532,7 @@ pub async fn set_merge_methods(
     let mut tx = pool.begin().await?;
     require_settings_actor(&mut tx, &authority).await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::postgres::discussions::lock_repository_mutation_authority(
+        codeyard_database::queries::postgres::discussions::lock_repository_mutation_authority(
             &mut tx, actor_id, repo_id
         )
         .await?,
@@ -641,21 +641,21 @@ pub async fn delete_unattached_advisory_fork(
         "DELETE FROM repositories WHERE id=$1 AND is_private AND contribution_version=1 AND NOT EXISTS(SELECT 1 FROM repository_advisories WHERE private_fork_id=$1) RETURNING *",
     ).bind(repo_id).fetch_optional(&mut *tx).await?;
     if deleted.is_some() {
-        codeyard_db_core::cells::outbox::postgres::forget(
+        codeyard_database::cells::outbox::postgres::forget(
             pool,
             &mut tx,
-            codeyard_model::cells::Object {
-                kind: codeyard_model::cells::ObjectKind::Repository,
+            codeyard_types::cells::Object {
+                kind: codeyard_types::cells::ObjectKind::Repository,
                 id: repo_id,
             },
         )
         .await?;
     }
     tx.commit().await?;
-    codeyard_db_core::cells::directory::postgres::finish_forget(
+    codeyard_database::cells::directory::postgres::finish_forget(
         pool,
-        codeyard_model::cells::Object {
-            kind: codeyard_model::cells::ObjectKind::Repository,
+        codeyard_types::cells::Object {
+            kind: codeyard_types::cells::ObjectKind::Repository,
             id: repo_id,
         },
     )
@@ -677,21 +677,21 @@ pub async fn delete_unwritten_repository(
         "DELETE FROM repositories WHERE id=$1 AND contribution_version=0 AND NOT EXISTS(SELECT 1 FROM repository_discussion_counters WHERE repo_id=$1) AND NOT EXISTS(SELECT 1 FROM discussions WHERE repo_id=$1) AND NOT EXISTS(SELECT 1 FROM repository_security_reports WHERE repo_id=$1) RETURNING *",
     ).bind(repo_id).fetch_optional(&mut *tx).await?;
     if deleted.is_some() {
-        codeyard_db_core::cells::outbox::postgres::forget(
+        codeyard_database::cells::outbox::postgres::forget(
             pool,
             &mut tx,
-            codeyard_model::cells::Object {
-                kind: codeyard_model::cells::ObjectKind::Repository,
+            codeyard_types::cells::Object {
+                kind: codeyard_types::cells::ObjectKind::Repository,
                 id: repo_id,
             },
         )
         .await?;
     }
     tx.commit().await?;
-    codeyard_db_core::cells::directory::postgres::finish_forget(
+    codeyard_database::cells::directory::postgres::finish_forget(
         pool,
-        codeyard_model::cells::Object {
-            kind: codeyard_model::cells::ObjectKind::Repository,
+        codeyard_types::cells::Object {
+            kind: codeyard_types::cells::ObjectKind::Repository,
             id: repo_id,
         },
     )
@@ -701,7 +701,7 @@ pub async fn delete_unwritten_repository(
 
 pub async fn delete_repository(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
 ) -> Result<Repository> {
     use crate::repositories::records::RepositorySettingsRefusal as Refusal;
@@ -709,7 +709,7 @@ pub async fn delete_repository(
     let actor_id = actor.user_id;
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::postgres::discussions::lock_archive_authority(
+        codeyard_database::queries::postgres::discussions::lock_archive_authority(
             &mut tx, actor_id, repo_id
         )
         .await?,
@@ -732,7 +732,7 @@ pub async fn delete_repository(
         .bind(repo_id)
         .execute(&mut *tx)
         .await?;
-    codeyard_db_core::queries::postgres::runners::remove_repository_runners(&mut tx, repo_id)
+    codeyard_database::queries::postgres::runners::remove_repository_runners(&mut tx, repo_id)
         .await?;
     let deleted =
         sqlx::query_as::<_, Repository>("DELETE FROM repositories WHERE id=$1 RETURNING *")
@@ -741,25 +741,25 @@ pub async fn delete_repository(
             .await?;
     let deleted = deleted.ok_or(Refusal::Denied)?;
     for file in files {
-        codeyard_db_core::queries::postgres::files::delete_unreferenced_file_in_transaction(
+        codeyard_database::queries::postgres::files::delete_unreferenced_file_in_transaction(
             &mut tx, file,
         )
         .await?;
     }
-    codeyard_db_core::cells::outbox::postgres::forget(
+    codeyard_database::cells::outbox::postgres::forget(
         pool,
         &mut tx,
-        codeyard_model::cells::Object {
-            kind: codeyard_model::cells::ObjectKind::Repository,
+        codeyard_types::cells::Object {
+            kind: codeyard_types::cells::ObjectKind::Repository,
             id: repo_id,
         },
     )
     .await?;
     tx.commit().await?;
-    codeyard_db_core::cells::directory::postgres::finish_forget(
+    codeyard_database::cells::directory::postgres::finish_forget(
         pool,
-        codeyard_model::cells::Object {
-            kind: codeyard_model::cells::ObjectKind::Repository,
+        codeyard_types::cells::Object {
+            kind: codeyard_types::cells::ObjectKind::Repository,
             id: repo_id,
         },
     )
@@ -769,7 +769,7 @@ pub async fn delete_repository(
 
 pub async fn rename_repository(
     pool: &PgPool,
-    actor_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor_id: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     new_name: &str,
 ) -> Result<Repository> {
@@ -781,7 +781,7 @@ pub async fn rename_repository(
     crate::postgres::gists::lock_name(&mut tx, new_name).await?;
     require_settings_actor(&mut tx, &authority).await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::postgres::discussions::lock_repository_mutation_authority(
+        codeyard_database::queries::postgres::discussions::lock_repository_mutation_authority(
             &mut tx, actor_id, repo_id
         )
         .await?,
@@ -835,12 +835,12 @@ async fn check_namespace(
 }
 pub async fn transfer_repository(
     pool: &PgPool,
-    actor_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor_id: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     target: crate::repositories::creation::RepositoryTarget,
 ) -> Result<Repository> {
     let authority = actor_id.into();
-    codeyard_db_core::queries::postgres::retry_on_conflict(|| {
+    codeyard_database::queries::postgres::retry_on_conflict(|| {
         transfer_repository_once(pool, &authority, repo_id, target, None)
     })
     .await
@@ -848,14 +848,14 @@ pub async fn transfer_repository(
 
 pub async fn transfer_repository_checked(
     pool: &PgPool,
-    actor_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor_id: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     target: crate::repositories::creation::RepositoryTarget,
     expected_owner: &str,
     expected_name: &str,
 ) -> Result<Repository> {
     let authority = actor_id.into();
-    codeyard_db_core::queries::postgres::retry_on_conflict(|| {
+    codeyard_database::queries::postgres::retry_on_conflict(|| {
         transfer_repository_once(
             pool,
             &authority,
@@ -868,7 +868,7 @@ pub async fn transfer_repository_checked(
 }
 async fn transfer_repository_once(
     pool: &PgPool,
-    authority: &codeyard_db_core::queries::credentials::Actor,
+    authority: &codeyard_database::queries::credentials::Actor,
     repo_id: i64,
     target: crate::repositories::creation::RepositoryTarget,
     expected: Option<(&str, &str)>,
@@ -883,7 +883,7 @@ async fn transfer_repository_once(
         .await?
         .ok_or(Refusal::Denied)?;
     crate::postgres::gists::lock_name(&mut tx, &locked_name).await?;
-    codeyard_db_core::queries::postgres::users::transitions::lock_accounts_shared(
+    codeyard_database::queries::postgres::users::transitions::lock_accounts_shared(
         &mut tx,
         &[authority.user_id],
     )
@@ -913,7 +913,7 @@ async fn transfer_repository_once(
     .fetch_all(&mut *tx)
     .await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::postgres::discussions::lock_repository_mutation_authority(
+        codeyard_database::queries::postgres::discussions::lock_repository_mutation_authority(
             &mut tx, actor_id, repo_id
         )
         .await?,
@@ -1023,7 +1023,7 @@ async fn transfer_repository_once(
     .ok_or_else(|| anyhow::anyhow!(Refusal::Denied))?;
     // Stop work admitted under the former owner's authority.
     if changed {
-        codeyard_db_core::queries::postgres::repositories::records::leave_former_owner(
+        codeyard_database::queries::postgres::repositories::records::leave_former_owner(
             &mut tx, repo_id, user,
         )
         .await?;
@@ -1033,7 +1033,8 @@ async fn transfer_repository_once(
             repo_id,
         )
         .await?;
-        codeyard_db_core::queries::postgres::code_security::apply_default(&mut tx, &result).await?;
+        codeyard_database::queries::postgres::code_security::apply_default(&mut tx, &result)
+            .await?;
         sqlx::query("INSERT INTO secret_scanning_jobs(repo_id,scan_type,actor_id) SELECT $1,'backfill',$2 WHERE EXISTS(SELECT 1 FROM secret_scanning_settings WHERE repo_id=$1 AND enabled)")
             .bind(repo_id).bind(actor_id).execute(&mut *tx).await?;
         // Packages stay in their publishing namespace; the new owner must not inherit access.
@@ -1045,11 +1046,11 @@ async fn transfer_repository_once(
             .await?;
         let runs: Vec<i64> = sqlx::query_scalar("SELECT id FROM ci_runs WHERE repo_id=$1 AND (status IN ('queued','running') OR completed_at > NOW() - INTERVAL '1 hour') ORDER BY id FOR UPDATE")
             .bind(repo_id).fetch_all(&mut *tx).await?;
-        codeyard_db_core::queries::postgres::ci::stop_ci_runs(&mut tx, &runs).await?;
-        codeyard_db_core::queries::postgres::runners::remove_repository_runners(&mut tx, repo_id)
+        codeyard_database::queries::postgres::ci::stop_ci_runs(&mut tx, &runs).await?;
+        codeyard_database::queries::postgres::runners::remove_repository_runners(&mut tx, repo_id)
             .await?;
     }
-    codeyard_db_core::queries::postgres::secrets::delivery_budget(&mut tx, repo_id).await?;
+    codeyard_database::queries::postgres::secrets::delivery_budget(&mut tx, repo_id).await?;
     tx.commit().await?;
     Ok(result)
 }
@@ -1114,7 +1115,7 @@ pub async fn restore_repository_default_branch(
 /// Archives or unarchives under current administrator authority, including archived rows.
 pub async fn set_repository_archived(
     pool: &PgPool,
-    actor_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor_id: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     archived: bool,
 ) -> Result<bool> {
@@ -1124,7 +1125,7 @@ pub async fn set_repository_archived(
     let mut tx = pool.begin().await?;
     require_settings_actor(&mut tx, &authority).await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::postgres::discussions::lock_archive_authority(
+        codeyard_database::queries::postgres::discussions::lock_archive_authority(
             &mut tx, actor_id, repo_id
         )
         .await?,
@@ -1208,7 +1209,7 @@ pub async fn set_repository_wiki(
 ) -> Result<()> {
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::postgres::discussions::lock_repository_mutation_authority(
+        codeyard_database::queries::postgres::discussions::lock_repository_mutation_authority(
             &mut tx, actor, repo_id
         )
         .await?,
@@ -1228,7 +1229,7 @@ pub async fn set_repository_default_branch(
     branch: &str,
 ) -> Result<bool> {
     let mut tx = pool.begin().await?;
-    if !codeyard_db_core::queries::postgres::discussions::lock_repository_mutation_authority(
+    if !codeyard_database::queries::postgres::discussions::lock_repository_mutation_authority(
         &mut tx, actor_id, repo_id,
     )
     .await?
@@ -1246,6 +1247,6 @@ pub async fn set_repository_default_branch(
     Ok(result.rows_affected() == 1)
 }
 
-use codeyard_db_core::queries::postgres::repositories::records::lock_fork_ancestors;
+use codeyard_database::queries::postgres::repositories::records::lock_fork_ancestors;
 
-use codeyard_db_core::queries::postgres::repositories::records::ANCESTORS;
+use codeyard_database::queries::postgres::repositories::records::ANCESTORS;

@@ -11,8 +11,8 @@ pub(super) async fn contract(
     owner: i64,
     orgs: &[codeyard_db_orgs::organizations::profiles::OrganizationMetadata],
     repositories: (
-        &codeyard_db_core::models::Repository,
-        &codeyard_db_core::models::Repository,
+        &codeyard_database::models::Repository,
+        &codeyard_database::models::Repository,
     ),
     write: Option<&str>,
 ) {
@@ -201,7 +201,7 @@ pub(super) async fn contract(
         200,
     )
     .await;
-    let store = codeyard_repos_core::repositories::store::repo_store(second, None);
+    let store = codeyard_git_storage::repositories::store::repo_store(second, None);
     let head = store.commit("refs/heads/main").await.unwrap();
     let actor = codeyard_db_identity::users::accounts::get_user_by_id(f.pool(), owner)
         .await

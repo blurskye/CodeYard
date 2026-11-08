@@ -7,9 +7,9 @@ use codeyard_ci::config::CiExecutionMode;
 use codeyard_ci::config::CiPipelineKind;
 use codeyard_ci_engine::queue::RunQueue;
 use codeyard_ci_engine::workers::CiWorkers;
-use codeyard_db_core::ci_admission::AdmissionError;
+use codeyard_database::ci_admission::AdmissionError;
+use codeyard_git_storage::receive_ci::CiRunRequest;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
-use codeyard_repos_core::receive_ci::CiRunRequest;
 use codeyard_storage::ObjectStore;
 use codeyard_support::secrets::SecretEncryptor;
 use std::{collections::BTreeSet, sync::Arc, time::Duration};
@@ -139,7 +139,7 @@ async fn contract(pg: bool) {
         context: None,
         notifications: Arc::new(NotificationBroadcaster::new(f.pool())),
     };
-    let remote = codeyard_repos_core::repositories::lifecycle::provision(
+    let remote = codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(other),
@@ -150,7 +150,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    let caller = codeyard_repos_core::repositories::lifecycle::provision(
+    let caller = codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(actor),
@@ -168,7 +168,7 @@ async fn contract(pg: bool) {
         "CALL_PASSWORD",
         "reusable-server-password",
         Some(actor),
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), actor).await,
         ),
     )
@@ -242,14 +242,14 @@ jobs:
             .await;
         assert_eq!(tokens, if engine == "act" { 1 } else { 4 });
         let policies: Vec<String> = match f.pool() {
-            codeyard_db_core::DbPool::Postgres(pool) => {
+            codeyard_database::DbPool::Postgres(pool) => {
                 sqlx::query_scalar("SELECT permissions FROM actions_github_tokens WHERE run_id=$1")
                     .bind(run.id)
                     .fetch_all(pool)
                     .await
                     .unwrap()
             }
-            codeyard_db_core::DbPool::Sqlite(pool) => {
+            codeyard_database::DbPool::Sqlite(pool) => {
                 sqlx::query_scalar("SELECT permissions FROM actions_github_tokens WHERE run_id=$1")
                     .bind(run.id)
                     .fetch_all(pool)
@@ -258,7 +258,7 @@ jobs:
             }
         };
         for policy in policies {
-            let policy: codeyard_model::permissions::Permissions =
+            let policy: codeyard_types::permissions::Permissions =
                 serde_json::from_str(&policy).unwrap();
             assert!(policy.allows("contents", false));
             assert!(!policy.allows("contents", true));

@@ -9,12 +9,12 @@ pub fn normalize_stage_name(stage: &str) -> String {
 #[cfg(test)]
 mod tests {
 
-    use codeyard_db_core::ci_logs::admit_log_lines;
-    use codeyard_db_core::ci_logs::TRUNCATED_LINE;
-    use codeyard_db_core::ci_logs::TRUNCATION_RESERVE;
-    use codeyard_model::ci::LogLine;
-    use codeyard_model::ci::MAX_RUN_LOG_BYTES;
-    use codeyard_model::ci::MAX_RUN_LOG_LINES;
+    use codeyard_database::ci_logs::admit_log_lines;
+    use codeyard_database::ci_logs::TRUNCATED_LINE;
+    use codeyard_database::ci_logs::TRUNCATION_RESERVE;
+    use codeyard_types::ci::LogLine;
+    use codeyard_types::ci::MAX_RUN_LOG_BYTES;
+    use codeyard_types::ci::MAX_RUN_LOG_LINES;
 
     fn line(text: &str) -> LogLine {
         LogLine {

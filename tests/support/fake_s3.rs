@@ -22,8 +22,8 @@ pub struct FakeS3 {
 }
 
 impl FakeS3 {
-    pub async fn for_database(pool: &codeyard_db_core::DbPool) -> Option<Self> {
-        if codeyard_db_cluster::cluster::cluster_enabled(pool)
+    pub async fn for_database(pool: &codeyard_database::DbPool) -> Option<Self> {
+        if codeyard_db_placement::cluster::cluster_enabled(pool)
             .await
             .unwrap()
         {

@@ -1,10 +1,10 @@
 use anyhow::Result;
-use codeyard_db_core::ci_policy::CiAdmissionRefusal;
-use codeyard_db_core::models::CiDeployment;
-use codeyard_db_core::models::CiLogLine;
-use codeyard_db_core::models::CiRun;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::ci_policy::CiAdmissionRefusal;
+use codeyard_database::models::CiDeployment;
+use codeyard_database::models::CiLogLine;
+use codeyard_database::models::CiRun;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 use uuid::Uuid;
 
 pub mod claims;
@@ -35,7 +35,7 @@ pub fn may_cancel_run(
     actor_id: i64,
     triggered_by_id: Option<i64>,
     personal_admin: bool,
-    access: codeyard_db_core::models::AccessLevel,
+    access: codeyard_database::models::AccessLevel,
 ) -> bool {
     triggered_by_id == Some(actor_id) || personal_admin || access.can_write()
 }
@@ -175,7 +175,7 @@ pub(crate) fn validate_ci_attempt(
 
 #[derive(Default, sqlx::FromRow)]
 pub struct CiRunOptions {
-    pub replay: Option<sqlx::types::Json<codeyard_actions::progress::Replay>>,
+    pub replay: Option<sqlx::types::Json<codeyard_runner::progress::Replay>>,
     pub debug: bool,
 }
 native_operation!(crate::postgres::ci::ci_run_options,crate::sqlite::ci::ci_run_options,
@@ -280,7 +280,7 @@ native_operation!(crate::postgres::ci::request_ci_cancellation_with_credential,
     fn request_ci_cancellation_with_credential(pool: &DbPool, run_id: Uuid, actor_id: i64, credential: &CiCredential) -> Result<Cancellation>);
 native_operation!(crate::postgres::ci::delete_ci_run_data,
     crate::sqlite::ci::delete_ci_run_data,
-    fn delete_ci_run_data(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo: i64, id: i64, kind: CiRunDeletion) -> Result<bool>);
+    fn delete_ci_run_data(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, repo: i64, id: i64, kind: CiRunDeletion) -> Result<bool>);
 native_operation!(crate::postgres::ci::get_ci_run_by_id,
     crate::sqlite::ci::get_ci_run_by_id,
     fn get_ci_run_by_id(pool: &DbPool, repo_id: i64, id: i64) -> Result<Option<CiRun>>);
@@ -350,7 +350,7 @@ pub async fn append_ci_logs(
     run_id: i64,
     worker: &str,
     sequence: i64,
-    lines: &[codeyard_model::ci::LogLine],
+    lines: &[codeyard_types::ci::LogLine],
 ) -> Result<bool> {
     log_chunks::append(pool, run_id, worker, sequence, lines).await
 }
@@ -406,4 +406,4 @@ native_operation!(crate::postgres::ci::has_ci_accepted_push,
     sha: &str,
 ) -> Result<bool>);
 
-use codeyard_db_core::queries::ci::CiCredential;
+use codeyard_database::queries::ci::CiCredential;

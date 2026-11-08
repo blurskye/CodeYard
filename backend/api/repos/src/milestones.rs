@@ -32,13 +32,13 @@ use codeyard_api_http::shared::repos::forms::authorize_post;
 use codeyard_api_http::shared::repos::forms::field;
 use codeyard_api_http::shared::repos::forms::with_status;
 use codeyard_app::app::AppState;
-use codeyard_db_core::models::MilestoneSummary;
+use codeyard_database::models::MilestoneSummary;
 use codeyard_db_repos::assignees::AssignedItem;
 use codeyard_db_repos::discussions::ListFilter;
 use codeyard_db_repos::discussions::Pick;
 use codeyard_db_repos::milestones::MilestoneWriteRefusal;
-use codeyard_model::issue_input::parse_due_date;
-use codeyard_model::issue_input::validate_milestone;
+use codeyard_types::issue_input::parse_due_date;
+use codeyard_types::issue_input::validate_milestone;
 use codeyard_webui::pages::repos::issues as view;
 use codeyard_webui::pages::repos::issues::ListCounts;
 use codeyard_webui::pages::repos::issues::MilestoneDraft;
@@ -60,7 +60,7 @@ pub(crate) fn milestone_view(summary: MilestoneSummary) -> view::Milestone {
 
 /// Picker choices do not show progress counts.
 pub(crate) fn milestone_choice_view(
-    milestone: codeyard_db_core::models::Milestone,
+    milestone: codeyard_database::models::Milestone,
 ) -> view::Milestone {
     milestone_view(MilestoneSummary {
         milestone,

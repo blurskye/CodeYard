@@ -9,7 +9,7 @@ use axum::http::StatusCode;
 use axum::http::Uri;
 use axum::response::Response;
 use codeyard_app::app::AppState;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_webui::pages::ci as view;
 use codeyard_webui::pages::repos::actions as view_actions;
 use codeyard_webui::pages::repos::actions::logs::LogLine;
@@ -68,7 +68,7 @@ fn query_model(ctx: &PageContext) -> Result<BTreeMap<String, String>, Response> 
     ] {
         if let Some(value) = ctx.query.get(key).filter(|value| !value.is_empty()) {
             let too_long = if matches!(key, "branch" | "ref") {
-                !codeyard_repos_core::workflows::is_safe_ref(value)
+                !codeyard_git_storage::workflows::is_safe_ref(value)
             } else {
                 value.len() > 500
             };
@@ -112,7 +112,7 @@ fn bounded_limit(
 /// means the steps appear as their logs arrive.
 async fn planned_jobs(
     ctx: &PageContext,
-    repository: &codeyard_db_core::models::Repository,
+    repository: &codeyard_database::models::Repository,
     sha: Option<&str>,
     paths: &str,
 ) -> Vec<view_actions::PlannedJob> {
@@ -122,7 +122,7 @@ async fn planned_jobs(
     let store = repo_store(repository, ctx.state.cluster.as_ref());
     let listed = tokio::time::timeout(
         std::time::Duration::from_secs(5),
-        codeyard_repos_core::workflows::list_workflows_for_ref(&store, sha),
+        codeyard_git_storage::workflows::list_workflows_for_ref(&store, sha),
     )
     .await;
     let Ok(Ok(definitions)) = listed else {
@@ -255,7 +255,7 @@ pub async fn actions(
             .get("ref")
             .cloned()
             .unwrap_or_else(|| repository.default_branch.clone());
-        if !codeyard_repos_core::workflows::is_safe_ref(&dispatch_branch) {
+        if !codeyard_git_storage::workflows::is_safe_ref(&dispatch_branch) {
             return ctx.error(StatusCode::BAD_REQUEST, "Invalid workflow ref.");
         }
         let store = repo_store(repository, ctx.state.cluster.as_ref());
@@ -272,7 +272,7 @@ pub async fn actions(
                 return Ok(Vec::new());
             }
             store.commit(&discovery_ref).await?;
-            codeyard_repos_core::workflows::list_workflows_for_ref(&store, &discovery_ref).await
+            codeyard_git_storage::workflows::list_workflows_for_ref(&store, &discovery_ref).await
         })
         .await
         {

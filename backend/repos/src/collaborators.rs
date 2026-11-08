@@ -1,6 +1,6 @@
 //! Collaborator invitations keep admission separate from permission grants.
 
-use codeyard_db_core::models::AccessLevel;
+use codeyard_database::models::AccessLevel;
 use codeyard_db_repos::repositories::collaborators::Added;
 use codeyard_db_repos::repositories::collaborators::Collaborator;
 use codeyard_db_repos::repositories::collaborators::CollaboratorQuery;
@@ -44,7 +44,7 @@ pub fn permission(value: &str) -> Option<AccessLevel> {
 }
 
 pub async fn list(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     actor: i64,
     repo_id: i64,
     query: &CollaboratorQuery<'_>,
@@ -78,7 +78,7 @@ pub async fn list(
             codeyard_db_orgs::organizations::membership::get_organization_role(pool, actor, org)
                 .await
                 .map_err(|_| Error::Unavailable)?,
-            codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(_)
+            codeyard_database::queries::organizations::OrganizationOutcome::Applied(_)
         );
         if !member {
             return Err(Error::Denied);
@@ -89,8 +89,8 @@ pub async fn list(
         .map_err(database_error)
 }
 pub async fn add(
-    pool: &codeyard_db_core::DbPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    pool: &codeyard_database::DbPool,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     username: &str,
     permission: AccessLevel,
@@ -117,7 +117,7 @@ pub async fn add(
         .map_err(database_error)
 }
 pub async fn remove(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     actor: i64,
     repo_id: i64,
     username: &str,
@@ -127,7 +127,7 @@ pub async fn remove(
         .map_err(database_error)
 }
 pub async fn invitations(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     actor: i64,
     repo_id: Option<i64>,
     offset: i64,
@@ -143,7 +143,7 @@ pub async fn invitations(
         .map_err(database_error)
 }
 pub async fn recipient_invitations(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     actor: i64,
     session: &str,
     offset: i64,
@@ -157,7 +157,7 @@ pub async fn recipient_invitations(
 }
 
 pub async fn update_invitation(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     actor: i64,
     repo_id: i64,
     id: i64,
@@ -170,8 +170,8 @@ pub async fn update_invitation(
     .map_err(database_error)
 }
 pub async fn respond(
-    pool: &codeyard_db_core::DbPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    pool: &codeyard_database::DbPool,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     id: i64,
     accept: bool,
 ) -> Result<(), Error> {

@@ -68,7 +68,7 @@ async fn contract(pg: bool) {
     let mut repos = Vec::new();
     for name in ["project", "other"] {
         repos.push(
-            codeyard_repos_core::repositories::lifecycle::provision(
+            codeyard_git_storage::repositories::lifecycle::provision(
                 (f.pool(), None),
                 &repos_root,
                 codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(actor),
@@ -180,7 +180,7 @@ async fn contract(pg: bool) {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(bot.username, codeyard_db_core::queries::ci_tokens::BOT);
+    assert_eq!(bot.username, codeyard_database::queries::ci_tokens::BOT);
     assert!(codeyard_db_identity::users::sessions::create_session(
         f.pool(),
         "bot-session",
@@ -197,7 +197,7 @@ async fn contract(pg: bool) {
         f.pool(),
         bot.id,
         repos[1].id,
-        codeyard_db_core::models::AccessLevel::Write,
+        codeyard_database::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -213,7 +213,7 @@ async fn contract(pg: bool) {
     let names=graphql(&router,&jobs["writer"],"{ viewer { login } allowed:repository(owner:\"alice\",name:\"project\") { id name } denied:repository(owner:\"alice\",name:\"other\") { id name } }",json!({})).await;
     assert_eq!(
         names["data"]["viewer"]["login"],
-        codeyard_db_core::queries::ci_tokens::BOT
+        codeyard_database::queries::ci_tokens::BOT
     );
     assert_eq!(names["data"]["allowed"]["name"], "project");
     assert!(names["data"]["denied"].is_null());

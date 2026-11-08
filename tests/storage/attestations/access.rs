@@ -1,6 +1,6 @@
 use super::*;
 
-use codeyard_model::permissions::Permissions;
+use codeyard_types::permissions::Permissions;
 use std::collections::BTreeMap;
 
 async fn contract(pg: bool) {

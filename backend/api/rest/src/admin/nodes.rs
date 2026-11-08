@@ -63,7 +63,7 @@ async fn render_invite(
     let authority = (administrator.id, session).into();
     let after = ctx.query.get("after").map(String::as_str).unwrap_or("");
     let mut nodes =
-        match codeyard_db_cluster::cluster::admin_node_page(&ctx.state.pool, &authority, after)
+        match codeyard_db_placement::cluster::admin_node_page(&ctx.state.pool, &authority, after)
             .await
         {
             Ok(nodes) => nodes,
@@ -82,7 +82,8 @@ async fn render_invite(
     let next_after = more
         .then(|| nodes.last().map(|node| node.name.clone()))
         .flatten();
-    let Ok(cluster_enabled) = codeyard_db_cluster::cluster::cluster_enabled(&ctx.state.pool).await
+    let Ok(cluster_enabled) =
+        codeyard_db_placement::cluster::cluster_enabled(&ctx.state.pool).await
     else {
         return ctx.error(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -99,7 +100,7 @@ async fn render_invite(
             .into_iter()
             .map(|node| view::Node {
                 offline: node.status == "active" && !node.is_online(),
-                roles: codeyard_model::node_roles::describe_roles(&node.roles),
+                roles: codeyard_types::node_roles::describe_roles(&node.roles),
                 version: node.version.unwrap_or_default(),
                 last_seen: node
                     .last_seen
@@ -166,21 +167,21 @@ async fn change(
         .expect("mutation guard checked account")
         .id;
     let session = codeyard_api_http::session::extract_session_id(&ctx.headers).unwrap_or_default();
-    let authority = codeyard_db_cluster::cluster::Authority::Administrator {
+    let authority = codeyard_db_placement::cluster::Authority::Administrator {
         user_id: actor,
         session: &session,
     };
     let pool = &ctx.state.pool;
     let result = match change {
-        Change::Approve => codeyard_cluster_core::pairing::approve(pool, authority, &name).await,
-        Change::Revoke => codeyard_cluster_core::pairing::revoke(pool, authority, &name).await,
+        Change::Approve => codeyard_nodes::pairing::approve(pool, authority, &name).await,
+        Change::Revoke => codeyard_nodes::pairing::revoke(pool, authority, &name).await,
     };
     match result {
-        Ok(codeyard_db_core::models::NodeStatusChange::Changed { .. }) => {
+        Ok(codeyard_database::models::NodeStatusChange::Changed { .. }) => {
             ctx.redirect("/admin/nodes")
         }
         // The account stopped being an administrator after the page check above.
-        Ok(codeyard_db_core::models::NodeStatusChange::Denied) => {
+        Ok(codeyard_database::models::NodeStatusChange::Denied) => {
             ctx.error(StatusCode::FORBIDDEN, "Administrator access is required.")
         }
         _ => {
@@ -215,7 +216,7 @@ async fn cancel_drain(
 }
 
 fn drain_error(error: &anyhow::Error) -> (StatusCode, String, Option<i64>) {
-    use codeyard_db_cluster::drain::Refusal;
+    use codeyard_db_placement::drain::Refusal;
     match error.downcast_ref::<Refusal>() {
         Some(Refusal::Denied) => (StatusCode::FORBIDDEN, error.to_string(), None),
         Some(Refusal::Invalid) => (StatusCode::UNPROCESSABLE_ENTITY, error.to_string(), None),
@@ -253,7 +254,8 @@ async fn change_drain(
     let user = ctx.user.as_ref().expect("mutation guard checked account");
     let session = codeyard_api_http::session::extract_session_id(&ctx.headers).unwrap_or_default();
     let actor = (user.id, session).into();
-    match codeyard_cluster::drain::change(&ctx.state.pool, Some(&actor), &name, cancel, None).await
+    match codeyard_placement::drain::change(&ctx.state.pool, Some(&actor), &name, cancel, None)
+        .await
     {
         Ok(_) => ctx.redirect("/admin/nodes"),
         Err(error) => {
@@ -290,7 +292,7 @@ async fn api_change_drain(
         Ok(auth) => auth,
         Err(response) => return response,
     };
-    match codeyard_cluster::drain::change(
+    match codeyard_placement::drain::change(
         &state.pool,
         Some(&auth.database_actor()),
         &name,
@@ -378,7 +380,7 @@ async fn api_add_nodes(
         )
             .into_response();
     };
-    match codeyard_cluster::provision::add(
+    match codeyard_placement::provision::add(
         context,
         Some(&auth.database_actor()),
         &input.role,
@@ -436,7 +438,7 @@ async fn add_nodes(
         codeyard_api_http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
     )
         .into();
-    match codeyard_cluster::provision::add(context, Some(&actor), role, count).await {
+    match codeyard_placement::provision::add(context, Some(&actor), role, count).await {
         Ok(added) => {
             render_invite(
                 &ctx,

@@ -8,15 +8,15 @@ use serde::Serialize;
 
 /// Safe canonical namespace projection, never numeric-ID owner inference.
 pub(crate) async fn repository_owner(
-    pool: &codeyard_db_core::DbPool,
-    repository: &codeyard_db_core::models::Repository,
+    pool: &codeyard_database::DbPool,
+    repository: &codeyard_database::models::Repository,
 ) -> Result<String, (StatusCode, Json<ApiError>)> {
     let mut owners = repository_owners(pool, &[repository.id]).await?;
     Ok(owners.remove(&repository.id).expect("validated owner"))
 }
 
 pub(crate) async fn repository_owners(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     ids: &[i64],
 ) -> Result<std::collections::BTreeMap<i64, String>, (StatusCode, Json<ApiError>)> {
     let unavailable = || {
@@ -39,7 +39,7 @@ pub(crate) async fn repository_owners(
 
 /// The topics of each listed repository. A repository without topics is absent from the map.
 pub(crate) async fn repository_topics(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     ids: &[i64],
 ) -> Result<std::collections::BTreeMap<i64, Vec<String>>, (StatusCode, Json<ApiError>)> {
     codeyard_db_repos::repositories::topics::repository_topics(pool, ids)
@@ -56,7 +56,7 @@ pub(crate) async fn repository_topics(
 }
 
 pub(crate) fn map_commit_status_response(
-    status: codeyard_db_core::models::CommitStatus,
+    status: codeyard_database::models::CommitStatus,
     creator: Option<UserResponse>,
 ) -> CommitStatusResponse {
     CommitStatusResponse {
@@ -100,7 +100,7 @@ pub struct RepoResponse {
 impl RepoResponse {
     /// The repository as the API lists it. `owner` is the namespace it belongs to.
     pub(crate) fn new(
-        repository: &codeyard_db_core::models::Repository,
+        repository: &codeyard_database::models::Repository,
         owner: &str,
         topics: Vec<String>,
         forked_from: Option<ForkParent>,
@@ -223,9 +223,9 @@ pub fn repo_store_error(
 }
 
 pub(crate) fn lifecycle_status(
-    error: &codeyard_repos_core::repositories::lifecycle::StorageError,
+    error: &codeyard_git_storage::repositories::lifecycle::StorageError,
 ) -> StatusCode {
-    use codeyard_repos_core::repositories::lifecycle::LifecycleFailure;
+    use codeyard_git_storage::repositories::lifecycle::LifecycleFailure;
     match error.kind {
         LifecycleFailure::Invalid | LifecycleFailure::OwnRepositoryFork => StatusCode::BAD_REQUEST,
         LifecycleFailure::Denied => StatusCode::FORBIDDEN,
@@ -246,9 +246,9 @@ pub(crate) fn storage_unavailable() -> (StatusCode, Json<ApiError>) {
 }
 
 pub(crate) fn lifecycle_error(
-    error: codeyard_repos_core::repositories::lifecycle::StorageError,
+    error: codeyard_git_storage::repositories::lifecycle::StorageError,
 ) -> (StatusCode, Json<ApiError>) {
-    use codeyard_repos_core::repositories::lifecycle::LifecycleFailure;
+    use codeyard_git_storage::repositories::lifecycle::LifecycleFailure;
     let code = match error.kind {
         LifecycleFailure::Invalid => "validation_error",
         LifecycleFailure::OwnRepositoryFork => "invalid_operation",
@@ -266,9 +266,9 @@ pub(crate) fn lifecycle_error(
 }
 
 pub(crate) fn ref_error(
-    error: codeyard_repos_core::ref_errors::RefError,
+    error: codeyard_git_storage::ref_errors::RefError,
 ) -> (StatusCode, Json<ApiError>) {
-    use codeyard_repos_core::ref_errors::RefError;
+    use codeyard_git_storage::ref_errors::RefError;
     let (status, code, message) = match error {
         RefError::Access(error) => return codeyard_api_http::shared::repos::access::access_error(error),
         RefError::Git(error) => return repo_store_error(error, StatusCode::BAD_REQUEST),
@@ -337,7 +337,7 @@ mod error_tests {
 
     #[test]
     fn unreachable_storage_is_503_and_only_refused_refs_are_400() {
-        use codeyard_repos_core::ref_errors::RefError;
+        use codeyard_git_storage::ref_errors::RefError;
         let (status, _) = ref_error(RefError::Git(RepoError::authority_unavailable()));
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
         let (status, _) = ref_error(RefError::Git(RepoError::new(

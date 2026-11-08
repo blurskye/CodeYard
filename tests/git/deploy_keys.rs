@@ -157,7 +157,7 @@ async fn deploy_keys_clone_push_and_stay_inside_their_repository() {
     crate::support::native_database::enable_cluster(&database.pool)
         .await
         .unwrap();
-    codeyard_db_cluster::node_config::upsert_node_configuration(&database.pool, "public", true)
+    codeyard_db_placement::node_config::upsert_node_configuration(&database.pool, "public", true)
         .await
         .unwrap();
     let owner =
@@ -389,9 +389,9 @@ async fn deploy_keys_clone_push_and_stay_inside_their_repository() {
     .unwrap();
     let physical = root.path().join("storage/repos").join(format!(
         "{}.git",
-        codeyard_repos_core::wire::repository_uuid(&project.disk_path).unwrap()
+        codeyard_git_storage::wire::repository_uuid(&project.disk_path).unwrap()
     ));
-    let provenance = codeyard_repos_core::repositories::store::RepoStore::from_disk_path(
+    let provenance = codeyard_git_storage::repositories::store::RepoStore::from_disk_path(
         &physical.to_string_lossy(),
     )
     .branch_publication(project.id, "refs/heads/from-writer")

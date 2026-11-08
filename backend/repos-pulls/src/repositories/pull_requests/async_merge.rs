@@ -1,9 +1,9 @@
 //! Durable asynchronous requests, executed by the server's bounded, shutdown-drained Git tasks.
 use crate::services::RepositoryServices;
 use codeyard_ci_engine::runs::CiRuns;
+use codeyard_git_storage::repositories::pull_requests::database_error;
+use codeyard_git_storage::repositories::pull_requests::OperationError;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
-use codeyard_repos_core::repositories::pull_requests::database_error;
-use codeyard_repos_core::repositories::pull_requests::OperationError;
 use serde_json::json;
 use serde_json::Value;
 
@@ -12,7 +12,7 @@ pub struct Job {
     pub pull_request_id: i64,
     /// The token the request came with. The job runs on this server, so the credential stays
     /// in memory and is rechecked before preparation and publication.
-    pub authority: codeyard_db_core::queries::credentials::Actor,
+    pub authority: codeyard_database::queries::credentials::Actor,
     pub owner: String,
     pub name: String,
     pub number: i32,
@@ -26,7 +26,7 @@ fn denied() -> OperationError {
     }
 }
 async fn execute(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     ci: &CiRuns,
     broadcaster: &std::sync::Arc<NotificationBroadcaster>,
     uuid: &str,
@@ -119,7 +119,7 @@ pub async fn start(state: &dyn RepositoryServices, job: Job) -> Result<Value, Op
                 code: "not_found",
                 message: "Repository not found".into(),
             })?;
-    codeyard_repos_core::repositories::pull_requests::require_write(state.pool(), &actor, &repo)
+    codeyard_git_storage::repositories::pull_requests::require_write(state.pool(), &actor, &repo)
         .await?;
     let pull = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(
         state.pool(),
@@ -193,7 +193,7 @@ pub async fn start(state: &dyn RepositoryServices, job: Job) -> Result<Value, Op
 /// Records the result, retrying a failed write with backoff. The update only changes a pending
 /// row, so repeating it is safe. When every attempt fails, restart recovery settles the row.
 async fn finish_with_retry(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     uuid: &str,
     status: &str,
     details: &Value,
@@ -218,7 +218,10 @@ async fn finish_with_retry(
 }
 /// Only this node's abandoned requests fail; starting another web node never cancels live work.
 /// A request whose pull request is already recorded as merged reports that merge instead.
-pub async fn recover(pool: &codeyard_db_core::DbPool, node_id: Option<i64>) -> anyhow::Result<u64> {
+pub async fn recover(
+    pool: &codeyard_database::DbPool,
+    node_id: Option<i64>,
+) -> anyhow::Result<u64> {
     codeyard_db_repos::pull_requests::async_merge::recover(
         pool,
         node_id,

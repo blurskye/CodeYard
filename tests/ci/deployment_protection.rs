@@ -9,7 +9,7 @@ use codeyard_db_actions::deployment_protection::Review;
 use codeyard_db_identity::github_apps::App;
 use codeyard_support::token_hash::token_hash;
 
-use codeyard_db_core::models::CiRun;
+use codeyard_database::models::CiRun;
 use serde_json::{json, Value};
 use std::time::Duration;
 
@@ -60,7 +60,7 @@ async fn app(
     codeyard_db_identity::github_app_hooks::save(
         f.pool(),
         app.id,
-        &codeyard_db_core::queries::webhooks::WebhookPatch {
+        &codeyard_database::queries::webhooks::WebhookPatch {
             payload_url: Some("http://127.0.0.1:1/blocked".into()),
             content_type: Some("application/json".into()),
             events: Some("deployment_protection_rule".into()),

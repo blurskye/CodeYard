@@ -181,7 +181,7 @@ fn check_destination(dir: &Path, places: &Places<'_>) -> Result<()> {
         reject_symlink(&dir.join(name))?;
     }
     if !places.database_url.is_empty() {
-        if let Some(database) = codeyard_db_core::sqlite_file(places.database_url)? {
+        if let Some(database) = codeyard_database::sqlite_file(places.database_url)? {
             for suffix in ["", "-wal", "-shm"] {
                 let mut path = database.as_os_str().to_owned();
                 path.push(suffix);
@@ -424,7 +424,7 @@ fn lock_destination(dir: &Path) -> Result<std::fs::File> {
 
 /// Writes a backup of this installation into `dir`.
 pub async fn backup(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     places: &Places<'_>,
     dir: &Path,
 ) -> Result<()> {
@@ -433,19 +433,19 @@ pub async fn backup(
 
 /// An operator on an enrolled, stopped web/SSH node can copy the other live primaries.
 pub async fn backup_with_context(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     places: &Places<'_>,
     dir: &Path,
-    context: Option<&codeyard_repos_core::context::NodeContext>,
+    context: Option<&codeyard_git_storage::context::NodeContext>,
 ) -> Result<()> {
-    let clustered = codeyard_db_cluster::cluster::cluster_enabled(pool).await?;
+    let clustered = codeyard_db_placement::cluster::cluster_enabled(pool).await?;
     ensure!(
         !clustered || context.is_some(),
         "cluster backup needs an enrolled web or ssh node context"
     );
     let s3 = codeyard_storage::s3::S3Config::optional_from_env()?.is_some();
     let started = std::time::Instant::now();
-    let before = codeyard_db_cluster::backups::list_repositories(pool).await?;
+    let before = codeyard_db_placement::backups::list_repositories(pool).await?;
     ensure!(
         clustered || before.iter().all(|repo| repo.storage_node_id.is_none()),
         "single-node backup cannot include repositories assigned to storage nodes"
@@ -469,8 +469,8 @@ pub async fn backup_with_context(
     let mut object_inventory = Vec::new();
     let mut snapshot_revisions = std::collections::BTreeMap::<i64, Vec<String>>::new();
     let file = match pool {
-        codeyard_db_core::DbPool::Sqlite(_) => SQLITE_FILE,
-        codeyard_db_core::DbPool::Postgres(_) => POSTGRES_FILE,
+        codeyard_database::DbPool::Sqlite(_) => SQLITE_FILE,
+        codeyard_database::DbPool::Postgres(_) => POSTGRES_FILE,
     };
     // The snapshot waits in a partial file until every copy has succeeded, so a failed run
     // leaves the previous complete backup as it was.
@@ -479,16 +479,16 @@ pub async fn backup_with_context(
         std::fs::remove_file(&partial)?;
     }
     let after = match pool {
-        codeyard_db_core::DbPool::Sqlite(_) => {
+        codeyard_database::DbPool::Sqlite(_) => {
             let target = partial.to_str().context("backup path is not UTF-8")?;
-            codeyard_db_cluster::backups::copy_sqlite(pool, target).await?;
-            codeyard_db_cluster::backups::sqlite_snapshot_repositories(&partial).await?
+            codeyard_db_placement::backups::copy_sqlite(pool, target).await?;
+            codeyard_db_placement::backups::sqlite_snapshot_repositories(&partial).await?
         }
-        codeyard_db_core::DbPool::Postgres(_) => {
+        codeyard_database::DbPool::Postgres(_) => {
             let (snapshot_tx, snapshot, repositories, objects, revisions) =
-                codeyard_db_cluster::backups::postgres_snapshot(pool).await?;
+                codeyard_db_placement::backups::postgres_snapshot(pool).await?;
             let snapshot = format!("--snapshot={snapshot}");
-            let schema = codeyard_db_cluster::backups::schema_name(pool).await?;
+            let schema = codeyard_db_placement::backups::schema_name(pool).await?;
             let schema = format!("--schema=\"{}\"", schema.replace('"', "\"\""));
             let target = format!("--file={}", partial.display());
             postgres_tool(
@@ -547,7 +547,7 @@ pub async fn backup_with_context(
     for repository in &after {
         if repository.storage_node_id.is_some() {
             let context = context.context("cluster backup context unavailable")?;
-            let uuid = codeyard_repos_core::wire::repository_uuid(&repository.disk_path)?;
+            let uuid = codeyard_git_storage::wire::repository_uuid(&repository.disk_path)?;
             let name = format!("{uuid}.git");
             let path = dir.join(REPOSITORIES_DIR).join(&name);
             reject_symlink(&path)?;
@@ -558,7 +558,7 @@ pub async fn backup_with_context(
             let primary = current
                 .storage_node_id
                 .context("snapshot repository placement disappeared")?;
-            codeyard_cluster::replicas::snapshot(
+            codeyard_placement::replicas::snapshot(
                 context,
                 primary,
                 uuid,
@@ -606,13 +606,13 @@ pub async fn backup_with_context(
             let name = if repository.storage_node_id.is_some() {
                 format!(
                     "{}.git",
-                    codeyard_repos_core::wire::repository_uuid(&repository.disk_path)?
+                    codeyard_git_storage::wire::repository_uuid(&repository.disk_path)?
                 )
             } else {
                 directory_name(Path::new(&repository.disk_path))?
             };
             let path = dir.join(REPOSITORIES_DIR).join(name);
-            let store = codeyard_repos_core::repositories::store::RepoStore::from_disk_path(
+            let store = codeyard_git_storage::repositories::store::RepoStore::from_disk_path(
                 path.to_str().context("backup path is not text")?,
             );
             let present = store.existing_commits(want).await?;
@@ -668,7 +668,7 @@ pub async fn backup_with_context(
     // nothing it names has been removed yet.
     ensure!(
         started.elapsed().as_secs()
-            < codeyard_db_core::queries::files::RESTORE_WINDOW_SECONDS as u64,
+            < codeyard_database::queries::files::RESTORE_WINDOW_SECONDS as u64,
         "backup exceeded the object retention window; refusing publication"
     );
     std::fs::rename(&partial, dir.join(file))?;
@@ -693,7 +693,7 @@ pub async fn backup_with_context(
 /// Restores a backup into this installation's empty database, repository directory and
 /// state directory, then repairs and rebuilds what the database and Git disagree on.
 /// Returns the open database, migrated to this version.
-pub async fn restore(places: &Places<'_>, dir: &Path) -> Result<codeyard_db_core::DbPool> {
+pub async fn restore(places: &Places<'_>, dir: &Path) -> Result<codeyard_database::DbPool> {
     let s3 = codeyard_storage::s3::S3Config::optional_from_env()?.is_some();
     let _lock = lock_destination(dir)?;
     let key = std::env::var_os("NODE_KEY_FILE")
@@ -748,10 +748,10 @@ pub async fn restore(places: &Places<'_>, dir: &Path) -> Result<codeyard_db_core
     );
     let mut prepared_pool = None;
     let mut resume = false;
-    if codeyard_db_core::sqlite_file(places.database_url)?.is_none() {
-        let pool = codeyard_db_core::init_db(places.database_url).await?;
-        if !codeyard_db_cluster::backups::is_empty(&pool).await? {
-            let digest = codeyard_db_cluster::backups::restore_digest(&pool)
+    if codeyard_database::sqlite_file(places.database_url)?.is_none() {
+        let pool = codeyard_database::init_db(places.database_url).await?;
+        if !codeyard_db_placement::backups::is_empty(&pool).await? {
+            let digest = codeyard_db_placement::backups::restore_digest(&pool)
                 .await?
                 .context(
                     "restore needs an empty PostgreSQL database or its own interrupted restore",
@@ -775,7 +775,7 @@ pub async fn restore(places: &Places<'_>, dir: &Path) -> Result<codeyard_db_core
         "restore needs an empty upload directory; {} is not empty",
         uploads.display()
     );
-    let pool = match codeyard_db_core::sqlite_file(places.database_url)? {
+    let pool = match codeyard_database::sqlite_file(places.database_url)? {
         Some(path) => {
             let source = dir.join(SQLITE_FILE);
             ensure!(source.is_file(), "{} has no {SQLITE_FILE}", dir.display());
@@ -804,7 +804,7 @@ pub async fn restore(places: &Places<'_>, dir: &Path) -> Result<codeyard_db_core
             if let Some(parent) = std::path::absolute(&path)?.parent() {
                 sync_dir(parent)?;
             }
-            codeyard_db_core::init_db(places.database_url).await?
+            codeyard_database::init_db(places.database_url).await?
         }
         None => {
             let source = dir.join(POSTGRES_FILE);
@@ -813,17 +813,17 @@ pub async fn restore(places: &Places<'_>, dir: &Path) -> Result<codeyard_db_core
                 .take()
                 .context("restore database was not prepared")?;
             if !resume {
-                let schema = codeyard_db_cluster::backups::schema_name(&pool).await?;
+                let schema = codeyard_db_placement::backups::schema_name(&pool).await?;
                 cluster::restore_postgres(places, &source, &schema).await?;
             }
             pool
         }
     };
-    codeyard_db_core::run_migrations(&pool).await?;
+    codeyard_database::run_migrations(&pool).await?;
     println!("Database restored.");
-    let clustered = codeyard_db_cluster::cluster::cluster_enabled(&pool).await?;
+    let clustered = codeyard_db_placement::cluster::cluster_enabled(&pool).await?;
     let maintenance = if clustered {
-        Some(codeyard_db_cluster::cluster::maintenance_lock(&pool).await?)
+        Some(codeyard_db_placement::cluster::maintenance_lock(&pool).await?)
     } else {
         None
     };
@@ -842,7 +842,7 @@ pub async fn restore(places: &Places<'_>, dir: &Path) -> Result<codeyard_db_core
     }
     // The rows name the directory the backup came from; point them at this one. A repository
     // deleted after the snapshot is only under `deleted/`, and the checks below bring it back.
-    for repository in codeyard_db_cluster::backups::list_repositories(&pool).await? {
+    for repository in codeyard_db_placement::backups::list_repositories(&pool).await? {
         if repository.storage_node_id.is_some() {
             continue;
         }
@@ -850,7 +850,7 @@ pub async fn restore(places: &Places<'_>, dir: &Path) -> Result<codeyard_db_core
         let here = root.join(&name);
         let here = here.to_str().context("repository path is not UTF-8")?;
         if repository.disk_path != here {
-            codeyard_db_cluster::backups::set_disk_path(&pool, repository.id, here).await?;
+            codeyard_db_placement::backups::set_disk_path(&pool, repository.id, here).await?;
         }
     }
     println!("Repositories restored.");
@@ -883,11 +883,11 @@ pub async fn restore(places: &Places<'_>, dir: &Path) -> Result<codeyard_db_core
         cluster::restore_refs(&pool, &root, true).await?;
         if let Some(key) = codeyard_support::node_identity::load_existing(places.state_dir)? {
             if let Some(node) =
-                codeyard_db_cluster::cluster::get_node_by_public_key(&pool, &key.public_hex())
+                codeyard_db_placement::cluster::get_node_by_public_key(&pool, &key.public_hex())
                     .await?
             {
                 if !node.roles.iter().any(|role| role == "storage") {
-                    codeyard_db_cluster::backups::restore_node_ready(
+                    codeyard_db_placement::backups::restore_node_ready(
                         &pool,
                         node.id,
                         &key.public_hex(),

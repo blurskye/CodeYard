@@ -2,11 +2,11 @@ use crate::dependabot_alerts::Update;
 use anyhow::ensure;
 use anyhow::Result;
 use chrono::Utc;
-use codeyard_db_core::pool::PgPool;
-use codeyard_db_core::queries::credentials::Actor;
-use codeyard_db_core::queries::dependabot_alerts::Alert;
-use codeyard_model::advisories::Advisory;
-use codeyard_model::advisories::Refusal;
+use codeyard_database::pool::PgPool;
+use codeyard_database::queries::credentials::Actor;
+use codeyard_database::queries::dependabot_alerts::Alert;
+use codeyard_types::advisories::Advisory;
+use codeyard_types::advisories::Refusal;
 use serde_json::Value;
 use sqlx::Postgres;
 use sqlx::Transaction;
@@ -80,7 +80,7 @@ pub async fn without_osv(pool: &PgPool) -> Result<Vec<Value>> {
     tx.commit().await?;
     let mut rows = Vec::with_capacity(imported.len() + published.len());
     for row in published {
-        match codeyard_db_core::queries::dependabot_alerts::published(row) {
+        match codeyard_database::queries::dependabot_alerts::published(row) {
             Ok(value) => rows.push(value),
             Err(_) => tracing::warn!("Invalid published advisory excluded from catalogue"),
         }
@@ -113,7 +113,7 @@ async fn global_one_in(
         .await?;
     match published {
         Some(row) => Ok(Some(
-            codeyard_db_core::queries::dependabot_alerts::published(row)?,
+            codeyard_database::queries::dependabot_alerts::published(row)?,
         )),
         None => Ok(None),
     }
@@ -121,7 +121,7 @@ async fn global_one_in(
 pub async fn import(pool: &PgPool, actor: impl Into<Actor>, value: &Value) -> Result<Value> {
     let authority = actor.into();
     let actor = authority.user_id;
-    let value = codeyard_model::advisory_documents::import_document(value)?;
+    let value = codeyard_types::advisory_documents::import_document(value)?;
     let mut tx = pool.begin().await?;
     ensure!(
         codeyard_db_identity::postgres::users::transitions::active_admin(&mut tx, actor).await?,
@@ -148,14 +148,14 @@ async fn authorize(
     write: bool,
 ) -> Result<()> {
     ensure!(
-        codeyard_db_core::queries::postgres::discussions::lock_security_authority(
+        codeyard_database::queries::postgres::discussions::lock_security_authority(
             tx,
             actor.user_id,
             repo,
             write
         )
         .await?
-            && codeyard_db_core::queries::postgres::credentials::repository(
+            && codeyard_database::queries::postgres::credentials::repository(
                 tx,
                 actor,
                 repo,
@@ -222,7 +222,7 @@ pub async fn update(
 }
 pub async fn organization_repositories(pool: &PgPool, actor: i64, org: i64) -> Result<Vec<i64>> {
     let mut tx = pool.begin().await?;
-    codeyard_db_core::queries::postgres::users::transitions::lock_accounts_shared(
+    codeyard_database::queries::postgres::users::transitions::lock_accounts_shared(
         &mut tx,
         &[actor],
     )
@@ -230,7 +230,7 @@ pub async fn organization_repositories(pool: &PgPool, actor: i64, org: i64) -> R
     let allowed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM org_memberships m JOIN users u ON u.id=m.user_id WHERE m.org_id=$1 AND m.user_id=$2 AND m.role IN ('owner','admin') AND NOT u.is_banned AND NOT u.must_change_password AND EXISTS(SELECT 1 FROM org_memberships owners JOIN users active ON active.id=owners.user_id WHERE owners.org_id=m.org_id AND owners.role='owner' AND NOT active.is_banned AND NOT active.must_change_password))").bind(org).bind(actor).fetch_one(&mut *tx).await?;
     ensure!(
         allowed
-            || codeyard_db_core::queries::postgres::organizations::roles::manages_security(
+            || codeyard_database::queries::postgres::organizations::roles::manages_security(
                 &mut tx, actor, org
             )
             .await?,
@@ -246,6 +246,6 @@ pub async fn organization_repositories(pool: &PgPool, actor: i64, org: i64) -> R
     Ok(rows)
 }
 
-use codeyard_db_core::queries::postgres::dependabot_alerts::refresh;
+use codeyard_database::queries::postgres::dependabot_alerts::refresh;
 
-use codeyard_db_core::queries::postgres::dependabot_alerts::global_in;
+use codeyard_database::queries::postgres::dependabot_alerts::global_in;

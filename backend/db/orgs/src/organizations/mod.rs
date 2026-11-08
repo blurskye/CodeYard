@@ -1,4 +1,4 @@
-use codeyard_db_core::models::OrgRole;
+use codeyard_database::models::OrgRole;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OrganizationInputError {

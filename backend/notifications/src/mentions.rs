@@ -31,8 +31,8 @@ pub enum MentionComment {
 
 /// One text that may mention users, and the event it belongs to.
 pub struct MentionSource<'a> {
-    pub actor: &'a codeyard_db_core::models::User,
-    pub repository: &'a codeyard_db_core::models::Repository,
+    pub actor: &'a codeyard_database::models::User,
+    pub repository: &'a codeyard_database::models::Repository,
     pub owner: &'a str,
     pub repo: &'a str,
     /// The issue or pull request number.
@@ -54,7 +54,7 @@ pub struct MentionSource<'a> {
 /// write has already been saved, so a failure here never fails the request. A failed lookup is
 /// logged; a failed notification is dropped, as the other notification kinds drop theirs.
 pub async fn notify_mentions(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     broadcaster: &NotificationBroadcaster,
     source: MentionSource<'_>,
 ) -> Vec<i64> {
@@ -179,11 +179,11 @@ const REMOTE_LOOKUP_SECONDS: u64 = 10;
 /// Accounts this cell does not know yet, looked up in their home cells. Only a public
 /// repository's mention reaches another cell, so no other lookup is made.
 async fn remote_users(
-    pool: &codeyard_db_core::DbPool,
-    repository: &codeyard_db_core::models::Repository,
+    pool: &codeyard_database::DbPool,
+    repository: &codeyard_database::models::Repository,
     names: &[String],
-    known: &[codeyard_db_core::models::User],
-) -> Vec<codeyard_db_core::models::User> {
+    known: &[codeyard_database::models::User],
+) -> Vec<codeyard_database::models::User> {
     if pool.foreign_authorization().is_none()
         || repository.is_private
         || repository.is_internal
@@ -222,16 +222,16 @@ async fn remote_users(
 /// A recipient who is gone, blocked the actor or ignores the repository gets nothing, and the
 /// event still counts as delivered.
 pub async fn receive(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     broadcaster: &NotificationBroadcaster,
-    event: &codeyard_db_core::cells::notices::Event,
-    admission: &dyn codeyard_db_core::cells::notices::Admission,
+    event: &codeyard_database::cells::notices::Event,
+    admission: &dyn codeyard_database::cells::notices::Admission,
 ) -> anyhow::Result<()> {
     let source = admission.check(event).await?;
     event.validate(source)?;
     let notice = &event.notice;
     if event.withdrawn {
-        return codeyard_db_core::cells::notices::withdraw(pool, source, notice.repository.id)
+        return codeyard_database::cells::notices::withdraw(pool, source, notice.repository.id)
             .await;
     }
     let Some(recipient) =
@@ -249,7 +249,7 @@ pub async fn receive(
     {
         return Ok(());
     }
-    let actor = codeyard_db_core::cells::notices::retain(pool, source, notice).await?;
+    let actor = codeyard_database::cells::notices::retain(pool, source, notice).await?;
     anyhow::ensure!(
         admission.check(event).await? == source,
         "Notice source changed"

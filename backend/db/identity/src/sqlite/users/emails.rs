@@ -2,8 +2,8 @@ use crate::email::secondary_link_condition;
 use crate::users::emails::EmailAddress;
 use crate::users::emails::EmailRefusal;
 use anyhow::Result;
-use codeyard_db_core::pool::SqlitePool;
-use codeyard_db_core::queries::users::accounts::AccountCredential;
+use codeyard_database::pool::SqlitePool;
+use codeyard_database::queries::users::accounts::AccountCredential;
 
 const LIST_EMAILS: &str = "SELECT e.email,e.verified FROM user_emails e JOIN users u ON u.id=e.user_id WHERE e.user_id=?1 AND lower(e.email)<>lower(COALESCE(u.email,'')) ORDER BY e.email";
 
@@ -82,7 +82,7 @@ pub async fn change_emails(
         emails
             .iter()
             .map(|email| {
-                codeyard_model::cells::Key::new(codeyard_model::cells::KeyKind::Email, email)
+                codeyard_types::cells::Key::new(codeyard_types::cells::KeyKind::Email, email)
             })
             .collect::<Result<Vec<_>>>()?
     } else {
@@ -90,18 +90,19 @@ pub async fn change_emails(
     };
     if add && pool.directory().is_some() {
         anyhow::ensure!(
-            codeyard_db_core::cells::directory::sqlite::user_id(pool, &mut tx, user, &keys).await?,
+            codeyard_database::cells::directory::sqlite::user_id(pool, &mut tx, user, &keys)
+                .await?,
             EmailRefusal::Taken
         );
         crate::sqlite::users::transitions::require_account_exclusive(&mut tx, user, credential)
             .await?;
     }
     if !add && !keys.is_empty() {
-        codeyard_db_core::cells::outbox::sqlite::release(
+        codeyard_database::cells::outbox::sqlite::release(
             pool,
             &mut tx,
-            codeyard_model::cells::Object {
-                kind: codeyard_model::cells::ObjectKind::User,
+            codeyard_types::cells::Object {
+                kind: codeyard_types::cells::ObjectKind::User,
                 id: user,
             },
             &keys,
@@ -110,10 +111,10 @@ pub async fn change_emails(
     }
     tx.commit().await?;
     if !add && !keys.is_empty() {
-        codeyard_db_core::cells::directory::sqlite::finish_release(
+        codeyard_database::cells::directory::sqlite::finish_release(
             pool,
-            codeyard_model::cells::Object {
-                kind: codeyard_model::cells::ObjectKind::User,
+            codeyard_types::cells::Object {
+                kind: codeyard_types::cells::ObjectKind::User,
                 id: user,
             },
             &keys,

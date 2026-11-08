@@ -6,8 +6,8 @@ use crate::repositories::commit_comments::CommentEdit;
 use crate::repositories::commit_comments::CommentEdited;
 use crate::repositories::commit_comments::CommentRefusal;
 use anyhow::Result;
-use codeyard_db_core::models::CommitComment;
-use codeyard_db_core::pool::SqlitePool;
+use codeyard_database::models::CommitComment;
+use codeyard_database::pool::SqlitePool;
 
 pub async fn create_comment(pool: &SqlitePool, input: CommentCreate<'_>) -> Result<CommitComment> {
     validate_create(&input)?;
@@ -22,7 +22,7 @@ pub async fn create_comment(pool: &SqlitePool, input: CommentCreate<'_>) -> Resu
         CommentRefusal::Denied
     );
     anyhow::ensure!(
-        codeyard_db_core::queries::sqlite::credentials::writes(
+        codeyard_database::queries::sqlite::credentials::writes(
             &mut tx,
             &input.actor,
             Some(input.repo_id),
@@ -54,7 +54,7 @@ pub async fn edit_comment(
         CommentRefusal::Denied
     );
     anyhow::ensure!(
-        codeyard_db_core::queries::sqlite::credentials::writes(
+        codeyard_database::queries::sqlite::credentials::writes(
             &mut tx,
             &input.actor,
             Some(input.repo_id),
@@ -94,7 +94,7 @@ pub async fn edit_comment(
 
 pub async fn delete_comment(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo: i64,
     id: i64,
     expected_revision: Option<&str>,
@@ -107,7 +107,7 @@ pub async fn delete_comment(
         CommentRefusal::Denied
     );
     anyhow::ensure!(
-        codeyard_db_core::queries::sqlite::credentials::writes(
+        codeyard_database::queries::sqlite::credentials::writes(
             &mut tx,
             &credential,
             Some(repo),

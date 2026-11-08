@@ -8,18 +8,18 @@ use crate::notifications::records::NotificationMark;
 use crate::notifications::records::NotificationScopes;
 use crate::notifications::threads::ThreadAction;
 use anyhow::Result;
-use codeyard_db_core::models::Notification;
-use codeyard_db_core::pool::PgPool;
-use codeyard_db_core::queries::notifications::records::NewNotification;
-use codeyard_db_core::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL;
-use codeyard_db_core::queries::postgres::users::transitions::lock_accounts_shared;
+use codeyard_database::models::Notification;
+use codeyard_database::pool::PgPool;
+use codeyard_database::queries::notifications::records::NewNotification;
+use codeyard_database::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL;
+use codeyard_database::queries::postgres::users::transitions::lock_accounts_shared;
 pub(crate) mod threads;
 
 pub async fn create_notification(
     pool: &PgPool,
     input: NewNotification<'_>,
 ) -> Result<Notification> {
-    use codeyard_db_core::queries::notifications::records::NotificationSuppressed;
+    use codeyard_database::queries::notifications::records::NotificationSuppressed;
     let mut tx = pool.begin().await?;
     let accounts: Vec<i64> = [Some(input.user_id), input.actor_id]
         .into_iter()
@@ -64,7 +64,7 @@ pub async fn create_notification(
     if let Some(repo) = input.repo_id {
         for user in [Some(input.user_id), input.actor_id].into_iter().flatten() {
             anyhow::ensure!(
-                !codeyard_db_core::queries::postgres::users::blocks::repository_interaction_blocked(
+                !codeyard_database::queries::postgres::users::blocks::repository_interaction_blocked(
                     &mut tx, user, repo
                 )
                 .await?,
@@ -172,7 +172,7 @@ pub async fn create_notification(
         .await?;
         anyhow::ensure!(comment.is_some(), NotificationSuppressed);
     }
-    let thread_id = codeyard_db_core::queries::postgres::notifications::records::threads::ensure(
+    let thread_id = codeyard_database::queries::postgres::notifications::records::threads::ensure(
         &mut tx, &input,
     )
     .await?;
@@ -220,7 +220,7 @@ async fn notification_recipient(
 /// commits meanwhile waits for this read. The original positive scope survives
 /// repository deletion and must still resolve to current Read.
 async fn lock_notification_scope_readable(
-    home: Option<&codeyard_db_core::cells::authorization::Provider>,
+    home: Option<&codeyard_database::cells::authorization::Provider>,
     connection: &mut sqlx::PgConnection,
     user_id: i64,
     scope_repository_id: i64,
@@ -238,16 +238,15 @@ async fn lock_notification_scope_readable(
     .fetch_optional(&mut *connection)
     .await?;
     if let Some(readable) = stub {
-        return Ok(
-            readable && codeyard_db_core::cells::notices::readable(home, scope_repository_id).await
-        );
+        return Ok(readable
+            && codeyard_database::cells::notices::readable(home, scope_repository_id).await);
     }
     let Some(authority) =
-        codeyard_db_core::queries::postgres::repositories::access::lock_user_repo_access_in_transaction(
+        codeyard_database::queries::postgres::repositories::access::lock_user_repo_access_in_transaction(
             connection,
             user_id,
             scope_repository_id,
-            codeyard_db_core::queries::postgres::repositories::access::RepositoryRowLock::Shared,
+            codeyard_database::queries::postgres::repositories::access::RepositoryRowLock::Shared,
             true,
         )
         .await?
@@ -553,7 +552,7 @@ async fn decide_scopes(
     }
     for (id, stub, mut allowed) in decisions {
         if allowed && stub {
-            allowed = codeyard_db_core::cells::notices::readable_until(
+            allowed = codeyard_database::cells::notices::readable_until(
                 scopes.home.as_ref(),
                 id,
                 scopes.remote_deadline,
@@ -717,7 +716,7 @@ pub async fn count_header_unread(pool: &PgPool, user_id: i64) -> Result<i64> {
     .await?;
     Ok(native
         + crate::notifications::records::foreign_unread(
-            &codeyard_db_core::DbPool::Postgres(pool.clone()),
+            &codeyard_database::DbPool::Postgres(pool.clone()),
             user_id,
         )
         .await?)
@@ -1087,7 +1086,7 @@ pub async fn notification_inbox_with_credential(
     user_id: i64,
     action: NotificationInboxAction,
 ) -> Result<Option<NotificationInbox>> {
-    codeyard_db_core::queries::postgres::retry_on_conflict(|| {
+    codeyard_database::queries::postgres::retry_on_conflict(|| {
         notification_inbox_once(pool, credential, user_id, action.clone())
     })
     .await

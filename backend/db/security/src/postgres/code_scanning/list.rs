@@ -8,7 +8,7 @@ use crate::code_scanning::ANALYSIS_COLUMNS;
 use crate::code_scanning::ANALYSIS_DELETABLE;
 use anyhow::ensure;
 use anyhow::Result;
-use codeyard_db_core::pool::PgPool;
+use codeyard_database::pool::PgPool;
 
 pub async fn analyses(
     pool: &PgPool,

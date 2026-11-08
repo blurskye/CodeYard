@@ -66,7 +66,7 @@ pub(crate) async fn follow_post(
         .id;
     let session = codeyard_api_http::session::extract_session_id(&ctx.headers).unwrap_or_default();
     let credential =
-        codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session);
+        codeyard_database::queries::users::accounts::AccountCredential::Session(&session);
     let result = codeyard_notifications::following::change(
         &ctx.state.pool,
         &ctx.state.notification_broadcaster,

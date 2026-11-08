@@ -3,7 +3,7 @@ use axum::response::Response;
 use codeyard_api_http::context::PageContext;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_types::ref_path::resolve_repo_ref_path;
 use codeyard_types::ref_path::split_path;
 use std::collections::HashMap;
@@ -79,7 +79,7 @@ pub(crate) fn ref_names_under(loaded: &Loaded, prefix: &str) -> Vec<String> {
 pub(crate) fn default_ref(loaded: &Loaded) -> String {
     let stored = &loaded.default_branch;
     let branch =
-        codeyard_repos_core::repositories::reads::default_branch(&loaded.refs, stored, stored);
+        codeyard_git_storage::repositories::reads::default_branch(&loaded.refs, stored, stored);
     if branch != *stored
         || loaded.refs.is_empty()
         || loaded.refs.contains_key(&format!("refs/heads/{stored}"))
@@ -197,7 +197,7 @@ pub(crate) fn root_if_missing(
 
 pub(crate) async fn load_refs_from_repo(
     state: &codeyard_app::app::AppState,
-    repository: &codeyard_db_core::models::Repository,
+    repository: &codeyard_database::models::Repository,
 ) -> ApiResult<HashMap<String, String>> {
     repo_store(repository, state.cluster.as_ref())
         .refs()
@@ -208,7 +208,7 @@ pub(crate) async fn load_refs_from_repo(
 /// Metadata may use the stored branch when optional Git enrichment is unavailable.
 pub(crate) async fn repository_default_branch_or_db(
     state: &codeyard_app::app::AppState,
-    repository: &codeyard_db_core::models::Repository,
+    repository: &codeyard_database::models::Repository,
 ) -> String {
     match repo_store(repository, state.cluster.as_ref()).info().await {
         Ok(info) => info.default_branch,
@@ -218,7 +218,7 @@ pub(crate) async fn repository_default_branch_or_db(
 
 pub(crate) async fn repository_default_branch(
     state: &codeyard_app::app::AppState,
-    repository: &codeyard_db_core::models::Repository,
+    repository: &codeyard_database::models::Repository,
 ) -> ApiResult<String> {
     repo_store(repository, state.cluster.as_ref())
         .info()

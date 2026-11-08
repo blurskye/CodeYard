@@ -1,6 +1,6 @@
 use anyhow::Result;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct Autolink {
@@ -73,13 +73,13 @@ impl NewAutolink {
 }
 
 native_operation!(crate::postgres::repositories::autolinks::create,crate::sqlite::repositories::autolinks::create,
-    fn create(pool:&DbPool,actor:impl Into<codeyard_db_core::queries::credentials::Actor>,repo:i64,input:&NewAutolink)->Result<Autolink>);
+    fn create(pool:&DbPool,actor:impl Into<codeyard_database::queries::credentials::Actor>,repo:i64,input:&NewAutolink)->Result<Autolink>);
 native_operation!(crate::postgres::repositories::autolinks::list,crate::sqlite::repositories::autolinks::list,
     fn list(pool:&DbPool,actor:i64,repo:i64,limit:i64,offset:i64)->Result<Vec<Autolink>>);
 native_operation!(crate::postgres::repositories::autolinks::get,crate::sqlite::repositories::autolinks::get,
     fn get(pool:&DbPool,actor:i64,repo:i64,id:i64)->Result<Autolink>);
 native_operation!(crate::postgres::repositories::autolinks::remove,crate::sqlite::repositories::autolinks::remove,
-    fn remove(pool:&DbPool,actor:impl Into<codeyard_db_core::queries::credentials::Actor>,repo:i64,id:i64)->Result<()>);
+    fn remove(pool:&DbPool,actor:impl Into<codeyard_database::queries::credentials::Actor>,repo:i64,id:i64)->Result<()>);
 // Trusted Markdown callers have already authorized their repository; no target is resolved here.
 native_operation!(crate::postgres::repositories::autolinks::for_rendering,crate::sqlite::repositories::autolinks::for_rendering,
     fn for_rendering(pool:&DbPool,repo:i64)->Result<Vec<Autolink>>);

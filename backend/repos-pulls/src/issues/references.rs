@@ -2,11 +2,11 @@
 use crate::issues::OperationError;
 
 pub async fn resolve(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     actor_id: i64,
     (owner, repo): (&str, &str),
     reference: &str,
-) -> Result<codeyard_db_core::models::Issue, OperationError> {
+) -> Result<codeyard_database::models::Issue, OperationError> {
     let invalid = || OperationError::Invalid {
         code: "invalid_reference",
         message: "Use an issue number or owner/repository#number.".into(),

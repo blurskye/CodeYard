@@ -1,10 +1,10 @@
 use anyhow::Result;
-use codeyard_db_core::models::OrgRole;
-use codeyard_db_core::pool::SqlitePool;
-use codeyard_db_core::queries::credentials::Actor;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_db_core::queries::sqlite::organizations::authority::begin_read;
-use codeyard_db_core::require_read_org_sqlite;
+use codeyard_database::models::OrgRole;
+use codeyard_database::pool::SqlitePool;
+use codeyard_database::queries::credentials::Actor;
+use codeyard_database::queries::organizations::OrganizationOutcome;
+use codeyard_database::queries::sqlite::organizations::authority::begin_read;
+use codeyard_database::require_read_org_sqlite;
 use sqlx::SqliteConnection;
 use OrganizationOutcome::Applied;
 use OrganizationOutcome::Conflict;
@@ -21,7 +21,7 @@ pub async fn delete_organization(
     codeyard_db_identity::sqlite::credentials::require_account(&mut tx, &owner).await?;
     let role = require_org!(tx, actor, org);
     if role != OrgRole::Owner
-        || !codeyard_db_core::queries::sqlite::credentials::organization(
+        || !codeyard_database::queries::sqlite::credentials::organization(
             &mut tx,
             &owner,
             org,
@@ -46,25 +46,25 @@ pub async fn delete_organization(
         .execute(&mut *tx)
         .await?;
     if let Some(avatar) = avatar {
-        codeyard_db_core::queries::sqlite::files::delete_unreferenced_file_in_transaction(
+        codeyard_database::queries::sqlite::files::delete_unreferenced_file_in_transaction(
             &mut tx, avatar,
         )
         .await?;
     }
-    codeyard_db_core::cells::outbox::sqlite::forget(
+    codeyard_database::cells::outbox::sqlite::forget(
         pool,
         &mut tx,
-        codeyard_model::cells::Object {
-            kind: codeyard_model::cells::ObjectKind::Organization,
+        codeyard_types::cells::Object {
+            kind: codeyard_types::cells::ObjectKind::Organization,
             id: org,
         },
     )
     .await?;
     tx.commit().await?;
-    codeyard_db_core::cells::directory::sqlite::finish_forget(
+    codeyard_database::cells::directory::sqlite::finish_forget(
         pool,
-        codeyard_model::cells::Object {
-            kind: codeyard_model::cells::ObjectKind::Organization,
+        codeyard_types::cells::Object {
+            kind: codeyard_types::cells::ObjectKind::Organization,
             id: org,
         },
     )
@@ -97,7 +97,7 @@ pub async fn list_organization_deletion_repositories(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     codeyard_db_identity::sqlite::credentials::require_account(&mut tx, &owner).await?;
     if require_org!(tx, actor, org) != OrgRole::Owner
-        || !codeyard_db_core::queries::sqlite::credentials::organization(
+        || !codeyard_database::queries::sqlite::credentials::organization(
             &mut tx,
             &owner,
             org,
@@ -124,13 +124,13 @@ pub async fn delete_organization_repository(
     actor: impl Into<Actor>,
     org: i64,
     repo: i64,
-) -> Result<OrganizationOutcome<codeyard_db_core::models::Repository>> {
+) -> Result<OrganizationOutcome<codeyard_database::models::Repository>> {
     let owner = actor.into();
     let actor = owner.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     codeyard_db_identity::sqlite::credentials::require_account(&mut tx, &owner).await?;
     if require_org!(tx, actor, org) != OrgRole::Owner
-        || !codeyard_db_core::queries::sqlite::credentials::organization(
+        || !codeyard_database::queries::sqlite::credentials::organization(
             &mut tx,
             &owner,
             org,
@@ -151,25 +151,25 @@ pub async fn delete_organization_repository(
         return Ok(Conflict);
     };
     for file in files {
-        codeyard_db_core::queries::sqlite::files::delete_unreferenced_file_in_transaction(
+        codeyard_database::queries::sqlite::files::delete_unreferenced_file_in_transaction(
             &mut tx, file,
         )
         .await?;
     }
-    codeyard_db_core::cells::outbox::sqlite::forget(
+    codeyard_database::cells::outbox::sqlite::forget(
         pool,
         &mut tx,
-        codeyard_model::cells::Object {
-            kind: codeyard_model::cells::ObjectKind::Repository,
+        codeyard_types::cells::Object {
+            kind: codeyard_types::cells::ObjectKind::Repository,
             id: repo,
         },
     )
     .await?;
     tx.commit().await?;
-    codeyard_db_core::cells::directory::sqlite::finish_forget(
+    codeyard_database::cells::directory::sqlite::finish_forget(
         pool,
-        codeyard_model::cells::Object {
-            kind: codeyard_model::cells::ObjectKind::Repository,
+        codeyard_types::cells::Object {
+            kind: codeyard_types::cells::ObjectKind::Repository,
             id: repo,
         },
     )

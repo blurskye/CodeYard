@@ -104,7 +104,7 @@ async fn user_create_requires_setup_without_blocking_web_bootstrap() {
         "sqlite://{}",
         installation.path().join("data/gitserv.db").display()
     );
-    let pool = codeyard_db_core::init_db(&url).await.unwrap();
+    let pool = codeyard_database::init_db(&url).await.unwrap();
     assert!(codeyard_db_identity::users::accounts::list_users(&pool)
         .await
         .unwrap()
@@ -158,7 +158,7 @@ fn provision(
     child.wait_with_output().unwrap()
 }
 
-async fn cli_account_contract(pool: &codeyard_db_core::DbPool, url: &str) {
+async fn cli_account_contract(pool: &codeyard_database::DbPool, url: &str) {
     use codeyard_db_identity::users::accounts;
     use codeyard_db_identity::users::transitions;
     let installation = tempfile::tempdir().unwrap();
@@ -189,7 +189,7 @@ async fn cli_account_contract(pool: &codeyard_db_core::DbPool, url: &str) {
         assert!(!output.status.success(), "{output:?}");
         assert_eq!(accounts::list_users(pool).await.unwrap().len(), 1);
         assert!(
-            codeyard_db_cluster::node_config::get_node_configuration(pool)
+            codeyard_db_placement::node_config::get_node_configuration(pool)
                 .await
                 .unwrap()
                 .is_none_or(|config| !config.setup_completed)
@@ -211,7 +211,7 @@ async fn cli_account_contract(pool: &codeyard_db_core::DbPool, url: &str) {
     assert!(output.status.success(), "{output:?}");
     assert!(!String::from_utf8_lossy(&output.stdout).contains("bootstrap-password"));
     assert!(!String::from_utf8_lossy(&output.stderr).contains("bootstrap-password"));
-    let config = codeyard_db_cluster::node_config::get_node_configuration(pool)
+    let config = codeyard_db_placement::node_config::get_node_configuration(pool)
         .await
         .unwrap()
         .unwrap();
@@ -317,7 +317,7 @@ async fn local_bootstrap_rolls_back_and_serializes_with_public_setup_on_both_eng
             .unwrap()
             .is_empty());
         assert!(
-            codeyard_db_cluster::node_config::get_node_configuration(pool)
+            codeyard_db_placement::node_config::get_node_configuration(pool)
                 .await
                 .unwrap()
                 .is_none()
@@ -339,7 +339,7 @@ async fn local_bootstrap_rolls_back_and_serializes_with_public_setup_on_both_eng
                 .len(),
             1
         );
-        let config = codeyard_db_cluster::node_config::get_node_configuration(pool)
+        let config = codeyard_db_placement::node_config::get_node_configuration(pool)
             .await
             .unwrap()
             .unwrap();

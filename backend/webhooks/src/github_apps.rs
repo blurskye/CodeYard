@@ -3,9 +3,9 @@
 use crate::delivery::Outgoing;
 use crate::enqueue;
 use crate::outgoing;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::models::Webhook;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::Repository;
+use codeyard_database::models::Webhook;
+use codeyard_database::DbPool;
 use serde_json::json;
 use serde_json::Value;
 
@@ -13,10 +13,10 @@ fn targets_app(event: &str, action: Option<&str>) -> bool {
     matches!(
         (event, action),
         (
-            codeyard_model::webhook_events::CHECK_SUITE,
+            codeyard_types::webhook_events::CHECK_SUITE,
             Some("requested" | "rerequested")
         ) | (
-            codeyard_model::webhook_events::CHECK_RUN,
+            codeyard_types::webhook_events::CHECK_RUN,
             Some("rerequested" | "requested_action")
         )
     )
@@ -28,7 +28,7 @@ fn accepts(
 ) -> anyhow::Result<bool> {
     let permissions: Value = serde_json::from_str(&subscription.permissions)?;
     Ok(subscription.hook.active
-        && codeyard_model::webhook_events::subscribes(&subscription.hook.events, event)
+        && codeyard_types::webhook_events::subscribes(&subscription.hook.events, event)
         && codeyard_identity::github_apps::event_permission(&permissions, event))
 }
 
@@ -103,7 +103,7 @@ pub async fn current(
     }
     if outgoing.automatic
         && (!current.active
-            || !codeyard_model::webhook_events::subscribes(&current.events, &outgoing.event))
+            || !codeyard_types::webhook_events::subscribes(&current.events, &outgoing.event))
     {
         return Ok(false);
     }
@@ -120,10 +120,10 @@ pub async fn current(
         payload["repository"]["id"].as_i64(),
         payload["installation"]["id"].as_i64(),
     ) else {
-        return Ok(outgoing.event == codeyard_model::webhook_events::PING
+        return Ok(outgoing.event == codeyard_types::webhook_events::PING
             && payload.get("installation").is_none());
     };
-    if outgoing.event == codeyard_model::webhook_events::DEPLOYMENT_PROTECTION_RULE {
+    if outgoing.event == codeyard_types::webhook_events::DEPLOYMENT_PROTECTION_RULE {
         let Some(run) = payload["run_id"].as_i64() else {
             return Ok(false);
         };

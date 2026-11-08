@@ -13,7 +13,7 @@ use crate::sessions::SessionContext;
 use crate::sessions::SessionIssueError;
 
 use crate::AuthenticatedAccount;
-use codeyard_db_core::DbPool;
+use codeyard_database::DbPool;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum OAuthError {
@@ -37,11 +37,11 @@ pub enum OAuthError {
 pub fn validate_callback(
     code: &str,
     token: &str,
-) -> Result<codeyard_types::cells::Prefix, OAuthError> {
+) -> Result<codeyard_types::cell_ids::Prefix, OAuthError> {
     if code.is_empty() || code.len() > 4096 {
         return Err(OAuthError::InvalidCode);
     }
-    codeyard_types::cells::Secret::cookie(token)
+    codeyard_types::cell_ids::Secret::cookie(token)
         .map(|token| token.cell)
         .map_err(|_| OAuthError::InvalidCode)
 }
@@ -65,7 +65,7 @@ pub async fn begin(
     verifier: &str,
     return_to: &str,
 ) -> Result<String, OAuthError> {
-    if codeyard_types::cells::Secret::cookie(state_token)
+    if codeyard_types::cell_ids::Secret::cookie(state_token)
         .ok()
         .is_none_or(|token| !pool.owns_prefix(token.cell))
     {

@@ -1,6 +1,6 @@
 use anyhow::Result;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 
 native_operation!(crate::postgres::pull_requests::viewed::set_pull_request_file_viewed,
     crate::sqlite::pull_requests::viewed::set_pull_request_file_viewed,

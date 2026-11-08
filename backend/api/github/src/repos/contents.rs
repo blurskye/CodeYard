@@ -19,13 +19,13 @@ use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoErrorReason;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
-use codeyard_model::urls::repo_url;
+use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_repos::editor::FileWrite;
 use codeyard_repos::editor::MAX_EDITOR_BYTES;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use codeyard_types::ref_path::encode_path as path_url;
+use codeyard_types::urls::repo_url;
 use codeyard_webhooks::payloads::git_commit as commit_json;
 use serde::Deserialize;
 use serde_json::json;
@@ -113,7 +113,7 @@ pub(crate) fn entry(
     );
     let base = format!(
         "{}/{}/{}",
-        codeyard_model::http_config::link_origin(),
+        codeyard_types::http_config::link_origin(),
         codeyard_types::paths::encode_component(owner),
         codeyard_types::paths::encode_component(repo)
     );
@@ -153,7 +153,7 @@ pub(crate) async fn blob_response(
     reference: &str,
     revision: &str,
     path: &str,
-    blob: codeyard_repos_core::store_types::BlobBytes,
+    blob: codeyard_git_storage::store_types::BlobBytes,
 ) -> Result<Response> {
     if headers
         .get(header::ACCEPT)
@@ -525,7 +525,7 @@ pub(crate) fn aliases() -> Router<Arc<AppState>> {
     Router::new().cell_route("/repos/:owner/:repo/contents", get(read))
 }
 
-use codeyard_repos_core::api_shared::github::contents::store_error;
+use codeyard_git_storage::api_shared::github::contents::store_error;
 
 #[cfg(test)]
 mod link_tests {

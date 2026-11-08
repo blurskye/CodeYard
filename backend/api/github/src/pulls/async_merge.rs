@@ -12,9 +12,9 @@ use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
-use codeyard_repos_core::store_types::MergeMethod;
+use codeyard_git_storage::store_types::MergeMethod;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -67,7 +67,7 @@ async fn start(
         match serde_json::from_slice(&body) {
             Ok(input) => input,
             Err(error) => {
-                let error = codeyard_model::github_error::json_parse_error(error);
+                let error = codeyard_types::github_error::json_parse_error(error);
                 return Ok(failed(error.0, error.1));
             }
         }
@@ -98,7 +98,7 @@ async fn start(
             &state.ci_runs,
             auth.user.id,
             pull.id,
-            Some(codeyard_db_core::models::AccessLevel::Owner),
+            Some(codeyard_database::models::AccessLevel::Owner),
         )
         .await
         .map_err(Error::unavailable)?;
@@ -156,7 +156,7 @@ async fn start(
     .await
     {
         Ok(value) => Ok((StatusCode::ACCEPTED, Json(value)).into_response()),
-        Err(codeyard_repos_core::repositories::pull_requests::OperationError::Conflict {
+        Err(codeyard_git_storage::repositories::pull_requests::OperationError::Conflict {
             message,
             ..
         }) => Ok(failed(StatusCode::CONFLICT, message)),

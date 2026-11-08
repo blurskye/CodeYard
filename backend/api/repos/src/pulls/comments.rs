@@ -112,7 +112,7 @@ pub struct PullRequestCommentResponse {
 
 impl PullRequestCommentResponse {
     fn new(
-        comment: codeyard_db_core::models::PullRequestComment,
+        comment: codeyard_database::models::PullRequestComment,
         author: Option<UserResponse>,
     ) -> Self {
         Self {

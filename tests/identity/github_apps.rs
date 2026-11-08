@@ -427,7 +427,7 @@ async fn contract(pg: bool) {
     .await
     .unwrap()
     {
-        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(org) => org,
+        codeyard_database::queries::organizations::OrganizationOutcome::Applied(org) => org,
         _ => panic!("organization creation"),
     };
     assert!(matches!(
@@ -436,11 +436,11 @@ async fn contract(pg: bool) {
             alice,
             org.id,
             bob,
-            codeyard_db_core::models::OrgRole::Member
+            codeyard_database::models::OrgRole::Member
         )
         .await
         .unwrap(),
-        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(_)
+        codeyard_database::queries::organizations::OrganizationOutcome::Applied(_)
     ));
     let response = other
         .form_reply(

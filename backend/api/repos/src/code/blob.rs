@@ -24,10 +24,10 @@ use codeyard_git::repository::PREVIEW_BYTES;
 use codeyard_git::repository::PREVIEW_LINES;
 use codeyard_git::MAX_BLAME_FILE_BYTES;
 use codeyard_git::MAX_BLAME_LINES;
+use codeyard_git_storage::repositories::store::repo_store;
+use codeyard_git_storage::repositories::store::RepoStore;
+use codeyard_git_storage::store_types::BlobBytes;
 use codeyard_repos::editor::MAX_EDITOR_BYTES;
-use codeyard_repos_core::repositories::store::repo_store;
-use codeyard_repos_core::repositories::store::RepoStore;
-use codeyard_repos_core::store_types::BlobBytes;
 use codeyard_storage::range::ByteRange as BlobRange;
 use codeyard_webui::pages::repos as view;
 use serde::Deserialize;
@@ -502,7 +502,7 @@ pub(super) async fn file_context(
     };
     let permalink = format!(
         "{}{}",
-        codeyard_model::http_config::public_origin(),
+        codeyard_types::http_config::public_origin(),
         codeyard_types::ref_path::file_url(&loaded.chrome.base(), "blob", commit, path)
     );
     Ok((folders, latest_commit, permalink))
@@ -534,13 +534,13 @@ mod tests {
 
     #[tokio::test]
     async fn binary_json_previews_hold_download_slots_until_consumed_or_timed_out() {
-        let pool = codeyard_db_core::init_db("sqlite::memory:").await.unwrap();
-        codeyard_db_core::run_migrations(&pool).await.unwrap();
+        let pool = codeyard_database::init_db("sqlite::memory:").await.unwrap();
+        codeyard_database::run_migrations(&pool).await.unwrap();
         let root = tempfile::tempdir().unwrap();
         let user = codeyard_db_identity::users::accounts::create_user(&pool, "alice", None)
             .await
             .unwrap();
-        let repository = codeyard_repos_core::repositories::lifecycle::provision(
+        let repository = codeyard_git_storage::repositories::lifecycle::provision(
             (&pool, None),
             root.path(),
             codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(user.id),

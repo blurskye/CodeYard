@@ -3,7 +3,7 @@ use crate::discussion::unavailable;
 use crate::discussion::RepositoryData;
 use crate::discussion::ResultPage;
 use codeyard_api_http::context::PageContext;
-use codeyard_db_core::models::PullRequest;
+use codeyard_database::models::PullRequest;
 use codeyard_types::paths::encode_component;
 use codeyard_webui::excerpt;
 use codeyard_webui::pages::repos::security as view;
@@ -35,7 +35,7 @@ pub(super) async fn checks(
     .await
     .map_err(|_| unavailable(ctx))?;
     let mut more = candidates.len() > 100;
-    let store = codeyard_repos_core::repositories::store::repo_store(
+    let store = codeyard_git_storage::repositories::store::repo_store(
         &repo.record,
         ctx.state.cluster.as_ref(),
     );

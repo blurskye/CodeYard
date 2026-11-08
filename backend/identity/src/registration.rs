@@ -2,7 +2,7 @@ use crate::credentials::validate_account;
 use crate::credentials::validate_new_account_name;
 use crate::credentials::PasswordAccount;
 use codeyard_db_identity::auth_admission::AdmissionError;
-use codeyard_model::account_input::AccountInputError;
+use codeyard_types::account_input::AccountInputError;
 
 use crate::passwords::PasswordError;
 
@@ -10,7 +10,7 @@ use crate::sessions::SessionContext;
 use crate::sessions::SessionIssueError;
 use crate::AuthenticatedAccount;
 
-use codeyard_db_core::DbPool;
+use codeyard_database::DbPool;
 use codeyard_db_identity::users::transitions::AccountAdmission;
 
 pub enum RegistrationOutcome {

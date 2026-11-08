@@ -6,8 +6,8 @@ use crate::oauth_apps::APPLICATIONS_SQL;
 use crate::oauth_apps::APPLICATION_PAGE_SIZE;
 use anyhow::Result;
 use chrono::Utc;
-use codeyard_db_core::pool::PgPool;
-use codeyard_db_core::queries::credentials::Actor;
+use codeyard_database::pool::PgPool;
+use codeyard_database::queries::credentials::Actor;
 use codeyard_support::token_hash::token_hash;
 use sqlx::PgConnection;
 
@@ -23,7 +23,7 @@ async fn lock_client_accounts(
     if exclusive {
         crate::postgres::users::transitions::lock_accounts(connection, &accounts).await
     } else {
-        codeyard_db_core::queries::postgres::users::transitions::lock_accounts_shared(
+        codeyard_database::queries::postgres::users::transitions::lock_accounts_shared(
             connection, &accounts,
         )
         .await
@@ -45,7 +45,7 @@ pub async fn register(
     redirect_uri: &str,
 ) -> Result<Option<Application>> {
     let mut tx = pool.begin().await?;
-    codeyard_db_core::queries::postgres::users::transitions::lock_accounts_shared(
+    codeyard_database::queries::postgres::users::transitions::lock_accounts_shared(
         &mut tx,
         &[actor],
     )
@@ -65,7 +65,7 @@ pub async fn register(
 pub async fn application(pool: &PgPool, client_id: &str) -> Result<Option<Application>> {
     Ok(sqlx::query_as(&format!(
         "SELECT * FROM oauth_applications WHERE client_id=$1 AND {}",
-        codeyard_db_core::queries::oauth_apps::client_condition("$1")
+        codeyard_database::queries::oauth_apps::client_condition("$1")
     ))
     .bind(client_id)
     .fetch_optional(pool)
@@ -80,7 +80,7 @@ pub async fn applications(
 ) -> Result<Option<Vec<ApplicationSummary>>> {
     let actor = actor.into();
     let mut tx = pool.begin().await?;
-    codeyard_db_core::queries::postgres::users::transitions::lock_accounts_shared(
+    codeyard_database::queries::postgres::users::transitions::lock_accounts_shared(
         &mut tx,
         &[actor.user_id],
     )
@@ -92,7 +92,7 @@ pub async fn applications(
     .fetch_optional(&mut *tx)
     .await?;
     if active.is_none()
-        || !codeyard_db_core::queries::postgres::credentials::live(&mut tx, &actor, false).await?
+        || !codeyard_database::queries::postgres::credentials::live(&mut tx, &actor, false).await?
     {
         return Ok(None);
     }
@@ -162,10 +162,10 @@ pub async fn exchange(
     lock_client_accounts(&mut tx, client_id, candidate, false).await?;
     let active: bool = sqlx::query_scalar(&format!(
         "SELECT $1=$2 OR {}",
-        codeyard_db_core::queries::oauth_apps::client_condition("$1")
+        codeyard_database::queries::oauth_apps::client_condition("$1")
     ))
     .bind(client_id)
-    .bind(codeyard_model::identity::CLI_CLIENT)
+    .bind(codeyard_types::identity::CLI_CLIENT)
     .fetch_one(&mut *tx)
     .await?;
     if !active {
@@ -196,7 +196,7 @@ pub async fn exchange(
     if grant.kind == "web"
         && (redirect_uri.is_some_and(|uri| uri != grant.redirect_uri)
             || state.is_some_and(|state| state != grant.state)
-            || !codeyard_model::oauth_apps::verify_challenge(&grant.challenge, verifier))
+            || !codeyard_types::oauth_apps::verify_challenge(&grant.challenge, verifier))
     {
         return Ok(Exchange::Invalid);
     }
@@ -229,7 +229,7 @@ pub async fn exchange(
         .fetch_optional(&mut *tx)
         .await?;
     let token_id: Option<i64> = sqlx::query_scalar("INSERT INTO personal_access_tokens(user_id,name,token_hash,scope) SELECT u.id,'OAuth: ' || $3,$4,CASE WHEN EXISTS(SELECT 1 FROM github_apps WHERE client_id=$3 AND access_level>=3) THEN 'write' ELSE $5 END FROM users u JOIN sessions s ON s.user_id=u.id WHERE u.id=$1 AND s.id=$2 AND NOT u.is_banned AND NOT u.must_change_password AND s.expires_at>clock_timestamp() RETURNING id")
-        .bind(actor).bind(&grant.session_id).bind(client_id).bind(token_hash(value)).bind(if codeyard_model::oauth_apps::write_scope(&grant.scopes) { "write" } else { "read" }).fetch_optional(&mut *tx).await?;
+        .bind(actor).bind(&grant.session_id).bind(client_id).bind(token_hash(value)).bind(if codeyard_types::oauth_apps::write_scope(&grant.scopes) { "write" } else { "read" }).fetch_optional(&mut *tx).await?;
     let Some(token_id) = token_id else {
         return Ok(Exchange::Denied);
     };
@@ -251,10 +251,10 @@ pub async fn owned_token(
     pool: &PgPool,
     client: &str,
     hash: &str,
-) -> Result<Option<codeyard_db_core::models::PersonalAccessToken>> {
-    let issuer = codeyard_db_core::queries::oauth_apps::token_issuer_condition("t", "$3");
+) -> Result<Option<codeyard_database::models::PersonalAccessToken>> {
+    let issuer = codeyard_database::queries::oauth_apps::token_issuer_condition("t", "$3");
     Ok(sqlx::query_as(&format!("SELECT t.id,t.user_id,t.name,t.scope,t.expires_at,t.created_at FROM personal_access_tokens t JOIN oauth_app_tokens o ON o.token_id=t.id JOIN users u ON u.id=t.user_id WHERE o.client_id=$1 AND t.token_hash=$2 AND (t.expires_at IS NULL OR t.expires_at>clock_timestamp()) AND NOT u.is_banned AND NOT u.must_change_password AND {issuer}"))
-        .bind(client).bind(hash).bind(codeyard_model::identity::CLI_CLIENT).fetch_optional(pool).await?)
+        .bind(client).bind(hash).bind(codeyard_types::identity::CLI_CLIENT).fetch_optional(pool).await?)
 }
 
 pub async fn reset_token(
@@ -262,19 +262,19 @@ pub async fn reset_token(
     client: &str,
     hash: &str,
     new_hash: &str,
-) -> Result<Option<codeyard_db_core::models::PersonalAccessToken>> {
+) -> Result<Option<codeyard_database::models::PersonalAccessToken>> {
     let mut tx = pool.begin().await?;
     let user: Option<i64> = sqlx::query_scalar("SELECT t.user_id FROM personal_access_tokens t JOIN oauth_app_tokens o ON o.token_id=t.id WHERE o.client_id=$1 AND t.token_hash=$2")
         .bind(client).bind(hash).fetch_optional(&mut *tx).await?;
     lock_client_accounts(&mut tx, client, user, false).await?;
     // A token from an app that is no longer available is not refreshed.
-    let issuer = codeyard_db_core::queries::oauth_apps::token_issuer_condition("t", "$3");
-    let old: Option<codeyard_db_core::models::PersonalAccessToken> = sqlx::query_as(&format!("SELECT t.id,t.user_id,t.name,t.scope,t.expires_at,t.created_at FROM personal_access_tokens t JOIN oauth_app_tokens o ON o.token_id=t.id JOIN users u ON u.id=t.user_id WHERE o.client_id=$1 AND t.token_hash=$2 AND (t.expires_at IS NULL OR t.expires_at>clock_timestamp()) AND NOT u.is_banned AND NOT u.must_change_password AND {issuer} FOR UPDATE OF t"))
-        .bind(client).bind(hash).bind(codeyard_model::identity::CLI_CLIENT).fetch_optional(&mut *tx).await?;
+    let issuer = codeyard_database::queries::oauth_apps::token_issuer_condition("t", "$3");
+    let old: Option<codeyard_database::models::PersonalAccessToken> = sqlx::query_as(&format!("SELECT t.id,t.user_id,t.name,t.scope,t.expires_at,t.created_at FROM personal_access_tokens t JOIN oauth_app_tokens o ON o.token_id=t.id JOIN users u ON u.id=t.user_id WHERE o.client_id=$1 AND t.token_hash=$2 AND (t.expires_at IS NULL OR t.expires_at>clock_timestamp()) AND NOT u.is_banned AND NOT u.must_change_password AND {issuer} FOR UPDATE OF t"))
+        .bind(client).bind(hash).bind(codeyard_types::identity::CLI_CLIENT).fetch_optional(&mut *tx).await?;
     let Some(old) = old else {
         return Ok(None);
     };
-    let replacement: codeyard_db_core::models::PersonalAccessToken = sqlx::query_as("INSERT INTO personal_access_tokens(user_id,name,scope,expires_at,token_hash) VALUES($1,$2,$3,$4,$5) RETURNING id,user_id,name,scope,expires_at,created_at")
+    let replacement: codeyard_database::models::PersonalAccessToken = sqlx::query_as("INSERT INTO personal_access_tokens(user_id,name,scope,expires_at,token_hash) VALUES($1,$2,$3,$4,$5) RETURNING id,user_id,name,scope,expires_at,created_at")
         .bind(old.user_id).bind(&old.name).bind(&old.scope).bind(old.expires_at).bind(new_hash).fetch_one(&mut *tx).await?;
     sqlx::query("INSERT INTO oauth_app_tokens(token_id,client_id,scopes) SELECT $2,client_id,scopes FROM oauth_app_tokens WHERE token_id=$1")
         .bind(old.id).bind(replacement.id).execute(&mut *tx).await?;
@@ -295,10 +295,10 @@ pub async fn revoke(pool: &PgPool, client: &str, hash: &str, authorization: bool
     lock_client_accounts(&mut tx, client, candidate, true).await?;
     let active: bool = sqlx::query_scalar(&format!(
         "SELECT $1=$2 OR {}",
-        codeyard_db_core::queries::oauth_apps::client_condition("$1")
+        codeyard_database::queries::oauth_apps::client_condition("$1")
     ))
     .bind(client)
-    .bind(codeyard_model::identity::CLI_CLIENT)
+    .bind(codeyard_types::identity::CLI_CLIENT)
     .fetch_one(&mut *tx)
     .await?;
     if !active {

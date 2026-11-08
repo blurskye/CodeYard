@@ -13,7 +13,7 @@ async fn reactions(pg: bool) {
     let alice = f.actor("alice").await;
     let bob = f.actor("bob").await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard_repos_core::repositories::lifecycle::provision(
+    let repo = codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
@@ -252,7 +252,7 @@ async fn reactions(pg: bool) {
     assert!(codeyard_db_repos::reactions::create_reaction(
         f.pool(),
         bob,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&outsider.session),
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(&outsider.session),
         codeyard_db_repos::reactions::Target {
             repo_id: repo.id,
             item_id: draft_id,

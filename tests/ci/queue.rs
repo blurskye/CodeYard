@@ -14,9 +14,9 @@ use crate::support::native_database as native;
 use crate::support::organizations::applied;
 use crate::support::production_ci as production;
 
-use codeyard_db_core::models::AccessLevel;
-use codeyard_db_core::models::CiRun;
-use codeyard_db_core::models::OrgRole;
+use codeyard_database::models::AccessLevel;
+use codeyard_database::models::CiRun;
+use codeyard_database::models::OrgRole;
 use codeyard_db_orgs::organizations::profiles::NewOrganization;
 use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
 use codeyard_db_orgs::organizations::teams::NewTeam;
@@ -38,7 +38,7 @@ fn platforms() -> Vec<String> {
 }
 
 const WORKER: &str = "worker-1";
-const ACCESS_LOST: &str = codeyard_db_core::ci_policy::ACCESS_LOST_MESSAGE;
+const ACCESS_LOST: &str = codeyard_database::ci_policy::ACCESS_LOST_MESSAGE;
 const WORKFLOW: &str = ".github/workflows/ci.yml";
 
 impl Database {
@@ -197,8 +197,8 @@ async fn allow_fork_workflows(db: &Database, owner: i64, repo: i64) {
     codeyard_db_actions::action_settings::settings(
         db.pool(),
         owner,
-        &codeyard_db_core::queries::action_settings::Scope::Repository(repo),
-        codeyard_db_core::queries::action_settings::Setting::ForkWorkflows,
+        &codeyard_database::queries::action_settings::Scope::Repository(repo),
+        codeyard_database::queries::action_settings::Setting::ForkWorkflows,
         Some(&serde_json::json!({"run_workflows_from_fork_pull_requests": true})),
     )
     .await
@@ -1314,7 +1314,7 @@ async fn finishing_and_cancelling_broadcast_only_the_created_notification(db: &D
     let expected = format!(
         "CI run failed: {} on {} ({})",
         run.workflow_path,
-        codeyard_db_core::ci_messages::branch_name(&run.branch),
+        codeyard_database::ci_messages::branch_name(&run.branch),
         &sha[..7]
     );
     assert!(
@@ -1633,8 +1633,8 @@ async fn actions_models_bound_current_logs_and_keep_refreshing_status(db: &Datab
     use codeyard_api_rest::create_router;
     use codeyard_app::app::AppState;
     use codeyard_ci::config::CiConfig;
-    use codeyard_model::ci::LogLine;
     use codeyard_storage::ObjectStore;
+    use codeyard_types::ci::LogLine;
     use codeyard_webui::app::PageEnvelope;
     use codeyard_webui::bootstrap::MAX_PAGE_MODEL_BYTES;
     use codeyard_webui::bootstrap::MODEL_CONTENT_TYPE;
@@ -1670,7 +1670,7 @@ async fn actions_models_bound_current_logs_and_keep_refreshing_status(db: &Datab
     }
 
     let w = world(db, "log_page").await;
-    codeyard_db_cluster::node_config::upsert_node_configuration(db.pool(), "public", true)
+    codeyard_db_placement::node_config::upsert_node_configuration(db.pool(), "public", true)
         .await
         .unwrap();
     let session = native::token();
@@ -1942,8 +1942,8 @@ async fn pull_request_runs_use_exact_approval_identity(db: &Database) {
         .await
         .unwrap_err();
     assert!(matches!(
-        ambiguous.downcast_ref::<codeyard_db_core::ci_policy::CiAdmissionRefusal>(),
-        Some(codeyard_db_core::ci_policy::CiAdmissionRefusal::Conflict(
+        ambiguous.downcast_ref::<codeyard_database::ci_policy::CiAdmissionRefusal>(),
+        Some(codeyard_database::ci_policy::CiAdmissionRefusal::Conflict(
             "CI pull request revision is not open"
         ))
     ));
@@ -2340,7 +2340,7 @@ async fn commit_status_descriptions_redact_runner_messages(db: &Database) {
 }
 
 async fn log_batches_preserve_line_order_and_totals(db: &Database) {
-    use codeyard_model::ci::LogLine;
+    use codeyard_types::ci::LogLine;
     let w = world(db, "batch_order").await;
     let run = db.enqueue(w.repo, w.owner, false, &[w.owner]).await;
     codeyard_db_actions::ci::claim_ci_run(db.pool(), WORKER, "local", &[w.owner], &platforms())
@@ -2413,7 +2413,7 @@ async fn cluster_claim_needs_an_active_runner_node(db: &Database) {
     let trusted = [w.owner];
     let queued = db.enqueue(w.repo, w.owner, false, &trusted).await;
     let key = "a".repeat(64);
-    let node = codeyard_db_cluster::cluster::register_own_node(
+    let node = codeyard_db_placement::cluster::register_own_node(
         db.pool(),
         &key,
         "claim-node",
@@ -2423,9 +2423,9 @@ async fn cluster_claim_needs_an_active_runner_node(db: &Database) {
     .await
     .unwrap();
 
-    codeyard_db_cluster::cluster::set_node_status(
+    codeyard_db_placement::cluster::set_node_status(
         db.pool(),
-        codeyard_db_cluster::cluster::Authority::Operator,
+        codeyard_db_placement::cluster::Authority::Operator,
         &node.name,
         "revoked",
     )
@@ -2433,9 +2433,9 @@ async fn cluster_claim_needs_an_active_runner_node(db: &Database) {
     .unwrap();
     refused_claim(db, &key, queued.id, &trusted).await;
 
-    codeyard_db_cluster::cluster::set_node_status(
+    codeyard_db_placement::cluster::set_node_status(
         db.pool(),
-        codeyard_db_cluster::cluster::Authority::Operator,
+        codeyard_db_placement::cluster::Authority::Operator,
         &node.name,
         "pending",
     )
@@ -2444,9 +2444,9 @@ async fn cluster_claim_needs_an_active_runner_node(db: &Database) {
     refused_claim(db, &key, queued.id, &trusted).await;
 
     // Active again, but no longer an actions worker.
-    codeyard_db_cluster::cluster::upsert_declared_nodes(
+    codeyard_db_placement::cluster::upsert_declared_nodes(
         db.pool(),
-        &[codeyard_db_cluster::cluster::DeclaredMember {
+        &[codeyard_db_placement::cluster::DeclaredMember {
             public_key: key.clone(),
             name: node.name.clone(),
             roles: vec!["storage".into()],
@@ -2457,9 +2457,9 @@ async fn cluster_claim_needs_an_active_runner_node(db: &Database) {
     refused_claim(db, &key, queued.id, &trusted).await;
 
     // An actions worker again, but under a new key: the old key belongs to no node.
-    codeyard_db_cluster::cluster::upsert_declared_nodes(
+    codeyard_db_placement::cluster::upsert_declared_nodes(
         db.pool(),
-        &[codeyard_db_cluster::cluster::DeclaredMember {
+        &[codeyard_db_placement::cluster::DeclaredMember {
             public_key: key.clone(),
             name: node.name.clone(),
             roles: vec!["runner".into()],
@@ -2681,7 +2681,7 @@ on_both_engines!(
 mod interleaved {
     use super::*;
     use crate::support::database::wait_until_blocked;
-    use codeyard_db_core::pool::PgPool;
+    use codeyard_database::pool::PgPool;
     use sqlx::{Postgres, Transaction};
 
     /// A transaction that has locked the run row, and its backend process id.
@@ -2724,7 +2724,7 @@ mod interleaved {
     }
 
     async fn enqueue_once(
-        pool: &codeyard_db_core::DbPool,
+        pool: &codeyard_database::DbPool,
         repo: i64,
         actor: i64,
         trusted: &[i64],
@@ -3149,8 +3149,8 @@ mod interleaved {
             .unwrap()
             .expect_err("the committed revocation must deny admission");
         assert!(matches!(
-            error.downcast_ref::<codeyard_db_core::ci_policy::CiAdmissionRefusal>(),
-            Some(codeyard_db_core::ci_policy::CiAdmissionRefusal::Denied(
+            error.downcast_ref::<codeyard_database::ci_policy::CiAdmissionRefusal>(),
+            Some(codeyard_database::ci_policy::CiAdmissionRefusal::Denied(
                 "CI repository execution permission denied"
             ))
         ));
@@ -3248,8 +3248,8 @@ mod interleaved {
             .unwrap()
             .expect_err("the committed membership revocation must deny admission");
         assert!(matches!(
-            error.downcast_ref::<codeyard_db_core::ci_policy::CiAdmissionRefusal>(),
-            Some(codeyard_db_core::ci_policy::CiAdmissionRefusal::Denied(
+            error.downcast_ref::<codeyard_database::ci_policy::CiAdmissionRefusal>(),
+            Some(codeyard_database::ci_policy::CiAdmissionRefusal::Denied(
                 "CI repository execution permission denied"
             ))
         ));

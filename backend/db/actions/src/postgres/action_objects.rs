@@ -3,7 +3,7 @@ use crate::action_objects::BlobPart;
 use crate::action_objects::NewObject;
 use crate::action_objects::RuntimeRun;
 use anyhow::Result;
-use codeyard_db_core::pool::PgPool;
+use codeyard_database::pool::PgPool;
 
 pub async fn issue_token(
     pool: &PgPool,
@@ -459,7 +459,7 @@ pub async fn artifact_for_reader(
     run: i64,
     id: i64,
 ) -> Result<Option<ActionObject>> {
-    let access = codeyard_db_core::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL;
+    let access = codeyard_database::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL;
     Ok(sqlx::query_as(&format!("SELECT o.* FROM actions_objects o JOIN repositories r ON r.id=o.repo_id JOIN ci_runs c ON c.id=o.run_id AND c.repo_id=r.id JOIN users u ON u.id=$1 JOIN sessions s ON s.user_id=u.id AND s.id=$2 WHERE r.id=$3 AND c.id=$4 AND o.id=$5 AND o.kind='artifact' AND o.finalized AND o.expires_at>$6 AND s.expires_at>clock_timestamp() AND NOT u.is_banned AND NOT u.must_change_password AND ((r.owner_kind='user' AND u.is_admin) OR ({access})>0)"))
         .bind(actor).bind(session).bind(repo).bind(run).bind(id).bind(chrono::Utc::now().timestamp()).fetch_optional(pool).await?)
 }
@@ -474,7 +474,7 @@ pub async fn delete_artifact(
     id: i64,
     run_id: i64,
     actor: Option<i64>,
-    credential: Option<&codeyard_db_core::queries::ci::CiCredential>,
+    credential: Option<&codeyard_database::queries::ci::CiCredential>,
 ) -> Result<bool> {
     let mut tx = pool.begin().await?;
     if let Some(actor) = actor {
@@ -616,8 +616,10 @@ pub async fn delete_caches(
         "a cache id or key is required"
     );
     let mut tx = pool.begin().await?;
-    if !codeyard_db_core::queries::postgres::discussions::lock_write_authority(&mut tx, actor, repo)
-        .await?
+    if !codeyard_database::queries::postgres::discussions::lock_write_authority(
+        &mut tx, actor, repo,
+    )
+    .await?
     {
         return Ok(None);
     }
@@ -633,13 +635,13 @@ pub async fn cache_usage(pool: &PgPool, repo: i64) -> Result<(i64, i64)> {
 
 pub async fn grant_artifact_download(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo: i64,
     id: i64,
     hash: &str,
 ) -> Result<bool> {
-    use codeyard_db_core::queries::postgres::repositories::access::lock_user_repo_access_in_transaction;
-    use codeyard_db_core::queries::postgres::repositories::access::RepositoryRowLock;
+    use codeyard_database::queries::postgres::repositories::access::lock_user_repo_access_in_transaction;
+    use codeyard_database::queries::postgres::repositories::access::RepositoryRowLock;
     let actor = actor.into();
     let mut tx = pool.begin().await?;
     let authority = lock_user_repo_access_in_transaction(
@@ -653,7 +655,7 @@ pub async fn grant_artifact_download(
     if !authority.is_some_and(|a| a.access.can_read() || (!a.organization && a.is_admin)) {
         return Ok(false);
     }
-    if !codeyard_db_core::queries::postgres::credentials::repository(
+    if !codeyard_database::queries::postgres::credentials::repository(
         &mut tx, &actor, repo, "actions", false,
     )
     .await?
@@ -676,6 +678,6 @@ pub async fn expire_objects(pool: &PgPool) -> Result<()> {
     Ok(())
 }
 
-use codeyard_db_core::queries::postgres::action_objects::enforce_cache_limit;
+use codeyard_database::queries::postgres::action_objects::enforce_cache_limit;
 
-use codeyard_db_core::queries::postgres::action_objects::cache_policy;
+use codeyard_database::queries::postgres::action_objects::cache_policy;

@@ -366,7 +366,7 @@ async fn register(
     let events = if chosen.is_empty() {
         Ok(String::new())
     } else {
-        codeyard_model::webhook_events::subscription(&chosen)
+        codeyard_types::webhook_events::subscription(&chosen)
     };
     if !codeyard_identity::github_apps::valid_slug(slug)
         || name.is_none()
@@ -427,7 +427,7 @@ async fn register(
         public_key: public,
         permissions: permissions.to_string(),
         events: events.unwrap(),
-        access_level: if codeyard_model::github_apps::allows(&permissions, "administration", true) {
+        access_level: if codeyard_types::github_apps::allows(&permissions, "administration", true) {
             5
         } else if codeyard_identity::github_apps::write(&permissions) {
             3

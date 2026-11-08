@@ -1,8 +1,8 @@
 use anyhow::Result;
 use chrono::DateTime;
 use chrono::Utc;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 use serde::Deserialize;
 use serde::Serialize;
 use sqlx::types::Json;
@@ -51,8 +51,8 @@ pub struct Line {
     pub line: String,
     pub created_at: DateTime<Utc>,
 }
-impl From<codeyard_db_core::models::CiLogLine> for Line {
-    fn from(line: codeyard_db_core::models::CiLogLine) -> Self {
+impl From<codeyard_database::models::CiLogLine> for Line {
+    fn from(line: codeyard_database::models::CiLogLine) -> Self {
         Self {
             id: line.id,
             job_id: line.job_id,
@@ -102,7 +102,7 @@ impl Manifest {
 }
 
 native_operation!(crate::postgres::action_logs::issue,crate::sqlite::action_logs::issue,
-    fn issue(pool:&DbPool,actor:impl Into<codeyard_db_core::queries::credentials::Actor>,repo:i64,resource:&str,target:Target,hash:&str)->Result<bool>);
+    fn issue(pool:&DbPool,actor:impl Into<codeyard_database::queries::credentials::Actor>,repo:i64,resource:&str,target:Target,hash:&str)->Result<bool>);
 pub async fn read(pool: &DbPool, hash: &str, resource: &str) -> Result<Option<Snapshot>> {
     let Some(grant) = read_grant(pool, hash, resource).await? else {
         return Ok(None);

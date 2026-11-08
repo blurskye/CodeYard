@@ -1,12 +1,12 @@
 use anyhow::ensure;
 use anyhow::Result;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
-use codeyard_model::dependency_graph::Snapshot;
-use codeyard_model::repositories::Package;
-use codeyard_model::versions;
-use codeyard_model::vulnerabilities::PreparedAdvisory;
-use codeyard_model::vulnerabilities::{ecosystem, name, Advisory};
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
+use codeyard_types::dependency_graph::Snapshot;
+use codeyard_types::repositories::Package;
+use codeyard_types::versions;
+use codeyard_types::vulnerabilities::PreparedAdvisory;
+use codeyard_types::vulnerabilities::{ecosystem, name, Advisory};
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -38,7 +38,7 @@ impl Settings {
             serde_json::from_str(&self.ecosystems).map_err(|_| Refusal::Invalid)?;
         let mut unique = Vec::new();
         for ecosystem in ecosystems {
-            if !codeyard_model::vulnerabilities::ECOSYSTEMS.contains(&ecosystem.as_str()) {
+            if !codeyard_types::vulnerabilities::ECOSYSTEMS.contains(&ecosystem.as_str()) {
                 return Err(Refusal::Invalid);
             }
             if !unique.contains(&ecosystem) {
@@ -75,7 +75,10 @@ native_operation!(crate::postgres::vulnerabilities::claim_sync,crate::sqlite::vu
 native_operation!(crate::postgres::vulnerabilities::save_snapshot,crate::sqlite::vulnerabilities::save_snapshot,
     fn save_snapshot(pool:&DbPool,repo:i64,generation:i64,snapshot:&Snapshot)->Result<()>);
 
-pub async fn findings(pool: &codeyard_db_core::DbPool, package: &Package) -> Result<Vec<Advisory>> {
+pub async fn findings(
+    pool: &codeyard_database::DbPool,
+    package: &Package,
+) -> Result<Vec<Advisory>> {
     let Some(ecosystem) = ecosystem(&package.ecosystem) else {
         return Ok(Vec::new());
     };

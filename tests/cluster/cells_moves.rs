@@ -2,12 +2,12 @@
 //! requests to the new home, and the cell that issued the token asks the new home about it.
 use super::cells_frontend::{native, Server};
 use crate::support::native_database::PostgresDatabase;
-use codeyard_cells_router::{directory, frontend, http::Transport, routes::Routes};
-use codeyard_db_cluster::moves::{self, Account};
 use codeyard_db_directory::Directory;
-use codeyard_model::cells::{Cell, Key, KeyKind, Object, ObjectKind, State};
+use codeyard_db_placement::moves::{self, Account};
+use codeyard_router::{directory, frontend, http::Transport, routes::Routes};
 use codeyard_support::node_identity::NodeKey;
-use codeyard_types::cells::Prefix;
+use codeyard_types::cell_ids::Prefix;
+use codeyard_types::cells::{Cell, Key, KeyKind, Object, ObjectKind, State};
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
@@ -39,10 +39,12 @@ async fn a_moved_users_token_follows_the_user_to_the_new_home() {
     let mut source = PostgresDatabase::new().await;
     let mut target = PostgresDatabase::new().await;
     for (database, prefix) in [(&source, 1), (&target, 2)] {
-        codeyard_db_core::cells::initialize(&database.pool, Prefix::new(prefix))
+        codeyard_database::cells::initialize(&database.pool, Prefix::new(prefix))
             .await
             .unwrap();
-        codeyard_db_core::cells::load(&database.pool).await.unwrap();
+        codeyard_database::cells::load(&database.pool)
+            .await
+            .unwrap();
     }
     let (mut source_server, alice, alice_token) = native(&source, "alice").await;
     let (mut target_server, bob, bob_token) = native(&target, "bob").await;
@@ -126,7 +128,7 @@ async fn a_moved_users_token_follows_the_user_to_the_new_home() {
             Default::default(),
         )
         .unwrap();
-        let home = codeyard_cells_router::accounts::listen(
+        let home = codeyard_router::accounts::listen(
             client.clone(),
             Arc::new(codeyard_identity::cells::Local {
                 pool: database.pool.clone(),
@@ -141,7 +143,7 @@ async fn a_moved_users_token_follows_the_user_to_the_new_home() {
             .await
             .unwrap();
         database.pool.set_foreign_authorization(Arc::new(
-            codeyard_cells_router::accounts::Remote::new(key.clone(), client).unwrap(),
+            codeyard_router::accounts::Remote::new(key.clone(), client).unwrap(),
         ));
         homes.push(home);
     }
@@ -357,10 +359,12 @@ async fn a_repository_on_a_storage_node_moves_from_its_primary() {
     let mut source = PostgresDatabase::new().await;
     let mut target = PostgresDatabase::new().await;
     for (database, prefix) in [(&source, 1), (&target, 2)] {
-        codeyard_db_core::cells::initialize(&database.pool, Prefix::new(prefix))
+        codeyard_database::cells::initialize(&database.pool, Prefix::new(prefix))
             .await
             .unwrap();
-        codeyard_db_core::cells::load(&database.pool).await.unwrap();
+        codeyard_database::cells::load(&database.pool)
+            .await
+            .unwrap();
     }
     let stores = super::quorum::Stores::new(&source.pool).await;
     let (pushed, _, errors) = stores.push(&source.pool).await;
@@ -391,7 +395,7 @@ async fn a_repository_on_a_storage_node_moves_from_its_primary() {
     let state = root.path().join("state");
     let source_key = codeyard_support::node_identity::load_or_create(&state).unwrap();
     // The command copies with this cell's web node identity.
-    codeyard_db_cluster::cluster::register_own_node(
+    codeyard_db_placement::cluster::register_own_node(
         &source.pool,
         &source_key.public_hex(),
         "web",
@@ -501,7 +505,7 @@ async fn a_repository_on_a_storage_node_moves_from_its_primary() {
         destination.join("HEAD").is_file(),
         "the copy is kept for the next run"
     );
-    let view = codeyard_db_cluster::cluster::writes::recovery_view(&source.pool, repo)
+    let view = codeyard_db_placement::cluster::writes::recovery_view(&source.pool, repo)
         .await
         .unwrap();
     assert!(view.serving, "a failed move leaves the source serving");

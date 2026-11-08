@@ -22,16 +22,16 @@ use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_db_core::models::BranchProtectionSettings;
+use codeyard_database::models::BranchProtectionSettings;
 use codeyard_db_repos::repositories::protection::ActorListUpdate;
 use codeyard_db_repos::repositories::protection::BranchProtectionRuleUpsert;
 use codeyard_db_repos::repositories::protection::ProtectionUpdate;
 use codeyard_db_repos::repositories::protection::ReviewProtectionUpdate;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
-use codeyard_model::urls::repo_url;
-use codeyard_repos_core::api_shared::github::contents::store_error;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_git_storage::api_shared::github::contents::store_error;
+use codeyard_git_storage::repositories::store::repo_store;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
+use codeyard_types::urls::repo_url;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -246,7 +246,7 @@ async fn update(
     }
     let Json(value) = Json::<Value>::from_request(request, &state)
         .await
-        .map_err(codeyard_model::github_error::json_error)?;
+        .map_err(codeyard_types::github_error::json_error)?;
     for field in [
         "required_status_checks",
         "enforce_admins",
@@ -415,7 +415,7 @@ async fn apps(
     if !read_method(&method) {
         let Json(input) = Json::<Apps>::from_request(request, &state)
             .await
-            .map_err(codeyard_model::github_error::json_error)?;
+            .map_err(codeyard_types::github_error::json_error)?;
         let (Apps::Array(names) | Apps::Object { apps: names }) = input;
         let ids = if method == Method::DELETE {
             valid_names(&names)?;

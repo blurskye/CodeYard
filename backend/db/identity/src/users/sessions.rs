@@ -1,12 +1,12 @@
 use anyhow::Result;
 use chrono::DateTime;
 use chrono::Utc;
-use codeyard_db_core::models::BrowserSession;
-use codeyard_db_core::models::OAuthState;
-use codeyard_db_core::models::Session;
-use codeyard_db_core::models::User;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::BrowserSession;
+use codeyard_database::models::OAuthState;
+use codeyard_database::models::Session;
+use codeyard_database::models::User;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 
 native_operation!(crate::postgres::users::sessions::create_session,
     crate::sqlite::users::sessions::create_session,
@@ -26,7 +26,7 @@ native_operation!(crate::postgres::users::sessions::get_session,
 pub async fn get_session_account(pool: &DbPool, session_id: &str) -> Result<Option<User>> {
     if foreign_session(pool, session_id) {
         return Ok(
-            codeyard_db_core::cells::authorization::session(pool, session_id)
+            codeyard_database::cells::authorization::session(pool, session_id)
                 .await?
                 .map(|credential| credential.user),
         );
@@ -89,7 +89,7 @@ native_operation!(crate::postgres::users::sessions::consume_bound_oauth_state,
 
 pub async fn get_browser_session(pool: &DbPool, id: &str) -> Result<Option<BrowserSession>> {
     if foreign_session(pool, id) {
-        return Ok(codeyard_db_core::cells::authorization::session(pool, id)
+        return Ok(codeyard_database::cells::authorization::session(pool, id)
             .await?
             .map(|credential| BrowserSession {
                 id: id.to_owned(),
@@ -246,10 +246,10 @@ pub async fn get_or_create_csrf_token(
     ttl_seconds: i64,
 ) -> Result<Option<String>> {
     if foreign_session(pool, id) {
-        return Ok(codeyard_db_core::cells::authorization::session(pool, id)
+        return Ok(codeyard_database::cells::authorization::session(pool, id)
             .await?
             .and_then(|credential| match credential.answer.authority {
-                codeyard_db_core::cells::authorization::Authority::Session { csrf }
+                codeyard_database::cells::authorization::Authority::Session { csrf }
                     if expected_user == Some(credential.user.id) =>
                 {
                     Some(csrf)
@@ -282,7 +282,8 @@ pub async fn get_or_create_csrf_token(
 }
 
 fn foreign_session(pool: &DbPool, value: &str) -> bool {
-    codeyard_types::cells::Secret::cookie(value).is_ok_and(|secret| !pool.owns_prefix(secret.cell))
+    codeyard_types::cell_ids::Secret::cookie(value)
+        .is_ok_and(|secret| !pool.owns_prefix(secret.cell))
 }
 
 native_operation!(crate::postgres::users::sessions::remove_expired_identity_rows,

@@ -1,6 +1,6 @@
 use anyhow::Result;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -145,10 +145,10 @@ native_operation!(crate::postgres::action_objects::artifact_by_id,
     fn artifact_by_id(pool: &DbPool, id: i64) -> Result<Option<ActionObject>>);
 native_operation!(crate::postgres::action_objects::delete_artifact,
     crate::sqlite::action_objects::delete_artifact,
-    fn delete_artifact(pool: &DbPool, id: i64, run_id: i64, actor: Option<i64>, credential: Option<&codeyard_db_core::queries::ci::CiCredential>) -> Result<bool>);
+    fn delete_artifact(pool: &DbPool, id: i64, run_id: i64, actor: Option<i64>, credential: Option<&codeyard_database::queries::ci::CiCredential>) -> Result<bool>);
 native_operation!(codeyard_db_orgs::postgres::organizations::cache::org_cache_usage,
     codeyard_db_orgs::sqlite::organizations::cache::org_cache_usage,
-    fn org_cache_usage(pool: &DbPool, actor: i64, name: &str, offset: i64, limit: i64) -> Result<codeyard_db_core::queries::organizations::OrganizationOutcome<OrganizationCacheUsage>>);
+    fn org_cache_usage(pool: &DbPool, actor: i64, name: &str, offset: i64, limit: i64) -> Result<codeyard_database::queries::organizations::OrganizationOutcome<OrganizationCacheUsage>>);
 native_operation!(crate::postgres::action_objects::query_objects,
     crate::sqlite::action_objects::query_objects,
     fn query_objects(pool: &DbPool, query: &ObjectQuery<'_>) -> Result<ObjectPage>);
@@ -163,9 +163,9 @@ native_operation!(crate::postgres::action_objects::cache_usage,
     fn cache_usage(pool: &DbPool, repo: i64) -> Result<(i64, i64)>);
 native_operation!(crate::postgres::action_objects::grant_artifact_download,
     crate::sqlite::action_objects::grant_artifact_download,
-    fn grant_artifact_download(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo: i64, id: i64, hash: &str) -> Result<bool>);
+    fn grant_artifact_download(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, repo: i64, id: i64, hash: &str) -> Result<bool>);
 native_operation!(crate::postgres::action_objects::expire_objects,
     crate::sqlite::action_objects::expire_objects,
     fn expire_objects(pool: &DbPool) -> Result<()>);
 
-use codeyard_db_core::queries::action_objects::OrganizationCacheUsage;
+use codeyard_database::queries::action_objects::OrganizationCacheUsage;

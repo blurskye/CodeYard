@@ -40,7 +40,7 @@ async fn contract(pg: bool) {
         }
     }
     let actor = fixture.actor("alice").await;
-    let repo = codeyard_repos_core::repositories::lifecycle::provision(
+    let repo = codeyard_git_storage::repositories::lifecycle::provision(
         (fixture.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(actor),

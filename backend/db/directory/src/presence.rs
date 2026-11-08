@@ -2,7 +2,7 @@
 //! Every write still goes to the one home cell.
 use super::{Directory, Refusal};
 use anyhow::{ensure, Result};
-use codeyard_model::cells::{Object, ObjectKind};
+use codeyard_types::cells::{Object, ObjectKind};
 use sqlx::{Postgres, Transaction};
 
 /// An organization is present in at most this many regions besides its home.
@@ -44,7 +44,7 @@ impl Directory {
     ) -> Result<bool> {
         self.run(async {
             ensure!((1..=MAXIMUM_ID).contains(&organization), Refusal::Invalid);
-            codeyard_model::cells::validate_region(region).map_err(|_| Refusal::Invalid)?;
+            codeyard_types::cells::validate_region(region).map_err(|_| Refusal::Invalid)?;
             let mut tx = self.begin().await?;
             let result = async {
                 let home = self
@@ -82,7 +82,7 @@ impl Directory {
     ) -> Result<bool> {
         self.run(async {
             ensure!((1..=MAXIMUM_ID).contains(&organization), Refusal::Invalid);
-            codeyard_model::cells::validate_region(region).map_err(|_| Refusal::Invalid)?;
+            codeyard_types::cells::validate_region(region).map_err(|_| Refusal::Invalid)?;
             let mut tx = self.begin().await?;
             let result = async {
                 // The exclusive cell lock also makes this cell's presence changes take turns.

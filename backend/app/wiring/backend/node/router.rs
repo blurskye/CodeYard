@@ -1,6 +1,6 @@
 //! Router role wiring. It opens no cell database and owns both public listeners.
 use anyhow::{ensure, Context, Result};
-use codeyard_cells_router::{
+use codeyard_router::{
     directory::{Client, Reply, Request},
     routes::Routes,
 };
@@ -92,7 +92,7 @@ impl codeyard_ssh::router::Directory for Directory {
                 Some(owner) => self.routes.by_name(owner).await?,
                 None => {
                     self.routes
-                        .by_key(codeyard_model::cells::KeyKind::Ssh, fingerprint)
+                        .by_key(codeyard_types::cells::KeyKind::Ssh, fingerprint)
                         .await?
                 }
             };
@@ -137,12 +137,12 @@ pub async fn serve(config: Config) -> Result<()> {
         ),
         "Router key is not enrolled as a read-only router"
     );
-    let transport = codeyard_cells_router::http::Transport::new(Default::default())?;
-    let frontend = codeyard_cells_router::frontend::Frontend::new(
+    let transport = codeyard_router::http::Transport::new(Default::default())?;
+    let frontend = codeyard_router::frontend::Frontend::new(
         directory.routes.clone(),
         transport.clone(),
         codeyard_api_rest::routing_catalog().map_err(anyhow::Error::msg)?,
-        codeyard_cells_router::frontend::Config {
+        codeyard_router::frontend::Config {
             region: config.region,
             ..Default::default()
         },

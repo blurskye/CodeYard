@@ -7,8 +7,8 @@ use crate::RequestContext;
 use crate::Result;
 use async_graphql::Error;
 use async_graphql::ErrorExtensions;
-use codeyard_model::node_id;
-use codeyard_repos_core::store_types::MergeMethod;
+use codeyard_git_storage::store_types::MergeMethod;
+use codeyard_types::node_id;
 use serde_json::json;
 use serde_json::Value;
 
@@ -30,7 +30,7 @@ pub(super) fn target(input: &Value, key: &str, expected: &str) -> Result<i64> {
 /// The merge method a merge or auto-merge names, refused when the client read an older head.
 fn merge_method(
     input: &Value,
-    current: &codeyard_db_core::models::PullRequest,
+    current: &codeyard_database::models::PullRequest,
 ) -> Result<MergeMethod> {
     if !input["expectedHeadOid"].is_null()
         && !text(input, "expectedHeadOid")?.eq_ignore_ascii_case(&current.head_sha)
@@ -46,17 +46,17 @@ fn merge_method(
     MergeMethod::parse(&method).ok_or_else(|| Error::new("Invalid merge method"))
 }
 pub(super) fn pull_error(
-    error: codeyard_repos_core::repositories::pull_requests::OperationError,
+    error: codeyard_git_storage::repositories::pull_requests::OperationError,
 ) -> Error {
     let kind = match &error {
-        codeyard_repos_core::repositories::pull_requests::OperationError::Missing { .. } => {
+        codeyard_git_storage::repositories::pull_requests::OperationError::Missing { .. } => {
             "NOT_FOUND"
         }
-        codeyard_repos_core::repositories::pull_requests::OperationError::Denied { .. }
-        | codeyard_repos_core::repositories::pull_requests::OperationError::Unauthenticated {
+        codeyard_git_storage::repositories::pull_requests::OperationError::Denied { .. }
+        | codeyard_git_storage::repositories::pull_requests::OperationError::Unauthenticated {
             ..
         } => "FORBIDDEN",
-        codeyard_repos_core::repositories::pull_requests::OperationError::Unavailable {
+        codeyard_git_storage::repositories::pull_requests::OperationError::Unavailable {
             ..
         } => "INTERNAL",
         _ => "UNPROCESSABLE",
@@ -420,7 +420,7 @@ pub(super) async fn resolve(
                     pool,
                     &request.state.ci_runs,
                     broadcaster,
-                    codeyard_repos_core::store_types::PullHeadActor {
+                    codeyard_git_storage::store_types::PullHeadActor {
                         user: actor,
                         token: Some(request.auth.token.id),
                     },
@@ -581,7 +581,7 @@ pub(super) async fn resolve(
                     )
                     .await
                     .map_err(|error| match error {
-                        codeyard_repos_core::repositories::pull_requests::OperationError::Denied { .. } => {
+                        codeyard_git_storage::repositories::pull_requests::OperationError::Denied { .. } => {
                             crate::forbidden(field, request)
                         }
                         error => pull_error(error),

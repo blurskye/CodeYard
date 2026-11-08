@@ -17,7 +17,7 @@ use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_api_http::context::PageContext;
 use codeyard_api_http::shared::user::responses::Fields;
 use codeyard_app::app::AppState;
-use codeyard_db_core::queries::users::accounts::AccountCredential;
+use codeyard_database::queries::users::accounts::AccountCredential;
 use std::sync::Arc;
 
 /// The HTTP status and error code for a refused picture change.

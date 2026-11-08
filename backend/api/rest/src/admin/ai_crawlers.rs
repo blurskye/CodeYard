@@ -32,7 +32,7 @@ async fn settings_response(
         return response;
     }
     let config =
-        match codeyard_db_cluster::node_config::get_node_configuration(&ctx.state.pool).await {
+        match codeyard_db_placement::node_config::get_node_configuration(&ctx.state.pool).await {
             Ok(config) => config,
             Err(_) => {
                 return ctx.error(
@@ -50,7 +50,7 @@ async fn settings_response(
             )
         }
     };
-    let scaling = match codeyard_db_cluster::scaling::policies(&ctx.state.pool).await {
+    let scaling = match codeyard_db_placement::scaling::policies(&ctx.state.pool).await {
         Ok(policies) => policies,
         Err(_) => {
             return ctx.error(
@@ -61,8 +61,8 @@ async fn settings_response(
     };
     // Only a cell enrolled in a directory has other regions to place organizations in.
     let presence = match &ctx.state.pool {
-        codeyard_db_core::DbPool::Postgres(pool) if pool.directory().is_some() => {
-            match codeyard_db_cluster::regions::policy(pool).await {
+        codeyard_database::DbPool::Postgres(pool) if pool.directory().is_some() => {
+            match codeyard_db_placement::regions::policy(pool).await {
                 Ok(policy) => Some(policy),
                 Err(_) => {
                     return ctx.error(
@@ -165,13 +165,14 @@ pub(crate) async fn settings_post(
             .await;
         };
         let authority = (actor, session).into();
-        return match codeyard_db_cluster::scaling::save(&ctx.state.pool, &authority, &policy).await
+        return match codeyard_db_placement::scaling::save(&ctx.state.pool, &authority, &policy)
+            .await
         {
             Ok(()) => ctx.redirect("/admin/settings?saved=scaling"),
             Err(error) => {
                 settings_response(
                     &ctx,
-                    if error.is::<codeyard_db_cluster::drain::Refusal>() {
+                    if error.is::<codeyard_db_placement::drain::Refusal>() {
                         StatusCode::FORBIDDEN
                     } else {
                         StatusCode::SERVICE_UNAVAILABLE
@@ -184,7 +185,7 @@ pub(crate) async fn settings_post(
         };
     }
     if form.contains_key("presence_window") {
-        let codeyard_db_core::DbPool::Postgres(pool) = &ctx.state.pool else {
+        let codeyard_database::DbPool::Postgres(pool) = &ctx.state.pool else {
             return settings_response(
                 &ctx,
                 StatusCode::UNPROCESSABLE_ENTITY,
@@ -233,12 +234,12 @@ pub(crate) async fn settings_post(
             .await;
         };
         let authority = (actor, session).into();
-        return match codeyard_db_cluster::regions::save(pool, &authority, &policy).await {
+        return match codeyard_db_placement::regions::save(pool, &authority, &policy).await {
             Ok(()) => ctx.redirect("/admin/settings?saved=regions"),
             Err(error) => {
                 settings_response(
                     &ctx,
-                    if error.is::<codeyard_db_cluster::drain::Refusal>() {
+                    if error.is::<codeyard_db_placement::drain::Refusal>() {
                         StatusCode::FORBIDDEN
                     } else {
                         StatusCode::SERVICE_UNAVAILABLE
@@ -302,8 +303,13 @@ pub(crate) async fn settings_post(
             .await;
         };
         (
-            codeyard_db_cluster::node_config::set_node_mode(&ctx.state.pool, actor, &session, mode)
-                .await,
+            codeyard_db_placement::node_config::set_node_mode(
+                &ctx.state.pool,
+                actor,
+                &session,
+                mode,
+            )
+            .await,
             "signup",
             "Unable to save the sign-up setting.",
         )
@@ -318,7 +324,7 @@ pub(crate) async fn settings_post(
             .await;
         };
         (
-            codeyard_db_cluster::node_config::set_ai_crawlers(
+            codeyard_db_placement::node_config::set_ai_crawlers(
                 &ctx.state.pool,
                 actor,
                 &session,

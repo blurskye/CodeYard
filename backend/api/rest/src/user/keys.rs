@@ -111,7 +111,7 @@ async fn save_key_form(
         codeyard_identity::keys::enroll_signing(
             &ctx.state.pool,
             actor,
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+            &codeyard_database::queries::users::accounts::AccountCredential::Session(
                 session_id.as_deref().unwrap_or_default(),
             ),
             field(&form, "name").trim(),
@@ -160,7 +160,7 @@ pub(crate) async fn signing_key_delete_post(
     let result = codeyard_identity::keys::delete_signing(
         &ctx.state.pool,
         actor,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session),
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(&session),
         id,
     )
     .await
@@ -187,7 +187,7 @@ pub(crate) async fn key_delete_post(
     let result = codeyard_identity::keys::delete(
         &ctx.state.pool,
         actor,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session),
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(&session),
         id,
     )
     .await

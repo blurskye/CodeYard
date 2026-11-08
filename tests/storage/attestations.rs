@@ -163,7 +163,7 @@ async fn contract(pg: bool) {
     .await;
     let unrelated = if pg {
         let mut tx = f.pg().begin().await.unwrap();
-        codeyard_db_core::queries::postgres::attestations::lock(&mut tx, "org", other_org)
+        codeyard_database::queries::postgres::attestations::lock(&mut tx, "org", other_org)
             .await
             .unwrap();
         Some(tx)

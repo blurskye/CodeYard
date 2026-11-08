@@ -9,7 +9,7 @@ use crate::support::fake_webui_bundle as bundle;
 use crate::support::http_client as pulls;
 use axum::{http::StatusCode, Router};
 
-use codeyard_db_core::models::repositories::AccessLevel;
+use codeyard_database::models::repositories::AccessLevel;
 use database::Database;
 use pulls::Client;
 use serde_json::{json, Value};
@@ -35,7 +35,7 @@ async fn setup(pg: bool) -> World {
     let bob_id = database.actor("bob").await;
     let carol_id = database.actor("carol").await;
     let root = tempfile::tempdir().unwrap();
-    let proj = codeyard_repos_core::repositories::lifecycle::provision(
+    let proj = codeyard_git_storage::repositories::lifecycle::provision(
         (database.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
@@ -277,7 +277,7 @@ async fn assigned_reason_filters_the_list(pg: bool) {
         .await;
     codeyard_db_repos::notifications::records::create_notification(
         w.database.pool(),
-        codeyard_db_core::queries::notifications::records::NewNotification {
+        codeyard_database::queries::notifications::records::NewNotification {
             user_id: w.bob_id,
             actor_id: None,
             repo_id: Some(w.proj),

@@ -4,7 +4,7 @@ use rand::RngCore;
 
 use anyhow::Result;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use codeyard_db_core::DbPool;
+use codeyard_database::DbPool;
 use codeyard_support::token_hash::token_hash;
 use serde::Deserialize;
 use serde::Serialize;
@@ -24,7 +24,7 @@ pub fn secret() -> String {
 pub fn oidc_url() -> String {
     format!(
         "{}/api/ci/oidc/token?",
-        codeyard_model::http_config::link_origin().trim_end_matches('/')
+        codeyard_types::http_config::link_origin().trim_end_matches('/')
     )
 }
 
@@ -32,14 +32,14 @@ pub fn results_url(settings: &codeyard_db_actions::actions::ActionsSettings) -> 
     settings
         .results_url
         .clone()
-        .unwrap_or_else(codeyard_model::http_config::link_origin)
+        .unwrap_or_else(codeyard_types::http_config::link_origin)
         .trim_end_matches('/')
         .to_owned()
 }
 
 pub async fn issue(
     pool: &DbPool,
-    run: &codeyard_db_core::models::CiRun,
+    run: &codeyard_database::models::CiRun,
     settings: &codeyard_db_actions::actions::ActionsSettings,
 ) -> Result<RuntimeCredentials> {
     let backend = run.run_id.to_string();

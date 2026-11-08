@@ -1,40 +1,40 @@
 use super::*;
 use codeyard_ci::config::CiConfig;
-use codeyard_cluster_core::link::Link;
-use codeyard_cluster_core::transport;
-use codeyard_repos_core::context::NodeContext;
-use codeyard_repos_core::wire::repository_uuid;
+use codeyard_git_storage::context::NodeContext;
+use codeyard_git_storage::wire::repository_uuid;
+use codeyard_nodes::link::Link;
+use codeyard_nodes::transport;
 
 use crate::RpcHandler;
-use codeyard_cluster_core::link::read_frame;
-use codeyard_cluster_core::link::write_frame;
-use codeyard_cluster_core::transport::IrohDialer;
-use codeyard_cluster_core::transport::Relay;
-use codeyard_db_core::DbPool;
-use codeyard_repos_core::repositories::git_sessions::ReceiveCredential;
-use codeyard_repos_core::repositories::store::RepoStore;
-use codeyard_repos_core::store_types::GitService;
-use codeyard_repos_core::store_types::GitSession;
-use codeyard_repos_core::wire::Operation;
-use codeyard_repos_core::wire::Request;
-use codeyard_repos_core::wire::MAX_BYTES;
-use codeyard_repos_core::wire::TIMEOUT;
+use codeyard_database::DbPool;
+use codeyard_git_storage::repositories::git_sessions::ReceiveCredential;
+use codeyard_git_storage::repositories::store::RepoStore;
+use codeyard_git_storage::store_types::GitService;
+use codeyard_git_storage::store_types::GitSession;
+use codeyard_git_storage::wire::Operation;
+use codeyard_git_storage::wire::Request;
+use codeyard_git_storage::wire::MAX_BYTES;
+use codeyard_git_storage::wire::TIMEOUT;
+use codeyard_nodes::link::read_frame;
+use codeyard_nodes::link::write_frame;
+use codeyard_nodes::transport::IrohDialer;
+use codeyard_nodes::transport::Relay;
 use codeyard_support::node_identity::NodeKey;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
 async fn context(path: &Path) -> NodeContext {
-    let pool = codeyard_db_core::init_db(&format!("sqlite://{}", path.join("test.db").display()))
+    let pool = codeyard_database::init_db(&format!("sqlite://{}", path.join("test.db").display()))
         .await
         .unwrap();
-    codeyard_db_core::run_migrations(&pool).await.unwrap();
+    codeyard_database::run_migrations(&pool).await.unwrap();
     // A web and storage node only exists in cluster mode.
-    codeyard_db_cluster::cluster::enable_cluster_with_quorum(&pool, "1")
+    codeyard_db_placement::cluster::enable_cluster_with_quorum(&pool, "1")
         .await
         .unwrap();
     let key = NodeKey::generate();
-    let node = codeyard_db_cluster::cluster::register_own_node(
+    let node = codeyard_db_placement::cluster::register_own_node(
         &pool,
         &key.public_hex(),
         "storage",
@@ -86,7 +86,7 @@ async fn rpc_and_git_admission_deadlines_include_database_waits() {
             directory.path().join("test.db").display()
         ))
         .await
-        .map(codeyard_db_core::pool::Pool::from)
+        .map(codeyard_database::pool::Pool::from)
         .unwrap();
     context.pool = Some(raw.clone().into());
     let held = raw.acquire().await.unwrap();
@@ -114,7 +114,7 @@ async fn rpc_and_git_admission_deadlines_include_database_waits() {
         .git_session(
             context.node_id + 1,
             request,
-            codeyard_repos_core::store_types::GitStreams {
+            codeyard_git_storage::store_types::GitStreams {
                 input: &mut tokio::io::empty(),
                 output: &mut tokio::io::sink(),
                 errors: &mut tokio::io::sink(),
@@ -138,7 +138,7 @@ async fn editor_and_streamed_admission_release_their_slots_at_the_deadline() {
             directory.path().join("test.db").display()
         ))
         .await
-        .map(codeyard_db_core::pool::Pool::from)
+        .map(codeyard_database::pool::Pool::from)
         .unwrap();
     context.pool = Some(raw.clone().into());
     let handler = RpcHandler::new(context.clone());
@@ -301,14 +301,14 @@ async fn storage_git_admission_rechecks_live_tokens_keys_and_grants() {
     )
     .await
     .unwrap();
-    codeyard_db_cluster::cluster::place_repository(pool, repo.id, context.node_id)
+    codeyard_db_placement::cluster::place_repository(pool, repo.id, context.node_id)
         .await
         .unwrap();
     codeyard_db_repos::repositories::access::grant_repo_access(
         pool,
         actor.id,
         repo.id,
-        codeyard_db_core::models::AccessLevel::Read,
+        codeyard_database::models::AccessLevel::Read,
     )
     .await
     .unwrap();
@@ -380,7 +380,7 @@ async fn storage_git_admission_rechecks_live_tokens_keys_and_grants() {
         pool,
         actor.id,
         repo.id,
-        codeyard_db_core::models::AccessLevel::Read,
+        codeyard_database::models::AccessLevel::Read,
     )
     .await
     .unwrap();
@@ -465,7 +465,7 @@ async fn connected_but_stalled_primary_leaves_time_for_buffered_and_streamed_fai
     let context = context(directory.path()).await;
     let pool = context.database().unwrap();
     let key = NodeKey::generate();
-    let primary = codeyard_db_cluster::cluster::register_own_node(
+    let primary = codeyard_db_placement::cluster::register_own_node(
         pool,
         &key.public_hex(),
         "primary",
@@ -475,11 +475,11 @@ async fn connected_but_stalled_primary_leaves_time_for_buffered_and_streamed_fai
     .await
     .unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = codeyard_cluster_core::transport::NodeAddress {
+    let address = codeyard_nodes::transport::NodeAddress {
         tcp: vec![listener.local_addr().unwrap()],
         ..Default::default()
     };
-    codeyard_db_cluster::cluster::record_node_heartbeat(
+    codeyard_db_placement::cluster::record_node_heartbeat(
         pool,
         &key.public_hex(),
         "test",
@@ -488,7 +488,7 @@ async fn connected_but_stalled_primary_leaves_time_for_buffered_and_streamed_fai
     )
     .await
     .unwrap();
-    codeyard_db_cluster::cluster::record_node_heartbeat(
+    codeyard_db_placement::cluster::record_node_heartbeat(
         pool,
         &context.key.public_hex(),
         "test",
@@ -501,7 +501,7 @@ async fn connected_but_stalled_primary_leaves_time_for_buffered_and_streamed_fai
         .await
         .unwrap();
     let uuid = uuid::Uuid::new_v4();
-    let path = codeyard_repos_core::cluster::replicas::copy_path(directory.path(), uuid);
+    let path = codeyard_git_storage::cluster::replicas::copy_path(directory.path(), uuid);
     let repo = codeyard_db_repos::repositories::records::create_repository(
         pool,
         owner.id,
@@ -512,7 +512,7 @@ async fn connected_but_stalled_primary_leaves_time_for_buffered_and_streamed_fai
     )
     .await
     .unwrap();
-    codeyard_db_cluster::cluster::place_repository(pool, repo.id, primary.id)
+    codeyard_db_placement::cluster::place_repository(pool, repo.id, primary.id)
         .await
         .unwrap();
     let DbPool::Sqlite(raw) = pool else {
@@ -529,7 +529,7 @@ async fn connected_but_stalled_primary_leaves_time_for_buffered_and_streamed_fai
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     git2::Repository::init_bare(&path).unwrap();
     let acceptor =
-        tokio_rustls::TlsAcceptor::from(codeyard_cluster_core::tls::server_config(&key).unwrap());
+        tokio_rustls::TlsAcceptor::from(codeyard_nodes::tls::server_config(&key).unwrap());
     let (ready, mut waiting) = tokio::sync::mpsc::channel(2);
     let server = tokio::spawn(async move {
         let mut links = tokio::task::JoinSet::new();
@@ -563,7 +563,7 @@ async fn connected_but_stalled_primary_leaves_time_for_buffered_and_streamed_fai
                     .git_session(
                         primary.id,
                         request,
-                        codeyard_repos_core::store_types::GitStreams {
+                        codeyard_git_storage::store_types::GitStreams {
                             input: &mut std::io::Cursor::new(b"0000"),
                             output: &mut tokio::io::sink(),
                             errors: &mut tokio::io::sink(),

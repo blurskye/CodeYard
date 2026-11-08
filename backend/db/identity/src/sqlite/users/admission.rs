@@ -4,7 +4,7 @@ use crate::users::admission::CLIENT_LIMIT;
 use crate::users::admission::WINDOW_SECONDS;
 use anyhow::Result;
 use chrono::Duration;
-use codeyard_db_core::pool::SqlitePool;
+use codeyard_database::pool::SqlitePool;
 use sqlx::SqliteConnection;
 
 fn check_keys(client_key: Option<&str>, account_key: &str) -> Result<()> {
@@ -30,7 +30,7 @@ async fn charge(
         .fetch_optional(&mut *tx).await?;
     Ok(window
         .as_deref()
-        .map(codeyard_db_core::queries::sqlite::time::decode)
+        .map(codeyard_database::queries::sqlite::time::decode)
         .transpose()?)
 }
 
@@ -45,10 +45,10 @@ pub async fn admit_password_attempt(
     // BEGIN IMMEDIATE plus bounded busy_timeout fails closed across connections
     // and processes. No row-lock imitation or per-process attempt authority.
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let now = codeyard_db_core::queries::sqlite::time::now();
-    let encoded = codeyard_db_core::queries::sqlite::time::encode(now);
+    let now = codeyard_database::queries::sqlite::time::now();
+    let encoded = codeyard_database::queries::sqlite::time::encode(now);
     let window_ends_at =
-        codeyard_db_core::queries::sqlite::time::encode(now + Duration::seconds(WINDOW_SECONDS));
+        codeyard_database::queries::sqlite::time::encode(now + Duration::seconds(WINDOW_SECONDS));
     let client_window = if let Some(key) = client_key {
         charge(&mut tx, key, &encoded, &window_ends_at, CLIENT_LIMIT).await?
     } else {
@@ -88,7 +88,7 @@ pub async fn forgive_password_attempt(pool: &SqlitePool, receipt: &Receipt) -> R
         .chain(std::iter::once(&receipt.account))
     {
         sqlx::query("UPDATE auth_login_limits SET attempts=attempts-1 WHERE account_key=?1 AND attempts>0 AND window_ends_at=?2 AND window_ends_at>?3")
-            .bind(key).bind(codeyard_db_core::queries::sqlite::time::encode(*window)).bind(codeyard_db_core::queries::sqlite::time::encode(codeyard_db_core::queries::sqlite::time::now()))
+            .bind(key).bind(codeyard_database::queries::sqlite::time::encode(*window)).bind(codeyard_database::queries::sqlite::time::encode(codeyard_database::queries::sqlite::time::now()))
             .execute(pool).await?;
     }
     Ok(())

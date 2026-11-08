@@ -1,6 +1,6 @@
 use crate::issues::database_error;
 use crate::issues::OperationError;
-use codeyard_db_core::cells::authorization::inherit;
+use codeyard_database::cells::authorization::inherit;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_notifications::create::create_and_broadcast_notification;
 use codeyard_notifications::create::notify_subscribers;
@@ -37,12 +37,12 @@ pub struct UpdateIssueRequest {
 }
 
 async fn emit_issue_event(
-    pool: &codeyard_db_core::DbPool,
-    repository: &codeyard_db_core::models::Repository,
-    issue: &codeyard_db_core::models::Issue,
+    pool: &codeyard_database::DbPool,
+    repository: &codeyard_database::models::Repository,
+    issue: &codeyard_database::models::Issue,
     sender_id: i64,
     action: &'static str,
-    previous: Option<&codeyard_db_core::models::Issue>,
+    previous: Option<&codeyard_database::models::Issue>,
 ) {
     let author_id = issue.author_id;
     let mut changes = serde_json::Map::new();
@@ -56,10 +56,10 @@ async fn emit_issue_event(
     }
     let issue = issue.clone();
     let document = repository.clone();
-    codeyard_repos_core::webhooks::emit(
+    codeyard_git_storage::webhooks::emit(
         pool,
         repository,
-        codeyard_model::webhook_events::ISSUES,
+        codeyard_types::webhook_events::ISSUES,
         vec![author_id, sender_id],
         move |owner, people| {
             let (author, sender) = (people.get(author_id), people.get(sender_id));
@@ -85,13 +85,13 @@ async fn emit_issue_event(
 /// The duplicate relationship, closure and timeline event commit together; the closure's
 /// notifications finish even if the initiating HTTP request is cancelled.
 pub async fn close_duplicate(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     broadcaster: &Arc<NotificationBroadcaster>,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo: i64,
     issue: i64,
     duplicate: i64,
-) -> Result<codeyard_db_core::models::Issue, OperationError> {
+) -> Result<codeyard_database::models::Issue, OperationError> {
     let (pool, broadcaster, actor) = (pool.clone(), broadcaster.clone(), actor.into());
     tokio::spawn(inherit(async move {
         let user = crate::issues::actor(&pool, actor.user_id).await?;
@@ -143,13 +143,13 @@ pub async fn close_duplicate(
 }
 
 pub async fn create_issue(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     broadcaster: &Arc<NotificationBroadcaster>,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     owner: String,
     repo: String,
     req: CreateIssueRequest,
-) -> Result<codeyard_db_core::models::Issue, OperationError> {
+) -> Result<codeyard_database::models::Issue, OperationError> {
     create_issue_with_metadata(
         pool,
         broadcaster,
@@ -163,14 +163,14 @@ pub async fn create_issue(
 }
 
 pub async fn create_issue_with_metadata(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     broadcaster: &Arc<NotificationBroadcaster>,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     owner: String,
     repo: String,
     req: CreateIssueRequest,
     metadata: codeyard_db_repos::issues::OwnedIssueMetadata,
-) -> Result<codeyard_db_core::models::Issue, OperationError> {
+) -> Result<codeyard_database::models::Issue, OperationError> {
     let (pool, broadcaster, actor) = (pool.clone(), broadcaster.clone(), actor.into());
     tokio::spawn(inherit(async move {
         create_issue_owned(
@@ -194,14 +194,14 @@ pub async fn create_issue_with_metadata(
 }
 
 async fn create_issue_owned(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     broadcaster: &NotificationBroadcaster,
-    actor: codeyard_db_core::queries::credentials::Actor,
+    actor: codeyard_database::queries::credentials::Actor,
     owner: String,
     repo: String,
     req: CreateIssueRequest,
     mut metadata: codeyard_db_repos::issues::IssueMetadata<'_>,
-) -> Result<codeyard_db_core::models::Issue, OperationError> {
+) -> Result<codeyard_database::models::Issue, OperationError> {
     let user = crate::issues::actor(pool, actor.user_id).await?;
 
     let repository = codeyard_db_repos::repositories::records::get_repository(pool, &owner, &repo)
@@ -221,8 +221,8 @@ async fn create_issue_owned(
         });
     }
 
-    let checked = codeyard_model::issue_input::validate_title(&req.title).and_then(|_| {
-        codeyard_model::issue_input::validate_body(req.body.as_deref().unwrap_or(""), false)
+    let checked = codeyard_types::issue_input::validate_title(&req.title).and_then(|_| {
+        codeyard_types::issue_input::validate_body(req.body.as_deref().unwrap_or(""), false)
     });
     if let Err(message) = checked {
         return Err(OperationError::Invalid {
@@ -316,13 +316,13 @@ async fn create_issue_owned(
 }
 
 pub async fn update_issue(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     broadcaster: &NotificationBroadcaster,
     actor_id: i64,
     repository_id: i64,
     number: i32,
     req: UpdateIssueRequest,
-) -> Result<codeyard_db_core::models::Issue, OperationError> {
+) -> Result<codeyard_database::models::Issue, OperationError> {
     let user = crate::issues::actor(pool, actor_id).await?;
     let (repository, owner) = crate::issues::repository(pool, repository_id).await?;
     crate::issues::require_read(pool, &user, &repository).await?;
@@ -370,11 +370,11 @@ pub async fn update_issue(
     if req
         .title
         .as_ref()
-        .is_some_and(|title| codeyard_model::issue_input::validate_title(title).is_err())
+        .is_some_and(|title| codeyard_types::issue_input::validate_title(title).is_err())
         || req
             .body
             .as_ref()
-            .is_some_and(|body| codeyard_model::issue_input::validate_body(body, false).is_err())
+            .is_some_and(|body| codeyard_types::issue_input::validate_body(body, false).is_err())
         || !matches!(req.expected_state.as_str(), "open" | "closed")
     {
         return Err(OperationError::Invalid {
@@ -429,13 +429,13 @@ pub async fn update_issue(
 }
 
 async fn after_update(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     broadcaster: &NotificationBroadcaster,
-    repository: &codeyard_db_core::models::Repository,
-    user: &codeyard_db_core::models::User,
+    repository: &codeyard_database::models::Repository,
+    user: &codeyard_database::models::User,
     owner: &str,
-    existing: &codeyard_db_core::models::Issue,
-    issue: &codeyard_db_core::models::Issue,
+    existing: &codeyard_database::models::Issue,
+    issue: &codeyard_database::models::Issue,
 ) {
     let repo = &repository.name;
     let number = issue.number;
@@ -478,11 +478,11 @@ async fn after_update(
 /// Tells the issue's author and the people subscribed to it that the issue was closed or
 /// reopened. The actor is not told about their own change.
 pub(super) async fn notify_state_change(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     broadcaster: &NotificationBroadcaster,
-    actor: &codeyard_db_core::models::User,
-    (repository, owner): (&codeyard_db_core::models::Repository, &str),
-    issue: &codeyard_db_core::models::Issue,
+    actor: &codeyard_database::models::User,
+    (repository, owner): (&codeyard_database::models::Repository, &str),
+    issue: &codeyard_database::models::Issue,
 ) {
     let (kind, verb) = if issue.state == "closed" {
         ("issue_closed", "closed")
@@ -516,13 +516,13 @@ pub(super) async fn notify_state_change(
 /// state and time it just read. A concurrent change, such as gh adding labels while it saves the
 /// title, moves that time, so read the issue again and retry instead of refusing.
 pub async fn update_issue_latest(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     broadcaster: &NotificationBroadcaster,
     actor_id: i64,
     repository_id: i64,
     number: i32,
     mut req: UpdateIssueRequest,
-) -> Result<codeyard_db_core::models::Issue, OperationError> {
+) -> Result<codeyard_database::models::Issue, OperationError> {
     for _ in 0..3 {
         let refused = match update_issue(
             pool,

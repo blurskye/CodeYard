@@ -19,10 +19,10 @@ pub fn router() -> Router<Arc<AppState>> {
 }
 
 /// The name of the database engine in use.
-fn database_name(pool: &codeyard_db_core::DbPool) -> &'static str {
+fn database_name(pool: &codeyard_database::DbPool) -> &'static str {
     match pool {
-        codeyard_db_core::DbPool::Postgres(_) => "PostgreSQL",
-        codeyard_db_core::DbPool::Sqlite(_) => "SQLite",
+        codeyard_database::DbPool::Postgres(_) => "PostgreSQL",
+        codeyard_database::DbPool::Sqlite(_) => "SQLite",
     }
 }
 

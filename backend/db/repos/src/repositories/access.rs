@@ -1,10 +1,10 @@
 use anyhow::Result;
-use codeyard_db_core::models::AccessLevel;
-use codeyard_db_core::models::RepoAccess;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::models::User;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::AccessLevel;
+use codeyard_database::models::RepoAccess;
+use codeyard_database::models::Repository;
+use codeyard_database::models::User;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 
 native_operation!(crate::postgres::repositories::access::git_access,
     crate::sqlite::repositories::access::git_access,
@@ -21,7 +21,7 @@ native_operation!(crate::postgres::repositories::access::change_personal_reposit
     crate::sqlite::repositories::access::change_personal_repository_collaborator,
     fn change_personal_repository_collaborator(
     pool: &DbPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     username: &str,
     permission: Option<AccessLevel>,

@@ -2,7 +2,7 @@ use crate::code_scanning::Analysis;
 use crate::code_scanning::NewFinding;
 use crate::code_scanning::ANALYSIS_COLUMNS;
 use anyhow::Result;
-use codeyard_db_core::pool::PgPool;
+use codeyard_database::pool::PgPool;
 
 pub async fn pull_analyses(
     pool: &PgPool,

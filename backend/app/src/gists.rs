@@ -3,7 +3,7 @@
 use crate::app::AppState;
 use anyhow::ensure;
 use anyhow::Result;
-use codeyard_db_core::models::Repository;
+use codeyard_database::models::Repository;
 use codeyard_db_repos::gists::Gist;
 use codeyard_db_repos::gists::GistRefusal;
 use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
@@ -13,8 +13,8 @@ use codeyard_git::gist_types::GistEdit;
 use codeyard_git::gist_types::GistFileChange;
 use codeyard_git::gist_types::GistSnapshot;
 use codeyard_git::gist_types::MAX_GIST_FILES;
+use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_repos::gists::GistCredential;
-use codeyard_repos_core::repositories::store::repo_store;
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::sync::Arc;
@@ -53,7 +53,7 @@ pub fn text_preview(bytes: &[u8], limit: usize) -> Option<&str> {
 
 /// Database-only operations need a published gist, not an available Git storage node.
 pub async fn metadata(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     id: &str,
 ) -> Result<codeyard_db_repos::gists::Gist> {
     codeyard_db_repos::gists::get(pool, id)
@@ -137,7 +137,7 @@ async fn discard(state: &AppState, repo: i64, orphan_only: bool) -> Result<bool>
     if let Some(repository) =
         codeyard_db_repos::gists::discard(&state.pool, repo, orphan_only).await?
     {
-        codeyard_repos_core::repositories::lifecycle::remove_deleted_repository(
+        codeyard_git_storage::repositories::lifecycle::remove_deleted_repository(
             state.cluster.as_ref(),
             &repository,
         )
@@ -185,7 +185,7 @@ pub async fn create(
     complete(&state, async move {
         let id = uuid::Uuid::new_v4().simple().to_string();
         let name = format!("gist-{id}");
-        let repo = codeyard_repos_core::repositories::lifecycle::provision_gist(
+        let repo = codeyard_git_storage::repositories::lifecycle::provision_gist(
             (&work.pool, work.cluster.as_ref()),
             &work.repos_path,
             RepositoryCreationOwner {
@@ -267,7 +267,7 @@ pub async fn fork(
         ensure!(source.gist.owner_id != actor, GistRefusal::Invalid);
         let id = uuid::Uuid::new_v4().simple().to_string();
         let name = format!("gist-{id}");
-        let repo = codeyard_repos_core::repositories::lifecycle::provision_gist(
+        let repo = codeyard_git_storage::repositories::lifecycle::provision_gist(
             (&work.pool, work.cluster.as_ref()),
             &work.repos_path,
             RepositoryCreationOwner {
@@ -316,7 +316,7 @@ pub async fn delete(
             gist.repo_id,
         )
         .await?;
-        codeyard_repos_core::repositories::lifecycle::remove_deleted_repository(
+        codeyard_git_storage::repositories::lifecycle::remove_deleted_repository(
             work.cluster.as_ref(),
             &repository,
         )

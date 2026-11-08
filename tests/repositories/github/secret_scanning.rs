@@ -5,9 +5,9 @@ use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
 use codeyard_ci::config::CiConfig;
 use codeyard_db_security::secret_scanning as records;
+use codeyard_git_storage::repositories::lifecycle;
 use codeyard_identity::tokens;
 use codeyard_identity::tokens::TokenInput;
-use codeyard_repos_core::repositories::lifecycle;
 use codeyard_repos_pulls::repositories::secret_scanning::jobs;
 use codeyard_storage::ObjectStore;
 use codeyard_support::secrets::SecretEncryptor;
@@ -501,7 +501,7 @@ async fn custom_patterns(
             .unwrap(),
     )
     .unwrap();
-    let codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(org) =
+    let codeyard_database::queries::organizations::OrganizationOutcome::Applied(org) =
         codeyard_db_orgs::organizations::profiles::create_organization(
             fixture.pool(),
             owner,

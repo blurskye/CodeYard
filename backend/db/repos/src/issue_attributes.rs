@@ -1,9 +1,9 @@
 use anyhow::Result;
 use chrono::DateTime;
 use chrono::Utc;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::queries::credentials::Actor;
-use codeyard_db_core::DbPool;
+use codeyard_database::native_operation;
+use codeyard_database::queries::credentials::Actor;
+use codeyard_database::DbPool;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
@@ -235,7 +235,7 @@ impl Attribute {
             Some("date") => {
                 let text = value.as_str().ok_or_else(invalid)?;
                 anyhow::ensure!(
-                    codeyard_model::issue_input::calendar_day(text).is_some(),
+                    codeyard_types::issue_input::calendar_day(text).is_some(),
                     Refusal::Invalid
                 );
                 value.clone()

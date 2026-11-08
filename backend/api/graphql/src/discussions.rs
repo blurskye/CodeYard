@@ -11,7 +11,7 @@ use codeyard_db_repos::repository_discussions as store;
 use codeyard_db_repos::repository_discussions::Filter;
 use codeyard_db_repos::repository_discussions::Order;
 use codeyard_db_repos::repository_discussions::Write;
-use codeyard_model::node_id;
+use codeyard_types::node_id;
 use serde_json::json;
 use serde_json::Value;
 
@@ -127,7 +127,7 @@ pub(super) async fn repository_field(
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(|| {
-                    codeyard_model::graphql_error::error(
+                    codeyard_types::graphql_error::error(
                         format!("Could not resolve to a Discussion with the number of {number}."),
                         "NOT_FOUND",
                     )

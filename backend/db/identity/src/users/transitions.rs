@@ -1,7 +1,7 @@
 use anyhow::Result;
-use codeyard_db_core::models::User;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::User;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 
 /// Browser operations retain the original session. Trusted local database callers use an ID.
 pub struct AdministratorActor {
@@ -122,7 +122,7 @@ native_operation!(crate::postgres::users::transitions::admit_oauth_account,
 ) -> Result<AccountAdmission>);
 
 pub(crate) fn valid_oauth_enrollment(provider: &str, subject: &str) -> bool {
-    let oidc = codeyard_model::oauth_apps::organization_from_oidc_provider(provider).is_some();
+    let oidc = codeyard_types::oauth_apps::organization_from_oidc_provider(provider).is_some();
     (oidc || ["github", "google", "gitlab", "discord", "bitbucket"].contains(&provider))
         && !subject.is_empty()
         && subject.len() <= 255
@@ -163,6 +163,6 @@ native_operation!(crate::postgres::users::transitions::compare_exchange_password
 pub(crate) fn native_account_sql() -> String {
     format!(
         "SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND NOT is_stub AND home_cell={})",
-        codeyard_db_core::cells::LOCAL_HOME_SQL
+        codeyard_database::cells::LOCAL_HOME_SQL
     )
 }

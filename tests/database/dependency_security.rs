@@ -40,9 +40,9 @@ async fn contract(postgres: bool) {
         .unwrap();
     }
     let alice_credential =
-        codeyard_db_core::queries::users::accounts::OwnedAccountCredential::from(&alice_session);
+        codeyard_database::queries::users::accounts::OwnedAccountCredential::from(&alice_session);
     let bob_credential =
-        codeyard_db_core::queries::users::accounts::OwnedAccountCredential::from(&bob_session);
+        codeyard_database::queries::users::accounts::OwnedAccountCredential::from(&bob_session);
     let configure = |actor, feature, enabled, consent| {
         let credential = if actor == alice {
             &alice_credential
@@ -86,7 +86,7 @@ async fn contract(postgres: bool) {
     let inventory = codeyard_repos_pulls::repositories::dependency_graph::snapshot(
         sha.clone(),
         "refs/heads/main".into(),
-        vec![codeyard_model::repositories::Package {
+        vec![codeyard_types::repositories::Package {
             manifest: "package-lock.json".into(),
             ecosystem: "npm".into(),
             name: "foo".into(),

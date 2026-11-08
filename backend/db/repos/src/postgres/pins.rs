@@ -4,7 +4,7 @@ use crate::pins::ItemPin;
 use crate::pins::Pin;
 use crate::pins::PinRefusal;
 use anyhow::Result;
-use codeyard_db_core::pool::PgPool;
+use codeyard_database::pool::PgPool;
 
 pub async fn get_pin(pool: &PgPool, item: AssignedItem) -> Result<Option<Pin>> {
     let s = scope(item);
@@ -36,7 +36,7 @@ pub async fn get_pins(pool: &PgPool, pull_requests: bool, ids: &[i64]) -> Result
 pub async fn set_pin(
     pool: &PgPool,
     actor: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     repo: i64,
     item: AssignedItem,
     comment: i64,
@@ -46,13 +46,13 @@ pub async fn set_pin(
     let mut tx = pool.begin().await?;
     let permission = if s.pull { "pull_requests" } else { "issues" };
     anyhow::ensure!(
-        codeyard_db_core::queries::postgres::discussions::lock_write_authority(
+        codeyard_database::queries::postgres::discussions::lock_write_authority(
             &mut tx, actor, repo
         )
         .await?
-            && codeyard_db_core::queries::postgres::credentials::repository(
+            && codeyard_database::queries::postgres::credentials::repository(
                 &mut tx,
-                &codeyard_db_core::queries::credentials::Actor::from((actor, credential)),
+                &codeyard_database::queries::credentials::Actor::from((actor, credential)),
                 repo,
                 permission,
                 true

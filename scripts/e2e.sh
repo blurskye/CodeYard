@@ -292,7 +292,7 @@ build_bundle() {
 }
 
 build_server() {
-    cargo build --locked "${CARGO_PROFILE[@]}" -p codeyard --bin codeyard -p codeyard-actions --bin codeyard-actions --message-format=json >"$WORK/cargo-artifacts.json" || return 1
+    cargo build --locked "${CARGO_PROFILE[@]}" -p codeyard --bin codeyard -p codeyard-runner --bin codeyard-actions --message-format=json >"$WORK/cargo-artifacts.json" || return 1
     BIN=$("$PYTHON" -I scripts/cargo-executable.py codeyard <"$WORK/cargo-artifacts.json") || return 1
     ACTIONS_BIN=$("$PYTHON" -I scripts/cargo-executable.py codeyard-actions <"$WORK/cargo-artifacts.json") || return 1
     [[ -x $BIN && -x $ACTIONS_BIN ]]

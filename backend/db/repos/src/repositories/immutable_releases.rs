@@ -1,9 +1,9 @@
+use crate::release_integrity::Artifact;
+use crate::release_integrity::Attestation;
+use crate::release_integrity::Statement;
 use anyhow::ensure;
 use anyhow::Result;
-use codeyard_db_core::DbPool;
-use codeyard_model::release_integrity::Artifact;
-use codeyard_model::release_integrity::Attestation;
-use codeyard_model::release_integrity::Statement;
+use codeyard_database::DbPool;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Refusal {
@@ -77,7 +77,7 @@ pub async fn enabled(pool: &DbPool, repo: i64) -> Result<bool> {
 
 pub async fn set_enabled(
     pool: &DbPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo: i64,
     enabled: bool,
 ) -> Result<()> {

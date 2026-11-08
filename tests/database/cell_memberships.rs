@@ -1,8 +1,8 @@
 //! Pointer delivery is ordered and atomic; a pointer never becomes native account authority.
 use crate::support::database::Database;
-use codeyard_db_core::cells::pointers::{self, Admission, Change, Event};
-use codeyard_model::cells::{Object, ObjectKind};
-use codeyard_types::cells::Prefix;
+use codeyard_database::cells::pointers::{self, Admission, Change, Event};
+use codeyard_types::cell_ids::Prefix;
+use codeyard_types::cells::{Object, ObjectKind};
 use futures_util::future::BoxFuture;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -24,17 +24,18 @@ struct PendingPage {
     started: tokio::sync::Notify,
     release: tokio::sync::Notify,
 }
-impl codeyard_db_core::cells::authorization::Home for PendingPage {
+impl codeyard_database::cells::authorization::Home for PendingPage {
     fn user<'a>(
         &'a self,
         _name: &'a str,
-    ) -> BoxFuture<'a, anyhow::Result<Option<codeyard_db_core::models::User>>> {
+    ) -> BoxFuture<'a, anyhow::Result<Option<codeyard_database::models::User>>> {
         Box::pin(async { Ok(None) })
     }
     fn authorize<'a>(
         &'a self,
-        _proof: &'a codeyard_db_core::cells::authorization::Proof,
-    ) -> BoxFuture<'a, anyhow::Result<Option<codeyard_db_core::cells::authorization::Answer>>> {
+        _proof: &'a codeyard_database::cells::authorization::Proof,
+    ) -> BoxFuture<'a, anyhow::Result<Option<codeyard_database::cells::authorization::Answer>>>
+    {
         Box::pin(async { Ok(None) })
     }
     fn resource_page<'a>(
@@ -117,10 +118,10 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    let actor = codeyard_db_core::queries::credentials::Actor::from((user, session.clone()));
+    let actor = codeyard_database::queries::credentials::Actor::from((user, session.clone()));
     let read = async {
         match f.pool() {
-            codeyard_db_core::DbPool::Postgres(pool) => {
+            codeyard_database::DbPool::Postgres(pool) => {
                 pointers::postgres::Reader::homes(
                     pool,
                     user,
@@ -130,7 +131,7 @@ async fn contract(pg: bool) {
                 )
                 .await
             }
-            codeyard_db_core::DbPool::Sqlite(pool) => {
+            codeyard_database::DbPool::Sqlite(pool) => {
                 pointers::sqlite::Reader::homes(
                     pool,
                     user,
@@ -263,8 +264,8 @@ async fn contract(pg: bool) {
     remote.email = None;
     remote.password_hash = None;
     remote.username = "membership-remote".into();
-    codeyard_db_core::cells::authorization::redact_user(&mut remote);
-    codeyard_db_core::cells::stubs::user(f.pool(), Prefix::new(1), &remote)
+    codeyard_database::cells::authorization::redact_user(&mut remote);
+    codeyard_database::cells::stubs::user(f.pool(), Prefix::new(1), &remote)
         .await
         .unwrap();
     let repository = codeyard_db_repos::repositories::records::create_repository(
@@ -301,12 +302,12 @@ async fn contract(pg: bool) {
         let sql =
             "SELECT payload FROM cell_outbox WHERE topic='pointer' AND root_id=$1 ORDER BY id";
         match f.pool() {
-            codeyard_db_core::DbPool::Postgres(pool) => sqlx::query_scalar::<_, String>(sql)
+            codeyard_database::DbPool::Postgres(pool) => sqlx::query_scalar::<_, String>(sql)
                 .bind(repository.id)
                 .fetch_all(pool)
                 .await
                 .unwrap(),
-            codeyard_db_core::DbPool::Sqlite(pool) => sqlx::query_scalar::<_, String>(sql)
+            codeyard_database::DbPool::Sqlite(pool) => sqlx::query_scalar::<_, String>(sql)
                 .bind(repository.id)
                 .fetch_all(pool)
                 .await
@@ -320,7 +321,7 @@ async fn contract(pg: bool) {
     assert_eq!(change.object.id, repository.id);
     assert_eq!(change.user_id, remote.id);
     match f.pool() {
-        codeyard_db_core::DbPool::Postgres(pool) => {
+        codeyard_database::DbPool::Postgres(pool) => {
             let mut tx = pool.begin().await.unwrap();
             sqlx::query("DELETE FROM stars WHERE user_id=$1 AND repo_id=$2")
                 .bind(remote.id)
@@ -330,7 +331,7 @@ async fn contract(pg: bool) {
                 .unwrap();
             tx.rollback().await.unwrap();
         }
-        codeyard_db_core::DbPool::Sqlite(pool) => {
+        codeyard_database::DbPool::Sqlite(pool) => {
             let mut tx = pool.begin().await.unwrap();
             sqlx::query("DELETE FROM stars WHERE user_id=$1 AND repo_id=$2")
                 .bind(remote.id)

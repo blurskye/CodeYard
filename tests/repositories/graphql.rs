@@ -121,7 +121,7 @@ async fn contract(pg: bool) {
     )
     .await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard_repos_core::repositories::lifecycle::provision(
+    let repo = codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
@@ -392,7 +392,7 @@ async fn contract(pg: bool) {
     codeyard_db_repos::reactions::create_reaction(
         f.pool(),
         alice,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Token(
+        &codeyard_database::queries::users::accounts::AccountCredential::Token(
             token_ids[0],
             &codeyard_support::token_hash::token_hash(token),
         ),
@@ -483,10 +483,10 @@ async fn contract(pg: bool) {
     assert_eq!(data["node"]["name"], "proj");
     assert_eq!(data["nodes"].as_array().unwrap().len(), 4);
     // Root hints select a cell, but the native reader verifies the actual owner.
-    let issue_row = codeyard_model::node_id::decode(issue_id.as_str().unwrap())
+    let issue_row = codeyard_types::node_id::decode(issue_id.as_str().unwrap())
         .unwrap()
         .1;
-    let scoped_issue = codeyard_model::node_id::scoped("I", repo.id, issue_row).unwrap();
+    let scoped_issue = codeyard_types::node_id::scoped("I", repo.id, issue_row).unwrap();
     let rooted = query(
         &router,
         token,
@@ -495,7 +495,7 @@ async fn contract(pg: bool) {
     )
     .await;
     assert_eq!(rooted["node"]["number"], issue_number);
-    let forged = codeyard_model::node_id::scoped("I", repo.id + 1000, issue_row).unwrap();
+    let forged = codeyard_types::node_id::scoped("I", repo.id + 1000, issue_row).unwrap();
     let (_, rejected) = call(
         &router,
         Some(token),

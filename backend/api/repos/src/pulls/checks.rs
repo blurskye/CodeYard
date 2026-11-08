@@ -99,7 +99,7 @@ async fn render_checks(
         // The view links only absolute HTTP(S) addresses.
         target_url: Some(format!(
             "{}/{}/{}/runs/{}",
-            codeyard_model::http_config::link_origin(),
+            codeyard_types::http_config::link_origin(),
             repo.view.owner,
             repo.record.name,
             run.id
@@ -154,9 +154,9 @@ mod tests {
 
     #[tokio::test]
     async fn checks_keep_the_item_snapshot_after_a_push() {
-        let pool = codeyard_db_core::init_db("sqlite::memory:").await.unwrap();
-        codeyard_db_core::run_migrations(&pool).await.unwrap();
-        let codeyard_db_core::DbPool::Sqlite(sqlite) = &pool else {
+        let pool = codeyard_database::init_db("sqlite::memory:").await.unwrap();
+        codeyard_database::run_migrations(&pool).await.unwrap();
+        let codeyard_database::DbPool::Sqlite(sqlite) = &pool else {
             unreachable!()
         };
         sqlx::query("INSERT INTO node_configuration(id, setup_completed) VALUES(1, TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE").execute(sqlite).await.unwrap();
@@ -164,7 +164,7 @@ mod tests {
             .await
             .unwrap();
         let root = tempfile::tempdir().unwrap();
-        let record = codeyard_repos_core::repositories::lifecycle::provision(
+        let record = codeyard_git_storage::repositories::lifecycle::provision(
             (&pool, None),
             root.path(),
             codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner.id),

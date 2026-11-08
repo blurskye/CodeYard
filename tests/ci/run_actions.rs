@@ -11,7 +11,7 @@ use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
 use codeyard_ci::config::CiConfig;
 
-use codeyard_db_core::models::AccessLevel;
+use codeyard_database::models::AccessLevel;
 use codeyard_storage::ObjectStore;
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
@@ -27,7 +27,7 @@ async fn contract(pg: bool) {
     let bob_id = f.actor("bob").await;
     let dave_id = f.actor("dave").await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard_repos_core::repositories::lifecycle::provision(
+    let repo = codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
@@ -120,7 +120,7 @@ async fn contract(pg: bool) {
         0,
         &output
             .iter()
-            .map(|line| codeyard_model::ci::LogLine {
+            .map(|line| codeyard_types::ci::LogLine {
                 stage: "ci.yml".into(),
                 line: (*line).into(),
                 level: "info".into(),
@@ -190,7 +190,7 @@ async fn contract(pg: bool) {
     );
 
     // An unreadable repository and a missing one have the same run-action refusal.
-    let private = codeyard_repos_core::repositories::lifecycle::provision(
+    let private = codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
@@ -396,7 +396,7 @@ async fn browser_logs(
     router: &axum::Router,
     alice: &Client,
     dave: &Client,
-    run: &codeyard_db_core::models::CiRun,
+    run: &codeyard_database::models::CiRun,
 ) {
     use axum::{body::Body, http::Request};
 
@@ -661,7 +661,7 @@ async fn pull_request_run_is_run_again(pg: bool) {
     let carol_id = f.actor("carol").await;
     let dave_id = f.actor("dave").await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard_repos_core::repositories::lifecycle::provision(
+    let repo = codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),

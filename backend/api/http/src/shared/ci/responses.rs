@@ -1,8 +1,8 @@
 use codeyard_webui::pages::ci as view;
 use codeyard_webui::pages::repos::actions as view_actions;
 pub fn map_run(
-    run: codeyard_db_core::models::CiRun,
-    repository: &codeyard_db_core::models::Repository,
+    run: codeyard_database::models::CiRun,
+    repository: &codeyard_database::models::Repository,
 ) -> view_actions::Run {
     // A pull request run is stored on its base branch, which admission uses. The page shows the head
     // branch of the pull request, which the run kept in its event.
@@ -17,7 +17,7 @@ pub fn map_run(
             if matches!(run.event.as_str(), "pull_request" | "pull_request_target") {
                 &run.branch
             } else {
-                codeyard_db_core::ci_messages::branch_name(&run.branch)
+                codeyard_database::ci_messages::branch_name(&run.branch)
             }
         })
         .to_owned();
@@ -43,7 +43,7 @@ pub fn map_run(
         created_at: run.created_at.timestamp(),
         started_at: run.started_at.map(|value| value.timestamp()),
         completed_at: run.completed_at.map(|value| value.timestamp()),
-        error_message: codeyard_db_core::ci_messages::visible_run_error(
+        error_message: codeyard_database::ci_messages::visible_run_error(
             run.error_message.as_deref(),
         ),
         // Admission stores these as an object of strings; the page shows none if it cannot read them.
@@ -56,7 +56,7 @@ pub fn map_run(
 
 /// A workflow as the Actions page lists it: its inputs only matter when it can be dispatched.
 pub fn workflow_view(
-    workflow: codeyard_repos_core::workflows::WorkflowDefinition,
+    workflow: codeyard_git_storage::workflows::WorkflowDefinition,
 ) -> view_actions::Workflow {
     view_actions::Workflow {
         path: workflow.path,
@@ -72,9 +72,9 @@ pub fn workflow_view(
 }
 
 fn workflow_input_view(
-    input: codeyard_actions::workflow::dispatch_inputs::DispatchInput,
+    input: codeyard_runner::workflow::dispatch_inputs::DispatchInput,
 ) -> view_actions::WorkflowInput {
-    use codeyard_actions::workflow::dispatch_inputs::InputKind;
+    use codeyard_runner::workflow::dispatch_inputs::InputKind;
     view_actions::WorkflowInput {
         name: input.name,
         description: input.description.chars().take(1024).collect(),

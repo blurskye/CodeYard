@@ -131,7 +131,7 @@ async fn fields(pg: bool) {
         let project = projects::create(
             f.pool(),
             alice,
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+            &codeyard_database::queries::users::accounts::AccountCredential::Session(
                 &session.session,
             ),
             owner,
@@ -144,7 +144,7 @@ async fn fields(pg: bool) {
         assert!(projects::create(
             f.pool(),
             bob,
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+            &codeyard_database::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(f.pool(), bob).await
             ),
             owner,
@@ -323,7 +323,7 @@ async fn fields(pg: bool) {
         projects::save(
             f.pool(),
             alice,
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+            &codeyard_database::queries::users::accounts::AccountCredential::Session(
                 &session.session,
             ),
             project.id,
@@ -340,7 +340,7 @@ async fn fields(pg: bool) {
         let unchanged = projects::save(
             f.pool(),
             alice,
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+            &codeyard_database::queries::users::accounts::AccountCredential::Session(
                 &session.session,
             ),
             project.id,
@@ -384,7 +384,7 @@ async fn fields(pg: bool) {
         projects::delete(
             f.pool(),
             alice,
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+            &codeyard_database::queries::users::accounts::AccountCredential::Session(
                 &session.session,
             ),
             project.id,
@@ -404,7 +404,7 @@ async fn fields(pg: bool) {
         let next = projects::create(
             f.pool(),
             alice,
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+            &codeyard_database::queries::users::accounts::AccountCredential::Session(
                 &session.session,
             ),
             owner,

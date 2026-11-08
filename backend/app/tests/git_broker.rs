@@ -5,12 +5,12 @@ use base64::Engine;
 use codeyard_ci_engine::queue::RunQueue;
 use codeyard_ci_engine::runs::CiRuns;
 use codeyard_ci_engine::workers::CiWorkers;
-use codeyard_db_core::models::AccessLevel;
+use codeyard_database::models::AccessLevel;
+use codeyard_git_storage::repositories::git_sessions::private_files;
+use codeyard_git_storage::repositories::git_sessions::protocol;
+use codeyard_git_storage::repositories::git_sessions::ReceiveCredential;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_repos::validation;
-use codeyard_repos_core::repositories::git_sessions::private_files;
-use codeyard_repos_core::repositories::git_sessions::protocol;
-use codeyard_repos_core::repositories::git_sessions::ReceiveCredential;
 use std::os::unix::fs::PermissionsExt;
 use std::process::Output;
 use std::process::Stdio;
@@ -28,7 +28,7 @@ const ZERO_SHA: &str = "0000000000000000000000000000000000000000";
 
 struct Database {
     pool: DbPool,
-    native: codeyard_db_core::pool::PgPool,
+    native: codeyard_database::pool::PgPool,
     schema: String,
     url: String,
 }
@@ -47,7 +47,7 @@ impl Drop for Database {
                 let admin = sqlx::postgres::PgPoolOptions::new()
                     .max_connections(1)
                     .connect(&url)
-                    .await.map(codeyard_db_core::pool::Pool::from)?;
+                    .await.map(codeyard_database::pool::Pool::from)?;
                 sqlx::raw_sql("SET lock_timeout = '5s'; SET statement_timeout = '10s'")
                     .execute(&admin)
                     .await?;
@@ -92,7 +92,7 @@ async fn database() -> Database {
         .max_connections(1)
         .connect(&url)
         .await
-        .map(codeyard_db_core::pool::Pool::from)
+        .map(codeyard_database::pool::Pool::from)
         .expect("required disposable PostgreSQL is unavailable");
     sqlx::query(&format!("CREATE SCHEMA \"{schema}\""))
         .execute(&admin)
@@ -112,10 +112,10 @@ async fn database() -> Database {
             fixture.url, fixture.schema, fixture.schema
         ))
         .await
-        .map(codeyard_db_core::pool::Pool::from)
+        .map(codeyard_database::pool::Pool::from)
         .unwrap();
     fixture.pool = DbPool::from(fixture.native.clone());
-    codeyard_db_core::run_migrations(&fixture.pool)
+    codeyard_database::run_migrations(&fixture.pool)
         .await
         .expect("required fixture migration");
     fixture
@@ -161,7 +161,7 @@ impl Broker {
         let helper =
             private_files::trusted_executable(&std::fs::canonicalize(helper).unwrap(), uid)
                 .unwrap();
-        let directory = codeyard_actions::fs::private_tempdir("openssh-broker-", None).unwrap();
+        let directory = codeyard_runner::fs::private_tempdir("openssh-broker-", None).unwrap();
         let root = directory.path().join("repos");
         std::fs::create_dir(&root).unwrap();
         let socket = directory.path().join("broker.sock");
@@ -1375,7 +1375,7 @@ struct PushFixture {
 impl PushFixture {
     async fn new(pool: DbPool) -> Self {
         let directory = tempfile::tempdir().unwrap();
-        codeyard_db_cluster::node_config::upsert_node_configuration(&pool, "public", true)
+        codeyard_db_placement::node_config::upsert_node_configuration(&pool, "public", true)
             .await
             .unwrap();
         let owner = codeyard_db_identity::users::accounts::create_user(&pool, "push-owner", None)
@@ -1762,13 +1762,13 @@ async fn concurrent_first_pushes(pool: DbPool) {
 
 async fn sqlite_push_database() -> (TempDir, DbPool) {
     let directory = tempfile::tempdir().unwrap();
-    let pool = codeyard_db_core::init_db(&format!(
+    let pool = codeyard_database::init_db(&format!(
         "sqlite://{}",
         directory.path().join("test.db").display()
     ))
     .await
     .unwrap();
-    codeyard_db_core::run_migrations(&pool).await.unwrap();
+    codeyard_database::run_migrations(&pool).await.unwrap();
     (directory, pool)
 }
 
@@ -1822,8 +1822,8 @@ async fn host_openssh_refuses_remote_repositories_without_starting_git() {
 
 #[tokio::test]
 async fn host_openssh_refuses_remote_repositories_without_starting_git_sqlite() {
-    let pool = codeyard_db_core::init_db("sqlite::memory:").await.unwrap();
-    codeyard_db_core::run_migrations(&pool).await.unwrap();
+    let pool = codeyard_database::init_db("sqlite::memory:").await.unwrap();
+    codeyard_database::run_migrations(&pool).await.unwrap();
     remote_repository_authorization(&pool).await;
     pool.close().await;
 }
@@ -1858,7 +1858,7 @@ async fn remote_repository_authorization(pool: &DbPool) {
     )
     .await
     .unwrap();
-    let node = codeyard_db_cluster::cluster::register_own_node(
+    let node = codeyard_db_placement::cluster::register_own_node(
         pool,
         &codeyard_support::node_identity::NodeKey::generate().public_hex(),
         "remote-storage",
@@ -1868,7 +1868,7 @@ async fn remote_repository_authorization(pool: &DbPool) {
     .await
     .unwrap();
     assert!(
-        codeyard_db_cluster::cluster::place_repository(pool, repo.id, node.id)
+        codeyard_db_placement::cluster::place_repository(pool, repo.id, node.id)
             .await
             .unwrap()
     );
@@ -2128,31 +2128,31 @@ async fn pushes_move_the_open_pull_requests_that_use_the_branch() {
     broker.stop().await;
 }
 
-use codeyard_repos_core::repositories::git_sessions::broker::MAX_CONTROLS;
+use codeyard_git_storage::repositories::git_sessions::broker::MAX_CONTROLS;
 
-use codeyard_repos_core::repositories::git_sessions::broker::Gateway;
+use codeyard_git_storage::repositories::git_sessions::broker::Gateway;
 
-use codeyard_repos_core::repositories::git_sessions::broker::listen;
+use codeyard_git_storage::repositories::git_sessions::broker::listen;
 
-use codeyard_repos_core::repositories::git_sessions::hook_barrier;
+use codeyard_git_storage::repositories::git_sessions::hook_barrier;
 
-use codeyard_repos_core::repositories::git_sessions::protocol::Request;
+use codeyard_git_storage::repositories::git_sessions::protocol::Request;
 
-use codeyard_repos_core::repositories::git_sessions::protocol::EOF;
+use codeyard_git_storage::repositories::git_sessions::protocol::EOF;
 
-use codeyard_repos_core::repositories::git_sessions::protocol::STDERR;
+use codeyard_git_storage::repositories::git_sessions::protocol::STDERR;
 
-use codeyard_repos_core::repositories::git_sessions::protocol::STDIN;
+use codeyard_git_storage::repositories::git_sessions::protocol::STDIN;
 
-use codeyard_repos_core::repositories::git_sessions::protocol::STDOUT;
+use codeyard_git_storage::repositories::git_sessions::protocol::STDOUT;
 
 use codeyard_repos::validation::RefUpdate;
 
 use anyhow::Result;
 
-use codeyard_db_core::models::Repository;
+use codeyard_database::models::Repository;
 
-use codeyard_db_core::DbPool;
+use codeyard_database::DbPool;
 
 use std::collections::HashMap;
 

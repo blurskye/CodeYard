@@ -9,7 +9,7 @@ use tower::ServiceExt;
 
 pub(super) async fn node(db: &Database, name: &str, free: i64) -> i64 {
     let key = NodeKey::generate();
-    let node = codeyard_db_cluster::cluster::register_own_node(
+    let node = codeyard_db_placement::cluster::register_own_node(
         db.pool(),
         &key.public_hex(),
         name,
@@ -18,7 +18,7 @@ pub(super) async fn node(db: &Database, name: &str, free: i64) -> i64 {
     )
     .await
     .unwrap();
-    codeyard_db_cluster::cluster::record_node_heartbeat(
+    codeyard_db_placement::cluster::record_node_heartbeat(
         db.pool(),
         &key.public_hex(),
         "test",
@@ -27,7 +27,7 @@ pub(super) async fn node(db: &Database, name: &str, free: i64) -> i64 {
     )
     .await
     .unwrap();
-    codeyard_db_cluster::drain::record_capacity(db.pool(), &key.public_hex(), 10_000)
+    codeyard_db_placement::drain::record_capacity(db.pool(), &key.public_hex(), 10_000)
         .await
         .unwrap();
     node.id
@@ -102,7 +102,7 @@ async fn drain_capacity_and_authority_are_checked_through_rest_on_both_engines()
         )
         .await
         .unwrap();
-        codeyard_db_cluster::cluster::place_repository(db.pool(), repo.id, source)
+        codeyard_db_placement::cluster::place_repository(db.pool(), repo.id, source)
             .await
             .unwrap();
         db.execute(
@@ -125,7 +125,7 @@ async fn drain_capacity_and_authority_are_checked_through_rest_on_both_engines()
         assert_eq!(status, StatusCode::CONFLICT, "{body}");
         assert!(body["missing_bytes"].as_i64().unwrap() > 0);
         assert_eq!(
-            codeyard_db_cluster::cluster::get_node_by_id(db.pool(), source)
+            codeyard_db_placement::cluster::get_node_by_id(db.pool(), source)
                 .await
                 .unwrap()
                 .unwrap()
@@ -151,16 +151,16 @@ async fn drain_capacity_and_authority_are_checked_through_rest_on_both_engines()
         assert_eq!(status, StatusCode::ACCEPTED, "{body}");
         assert_eq!(body["state"], "draining");
         assert_eq!(body["drain_total"], 1);
-        let nodes = codeyard_db_cluster::cluster::list_nodes(db.pool())
+        let nodes = codeyard_db_placement::cluster::list_nodes(db.pool())
             .await
             .unwrap();
         assert!(
-            !codeyard_db_core::models::ClusterNode::ranked_storage(&nodes)
+            !codeyard_database::models::ClusterNode::ranked_storage(&nodes)
                 .iter()
                 .any(|node| node.id == source)
         );
         assert!(
-            !codeyard_db_cluster::drain::complete_repository(db.pool(), source, repo.id)
+            !codeyard_db_placement::drain::complete_repository(db.pool(), source, repo.id)
                 .await
                 .unwrap()
         );
@@ -191,7 +191,7 @@ async fn drain_capacity_and_authority_are_checked_through_rest_on_both_engines()
             StatusCode::UNAUTHORIZED
         );
         assert_eq!(
-            codeyard_db_cluster::cluster::get_node_by_id(db.pool(), source)
+            codeyard_db_placement::cluster::get_node_by_id(db.pool(), source)
                 .await
                 .unwrap()
                 .unwrap()
@@ -204,11 +204,11 @@ async fn drain_capacity_and_authority_are_checked_through_rest_on_both_engines()
 
 #[tokio::test]
 async fn provisioning_api_limits_invitation_uses_and_rejects_request_commands() {
-    use codeyard_cluster_core::{
+    use codeyard_git_storage::context::NodeContext;
+    use codeyard_nodes::{
         pairing::JoinTicket,
         transport::{IrohDialer, NodeAddress, Relay},
     };
-    use codeyard_repos_core::context::NodeContext;
     use std::sync::Arc;
     for pg in [false, true] {
         let mut db = Database::new(pg).await;
@@ -219,7 +219,7 @@ async fn provisioning_api_limits_invitation_uses_and_rejects_request_commands() 
             .await;
         let credential = token(&db, admin).await;
         let key = NodeKey::generate();
-        let node = codeyard_db_cluster::cluster::register_own_node(
+        let node = codeyard_db_placement::cluster::register_own_node(
             db.pool(),
             &key.public_hex(),
             "core",
@@ -232,7 +232,7 @@ async fn provisioning_api_limits_invitation_uses_and_rejects_request_commands() 
             tcp: vec!["127.0.0.1:9".parse().unwrap()],
             ..Default::default()
         };
-        codeyard_db_cluster::cluster::record_node_heartbeat(
+        codeyard_db_placement::cluster::record_node_heartbeat(
             db.pool(),
             &key.public_hex(),
             "test",
@@ -294,9 +294,9 @@ async fn provisioning_api_limits_invitation_uses_and_rejects_request_commands() 
         let ticket = JoinTicket::decode(body["ticket"].as_str().unwrap()).unwrap();
         for index in 0..3 {
             let key = NodeKey::generate();
-            let outcome = codeyard_db_cluster::cluster::join_with_token(
+            let outcome = codeyard_db_placement::cluster::join_with_token(
                 db.pool(),
-                codeyard_db_cluster::cluster::JoinRequest {
+                codeyard_db_placement::cluster::JoinRequest {
                     token_hash: &ticket.secret_hash(),
                     public_key: &key.public_hex(),
                     name: &format!("joined-{index}"),
@@ -309,12 +309,12 @@ async fn provisioning_api_limits_invitation_uses_and_rejects_request_commands() 
             if index < 2 {
                 assert!(matches!(
                     outcome,
-                    codeyard_db_core::models::JoinOutcome::Joined(_)
+                    codeyard_database::models::JoinOutcome::Joined(_)
                 ));
             } else {
                 assert!(matches!(
                     outcome,
-                    codeyard_db_core::models::JoinOutcome::InvalidToken
+                    codeyard_database::models::JoinOutcome::InvalidToken
                 ));
             }
         }

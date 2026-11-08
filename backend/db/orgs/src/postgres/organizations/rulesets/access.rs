@@ -1,16 +1,16 @@
 use super::*;
 use crate::postgres::organizations::authority::site_administrator;
 use crate::postgres::organizations::rulesets::view;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::queries::organizations::properties::PropertyValue;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_db_core::queries::postgres::organizations::authority::authority;
-use codeyard_db_core::queries::postgres::organizations::authority::read_active;
-use codeyard_db_core::queries::postgres::organizations::authority::read_authority;
-use codeyard_db_core::queries::rulesets::matching::RepositoryContext;
-use codeyard_db_core::queries::rulesets::records::ListFilter;
-use codeyard_db_core::queries::rulesets::records::Owner;
-use codeyard_model::workflow_glob::WorkflowMatchBudget;
+use codeyard_database::models::Repository;
+use codeyard_database::queries::organizations::properties::PropertyValue;
+use codeyard_database::queries::organizations::OrganizationOutcome;
+use codeyard_database::queries::postgres::organizations::authority::authority;
+use codeyard_database::queries::postgres::organizations::authority::read_active;
+use codeyard_database::queries::postgres::organizations::authority::read_authority;
+use codeyard_database::queries::rulesets::matching::RepositoryContext;
+use codeyard_database::queries::rulesets::records::ListFilter;
+use codeyard_database::queries::rulesets::records::Owner;
+use codeyard_types::workflow_glob::WorkflowMatchBudget;
 use sqlx::Postgres;
 use sqlx::Transaction;
 use std::collections::HashMap;
@@ -39,7 +39,7 @@ pub(super) async fn authorize(
                     return Ok(Denied);
                 };
                 return Ok(Applied(
-                    codeyard_db_core::queries::postgres::discussions::lock_repository_mutation_authority(
+                    codeyard_database::queries::postgres::discussions::lock_repository_mutation_authority(
                         tx, actor, repo,
                     )
                     .await?,
@@ -63,7 +63,7 @@ pub(super) async fn authorize(
             if !read_active(tx, actor).await? {
                 return Ok(Denied);
             }
-            let level = codeyard_db_core::queries::postgres::repositories::access::user_repo_access_in_transaction(tx, actor, repo).await?;
+            let level = codeyard_database::queries::postgres::repositories::access::user_repo_access_in_transaction(tx, actor, repo).await?;
             let personal_admin =
                 repository.owner_kind == "user" && site_administrator(tx, actor).await?;
             if repository.is_private && !level.can_read() && !personal_admin {
@@ -126,7 +126,7 @@ pub async fn rows(
                 let values = if needs_properties {
                     let definitions =
                         crate::postgres::organizations::properties::definitions_on(tx, org).await?;
-                    codeyard_db_core::queries::postgres::organizations::properties::values_on(
+                    codeyard_database::queries::postgres::organizations::properties::values_on(
                         tx,
                         repo,
                         &definitions,

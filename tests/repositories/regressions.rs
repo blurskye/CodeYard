@@ -7,8 +7,8 @@ use axum::http::StatusCode;
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
 use codeyard_ci::config::CiConfig;
-use codeyard_repos_core::repositories::lifecycle;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_git_storage::repositories::lifecycle;
+use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_storage::ObjectStore;
 use codeyard_webui::app::Page;
 use codeyard_webui::pages::repos as view;
@@ -77,7 +77,7 @@ async fn contract(pg: bool) {
         f.pool(),
         bob,
         repository.id,
-        codeyard_db_core::models::AccessLevel::Admin,
+        codeyard_database::models::AccessLevel::Admin,
     )
     .await
     .unwrap();
@@ -151,7 +151,7 @@ async fn contract(pg: bool) {
         f.pool(),
         upper,
         repository.id,
-        codeyard_db_core::models::AccessLevel::Write,
+        codeyard_database::models::AccessLevel::Write,
     )
     .await
     .unwrap();

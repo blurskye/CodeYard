@@ -1,9 +1,9 @@
 //! Regression contracts for database effects and their current authority on both engines.
 use crate::support::database::Database;
 
-use codeyard_db_core::models::AccessLevel;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::queries::notifications::records::NewNotification;
+use codeyard_database::models::AccessLevel;
+use codeyard_database::models::Repository;
+use codeyard_database::queries::notifications::records::NewNotification;
 use codeyard_db_repos::notifications::records::NotificationFilter;
 use codeyard_db_repos::notifications::records::NotificationInboxAction;
 use codeyard_db_repos::repositories::creation::RepositoryTarget;
@@ -49,11 +49,11 @@ async fn org_repo(f: &Database, owner: i64, org: i64, name: &str) -> Repository 
 }
 
 async fn notice(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     user: i64,
     repository: Option<i64>,
     title: &str,
-) -> codeyard_db_core::models::Notification {
+) -> codeyard_database::models::Notification {
     codeyard_db_repos::notifications::records::create_notification(
         pool,
         NewNotification {
@@ -71,7 +71,7 @@ async fn notice(
     .unwrap()
 }
 
-async fn session(pool: &codeyard_db_core::DbPool, user: i64) -> String {
+async fn session(pool: &codeyard_database::DbPool, user: i64) -> String {
     let id = uuid::Uuid::new_v4().simple().to_string();
     codeyard_db_identity::users::sessions::create_session(
         pool,
@@ -419,8 +419,8 @@ async fn deleting_repositories_retires_only_unreferenced_release_uploads() {
                 filename: "asset.zip",
                 content_type: "application/zip",
                 file_size: 100,
-                reason: codeyard_db_core::models::FileReason::ReleaseAsset,
-                visibility: codeyard_db_core::models::FileVisibility::Owner,
+                reason: codeyard_database::models::FileReason::ReleaseAsset,
+                visibility: codeyard_database::models::FileVisibility::Owner,
                 sha256_hex: &"a".repeat(64),
             },
         )
@@ -451,7 +451,7 @@ async fn deleting_repositories_retires_only_unreferenced_release_uploads() {
             let added = codeyard_db_repos::releases::add_release_asset(
                 f.pool(),
                 owner,
-                &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+                &codeyard_database::queries::users::accounts::AccountCredential::Session(
                     &crate::support::live_session(f.pool(), owner).await,
                 ),
                 r.id,
@@ -472,7 +472,7 @@ async fn deleting_repositories_retires_only_unreferenced_release_uploads() {
                 // Existing data can share a file even though new attachments may not.
                 let sql = "INSERT INTO release_assets(release_id,file_id,name,content_type,size) VALUES($1,$2,'asset.zip','application/zip',100)";
                 match f.pool() {
-                    codeyard_db_core::DbPool::Postgres(pool) => {
+                    codeyard_database::DbPool::Postgres(pool) => {
                         sqlx::query(sql)
                             .bind(release.id)
                             .bind(file.id)
@@ -480,7 +480,7 @@ async fn deleting_repositories_retires_only_unreferenced_release_uploads() {
                             .await
                             .unwrap();
                     }
-                    codeyard_db_core::DbPool::Sqlite(pool) => {
+                    codeyard_database::DbPool::Sqlite(pool) => {
                         sqlx::query(sql)
                             .bind(release.id)
                             .bind(file.id)

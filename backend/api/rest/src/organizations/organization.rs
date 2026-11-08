@@ -1,6 +1,6 @@
 //! Organization settings, bounded native commands and authorized page projections.
-use codeyard_db_core::queries::organizations::administers;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
+use codeyard_database::queries::organizations::administers;
+use codeyard_database::queries::organizations::OrganizationOutcome;
 use codeyard_db_orgs::organizations::profiles::NewOrganization;
 use codeyard_db_orgs::organizations::profiles::OrganizationMetadata;
 use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
@@ -16,8 +16,8 @@ use axum::response::Response;
 use codeyard_api_http::context::PageContext;
 use codeyard_api_http::shared::user::responses::field;
 use codeyard_app::app::AppState;
-use codeyard_db_core::models::OrgRole;
-use codeyard_db_core::queries::organizations::OrganizationOutcome::*;
+use codeyard_database::models::OrgRole;
+use codeyard_database::queries::organizations::OrganizationOutcome::*;
 use codeyard_db_identity::interactions::InteractionScope;
 use codeyard_db_orgs::organizations::*;
 use codeyard_webui::app::Page;
@@ -234,7 +234,7 @@ pub(super) fn not_found(ctx: &PageContext) -> Response {
     ctx.error(StatusCode::NOT_FOUND, "Organization not found.")
 }
 /// The header of an organization's public pages, with its picture.
-pub(super) fn public_view(org: codeyard_db_core::models::Organization) -> view::Organization {
+pub(super) fn public_view(org: codeyard_database::models::Organization) -> view::Organization {
     view::Organization {
         id: org.id,
         name: org.name,
@@ -248,7 +248,7 @@ pub(super) fn public_view(org: codeyard_db_core::models::Organization) -> view::
 }
 
 /// A team with its member count, as the organization pages list it.
-pub(super) fn team_view(team: codeyard_db_core::models::Team, member_count: i64) -> view::Team {
+pub(super) fn team_view(team: codeyard_database::models::Team, member_count: i64) -> view::Team {
     view::Team {
         id: team.id,
         name: team.name,
@@ -292,7 +292,7 @@ pub(super) async fn selected(
 }
 
 /// Rows per list page. A full page may have rows after it, so its next link is shown.
-pub(super) const PAGE_LIMIT: i64 = codeyard_db_core::cells::pointers::DEFAULT_PAGE_SIZE as i64;
+pub(super) const PAGE_LIMIT: i64 = codeyard_database::cells::pointers::DEFAULT_PAGE_SIZE as i64;
 
 pub(super) fn cursor(ctx: &PageContext, name: &str) -> Option<(i64, OrganizationPage)> {
     cursor_with_limit(ctx, name, PAGE_LIMIT)
@@ -648,8 +648,8 @@ pub(super) async fn respond_with_hook_draft(
                 {
                     Ok(access) => access,
                     Err(
-                        codeyard_db_core::queries::secrets::SecretsError::Denied
-                        | codeyard_db_core::queries::secrets::SecretsError::NotFound,
+                        codeyard_database::queries::secrets::SecretsError::Denied
+                        | codeyard_database::queries::secrets::SecretsError::NotFound,
                     ) => return not_found(ctx),
                     Err(_) => return unavailable(ctx),
                 };
@@ -682,8 +682,8 @@ pub(super) async fn respond_with_hook_draft(
             {
                 Ok((_, registries)) => registries,
                 Err(codeyard_db_actions::private_registries::RegistryError::Secret(
-                    codeyard_db_core::queries::secrets::SecretsError::Denied
-                    | codeyard_db_core::queries::secrets::SecretsError::NotFound,
+                    codeyard_database::queries::secrets::SecretsError::Denied
+                    | codeyard_database::queries::secrets::SecretsError::NotFound,
                 )) => return not_found(ctx),
                 Err(_) => return unavailable(ctx),
             };
@@ -768,22 +768,21 @@ pub(super) async fn respond_with_hook_draft(
                 repository_id: None,
             };
             let viewer = ctx.require_user().ok();
-            let built = match viewer {
-                Some(viewer) => {
-                    codeyard_webhooks::panel::build(
+            let built =
+                match viewer {
+                    Some(viewer) => codeyard_webhooks::panel::build(
                         &ctx.state.pool,
                         viewer,
-                        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+                        &codeyard_database::queries::users::accounts::AccountCredential::Session(
                             &codeyard_api_http::session::extract_session_id(&ctx.headers)
                                 .unwrap_or_default(),
                         ),
                         &place,
                         &ctx.query,
                     )
-                    .await
-                }
-                None => Err(codeyard_webhooks::settings::HookError::Denied),
-            };
+                    .await,
+                    None => Err(codeyard_webhooks::settings::HookError::Denied),
+                };
             match built {
                 Ok(mut panel) => {
                     // A refused webhook action returns here with its message in the section.
@@ -974,7 +973,7 @@ pub(super) async fn respond_with_hook_draft(
                 &ctx.database_actor(actor),
                 stub,
                 session,
-                codeyard_db_core::cells::pointers::List::BrowserOrganizations,
+                codeyard_database::cells::pointers::List::BrowserOrganizations,
                 vec![("after".into(), after.to_string())],
                 PAGE_LIMIT as usize + 1,
             )
@@ -982,7 +981,7 @@ pub(super) async fn respond_with_hook_draft(
             match remote {
                 Ok(Some(remote)) => {
                     let Ok(mut budget) =
-                        codeyard_db_core::cells::pointers::Budget::new(Default::default())
+                        codeyard_database::cells::pointers::Budget::new(Default::default())
                     else {
                         return unavailable(ctx);
                     };
@@ -1107,7 +1106,7 @@ pub(super) fn destination(ctx: &PageContext, org: Option<i64>, keep_team: bool) 
     let tab = requested_tab(ctx);
     if tab == "properties" {
         if let Some(property) = ctx.query.get("property").filter(|property| {
-            codeyard_db_core::queries::organizations::properties::valid_name(property)
+            codeyard_database::queries::organizations::properties::valid_name(property)
         }) {
             query.append_pair("property", property);
         }
@@ -1156,7 +1155,7 @@ async fn delete_with_repositories(
     .await
     .map_err(|error| {
         if let Some(error) =
-            error.downcast_ref::<codeyard_repos_core::repositories::lifecycle::StorageError>()
+            error.downcast_ref::<codeyard_git_storage::repositories::lifecycle::StorageError>()
         {
             ctx.error(StatusCode::CONFLICT, error.message)
         } else {
@@ -1179,9 +1178,10 @@ async fn apply(
         Command::Create(_) => return Err(invalid(ctx)),
         Command::Delete => return delete_with_repositories(ctx, actor, org).await,
         Command::Profile(profile) => {
-            let credential = codeyard_db_core::queries::users::accounts::AccountCredential::Session(
-                ctx.session_id.as_deref().unwrap_or(""),
-            );
+            let credential =
+                codeyard_database::queries::users::accounts::AccountCredential::Session(
+                    ctx.session_id.as_deref().unwrap_or(""),
+                );
             codeyard_db_orgs::organizations::profiles::update_organization_profile(
                 pool,
                 actor,

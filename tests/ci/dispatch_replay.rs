@@ -8,7 +8,7 @@ use base64::Engine;
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
 use codeyard_ci::config::CiConfig;
-use codeyard_repos_core::repositories::lifecycle;
+use codeyard_git_storage::repositories::lifecycle;
 use codeyard_storage::ObjectStore;
 use serde_json::{json, Value};
 use std::{collections::BTreeSet, sync::Arc};
@@ -16,7 +16,7 @@ use std::{collections::BTreeSet, sync::Arc};
 async fn contract(pg: bool) {
     bundle::install();
     let mut f = Database::new(pg).await;
-    codeyard_db_cluster::node_config::upsert_node_configuration(f.pool(), "public", true)
+    codeyard_db_placement::node_config::upsert_node_configuration(f.pool(), "public", true)
         .await
         .unwrap();
     let actor = f.actor("alice").await;
@@ -149,7 +149,7 @@ async fn contract(pg: bool) {
     // Per-value validation still refuses a value over the shared bound, GitHub's 65,535 characters.
     let oversized = text.replacen(
         &"x".repeat(1700),
-        &"x".repeat(codeyard_actions::workflow::dispatch_inputs::MAX_VALUE_BYTES + 1),
+        &"x".repeat(codeyard_runner::workflow::dispatch_inputs::MAX_VALUE_BYTES + 1),
         1,
     );
     let refused = client

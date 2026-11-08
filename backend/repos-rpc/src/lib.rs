@@ -1,18 +1,18 @@
 //! Repository protocol composition; wire format and policy have explicit owners.
 use anyhow::Result;
-use codeyard_cluster_core::link::read_frame;
-use codeyard_cluster_core::link::write_frame;
-use codeyard_cluster_core::link::Link;
-use codeyard_db_core::cells::authorization::inherit;
-use codeyard_db_core::limits::MAX_JSON;
-use codeyard_repos_core::context::NodeContext;
-use codeyard_repos_core::wire::invalid;
-use codeyard_repos_core::wire::unavailable;
-use codeyard_repos_core::wire::Operation;
-use codeyard_repos_core::wire::Reply;
-use codeyard_repos_core::wire::Request;
-use codeyard_repos_core::wire::MAX_BYTES;
-use codeyard_repos_core::wire::TIMEOUT;
+use codeyard_database::cells::authorization::inherit;
+use codeyard_database::limits::MAX_JSON;
+use codeyard_git_storage::context::NodeContext;
+use codeyard_git_storage::wire::invalid;
+use codeyard_git_storage::wire::unavailable;
+use codeyard_git_storage::wire::Operation;
+use codeyard_git_storage::wire::Reply;
+use codeyard_git_storage::wire::Request;
+use codeyard_git_storage::wire::MAX_BYTES;
+use codeyard_git_storage::wire::TIMEOUT;
+use codeyard_nodes::link::read_frame;
+use codeyard_nodes::link::write_frame;
+use codeyard_nodes::link::Link;
 use iroh::endpoint::Connection;
 use iroh::protocol::AcceptError;
 use iroh::protocol::ProtocolHandler;
@@ -122,7 +122,7 @@ impl RpcHandler {
     }
 
     fn header_slot(&self, peer: iroh::PublicKey) -> Result<tokio::sync::OwnedSemaphorePermit> {
-        codeyard_cluster_core::transport::peer_header_slot(&self.headers, peer)
+        codeyard_nodes::transport::peer_header_slot(&self.headers, peer)
     }
 
     /// Serves one request stream. An error ends the connection the stream came on.
@@ -141,7 +141,7 @@ impl RpcHandler {
         // Membership is checked before reading headers, also on reused connections.
         // A bad request gets an error reply; an oversized or broken frame ends the connection.
         let request = tokio::time::timeout_at(deadline, async {
-            if !codeyard_cluster_core::transport::active_member(self.context.database()?, peer)
+            if !codeyard_nodes::transport::active_member(self.context.database()?, peer)
                 .await
                 .map_err(|_| unavailable())?
             {
@@ -189,7 +189,7 @@ impl RpcHandler {
         } else {
             None
         };
-        let body_limit = codeyard_repos_core::wire::operation_body_limit(&request.operation);
+        let body_limit = codeyard_git_storage::wire::operation_body_limit(&request.operation);
         tokio::time::timeout_at(deadline, async {
             if body_limit > 0 {
                 if let Err(error) = self.authorize_body_request(&request, peer).await {
@@ -239,11 +239,11 @@ impl RpcHandler {
 
 impl ProtocolHandler for RpcHandler {
     async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
-        let Ok(_connection) = codeyard_cluster_core::transport::connection_slot(&connection) else {
+        let Ok(_connection) = codeyard_nodes::transport::connection_slot(&connection) else {
             return Ok(());
         };
         // Each stream the peer opens is one request, answered in turn.
-        while let Some(link) = codeyard_cluster_core::transport::accept_stream(&connection).await {
+        while let Some(link) = codeyard_nodes::transport::accept_stream(&connection).await {
             if let Err(error) = self.serve_link(link).await {
                 tracing::warn!(%error, "repository RPC failed");
                 connection.close(500u32.into(), b"RPC request failed");
@@ -256,12 +256,12 @@ impl ProtocolHandler for RpcHandler {
 
 #[derive(Debug)]
 pub struct RpcFactory;
-impl codeyard_repos_core::local_rpc::RpcFactory for RpcFactory {
-    fn create(&self, context: NodeContext) -> Box<dyn codeyard_repos_core::local_rpc::LocalRpc> {
+impl codeyard_git_storage::local_rpc::RpcFactory for RpcFactory {
+    fn create(&self, context: NodeContext) -> Box<dyn codeyard_git_storage::local_rpc::LocalRpc> {
         Box::new(RpcHandler::new(context))
     }
 }
-impl codeyard_repos_core::local_rpc::LocalRpc for RpcHandler {
+impl codeyard_git_storage::local_rpc::LocalRpc for RpcHandler {
     fn execute(
         &self,
         request: Request,
@@ -269,7 +269,7 @@ impl codeyard_repos_core::local_rpc::LocalRpc for RpcHandler {
         caller: iroh::PublicKey,
     ) -> futures_util::future::BoxFuture<
         '_,
-        Result<(serde_json::Value, Vec<u8>), codeyard_repos_core::wire::Failure>,
+        Result<(serde_json::Value, Vec<u8>), codeyard_git_storage::wire::Failure>,
     > {
         Box::pin(self.execute(request, body, caller))
     }
@@ -278,7 +278,7 @@ impl codeyard_repos_core::local_rpc::LocalRpc for RpcHandler {
         request: &'a Request,
     ) -> futures_util::future::BoxFuture<
         'a,
-        Result<codeyard_repos_core::local_rpc::LocalCopy, codeyard_git::error::RepoError>,
+        Result<codeyard_git_storage::local_rpc::LocalCopy, codeyard_git::error::RepoError>,
     > {
         Box::pin(self.own_copy(request))
     }

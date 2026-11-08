@@ -2,8 +2,8 @@
 use axum::routing::MethodRouter;
 use axum::Router;
 use codeyard_app::app::AppState;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 mod approval;
@@ -31,7 +31,7 @@ fn id(params: &HashMap<String, String>, key: &str) -> Result<i64> {
         .ok_or_else(Error::missing)
 }
 
-async fn run(state: &AppState, repo: i64, id: i64) -> Result<codeyard_db_core::models::CiRun> {
+async fn run(state: &AppState, repo: i64, id: i64) -> Result<codeyard_database::models::CiRun> {
     codeyard_db_actions::action_runs::get(&state.pool, repo, id, None)
         .await
         .map_err(Error::unavailable)?

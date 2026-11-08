@@ -21,11 +21,11 @@ use codeyard_git::objects::TagObject;
 use codeyard_git::objects::TreeChange;
 use codeyard_git::objects::TreeObject;
 use codeyard_git::objects::MAX_BLOB_WRITE_BYTES;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
-use codeyard_model::urls::repo_url;
-use codeyard_repos_core::api_shared::github::contents::store_error;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_git_storage::api_shared::github::contents::store_error;
+use codeyard_git_storage::repositories::store::repo_store;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
+use codeyard_types::urls::repo_url;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -38,7 +38,7 @@ const BLOB_BODY_LIMIT: usize = MAX_BLOB_WRITE_BYTES * 6 + 64 * 1024;
 fn tree_document(tree: TreeObject, owner: &str, name: &str, repo: i64) -> Value {
     let url = repo_url(owner, name);
     json!({
-        "sha": tree.sha, "node_id": codeyard_model::node_id::git_object("T", repo, &tree.sha), "url": format!("{url}/git/trees/{}", tree.sha), "truncated": tree.truncated,
+        "sha": tree.sha, "node_id": codeyard_types::node_id::git_object("T", repo, &tree.sha), "url": format!("{url}/git/trees/{}", tree.sha), "truncated": tree.truncated,
         "tree": tree.tree.into_iter().map(|entry| {
             let mut value = json!({"path": entry.path, "mode": entry.mode, "type": entry.kind, "sha": entry.sha,
                 "url": format!("{url}/git/{}s/{}", entry.kind, entry.sha)});
@@ -68,7 +68,7 @@ async fn tag_document(
     .await
     .map_err(Error::unavailable)?;
     Ok(json!({
-        "sha": tag.sha, "node_id": codeyard_model::node_id::git_object("TAG", repo, &tag.sha), "url": format!("{url}/git/tags/{}", tag.sha),
+        "sha": tag.sha, "node_id": codeyard_types::node_id::git_object("TAG", repo, &tag.sha), "url": format!("{url}/git/tags/{}", tag.sha),
         "tag": tag.tag, "message": tag.message, "tagger": tag.tagger,
         "object": {"sha": tag.object, "type": tag.kind, "url": format!("{url}/git/{}s/{}", tag.kind, tag.object)},
         "verification": verification,
@@ -171,7 +171,7 @@ async fn create_blob(
         .map_err(write_error)?;
     Ok((
         StatusCode::CREATED,
-        Json(json!({"sha": sha, "node_id": codeyard_model::node_id::git_object("B", repo.id, &sha), "url": format!("{}/git/blobs/{sha}", repo_url(&owner, &name))})),
+        Json(json!({"sha": sha, "node_id": codeyard_types::node_id::git_object("B", repo.id, &sha), "url": format!("{}/git/blobs/{sha}", repo_url(&owner, &name))})),
     )
         .into_response())
 }

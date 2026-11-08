@@ -1,10 +1,10 @@
 use anyhow::Result;
 use chrono::DateTime;
 use chrono::Utc;
-use codeyard_db_core::models::AccessLevel;
-use codeyard_db_core::models::User;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::AccessLevel;
+use codeyard_database::models::User;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct Invitation {
@@ -53,7 +53,7 @@ pub struct Collaborator {
 
 native_operation!(crate::postgres::repositories::collaborators::add,
     crate::sqlite::repositories::collaborators::add,
-    fn add(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo_id: i64, username: &str, permission: AccessLevel) -> Result<Added>);
+    fn add(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, repo_id: i64, username: &str, permission: AccessLevel) -> Result<Added>);
 native_operation!(crate::postgres::repositories::collaborators::remove,
     crate::sqlite::repositories::collaborators::remove,
     fn remove(pool: &DbPool, actor: i64, repo_id: i64, username: &str) -> Result<()>);
@@ -79,4 +79,4 @@ native_operation!(crate::postgres::repositories::collaborators::update_invitatio
     fn update_invitation(pool: &DbPool, actor: i64, repo_id: i64, id: i64, permission: Option<AccessLevel>) -> Result<Invitation>);
 native_operation!(crate::postgres::repositories::collaborators::respond,
     crate::sqlite::repositories::collaborators::respond,
-    fn respond(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, id: i64, accept: bool) -> Result<()>);
+    fn respond(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, id: i64, accept: bool) -> Result<()>);

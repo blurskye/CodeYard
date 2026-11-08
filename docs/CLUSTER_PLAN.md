@@ -305,7 +305,7 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     from other cells; an org that refuses classic tokens hides its other-cell hits from every
     whole-account credential, including ones that policy would exempt.
     Stage 6, item 1: every table of both baselines has one ownership decision in
-    `backend/db/core/src/cells/ownership.rs`, and `every_table_has_an_ownership_rule` fails
+    `backend/database/src/cells/ownership.rs`, and `every_table_has_an_ownership_rule` fails
     when a table has none or names a missing column or table. A row belongs to its first
     non-null reference: an account column, a repository column (the repository's owner),
     or a parent row. The decisions, by first reference (columns in brackets, `a>b` is a
@@ -487,7 +487,7 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     `enforce_repository_visibility_floor`. The account row loads first so the credential
     guards see a local owner.
 
-    Stage 6 status. Written in `backend/db/cluster/src/moves.rs` and `codeyard cell move`:
+    Stage 6 status. Written in `backend/db/placement/src/moves.rs` and `codeyard cell move`:
     - The manual move of a user or organization with its repositories between PostgreSQL
       cells: begin (move row, CI asked to stop, older transactions drained), freeze, Git
       copy, row copy with stubs and the shared rows they need, ref comparison, switch,

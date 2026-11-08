@@ -6,7 +6,7 @@ use super::Value;
 
 pub(super) async fn run(
     router: &Router,
-    scope: (&codeyard_db_core::DbPool, i64, i64),
+    scope: (&codeyard_database::DbPool, i64, i64),
     base: &str,
     tokens: (&str, &str, &str),
     sha: &str,

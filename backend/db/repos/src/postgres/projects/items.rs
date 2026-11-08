@@ -20,7 +20,7 @@ pub async fn item_links(
     anyhow::ensure!(items.len() <= 50, Refusal::Invalid);
     let mut tx = pool.begin().await?;
     readable(&mut tx, viewer, project).await?;
-    let links = sqlx::query_as(&format!("SELECT i.id,COALESCE(owner_user.username,owner_org.name),r.name,CASE WHEN i.issue_id IS NOT NULL THEN 'issues' ELSE 'pulls' END,COALESCE(issues.number,pr.number) FROM project_items i JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id=$2 LEFT JOIN users owner_user ON owner_user.id=r.owner_user_id LEFT JOIN organizations owner_org ON owner_org.id=r.owner_org_id LEFT JOIN issues ON issues.id=i.issue_id LEFT JOIN pull_requests pr ON pr.id=i.pull_request_id WHERE i.project_id=$1 AND i.id=ANY($3) AND {}", codeyard_db_core::queries::postgres::repositories::access::readable_condition()))
+    let links = sqlx::query_as(&format!("SELECT i.id,COALESCE(owner_user.username,owner_org.name),r.name,CASE WHEN i.issue_id IS NOT NULL THEN 'issues' ELSE 'pulls' END,COALESCE(issues.number,pr.number) FROM project_items i JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id=$2 LEFT JOIN users owner_user ON owner_user.id=r.owner_user_id LEFT JOIN organizations owner_org ON owner_org.id=r.owner_org_id LEFT JOIN issues ON issues.id=i.issue_id LEFT JOIN pull_requests pr ON pr.id=i.pull_request_id WHERE i.project_id=$1 AND i.id=ANY($3) AND {}", codeyard_database::queries::postgres::repositories::access::readable_condition()))
         .bind(project).bind(viewer).bind(items).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok(links)
@@ -33,8 +33,8 @@ pub(super) async fn repository_read(
     actor: i64,
     repo: i64,
 ) -> Result<()> {
-    use codeyard_db_core::queries::postgres::repositories::access::lock_user_repo_access_in_transaction;
-    use codeyard_db_core::queries::postgres::repositories::access::RepositoryRowLock;
+    use codeyard_database::queries::postgres::repositories::access::lock_user_repo_access_in_transaction;
+    use codeyard_database::queries::postgres::repositories::access::RepositoryRowLock;
     let access =
         lock_user_repo_access_in_transaction(tx, actor, repo, RepositoryRowLock::Shared, true)
             .await?;
@@ -119,7 +119,7 @@ pub async fn delete_field(
         config.vertical_group_by.retain(|id| *id != field);
         config.sort_by.retain(|(id, _)| *id != field);
         if let Some(filter) = &config.filter {
-            config.filter = Some(codeyard_model::project_query::without_field_terms(
+            config.filter = Some(codeyard_types::project_query::without_field_terms(
                 filter, &name,
             )?);
         }
@@ -219,7 +219,7 @@ pub async fn item(
 ) -> Result<Option<Item>> {
     let mut tx = pool.begin().await?;
     readable(&mut tx, viewer, project).await?;
-    let item = sqlx::query_as(&format!("{ITEM} LEFT JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id=$2 WHERE i.project_id=$1 AND i.id=$3 AND (i.repo_id IS NULL OR {})", codeyard_db_core::queries::postgres::repositories::access::readable_condition()))
+    let item = sqlx::query_as(&format!("{ITEM} LEFT JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id=$2 WHERE i.project_id=$1 AND i.id=$3 AND (i.repo_id IS NULL OR {})", codeyard_database::queries::postgres::repositories::access::readable_condition()))
         .bind(project).bind(viewer).bind(id).fetch_optional(&mut *tx).await?;
     tx.commit().await?;
     Ok(item)
@@ -240,7 +240,7 @@ pub async fn items_page(
     let mut tx = pool.begin().await?;
     readable(&mut tx, viewer, project).await?;
     let direction = if before < i64::MAX { "DESC" } else { "ASC" };
-    let items = sqlx::query_as(&format!("{ITEM} LEFT JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id=$2 WHERE i.project_id=$1 AND (i.repo_id IS NULL OR {}) AND ($3=0 OR (i.position,i.id)>(SELECT b.position,b.id FROM project_items b WHERE b.project_id=$1 AND b.id=$3)) AND ($4=9223372036854775807 OR (i.position,i.id)<(SELECT b.position,b.id FROM project_items b WHERE b.project_id=$1 AND b.id=$4)) ORDER BY i.position {direction},i.id {direction} LIMIT $5", codeyard_db_core::queries::postgres::repositories::access::readable_condition()))
+    let items = sqlx::query_as(&format!("{ITEM} LEFT JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id=$2 WHERE i.project_id=$1 AND (i.repo_id IS NULL OR {}) AND ($3=0 OR (i.position,i.id)>(SELECT b.position,b.id FROM project_items b WHERE b.project_id=$1 AND b.id=$3)) AND ($4=9223372036854775807 OR (i.position,i.id)<(SELECT b.position,b.id FROM project_items b WHERE b.project_id=$1 AND b.id=$4)) ORDER BY i.position {direction},i.id {direction} LIMIT $5", codeyard_database::queries::postgres::repositories::access::readable_condition()))
         .bind(project).bind(viewer).bind(after).bind(before).bind(limit).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok(items)
@@ -261,7 +261,7 @@ pub async fn content_items(
         Content::PullRequest(id) => (None, Some(*id)),
         _ => return Ok((0, Vec::new())),
     };
-    let joins = format!(" JOIN projects p ON p.id=i.project_id LEFT JOIN repositories r ON r.id=COALESCE(issues.repo_id,pr.repo_id,i.repo_id) LEFT JOIN users u ON u.id=$3 WHERE (i.issue_id=$1 OR i.pull_request_id=$2) AND ($4 OR NOT i.archived) AND {} AND (COALESCE(issues.repo_id,pr.repo_id,i.repo_id) IS NULL OR {})", crate::projects::readable_condition("$3"), codeyard_db_core::queries::postgres::repositories::access::readable_condition());
+    let joins = format!(" JOIN projects p ON p.id=i.project_id LEFT JOIN repositories r ON r.id=COALESCE(issues.repo_id,pr.repo_id,i.repo_id) LEFT JOIN users u ON u.id=$3 WHERE (i.issue_id=$1 OR i.pull_request_id=$2) AND ($4 OR NOT i.archived) AND {} AND (COALESCE(issues.repo_id,pr.repo_id,i.repo_id) IS NULL OR {})", crate::projects::readable_condition("$3"), codeyard_database::queries::postgres::repositories::access::readable_condition());
     let mut tx = pool.begin().await?;
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         .execute(&mut *tx)
@@ -305,7 +305,7 @@ pub async fn items_window(
     );
     let mut tx = pool.begin().await?;
     readable_at(&mut tx, viewer, window.project, window.include_deleted).await?;
-    let joins = format!(" LEFT JOIN repositories r ON r.id=COALESCE(issues.repo_id,pr.repo_id,i.repo_id) LEFT JOIN users u ON u.id=$2 WHERE i.project_id=$1 AND ($3::boolean IS NULL OR i.archived=$3) AND (COALESCE(issues.repo_id,pr.repo_id,i.repo_id) IS NULL OR {})", codeyard_db_core::queries::postgres::repositories::access::readable_condition());
+    let joins = format!(" LEFT JOIN repositories r ON r.id=COALESCE(issues.repo_id,pr.repo_id,i.repo_id) LEFT JOIN users u ON u.id=$2 WHERE i.project_id=$1 AND ($3::boolean IS NULL OR i.archived=$3) AND (COALESCE(issues.repo_id,pr.repo_id,i.repo_id) IS NULL OR {})", codeyard_database::queries::postgres::repositories::access::readable_condition());
     let total = if window.count {
         sqlx::query_scalar(&format!("SELECT COUNT(*) FROM ({ITEM}{joins}) visible"))
             .bind(window.project)
@@ -345,7 +345,7 @@ pub(super) async fn readable_items(
     viewer: Option<i64>,
     project: i64,
 ) -> Result<Vec<Item>> {
-    Ok(sqlx::query_as(&format!("{ITEM} LEFT JOIN repositories r ON r.id=COALESCE(issues.repo_id,pr.repo_id,i.repo_id) LEFT JOIN users u ON u.id=$2 WHERE i.project_id=$1 AND (COALESCE(issues.repo_id,pr.repo_id,i.repo_id) IS NULL OR {}) ORDER BY i.position,i.id", codeyard_db_core::queries::postgres::repositories::access::readable_condition()))
+    Ok(sqlx::query_as(&format!("{ITEM} LEFT JOIN repositories r ON r.id=COALESCE(issues.repo_id,pr.repo_id,i.repo_id) LEFT JOIN users u ON u.id=$2 WHERE i.project_id=$1 AND (COALESCE(issues.repo_id,pr.repo_id,i.repo_id) IS NULL OR {}) ORDER BY i.position,i.id", codeyard_database::queries::postgres::repositories::access::readable_condition()))
         .bind(project).bind(viewer).fetch_all(&mut **tx).await?)
 }
 
@@ -489,7 +489,7 @@ pub async fn link_repository(
 ) -> Result<()> {
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::postgres::discussions::lock_admin_authority(
+        codeyard_database::queries::postgres::discussions::lock_admin_authority(
             &mut tx, actor, repo
         )
         .await?,

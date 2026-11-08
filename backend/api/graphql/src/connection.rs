@@ -12,9 +12,9 @@ pub(super) struct Page {
     end: i64,
 }
 
-pub(super) use codeyard_model::graphql_cursor::encode as cursor;
+pub(super) use codeyard_types::graphql_cursor::encode as cursor;
 fn decode(value: &str) -> Result<i64> {
-    codeyard_model::graphql_cursor::decode(value).ok_or_else(|| Error::new("Invalid cursor"))
+    codeyard_types::graphql_cursor::decode(value).ok_or_else(|| Error::new("Invalid cursor"))
 }
 
 pub(super) fn validate(ctx: &Arguments) -> Result<(Option<i64>, Option<i64>)> {

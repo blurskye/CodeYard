@@ -9,11 +9,11 @@ async fn branch_provenance_tracks_publishers_not_authors_and_survives_remote_noo
     crate::support::native_database::enable_cluster(&database.pool)
         .await
         .unwrap();
-    codeyard_db_cluster::node_config::upsert_node_configuration(&database.pool, "public", true)
+    codeyard_db_placement::node_config::upsert_node_configuration(&database.pool, "public", true)
         .await
         .unwrap();
     let root = tempfile::tempdir().unwrap();
-    let web = codeyard_cluster::start(
+    let web = codeyard_placement::start(
         &database.pool,
         &root.path().join("web-state"),
         &root.path().join("web-repos"),
@@ -23,7 +23,7 @@ async fn branch_provenance_tracks_publishers_not_authors_and_survives_remote_noo
     .await
     .unwrap();
     web.publish().await.unwrap();
-    let storage = codeyard_cluster::start(
+    let storage = codeyard_placement::start(
         &database.pool,
         &root.path().join("storage-state"),
         &root.path().join("storage-repos"),
@@ -54,7 +54,7 @@ async fn branch_provenance_tracks_publishers_not_authors_and_survives_remote_noo
     )
     .await
     .unwrap();
-    let repository = codeyard_repos_core::repositories::lifecycle::provision(
+    let repository = codeyard_git_storage::repositories::lifecycle::provision(
         (&database.pool, Some(&web.context)),
         &web.context.repos_path,
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner.id),
@@ -71,7 +71,7 @@ async fn branch_provenance_tracks_publishers_not_authors_and_survives_remote_noo
         owner.id,
         repository.id,
         &writer.username,
-        Some(codeyard_db_core::models::AccessLevel::Write),
+        Some(codeyard_database::models::AccessLevel::Write),
     )
     .await
     .unwrap();
@@ -263,7 +263,7 @@ async fn branch_provenance_tracks_publishers_not_authors_and_survives_remote_noo
     )
     .await
     .unwrap();
-    let mut request = codeyard_repos_core::store_types::PullBranchUpdate {
+    let mut request = codeyard_git_storage::store_types::PullBranchUpdate {
         pull_request_id: pull.id,
         base_branch: "upstream".into(),
         branch: "main".into(),

@@ -1,9 +1,9 @@
 use anyhow::Result;
 use chrono::DateTime;
 use chrono::Utc;
-use codeyard_db_core::models::CiRun;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::CiRun;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 
 #[derive(Clone, sqlx::FromRow)]
 pub struct Workflow {
@@ -21,7 +21,7 @@ native_operation!(crate::postgres::action_workflows::register_workflows,
     fn register_workflows(pool:&DbPool,repo:i64,definitions:&[(String,String)],refresh:bool) -> Result<Vec<Workflow>>);
 native_operation!(crate::postgres::action_workflows::set_workflow_enabled,
     crate::sqlite::action_workflows::set_workflow_enabled,
-    fn set_workflow_enabled(pool:&DbPool,actor:impl Into<codeyard_db_core::queries::credentials::Actor>,repo:i64,id:i64,enabled:bool) -> Result<Option<Workflow>>);
+    fn set_workflow_enabled(pool:&DbPool,actor:impl Into<codeyard_database::queries::credentials::Actor>,repo:i64,id:i64,enabled:bool) -> Result<Option<Workflow>>);
 native_operation!(crate::postgres::action_workflows::workflow_by_id,
     crate::sqlite::action_workflows::workflow_by_id,
     fn workflow_by_id(pool: &DbPool, repo: i64, id:i64) -> Result<Option<Workflow>>);

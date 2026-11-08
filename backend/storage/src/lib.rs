@@ -502,7 +502,7 @@ mod tests {
 
 pub mod zip_archives;
 
-impl codeyard_db_core::ci_logs::LogObjects for ObjectStore {
+impl codeyard_database::ci_logs::LogObjects for ObjectStore {
     fn put<'a>(
         &'a self,
         key: &'a str,
@@ -522,7 +522,7 @@ impl codeyard_db_core::ci_logs::LogObjects for ObjectStore {
             };
             let permit = Arc::new(self.try_acquire_io()?);
             tokio::time::timeout(
-                codeyard_db_core::ci_logs::io_timeout()?,
+                codeyard_database::ci_logs::io_timeout()?,
                 self.put_bytes(&upload, bytes, permit),
             )
             .await??;
@@ -537,7 +537,7 @@ impl codeyard_db_core::ci_logs::LogObjects for ObjectStore {
         Box::pin(async move {
             anyhow::ensure!(length <= 2 * 1024 * 1024, "CI chunk exceeds storage limit");
             Ok(tokio::time::timeout(
-                codeyard_db_core::ci_logs::io_timeout()?,
+                codeyard_database::ci_logs::io_timeout()?,
                 self.read_object(key, length),
             )
             .await??)

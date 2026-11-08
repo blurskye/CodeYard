@@ -1,6 +1,6 @@
 use anyhow::Result;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 
 /// What the server keeps for a user with two-factor sign-in. The secret is ciphertext.
 #[derive(Debug, Clone, PartialEq, Eq)]

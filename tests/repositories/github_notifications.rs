@@ -7,10 +7,10 @@ use axum::{
     Router,
 };
 
+use codeyard_git_storage::repositories::lifecycle;
 use codeyard_identity::tokens;
 use codeyard_identity::tokens::TokenInput;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
-use codeyard_repos_core::repositories::lifecycle;
 use codeyard_repos_pulls::issues::comments;
 use codeyard_repos_pulls::issues::comments::CreateCommentRequest;
 use serde_json::{json, Value};
@@ -67,7 +67,7 @@ async fn comment(f: &Database, actor: i64, name: &str, number: i32, body: &str) 
         f.pool(),
         &NotificationBroadcaster::new(f.pool()),
         actor,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), actor).await,
         ),
         "alice".into(),
@@ -174,7 +174,7 @@ async fn contract(pg: bool) {
         f.pool(),
         bob_id,
         repos[1].id,
-        codeyard_db_core::models::AccessLevel::Read,
+        codeyard_database::models::AccessLevel::Read,
     )
     .await
     .unwrap();

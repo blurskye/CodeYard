@@ -1,8 +1,8 @@
 //! Operator commands for a cell's identity and allocation ranges.
 use anyhow::Result;
 use clap::Subcommand;
-use codeyard_db_core::DbPool;
-use codeyard_types::cells::Prefix;
+use codeyard_database::DbPool;
+use codeyard_types::cell_ids::Prefix;
 use std::path::Path;
 
 #[derive(Debug, Subcommand)]
@@ -134,7 +134,7 @@ pub async fn run(command: &Command, pool: &DbPool, state: &Path, repos_path: &Pa
         let DbPool::Postgres(pool) = pool else {
             anyhow::bail!("Region moves need PostgreSQL");
         };
-        codeyard_db_cluster::regions::pin_user(pool, name, !remove).await?;
+        codeyard_db_placement::regions::pin_user(pool, name, !remove).await?;
         println!(
             "{}",
             if *remove {
@@ -147,14 +147,14 @@ pub async fn run(command: &Command, pool: &DbPool, state: &Path, repos_path: &Pa
     }
     if let Command::SearchReindex { after, limit } = command {
         let (next, count) =
-            codeyard_db_core::cells::search::queue_all(pool, *after, *limit).await?;
+            codeyard_database::cells::search::queue_all(pool, *after, *limit).await?;
         println!("{}", serde_json::json!({ "after": next, "count": count }));
         return Ok(());
     }
     let _state = codeyard_support::fs::lock_state_dir(state)?;
-    let maintenance = codeyard_db_cluster::cluster::maintenance_lock(pool).await?;
+    let maintenance = codeyard_db_placement::cluster::maintenance_lock(pool).await?;
     let result = match command {
-        Command::Initialize { prefix } => codeyard_db_core::cells::initialize(pool, *prefix).await,
+        Command::Initialize { prefix } => codeyard_database::cells::initialize(pool, *prefix).await,
         Command::Publish {
             directory_address,
             directory_key,
@@ -163,7 +163,7 @@ pub async fn run(command: &Command, pool: &DbPool, state: &Path, repos_path: &Pa
             limit,
         } => {
             async {
-                let client = codeyard_cells_router::directory::Client::new(
+                let client = codeyard_router::directory::Client::new(
                     codeyard_support::node_identity::load_or_create(state)?,
                     *directory_address,
                     codeyard_support::node_identity::parse_public_key(directory_key)?,
@@ -173,10 +173,10 @@ pub async fn run(command: &Command, pool: &DbPool, state: &Path, repos_path: &Pa
                 let DbPool::Postgres(pool) = pool else {
                     unreachable!("directory attachment requires PostgreSQL")
                 };
-                let kind = codeyard_model::cells::ObjectKind::parse(kind)
+                let kind = codeyard_types::cells::ObjectKind::parse(kind)
                     .ok_or_else(|| anyhow::anyhow!("Invalid object kind"))?;
                 let (next, count) =
-                    codeyard_db_core::cells::directory::publish_native(pool, kind, *after, *limit)
+                    codeyard_database::cells::directory::publish_native(pool, kind, *after, *limit)
                         .await?;
                 println!("{}", serde_json::json!({ "after": next, "count": count }));
                 Ok(())
@@ -189,28 +189,25 @@ pub async fn run(command: &Command, pool: &DbPool, state: &Path, repos_path: &Pa
         } => {
             async {
                 let previous = pool.cell_prefix();
-                let last_id = codeyard_db_core::cells::highest_id(pool).await?;
+                let last_id = codeyard_database::cells::highest_id(pool).await?;
                 anyhow::ensure!(
                     previous.needs_next_prefix(last_id),
                     "no cell sequence has reached 80% use"
                 );
                 let key = codeyard_support::node_identity::load_or_create(state)?;
-                let directory = codeyard_cells_router::directory::Client::new(
+                let directory = codeyard_router::directory::Client::new(
                     key,
                     *directory_address,
                     codeyard_support::node_identity::parse_public_key(directory_key)?,
                     Default::default(),
                 )?;
                 let reply = directory
-                    .request(&codeyard_cells_router::directory::Request::NextPrefix {
-                        previous,
-                        last_id,
-                    })
+                    .request(&codeyard_router::directory::Request::NextPrefix { previous, last_id })
                     .await?;
-                let codeyard_cells_router::directory::Reply::Prefix(prefix) = reply else {
+                let codeyard_router::directory::Reply::Prefix(prefix) = reply else {
                     anyhow::bail!("directory returned an invalid prefix reservation");
                 };
-                codeyard_db_core::cells::renew(pool, previous, prefix).await
+                codeyard_database::cells::renew(pool, previous, prefix).await
             }
             .await
         }
@@ -340,7 +337,7 @@ pub enum DirectoryCommand {
 
 /// Runs before opening a cell database or touching its state directory.
 pub async fn run_directory(command: &DirectoryCommand, state: &Path) -> Result<()> {
-    use codeyard_model::cells::{Cell, State};
+    use codeyard_types::cells::{Cell, State};
     let url = std::env::var("DIRECTORY_DATABASE_URL").map_err(|_| {
         anyhow::anyhow!("DIRECTORY_DATABASE_URL is required and must be valid UTF-8")
     })?;
@@ -396,12 +393,12 @@ pub async fn run_directory(command: &DirectoryCommand, state: &Path) -> Result<(
                 codeyard_support::fs::private_dir(state)?;
                 let _state = codeyard_support::fs::lock_state_dir(state)?;
                 let key = codeyard_support::node_identity::load_or_create(state)?;
-                let config = codeyard_cells_router::directory::Config {
+                let config = codeyard_router::directory::Config {
                     exchange_seconds: *exchange_seconds,
                     maximum_bytes: *maximum_bytes,
                     maximum_connections: *maximum_connections,
                 };
-                let mut listener = codeyard_cells_router::directory::Listener::bind(
+                let mut listener = codeyard_router::directory::Listener::bind(
                     directory.clone(),
                     &key,
                     *address,
@@ -437,14 +434,14 @@ pub async fn run_directory(command: &DirectoryCommand, state: &Path) -> Result<(
                 maximum_write_rate,
                 read_region,
             } => {
-                let mut read_regions: Vec<codeyard_model::cells::ReadRegion> = Vec::new();
+                let mut read_regions: Vec<codeyard_types::cells::ReadRegion> = Vec::new();
                 for value in read_region {
                     let (region, url) = value
                         .split_once('=')
                         .ok_or_else(|| anyhow::anyhow!("--read-region takes region=url"))?;
                     match read_regions.iter_mut().find(|read| read.region == region) {
                         Some(read) => read.web_urls.push(url.to_owned()),
-                        None => read_regions.push(codeyard_model::cells::ReadRegion {
+                        None => read_regions.push(codeyard_types::cells::ReadRegion {
                             region: region.to_owned(),
                             web_urls: vec![url.to_owned()],
                         }),
@@ -474,15 +471,15 @@ pub async fn run_directory(command: &DirectoryCommand, state: &Path) -> Result<(
                 region,
                 remove,
             } => {
-                let key = codeyard_model::cells::Key::new(
-                    codeyard_model::cells::KeyKind::Name,
+                let key = codeyard_types::cells::Key::new(
+                    codeyard_types::cells::KeyKind::Name,
                     organization,
                 )?;
                 let location = directory
                     .lookup(&key)
                     .await?
                     .filter(|location| {
-                        location.object.kind == codeyard_model::cells::ObjectKind::Organization
+                        location.object.kind == codeyard_types::cells::ObjectKind::Organization
                     })
                     .ok_or_else(|| anyhow::anyhow!("No organization is named {organization}"))?;
                 let changed = directory
@@ -562,7 +559,7 @@ async fn rollout(
     apply_limit: std::time::Duration,
     health_limit: std::time::Duration,
 ) -> Result<()> {
-    use codeyard_model::cells::State;
+    use codeyard_types::cells::State;
     const MAXIMUM_CELLS: usize = 65_536;
     let mut cells = Vec::new();
     let mut after = None;
@@ -653,7 +650,7 @@ async fn rollout(
     Ok(())
 }
 
-/// The steps are in `codeyard_db_cluster::moves`; this adds the Git copy and the directory
+/// The steps are in `codeyard_db_placement::moves`; this adds the Git copy and the directory
 /// switch, and undoes an unswitched move when a step fails. The CLI passes its own pinned
 /// directory client; a web node running an automatic move passes its client, its cluster
 /// identity and the planned move. None when the planned user was pinned or claimed since.
@@ -661,8 +658,8 @@ async fn move_account(
     arguments: &MoveArgs,
     pool: &DbPool,
     paths: (&Path, &Path),
-    directory: &codeyard_cells_router::directory::Client,
-    nodes: Option<codeyard_repos_core::context::NodeContext>,
+    directory: &codeyard_router::directory::Client,
+    nodes: Option<codeyard_git_storage::context::NodeContext>,
     planned: Option<&PlannedMove>,
 ) -> Result<Option<serde_json::Value>> {
     // Both cells' move leases end here, on every exit, so the next move can start at once.
@@ -687,19 +684,19 @@ async fn move_leased(
     arguments: &MoveArgs,
     pool: &DbPool,
     (state, repos_path): (&Path, &Path),
-    directory: &codeyard_cells_router::directory::Client,
-    nodes: Option<codeyard_repos_core::context::NodeContext>,
+    directory: &codeyard_router::directory::Client,
+    nodes: Option<codeyard_git_storage::context::NodeContext>,
     planned: Option<&PlannedMove>,
-    leases: &mut Vec<codeyard_db_cluster::cluster::ServingLock>,
+    leases: &mut Vec<codeyard_db_placement::cluster::ServingLock>,
 ) -> Result<Option<serde_json::Value>> {
-    use codeyard_db_cluster::moves;
-    use codeyard_model::cells::{Object, ObjectKind};
+    use codeyard_db_placement::moves;
+    use codeyard_types::cells::{Object, ObjectKind};
     let DbPool::Postgres(source) = pool else {
         anyhow::bail!("Account moves need PostgreSQL in both cells");
     };
     // Reuse the dedicated session lease: two operators must not cancel, recopy or
     // release the same source concurrently. Serving nodes retain their own identities.
-    leases.push(codeyard_db_cluster::cluster::serving_lock(pool, "account-move").await?);
+    leases.push(codeyard_db_placement::cluster::serving_lock(pool, "account-move").await?);
     let source_root = tokio::fs::canonicalize(repos_path).await?;
     let target_root = tokio::fs::canonicalize(&arguments.target_repositories).await?;
     anyhow::ensure!(
@@ -742,13 +739,14 @@ async fn move_leased(
             planned.login
         );
     }
-    let target_pool = codeyard_db_core::connection::open_source(&arguments.target_database).await?;
+    let target_pool =
+        codeyard_database::connection::open_source(&arguments.target_database).await?;
     let DbPool::Postgres(target) = &target_pool else {
         anyhow::bail!("Account moves need PostgreSQL in both cells");
     };
     // The same lease excludes incoming and outgoing moves. Acquisition is nonblocking,
     // so two opposite moves cannot deadlock while each holds its source lease.
-    leases.push(codeyard_db_cluster::cluster::serving_lock(&target_pool, "account-move").await?);
+    leases.push(codeyard_db_placement::cluster::serving_lock(&target_pool, "account-move").await?);
     let transfer = match (kind, &arguments.new_owner) {
         (ObjectKind::Repository, Some(owner)) => {
             moves::transfer(source, target, account, owner).await?
@@ -782,7 +780,7 @@ async fn move_leased(
             .any(|repository| repository.storage_node_id.is_some()) =>
         {
             Some(
-                codeyard_cluster::client_context(pool, state, repos_path)
+                codeyard_placement::client_context(pool, state, repos_path)
                     .await?
                     .ok_or_else(|| {
                         anyhow::anyhow!(
@@ -822,7 +820,7 @@ async fn move_leased(
         ..
     }) = planned
     {
-        if !codeyard_db_cluster::regions::claim_user_move(source, *user, *days, region, *cell)
+        if !codeyard_db_placement::regions::claim_user_move(source, *user, *days, region, *cell)
             .await?
         {
             return Ok(None);
@@ -986,10 +984,10 @@ async fn move_leased(
             }));
         for object in objects {
             let reply = directory
-                .request(&codeyard_cells_router::directory::Request::MoveHome { object, to })
+                .request(&codeyard_router::directory::Request::MoveHome { object, to })
                 .await?;
             anyhow::ensure!(
-                matches!(reply, codeyard_cells_router::directory::Reply::Done),
+                matches!(reply, codeyard_router::directory::Reply::Done),
                 "The directory returned an invalid reply"
             );
         }
@@ -1115,8 +1113,8 @@ pub struct UserMover {
     pub pool: DbPool,
     pub state: std::path::PathBuf,
     pub repositories: std::path::PathBuf,
-    pub directory: codeyard_cells_router::directory::Client,
-    pub nodes: Option<codeyard_repos_core::context::NodeContext>,
+    pub directory: codeyard_router::directory::Client,
+    pub nodes: Option<codeyard_git_storage::context::NodeContext>,
     pub targets: std::collections::BTreeMap<u16, MoveTarget>,
 }
 
@@ -1129,8 +1127,8 @@ impl UserMover {
         &self,
         policy: &codeyard_types::cluster::RegionPolicy,
     ) -> Result<Option<PlannedMove>> {
-        use codeyard_cells_router::directory::{Reply, Request};
-        use codeyard_db_cluster::regions;
+        use codeyard_db_placement::regions;
+        use codeyard_router::directory::{Reply, Request};
         let DbPool::Postgres(pool) = &self.pool else {
             return Ok(None);
         };
@@ -1193,7 +1191,7 @@ impl UserMover {
     }
 
     async fn region(&self, prefix: Prefix) -> Result<String> {
-        use codeyard_cells_router::directory::{Reply, Request};
+        use codeyard_router::directory::{Reply, Request};
         match self.directory.request(&Request::Cell { prefix }).await? {
             Reply::Cell(Some(cell)) => Ok(cell.region),
             _ => anyhow::bail!("The directory does not list cell {prefix}"),
@@ -1233,13 +1231,13 @@ impl UserMover {
 /// token to its user, so routers and other cells follow the user's home after the switch.
 /// Only the current home may add keys, so this runs before the switch; repeating it is safe.
 async fn publish_credentials(
-    directory: &codeyard_cells_router::directory::Client,
+    directory: &codeyard_router::directory::Client,
     user: i64,
-    keys: &[codeyard_model::cells::Key],
+    keys: &[codeyard_types::cells::Key],
 ) -> Result<()> {
-    use codeyard_cells_router::directory::{Reply, Request};
-    let object = codeyard_model::cells::Object {
-        kind: codeyard_model::cells::ObjectKind::User,
+    use codeyard_router::directory::{Reply, Request};
+    let object = codeyard_types::cells::Object {
+        kind: codeyard_types::cells::ObjectKind::User,
         id: user,
     };
     for chunk in keys.chunks(500) {
@@ -1276,17 +1274,17 @@ async fn publish_credentials(
 /// the target cluster's storage nodes or the files under `--target-state`.
 async fn object_stores(
     arguments: &MoveArgs,
-    directory: &codeyard_cells_router::directory::Client,
+    directory: &codeyard_router::directory::Client,
     target_s3: Option<codeyard_storage::s3::S3Config>,
     cells: (i32, i32),
     pools: (&DbPool, &DbPool),
     (state, repos_path, target_root): (&Path, &Path, &Path),
     contexts: (
-        Option<&codeyard_repos_core::context::NodeContext>,
-        Option<&codeyard_repos_core::context::NodeContext>,
+        Option<&codeyard_git_storage::context::NodeContext>,
+        Option<&codeyard_git_storage::context::NodeContext>,
     ),
 ) -> Result<Option<(codeyard_storage::ObjectStore, codeyard_storage::ObjectStore)>> {
-    use codeyard_cells_router::directory::{Reply, Request};
+    use codeyard_router::directory::{Reply, Request};
     use codeyard_storage::s3::S3Config;
     let mut regions = Vec::with_capacity(2);
     for id in [cells.0, cells.1] {
@@ -1336,12 +1334,12 @@ async fn cell_store(
     state: &Path,
     repos_path: &Path,
     s3: Option<codeyard_storage::s3::S3Config>,
-    context: Option<&codeyard_repos_core::context::NodeContext>,
+    context: Option<&codeyard_git_storage::context::NodeContext>,
 ) -> Result<codeyard_storage::ObjectStore> {
-    if s3.is_none() && codeyard_db_cluster::cluster::cluster_enabled(pool).await? {
+    if s3.is_none() && codeyard_db_placement::cluster::cluster_enabled(pool).await? {
         let context = match context {
             Some(context) => context.clone(),
-            None => codeyard_cluster::client_context(pool, state, repos_path)
+            None => codeyard_placement::client_context(pool, state, repos_path)
                 .await?
                 .ok_or_else(|| {
                     anyhow::anyhow!("A cluster cell's stored objects need its CLUSTER_* settings")
@@ -1349,7 +1347,7 @@ async fn cell_store(
         };
         return codeyard_storage::ObjectStore::on_nodes(
             state,
-            codeyard_repos_core::objects::Store::new(context),
+            codeyard_git_storage::objects::Store::new(context),
         )
         .await;
     }
@@ -1360,14 +1358,14 @@ async fn cell_store(
 /// each one back. A repeated run skips what the target already holds with the same digest.
 async fn copy_objects(
     source: &sqlx::PgPool,
-    account: codeyard_db_cluster::moves::Account,
+    account: codeyard_db_placement::moves::Account,
     (from, to): &(codeyard_storage::ObjectStore, codeyard_storage::ObjectStore),
     page: i64,
     timeout: std::time::Duration,
 ) -> Result<()> {
     let mut after = String::new();
     loop {
-        let objects = codeyard_db_cluster::moves::objects(source, account, &after, page).await?;
+        let objects = codeyard_db_placement::moves::objects(source, account, &after, page).await?;
         for object in &objects {
             tokio::time::timeout(timeout, copy_object(from, to, object))
                 .await
@@ -1383,7 +1381,7 @@ async fn copy_objects(
 async fn copy_object(
     from: &codeyard_storage::ObjectStore,
     to: &codeyard_storage::ObjectStore,
-    object: &codeyard_db_cluster::moves::StoredObject,
+    object: &codeyard_db_placement::moves::StoredObject,
 ) -> Result<()> {
     let key = object.object_key.as_str();
     let length = usize::try_from(object.bytes)?;
@@ -1436,7 +1434,7 @@ async fn holds(
 }
 
 /// The `<name>.git` directory name that a repository keeps in every cell.
-fn directory_name(repository: &codeyard_db_cluster::moves::Repository) -> Result<String> {
+fn directory_name(repository: &codeyard_db_placement::moves::Repository) -> Result<String> {
     Path::new(&repository.disk_path)
         .file_name()
         .and_then(|name| name.to_str())
@@ -1448,7 +1446,7 @@ fn directory_name(repository: &codeyard_db_cluster::moves::Repository) -> Result
 /// Where a copy from a storage node is kept between runs, beside the target directory.
 fn staging_path(
     target_root: &Path,
-    repository: &codeyard_db_cluster::moves::Repository,
+    repository: &codeyard_db_placement::moves::Repository,
 ) -> Result<std::path::PathBuf> {
     Ok(target_root.join(format!(".move-{}", directory_name(repository)?)))
 }
@@ -1457,7 +1455,7 @@ fn staging_path(
 fn repository_paths(
     source_root: &Path,
     target_root: &Path,
-    repository: &codeyard_db_cluster::moves::Repository,
+    repository: &codeyard_db_placement::moves::Repository,
 ) -> Result<(std::path::PathBuf, std::path::PathBuf)> {
     let from = std::path::PathBuf::from(&repository.disk_path);
     let name = directory_name(repository)?;
@@ -1478,7 +1476,7 @@ struct Refs {
 
 impl Refs {
     async fn read(path: &Path) -> Result<Self> {
-        let store = codeyard_repos_core::repositories::store::RepoStore::from_disk_path(
+        let store = codeyard_git_storage::repositories::store::RepoStore::from_disk_path(
             path.to_str()
                 .ok_or_else(|| anyhow::anyhow!("Invalid repository path"))?,
         );
@@ -1494,7 +1492,7 @@ impl Refs {
     }
 
     /// The first ref, HEAD included, that differs from a quorum's committed refs.
-    fn difference(&self, committed: &[codeyard_db_core::models::RefValue]) -> Option<String> {
+    fn difference(&self, committed: &[codeyard_database::models::RefValue]) -> Option<String> {
         let mut refs = std::collections::BTreeMap::new();
         let mut head = None;
         for value in committed {
@@ -1519,13 +1517,13 @@ impl Refs {
 /// incremental, so a repeated run fetches only what it lacks. A quorum repository must
 /// have no write in progress, and the copy must hold exactly its committed refs.
 async fn copy_placed(
-    context: &codeyard_repos_core::context::NodeContext,
+    context: &codeyard_git_storage::context::NodeContext,
     pool: &DbPool,
     repository: i64,
     mirror: &Path,
     wait: std::time::Duration,
 ) -> Result<Refs> {
-    use codeyard_db_cluster::cluster::writes as journal;
+    use codeyard_db_placement::cluster::writes as journal;
     let deadline = tokio::time::Instant::now() + wait;
     loop {
         let attempt = async {
@@ -1536,8 +1534,8 @@ async fn copy_placed(
             let primary = row
                 .storage_node_id
                 .ok_or_else(|| anyhow::anyhow!("Repository {repository} left its storage node"))?;
-            let uuid = codeyard_repos_core::wire::repository_uuid(&row.disk_path)?;
-            let quorum = codeyard_db_cluster::cluster::writes::write_settings(pool)
+            let uuid = codeyard_git_storage::wire::repository_uuid(&row.disk_path)?;
+            let quorum = codeyard_db_placement::cluster::writes::write_settings(pool)
                 .await?
                 .write_quorum
                 .is_some();
@@ -1556,7 +1554,7 @@ async fn copy_placed(
             } else {
                 None
             };
-            codeyard_cluster::replicas::snapshot(context, primary, uuid, mirror, &[]).await?;
+            codeyard_placement::replicas::snapshot(context, primary, uuid, mirror, &[]).await?;
             let refs = Refs::read(mirror).await?;
             if let Some(view) = view {
                 if let Some(name) = refs.difference(&view.refs) {
@@ -1589,14 +1587,14 @@ async fn target_placement(
     arguments: &MoveArgs,
     target: &DbPool,
     target_root: &Path,
-    repositories: &[codeyard_db_cluster::moves::Repository],
-) -> Result<Option<(codeyard_repos_core::context::NodeContext, i64)>> {
+    repositories: &[codeyard_db_placement::moves::Repository],
+) -> Result<Option<(codeyard_git_storage::context::NodeContext, i64)>> {
     let DbPool::Postgres(postgres) = target else {
         anyhow::bail!("Account moves need PostgreSQL in both cells");
     };
     if repositories.is_empty()
-        || !codeyard_db_cluster::cluster::cluster_enabled(target).await?
-        || codeyard_db_cluster::cluster::writes::write_settings(target)
+        || !codeyard_db_placement::cluster::cluster_enabled(target).await?
+        || codeyard_db_placement::cluster::writes::write_settings(target)
             .await?
             .write_quorum
             .is_none()
@@ -1608,7 +1606,7 @@ async fn target_placement(
             "The target cell writes through a quorum; pass --target-state with a stopped web node's state directory"
         )
     })?;
-    let context = codeyard_cluster::client_context(target, state, target_root)
+    let context = codeyard_placement::client_context(target, state, target_root)
         .await?
         .ok_or_else(|| anyhow::anyhow!("The target cell needs the CLUSTER_* settings"))?;
     // A repeated run keeps the node an earlier run chose. One node keeps fork families together.
@@ -1616,11 +1614,11 @@ async fn target_placement(
         .iter()
         .map(|repository| repository.id)
         .collect();
-    let node = match codeyard_db_cluster::moves::placed_node(postgres, &ids).await? {
+    let node = match codeyard_db_placement::moves::placed_node(postgres, &ids).await? {
         Some(node) => node,
         None => {
-            let nodes = codeyard_db_cluster::cluster::list_nodes(target).await?;
-            codeyard_db_core::models::ClusterNode::ranked_storage(&nodes)
+            let nodes = codeyard_db_placement::cluster::list_nodes(target).await?;
+            codeyard_database::models::ClusterNode::ranked_storage(&nodes)
                 .first()
                 .map(|node| node.id)
                 .ok_or_else(|| {
@@ -1636,20 +1634,20 @@ async fn target_placement(
 /// ref in one quorum write. Afterwards the committed refs are compared ref by ref. The
 /// pack is written to a temporary file in `scratch` first.
 async fn publish_placed(
-    context: &codeyard_repos_core::context::NodeContext,
+    context: &codeyard_git_storage::context::NodeContext,
     target: &DbPool,
     (repository, node): (i64, i64),
     (mirror, refs): (&Path, &Refs),
     scratch: &Path,
     timeout: std::time::Duration,
 ) -> Result<()> {
-    use codeyard_db_cluster::cluster::writes as journal;
-    use codeyard_repos_core::wire::{Operation, Request};
+    use codeyard_db_placement::cluster::writes as journal;
+    use codeyard_git_storage::wire::{Operation, Request};
     use tokio::io::AsyncWriteExt;
     let row = codeyard_db_repos::repositories::records::get_repository_by_id(target, repository)
         .await?
         .ok_or_else(|| anyhow::anyhow!("The target cell lost repository {repository}"))?;
-    let uuid = codeyard_repos_core::wire::repository_uuid(&row.disk_path)?;
+    let uuid = codeyard_git_storage::wire::repository_uuid(&row.disk_path)?;
     let head = refs
         .head
         .clone()
@@ -1693,7 +1691,7 @@ async fn publish_placed(
             Vec::new()
         }
     };
-    let store = codeyard_repos_core::repositories::store::RepoStore::from_disk_path(
+    let store = codeyard_git_storage::repositories::store::RepoStore::from_disk_path(
         mirror
             .to_str()
             .ok_or_else(|| anyhow::anyhow!("Invalid repository path"))?,
@@ -1701,20 +1699,20 @@ async fn publish_placed(
     let present = store.existing_commits(&have).await?;
     let have: Vec<String> = have.into_iter().filter(|id| present.contains(id)).collect();
     let targets: Vec<String> = refs.refs.values().cloned().collect();
-    let limits = codeyard_repos_core::git_transport::WriteLimits::load(target).await?;
+    let limits = codeyard_git_storage::git_transport::WriteLimits::load(target).await?;
     let pack = tempfile::Builder::new()
         .prefix(".move-pack-")
         .tempfile_in(scratch)?;
     if !targets.is_empty() {
         let mut file = tokio::fs::File::from_std(pack.reopen()?);
         let mut bounded =
-            codeyard_repos_core::git_transport::LimitedWriter::new(&mut file, limits.pack_bytes);
+            codeyard_git_storage::git_transport::LimitedWriter::new(&mut file, limits.pack_bytes);
         let status = tokio::time::timeout(
             timeout,
             store.replica_pack(
                 &targets,
                 &have,
-                codeyard_repos_core::store_types::GitStreams {
+                codeyard_git_storage::store_types::GitStreams {
                     input: &mut tokio::io::empty(),
                     output: &mut bounded,
                     errors: &mut tokio::io::sink(),
@@ -1742,7 +1740,7 @@ async fn publish_placed(
                 actor: None,
                 ci_run: None,
             },
-            codeyard_repos_core::store_types::GitStreams {
+            codeyard_git_storage::store_types::GitStreams {
                 input: &mut input,
                 output: &mut tokio::io::sink(),
                 errors: &mut tokio::io::sink(),

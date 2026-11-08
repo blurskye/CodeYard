@@ -17,7 +17,7 @@ use axum::routing::post;
 use axum::Router;
 use codeyard_api_http::context::PageContext;
 use codeyard_app::app::AppState;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
+use codeyard_database::queries::organizations::OrganizationOutcome;
 use codeyard_webui::pages::orgs as view;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -47,7 +47,7 @@ pub(super) async fn panel(
         };
     let selected = if let Some(name) = ctx.query.get("property").filter(|name| !name.is_empty()) {
         let missing = || ctx.error(StatusCode::NOT_FOUND, "Repository property not found.");
-        if !codeyard_db_core::queries::organizations::properties::valid_name(name) {
+        if !codeyard_database::queries::organizations::properties::valid_name(name) {
             return Err(missing());
         }
         let definition = match codeyard_db_orgs::organizations::properties::definition(
@@ -76,7 +76,7 @@ pub(super) async fn panel(
                 .default_value
                 .as_ref()
                 .map(
-                    codeyard_db_core::queries::organizations::properties::PropertyValue::form_value,
+                    codeyard_database::queries::organizations::properties::PropertyValue::form_value,
                 )
                 .unwrap_or_default(),
             allowed_values: input
@@ -123,8 +123,8 @@ fn allowed(action: &str) -> &'static [&'static str] {
 fn bound(key: &str) -> usize {
     match key {
         "allowed_values" | "default_value" | "value" => {
-            codeyard_db_core::queries::organizations::properties::MAX_ALLOWED_VALUES
-                * (codeyard_db_core::queries::organizations::properties::MAX_VALUE_BYTES + 1)
+            codeyard_database::queries::organizations::properties::MAX_ALLOWED_VALUES
+                * (codeyard_database::queries::organizations::properties::MAX_VALUE_BYTES + 1)
         }
         "description" => 4096,
         "repository_names" => 8192,
@@ -149,7 +149,7 @@ fn flag(form: &Fields, key: &str) -> Result<bool> {
         None | Some("false") => Ok(false),
         Some("true") => Ok(true),
         _ => Err(
-            codeyard_db_core::queries::organizations::properties::invalid(
+            codeyard_database::queries::organizations::properties::invalid(
                 key_name(key),
                 "Invalid property checkbox value",
             )
@@ -174,19 +174,19 @@ async fn apply(
 ) -> Result<OrganizationOutcome<()>> {
     let name = codeyard_api_http::shared::user::responses::field(form, "property_name");
     ensure!(
-        codeyard_db_core::queries::organizations::properties::valid_name(name),
-        codeyard_db_core::queries::organizations::properties::invalid(
+        codeyard_database::queries::organizations::properties::valid_name(name),
+        codeyard_database::queries::organizations::properties::invalid(
             "property_name",
             "Property names must contain 1-75 ASCII letters, numbers, hyphens or underscores"
         )
     );
     match codeyard_api_http::shared::user::responses::field(form, "action") {
         "save-property" => {
-            let kind = codeyard_db_core::queries::organizations::properties::ValueType::parse(
+            let kind = codeyard_database::queries::organizations::properties::ValueType::parse(
                 codeyard_api_http::shared::user::responses::field(form, "value_type"),
             )?;
             let choices = codeyard_api_http::shared::user::responses::field(form, "allowed_values");
-            let input = codeyard_db_core::queries::organizations::properties::DefinitionInput {
+            let input = codeyard_database::queries::organizations::properties::DefinitionInput {
                 property_name: name.into(),
                 value_type: kind,
                 description: crate::organizations::organization::optional(form, "description")
@@ -195,7 +195,7 @@ async fn apply(
                 require_explicit_values: flag(form, "require_explicit_values")?,
                 default_value: if flag(form, "use_default")? {
                     Some(
-                        codeyard_db_core::queries::organizations::properties::PropertyValue::from_form(
+                        codeyard_database::queries::organizations::properties::PropertyValue::from_form(
                             kind,
                             codeyard_api_http::shared::user::responses::field(
                                 form,
@@ -218,7 +218,7 @@ async fn apply(
                     None
                 },
                 values_editable_by:
-                    codeyard_db_core::queries::organizations::properties::EditableBy::parse(
+                    codeyard_database::queries::organizations::properties::EditableBy::parse(
                         crate::organizations::organization::optional(form, "values_editable_by")
                             .unwrap_or("org_actors"),
                     )?,
@@ -233,10 +233,10 @@ async fn apply(
             .map(|_| ()))
         }
         "delete-property" => {
-            ensure!(codeyard_api_http::shared::user::responses::field(form,"confirm")==name,codeyard_db_core::queries::organizations::properties::invalid("confirm","Type the property name to confirm deleting its definition and every repository value"));
+            ensure!(codeyard_api_http::shared::user::responses::field(form,"confirm")==name,codeyard_database::queries::organizations::properties::invalid("confirm","Type the property name to confirm deleting its definition and every repository value"));
             let definition = crate::organizations::organization::id(form, "definition_id")
                 .map_err(|()| {
-                    codeyard_db_core::queries::organizations::properties::invalid(
+                    codeyard_database::queries::organizations::properties::invalid(
                         "definition_id",
                         "Reload the property and try again",
                     )
@@ -262,7 +262,7 @@ async fn apply(
                 Applied(Some(definition)) => definition,
                 Applied(None) => {
                     return Err(
-                        codeyard_db_core::queries::organizations::properties::Refusal::Missing
+                        codeyard_database::queries::organizations::properties::Refusal::Missing
                             .into(),
                     )
                 }
@@ -279,7 +279,7 @@ async fn apply(
                 None
             } else {
                 Some(
-                    codeyard_db_core::queries::organizations::properties::PropertyValue::from_form(
+                    codeyard_database::queries::organizations::properties::PropertyValue::from_form(
                         definition.fields.value_type,
                         codeyard_api_http::shared::user::responses::field(form, "value"),
                     ),
@@ -291,7 +291,7 @@ async fn apply(
                 org,
                 &repositories,
                 &[
-                    codeyard_db_core::queries::organizations::properties::ValueInput {
+                    codeyard_database::queries::organizations::properties::ValueInput {
                         property_name: name.into(),
                         value,
                     },
@@ -300,7 +300,7 @@ async fn apply(
             .await
         }
         _ => Err(
-            codeyard_db_core::queries::organizations::properties::invalid(
+            codeyard_database::queries::organizations::properties::invalid(
                 "action",
                 "Invalid repository property operation",
             )
@@ -387,17 +387,17 @@ async fn mutate(
         ),
         Err(error) => {
             match error
-                .downcast_ref::<codeyard_db_core::queries::organizations::properties::Refusal>()
+                .downcast_ref::<codeyard_database::queries::organizations::properties::Refusal>()
             {
-                Some(codeyard_db_core::queries::organizations::properties::Refusal::Invalid {
+                Some(codeyard_database::queries::organizations::properties::Refusal::Invalid {
                     message,
                     ..
                 }) => (StatusCode::BAD_REQUEST, (*message).to_owned()),
-                Some(codeyard_db_core::queries::organizations::properties::Refusal::Denied) => (
+                Some(codeyard_database::queries::organizations::properties::Refusal::Denied) => (
                     StatusCode::FORBIDDEN,
                     "Repository property access denied.".to_owned(),
                 ),
-                Some(codeyard_db_core::queries::organizations::properties::Refusal::Missing) => (
+                Some(codeyard_database::queries::organizations::properties::Refusal::Missing) => (
                     StatusCode::NOT_FOUND,
                     "Repository property not found.".to_owned(),
                 ),
@@ -407,7 +407,7 @@ async fn mutate(
     };
     ctx.query.remove("property");
     let name = codeyard_api_http::shared::user::responses::field(&form, "property_name");
-    if codeyard_db_core::queries::organizations::properties::valid_name(name) {
+    if codeyard_database::queries::organizations::properties::valid_name(name) {
         if let Ok(Applied(Some(definition))) =
             codeyard_db_orgs::organizations::properties::definition(
                 &ctx.state.pool,

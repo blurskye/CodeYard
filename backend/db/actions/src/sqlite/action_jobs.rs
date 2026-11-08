@@ -5,13 +5,13 @@ use anyhow::ensure;
 use anyhow::Result;
 use chrono::DateTime;
 use chrono::Utc;
-use codeyard_actions::progress::Annotation;
-use codeyard_actions::progress::Event;
-use codeyard_actions::progress::State;
-use codeyard_actions::progress::Update;
-use codeyard_db_core::ci_concurrency::Configuration;
-use codeyard_db_core::models::CiRun;
-use codeyard_db_core::pool::SqlitePool;
+use codeyard_database::ci_concurrency::Configuration;
+use codeyard_database::models::CiRun;
+use codeyard_database::pool::SqlitePool;
+use codeyard_runner::progress::Annotation;
+use codeyard_runner::progress::Event;
+use codeyard_runner::progress::State;
+use codeyard_runner::progress::Update;
 use sqlx::types::Json;
 use sqlx::SqliteConnection;
 
@@ -64,7 +64,7 @@ pub async fn apply(
     ensure!(issued, "job is outside the issued credentials");
     let admitted: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM actions_jobs WHERE run_id=$1 AND generation=$2 AND workflow_path=$3 AND logical_job=$4) OR (SELECT COUNT(*) FROM (SELECT DISTINCT workflow_path,logical_job FROM actions_jobs WHERE run_id=$1 AND generation=$2) jobs)<$5")
         .bind(run).bind(generation).bind(workflow).bind(&event.job)
-        .bind(codeyard_model::ci::MAX_EXPANDED_JOBS as i64).fetch_one(&mut *tx).await?;
+        .bind(codeyard_types::ci::MAX_EXPANDED_JOBS as i64).fetch_one(&mut *tx).await?;
     ensure!(admitted, "run job budget exceeded");
     let mut transitioned = false;
     if let Update::Queued {
@@ -105,7 +105,7 @@ pub async fn apply(
             name: display,
         } => {
             ensure!(
-                (1..=codeyard_actions::progress::MAX_STEP_NUMBER).contains(number),
+                (1..=codeyard_runner::progress::MAX_STEP_NUMBER).contains(number),
                 "invalid step number"
             );
             name(display)?;
@@ -155,14 +155,14 @@ pub async fn apply(
         Update::Summary { number, markdown } => {
             ensure!(
                 *number > 0
-                    && *number <= codeyard_actions::progress::MAX_STEP_NUMBER
-                    && markdown.len() <= codeyard_actions::progress::MAX_STEP_SUMMARY_BYTES
+                    && *number <= codeyard_runner::progress::MAX_STEP_NUMBER
+                    && markdown.len() <= codeyard_runner::progress::MAX_STEP_SUMMARY_BYTES
                     && !markdown.contains('\0'),
                 "invalid step summary"
             );
             sqlx::query("INSERT INTO actions_step_summaries(job_id,number,markdown,bytes) SELECT $1,$2,$3,$4 WHERE EXISTS(SELECT 1 FROM actions_jobs WHERE id=$1 AND status='in_progress') AND $4 + COALESCE((SELECT SUM(s.bytes) FROM actions_step_summaries s JOIN actions_jobs j ON j.id=s.job_id WHERE j.run_id=$6 AND NOT(s.job_id=$1 AND s.number=$2)),0)<=$5 ON CONFLICT(job_id,number) DO UPDATE SET markdown=excluded.markdown,bytes=excluded.bytes")
                 .bind(id).bind(*number as i32).bind(markdown).bind(markdown.len() as i32)
-                .bind(codeyard_actions::progress::MAX_RUN_SUMMARY_BYTES as i64).bind(run).execute(&mut *tx).await?;
+                .bind(codeyard_runner::progress::MAX_RUN_SUMMARY_BYTES as i64).bind(run).execute(&mut *tx).await?;
         }
         Update::Log { .. } => anyhow::bail!("runner output uses bounded native log storage"),
     }

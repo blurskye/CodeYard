@@ -1,4 +1,4 @@
-use codeyard_db_core::queries::users::accounts::AccountCredential;
+use codeyard_database::queries::users::accounts::AccountCredential;
 
 pub struct Reader<'a> {
     pub user: Option<i64>,
@@ -111,7 +111,7 @@ pub fn repository_condition(
     let app_active = "NOT app_owner.is_banned AND NOT app_owner.must_change_password AND EXISTS(SELECT 1 FROM users app_bot WHERE app_bot.id=a.bot_id AND NOT app_bot.is_banned AND NOT app_bot.must_change_password)";
     let covering = "i.suspended_at IS NULL AND (i.user_id=r.owner_user_id OR i.org_id=r.owner_org_id) AND (i.all_repos OR EXISTS(SELECT 1 FROM github_app_repositories ar WHERE ar.installation_id=i.id AND ar.repo_id=r.id))";
     let fine_reach = format!("f.status='approved' AND (f.owner_org_id IS NULL OR (EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=f.owner_org_id AND m.user_id=u.id) AND COALESCE(p.fine_grained_allowed,TRUE) AND (p.org_id IS NOT NULL AND p.max_lifetime_days IS NULL OR (t.expires_at IS NOT NULL AND {lifetime})))) AND ((f.owner_org_id IS NULL AND r.owner_user_id=u.id) OR f.owner_org_id=r.owner_org_id) AND (f.repository_access='all' OR (f.repository_access='selected' AND EXISTS(SELECT 1 FROM fine_grained_token_repositories fr WHERE fr.token_id=t.id AND fr.repo_id=r.id)))");
-    let foreign = codeyard_db_core::cells::authorization::repository_condition(
+    let foreign = codeyard_database::cells::authorization::repository_condition(
         postgres, scope, write, token, hash,
     );
     format!("(({foreign}) OR (({public_read} AND u.id IS NULL AND CAST({token} AS BIGINT) IS NULL AND CAST({session} AS TEXT) IS NULL) OR (u.id IS NOT NULL AND NOT u.is_banned AND NOT u.must_change_password AND (EXISTS(SELECT 1 FROM sessions s WHERE s.user_id=u.id AND s.id={session} AND s.expires_at>{now}) OR EXISTS(SELECT 1 FROM personal_access_tokens t WHERE t.id=CAST({token} AS BIGINT) AND t.user_id=u.id AND t.token_hash={hash} AND {token_scope} AND (t.expires_at IS NULL OR t.expires_at>{now}) AND CASE

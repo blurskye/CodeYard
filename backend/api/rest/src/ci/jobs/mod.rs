@@ -28,7 +28,7 @@ async fn authorized_run(
     state: &AppState,
     headers: &HeaderMap,
     job_id: &str,
-) -> Result<codeyard_db_core::models::CiRun, CiReadError> {
+) -> Result<codeyard_database::models::CiRun, CiReadError> {
     let user = get_current_user(&state.pool, headers).await?;
     let run = codeyard_db_actions::ci::get_ci_run_by_run_id(&state.pool, parse_job_id(job_id)?)
         .await

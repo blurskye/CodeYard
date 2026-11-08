@@ -18,9 +18,9 @@ use codeyard_identity::email_links::Purpose;
 use codeyard_identity::accounts::PasswordChange;
 use codeyard_identity::accounts::PasswordResetError;
 
-use codeyard_db_core::models::OutboxMessage;
-use codeyard_db_core::models::User;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::OutboxMessage;
+use codeyard_database::models::User;
+use codeyard_database::DbPool;
 
 const PAST: &str = "2020-01-01T00:00:00.000000Z";
 

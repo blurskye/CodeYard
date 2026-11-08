@@ -1,9 +1,9 @@
 //! Admission snapshots called workflows so workers never fetch a moving ref or another repository.
-use codeyard_db_core::ci_admission::AdmissionError;
+use codeyard_database::ci_admission::AdmissionError;
 use codeyard_git::error::ErrorKind;
-use codeyard_repos_core::repositories::store::repo_store;
-use codeyard_repos_core::workflows::is_safe_ref;
-use codeyard_repos_core::workflows::is_safe_workflow_path;
+use codeyard_git_storage::repositories::store::repo_store;
+use codeyard_git_storage::workflows::is_safe_ref;
+use codeyard_git_storage::workflows::is_safe_workflow_path;
 use serde_yaml::Value;
 use sha2::Digest;
 use sha2::Sha256;
@@ -11,10 +11,10 @@ use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
 pub(super) async fn authorize(
-    pool: &codeyard_db_core::DbPool,
-    caller: &codeyard_db_core::models::Repository,
+    pool: &codeyard_database::DbPool,
+    caller: &codeyard_database::models::Repository,
     actor: i64,
-    called: &codeyard_db_core::models::Repository,
+    called: &codeyard_database::models::Repository,
 ) -> Result<(), AdmissionError> {
     if caller.id == called.id || !called.is_private {
         return Ok(());
@@ -34,7 +34,7 @@ pub(super) async fn authorize(
     // namespace may call it. As on GitHub, an unset setting shares nothing.
     let (called_settings, _) =
         codeyard_db_actions::action_settings::effective(pool, called.id).await?;
-    let access = codeyard_db_core::queries::action_settings::Setting::Access;
+    let access = codeyard_database::queries::action_settings::Setting::Access;
     let level = called_settings
         .get(access.key())
         .unwrap_or(&access.defaults())
@@ -49,9 +49,9 @@ pub(super) async fn authorize(
 }
 
 pub(super) struct Resolver<'a> {
-    pub pool: &'a codeyard_db_core::DbPool,
-    pub context: Option<&'a codeyard_repos_core::context::NodeContext>,
-    pub caller: &'a codeyard_db_core::models::Repository,
+    pub pool: &'a codeyard_database::DbPool,
+    pub context: Option<&'a codeyard_git_storage::context::NodeContext>,
+    pub caller: &'a codeyard_database::models::Repository,
     pub actor: i64,
     pub files: BTreeMap<String, serde_json::Value>,
     pub environment: Option<String>,
@@ -98,9 +98,9 @@ pub(super) fn pinned_commits(
 
 impl<'a> Resolver<'a> {
     pub fn new(
-        pool: &'a codeyard_db_core::DbPool,
-        context: Option<&'a codeyard_repos_core::context::NodeContext>,
-        caller: &'a codeyard_db_core::models::Repository,
+        pool: &'a codeyard_database::DbPool,
+        context: Option<&'a codeyard_git_storage::context::NodeContext>,
+        caller: &'a codeyard_database::models::Repository,
         actor: i64,
         environment: Option<String>,
         pinned: BTreeMap<(i64, String, String), (String, String)>,
@@ -128,7 +128,7 @@ impl<'a> Resolver<'a> {
     )]
     pub fn snapshot<'b>(
         &'b mut self,
-        repository: codeyard_db_core::models::Repository,
+        repository: codeyard_database::models::Repository,
         sha: String,
         path: String,
         content: String,
@@ -149,7 +149,7 @@ impl<'a> Resolver<'a> {
                 repository.id,
                 called_ref.as_ref().map_or("", |(name, _)| name.as_str())
             );
-            if depth >= codeyard_actions::workflow::MAX_REUSABLE_LEVELS
+            if depth >= codeyard_runner::workflow::MAX_REUSABLE_LEVELS
                 || !self.active.insert(identity.clone())
             {
                 return Err(AdmissionError::Invalid(
@@ -157,7 +157,7 @@ impl<'a> Resolver<'a> {
                 ));
             }
             if let Some((snapshot, height)) = self.snapshots.get(&identity) {
-                if depth + height >= codeyard_actions::workflow::MAX_REUSABLE_LEVELS {
+                if depth + height >= codeyard_runner::workflow::MAX_REUSABLE_LEVELS {
                     return Err(AdmissionError::Invalid(
                         "Called workflows exceed four levels",
                     ));
@@ -174,7 +174,7 @@ impl<'a> Resolver<'a> {
                     self.environment.clone(),
                 )
                 .await?;
-                codeyard_actions::workflow::validate_called_concurrency(&parsed.yaml).map_err(
+                codeyard_runner::workflow::validate_called_concurrency(&parsed.yaml).map_err(
                     |_| AdmissionError::Invalid("Called workflow concurrency is unsupported"),
                 )?;
                 crate::admission::merge_scheduling(&mut self.scheduling, parsed.scheduling)?;
@@ -183,10 +183,10 @@ impl<'a> Resolver<'a> {
             };
             if depth > 0 {
                 self.called.insert(identity.clone());
-                if self.called.len() > codeyard_actions::workflow::MAX_CALLED_WORKFLOWS {
+                if self.called.len() > codeyard_runner::workflow::MAX_CALLED_WORKFLOWS {
                     return Err(AdmissionError::Invalid("More than twenty called workflows"));
                 }
-                if !codeyard_actions::workflow::events::declares_event(
+                if !codeyard_runner::workflow::events::declares_event(
                     yaml.get("on"),
                     "workflow_call",
                 ) {
@@ -224,7 +224,7 @@ impl<'a> Resolver<'a> {
                     let name = parts.next().unwrap_or("");
                     let path = parts.next().unwrap_or("");
                     if !crate::admission::is_safe_owner(owner)
-                        || codeyard_repos_core::repositories::lifecycle::validate_name(name)
+                        || codeyard_git_storage::repositories::lifecycle::validate_name(name)
                             .is_err()
                         || !is_safe_workflow_path(path)
                         || !(is_safe_ref(reference) || codeyard_git::is_full_commit_id(reference))
@@ -306,7 +306,7 @@ impl<'a> Resolver<'a> {
                 );
                 let mut snapshot = if let Some((snapshot, height)) = self.snapshots.get(&key) {
                     if self.active.contains(&key)
-                        || depth + 1 + height >= codeyard_actions::workflow::MAX_REUSABLE_LEVELS
+                        || depth + 1 + height >= codeyard_runner::workflow::MAX_REUSABLE_LEVELS
                     {
                         return Err(AdmissionError::Invalid(
                             "Called workflows exceed four levels or contain a cycle",

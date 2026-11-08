@@ -29,11 +29,11 @@ use codeyard_git::error::RepoError;
 use codeyard_git::gist_types::GistEdit;
 use codeyard_git::gist_types::GistFileChange;
 use codeyard_git::gist_types::MAX_GIST_REQUEST_BYTES;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_git_storage::repositories::lifecycle::LifecycleFailure;
+use codeyard_git_storage::repositories::lifecycle::StorageError;
 use codeyard_repos::gists::GistCredential;
-use codeyard_repos_core::repositories::lifecycle::LifecycleFailure;
-use codeyard_repos_core::repositories::lifecycle::StorageError;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -305,7 +305,7 @@ async fn created(state: &AppState, loaded: &codeyard_app::gists::LoadedGist) -> 
     let mut response = (StatusCode::CREATED, Json(value)).into_response();
     response.headers_mut().insert(
         header::LOCATION,
-        codeyard_model::urls::api_url(&format!("/gists/{}", loaded.gist.id))
+        codeyard_types::urls::api_url(&format!("/gists/{}", loaded.gist.id))
             .parse()
             .map_err(|_| saved_error(&loaded.gist.id))?,
     );

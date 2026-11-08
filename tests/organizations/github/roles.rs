@@ -14,8 +14,8 @@ use codeyard_db_repos::repositories::creation::NewRepository;
 use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
 use codeyard_db_repos::repositories::creation::RepositoryTarget;
 
-use codeyard_db_core::models::AccessLevel;
-use codeyard_db_core::models::OrgRole;
+use codeyard_database::models::AccessLevel;
+use codeyard_database::models::OrgRole;
 use codeyard_identity::tokens::TokenInput;
 use serde_json::{json, Value};
 
@@ -23,7 +23,7 @@ pub(super) async fn run(f: &Database, repo: i64, actor: i64, status: &str) {
     let sql="INSERT INTO ci_runs(run_id,repo_id,triggered_by_id,mode,pipeline,event,branch,workflow_path,status) VALUES($1,$2,$3,'local','ci','workflow_dispatch','main','.github/workflows/ci.yml',$4)";
     let id = uuid::Uuid::new_v4();
     match f.pool() {
-        codeyard_db_core::DbPool::Sqlite(pool) => {
+        codeyard_database::DbPool::Sqlite(pool) => {
             sqlx::query(sql)
                 .bind(id)
                 .bind(repo)
@@ -33,7 +33,7 @@ pub(super) async fn run(f: &Database, repo: i64, actor: i64, status: &str) {
                 .await
                 .unwrap();
         }
-        codeyard_db_core::DbPool::Postgres(pool) => {
+        codeyard_database::DbPool::Postgres(pool) => {
             sqlx::query(sql)
                 .bind(id)
                 .bind(repo)
@@ -51,7 +51,7 @@ pub(super) async fn repo(
     owner: i64,
     org: i64,
     name: &str,
-) -> codeyard_db_core::models::Repository {
+) -> codeyard_database::models::Repository {
     let disk = root
         .join(format!("{}.git", uuid::Uuid::new_v4()))
         .to_string_lossy()

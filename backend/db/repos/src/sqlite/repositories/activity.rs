@@ -3,7 +3,7 @@ use crate::repositories::activity::Filter;
 use crate::repositories::activity::Kind;
 use crate::repositories::activity::RefActivity;
 use anyhow::Result;
-use codeyard_db_core::pool::SqlitePool;
+use codeyard_database::pool::SqlitePool;
 use uuid::Uuid;
 
 pub async fn record(
@@ -44,7 +44,7 @@ pub async fn list(
         sqlx::query_as::<_, Activity>(&crate::repositories::activity::list_sql(
             false,
             filter,
-            &codeyard_db_core::queries::sqlite::repositories::access::readable_condition(),
+            &codeyard_database::queries::sqlite::repositories::access::readable_condition(),
         ))
         .bind(repo)
         .bind(filter.boundary)
@@ -54,7 +54,7 @@ pub async fn list(
         .bind(
             filter
                 .since
-                .map(codeyard_db_core::queries::sqlite::time::encode),
+                .map(codeyard_database::queries::sqlite::time::encode),
         )
         .bind(limit.clamp(1, 101))
         .bind(viewer)

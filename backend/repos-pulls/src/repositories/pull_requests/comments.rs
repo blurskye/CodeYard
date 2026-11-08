@@ -2,16 +2,16 @@ use crate::issues::comments::CommentTarget;
 use crate::issues::discussion_link;
 use crate::issues::discussion_page;
 use crate::issues::COMMENTS_PER_PAGE;
+use codeyard_git_storage::context::NodeContext;
+use codeyard_git_storage::repositories::pull_requests::database_error;
+use codeyard_git_storage::repositories::pull_requests::OperationError;
+use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_notifications::create::create_and_broadcast_notification;
 use codeyard_notifications::create::NotificationRequest;
 use codeyard_notifications::mentions::mentions_anyone;
 use codeyard_notifications::mentions::notify_mentions;
 use codeyard_notifications::mentions::MentionSource;
-use codeyard_repos_core::context::NodeContext;
-use codeyard_repos_core::repositories::pull_requests::database_error;
-use codeyard_repos_core::repositories::pull_requests::OperationError;
-use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_webhooks::payloads::Scope;
 use serde::Deserialize;
 use serde_json::json;
@@ -46,7 +46,7 @@ pub(super) struct PreparedComment {
 impl PreparedComment {
     pub(super) fn input<'a>(
         &'a self,
-        pull: &'a codeyard_db_core::models::PullRequest,
+        pull: &'a codeyard_database::models::PullRequest,
         author: i64,
     ) -> codeyard_db_repos::pull_requests::reviews::NewPullRequestComment<'a> {
         let req = &self.request;
@@ -74,8 +74,8 @@ mod tests;
 /// parent, so the chain is followed up to its root. A chain that loops back on itself has no
 /// root and takes no reply.
 async fn thread_root(
-    pool: &codeyard_db_core::DbPool,
-    parent: &codeyard_db_core::models::PullRequestComment,
+    pool: &codeyard_database::DbPool,
+    parent: &codeyard_database::models::PullRequestComment,
 ) -> Result<i64, OperationError> {
     let mut visited = HashSet::from([parent.id]);
     let mut root_id = parent.id;
@@ -106,8 +106,8 @@ async fn thread_root(
 pub fn pull_request_comment_link(
     owner: &str,
     repo: &str,
-    pull_request: &codeyard_db_core::models::PullRequest,
-    comment: &codeyard_db_core::models::PullRequestComment,
+    pull_request: &codeyard_database::models::PullRequest,
+    comment: &codeyard_database::models::PullRequestComment,
 ) -> String {
     format!(
         "/{owner}/{repo}/pulls/{}?comment={id}#comment-{id}",
@@ -118,9 +118,9 @@ pub fn pull_request_comment_link(
 
 /// The page and anchor of a comment where it is now.
 pub async fn saved_comment_link(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     base: &str,
-    comment: &codeyard_db_core::models::PullRequestComment,
+    comment: &codeyard_database::models::PullRequestComment,
 ) -> String {
     use codeyard_db_repos::pull_requests::reviews;
     use codeyard_db_repos::pull_requests::reviews::DiscussionItem;
@@ -178,8 +178,8 @@ pub async fn saved_comment_link(
 /// A review comment is publishable only while its submitted review still exists.
 /// A concurrent discard deletes the review and must never publish the private text.
 async fn in_pending_review(
-    pool: &codeyard_db_core::DbPool,
-    comment: &codeyard_db_core::models::PullRequestComment,
+    pool: &codeyard_database::DbPool,
+    comment: &codeyard_database::models::PullRequestComment,
 ) -> Result<bool, OperationError> {
     let Some(review_id) = comment.review_id else {
         return Ok(false);
@@ -195,8 +195,8 @@ async fn in_pending_review(
 /// from the base its diff starts at.
 async fn is_pull_request_commit(
     cluster: Option<&NodeContext>,
-    repository: &codeyard_db_core::models::Repository,
-    pull_request: &codeyard_db_core::models::PullRequest,
+    repository: &codeyard_database::models::Repository,
+    pull_request: &codeyard_database::models::PullRequest,
     commit: &str,
 ) -> Result<bool, OperationError> {
     let store = repo_store(repository, cluster);
@@ -225,10 +225,10 @@ async fn is_pull_request_commit(
 /// Sends the webhook for a saved comment. A comment on a file is a review comment. A conversation
 /// comment is sent as an issue comment, which is how GitHub sends those on pull requests.
 pub(super) async fn emit_comment_webhook(
-    pool: &codeyard_db_core::DbPool,
-    repository: &codeyard_db_core::models::Repository,
-    pull_request: &codeyard_db_core::models::PullRequest,
-    comment: &codeyard_db_core::models::PullRequestComment,
+    pool: &codeyard_database::DbPool,
+    repository: &codeyard_database::models::Repository,
+    pull_request: &codeyard_database::models::PullRequest,
+    comment: &codeyard_database::models::PullRequestComment,
     action: &'static str,
     sender_id: i64,
 ) {
@@ -238,9 +238,9 @@ pub(super) async fn emit_comment_webhook(
         return;
     }
     let event = if on_file {
-        codeyard_model::webhook_events::PULL_REQUEST_REVIEW_COMMENT
+        codeyard_types::webhook_events::PULL_REQUEST_REVIEW_COMMENT
     } else {
-        codeyard_model::webhook_events::ISSUE_COMMENT
+        codeyard_types::webhook_events::ISSUE_COMMENT
     };
     // The conversation link names the comment; the pull request page finds its page.
     let link = if on_file {
@@ -253,7 +253,7 @@ pub(super) async fn emit_comment_webhook(
     let (comment_for_hook, pull_for_hook, repository_for_hook) =
         (comment.clone(), pull_request.clone(), repository.clone());
     let (pull_author_id, comment_author_id) = (pull_request.author_id, comment.author_id);
-    codeyard_repos_core::webhooks::emit(
+    codeyard_git_storage::webhooks::emit(
         pool,
         repository,
         event,
@@ -303,8 +303,8 @@ pub(super) async fn emit_comment_webhook(
 )]
 async fn check_diff_anchor(
     cluster: Option<&NodeContext>,
-    repository: &codeyard_db_core::models::Repository,
-    pull_request: &codeyard_db_core::models::PullRequest,
+    repository: &codeyard_database::models::Repository,
+    pull_request: &codeyard_database::models::PullRequest,
     head: &str,
     path: &str,
     line: Option<i32>,
@@ -431,7 +431,7 @@ async fn check_diff_anchor(
     reason = "The database, git, broadcast and actor handles plus the target and request are each needed."
 )]
 pub async fn create_pull_request_comment(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     cluster: Option<&NodeContext>,
     broadcaster: &NotificationBroadcaster,
     actor_id: i64,
@@ -439,8 +439,8 @@ pub async fn create_pull_request_comment(
     repo: String,
     number: i32,
     req: CreatePullRequestCommentRequest,
-) -> Result<codeyard_db_core::models::PullRequestComment, OperationError> {
-    let user = codeyard_repos_core::repositories::pull_requests::actor(pool, actor_id).await?;
+) -> Result<codeyard_database::models::PullRequestComment, OperationError> {
+    let user = codeyard_git_storage::repositories::pull_requests::actor(pool, actor_id).await?;
 
     let repository = codeyard_db_repos::repositories::records::get_repository(pool, &owner, &repo)
         .await
@@ -458,7 +458,7 @@ pub async fn create_pull_request_comment(
                     .into(),
         });
     }
-    codeyard_repos_core::repositories::pull_requests::require_read(pool, &user, &repository)
+    codeyard_git_storage::repositories::pull_requests::require_read(pool, &user, &repository)
         .await?;
 
     let pull_request =
@@ -492,10 +492,10 @@ pub async fn create_pull_request_comment(
 }
 
 pub(super) async fn prepare_comment(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     cluster: Option<&NodeContext>,
-    repository: &codeyard_db_core::models::Repository,
-    pull_request: &codeyard_db_core::models::PullRequest,
+    repository: &codeyard_database::models::Repository,
+    pull_request: &codeyard_database::models::PullRequest,
     mut req: CreatePullRequestCommentRequest,
     cache: &mut DiffCache,
 ) -> Result<PreparedComment, OperationError> {
@@ -507,7 +507,7 @@ pub(super) async fn prepare_comment(
                     .into(),
         });
     }
-    if let Err(message) = codeyard_model::issue_input::validate_body(&req.body, true) {
+    if let Err(message) = codeyard_types::issue_input::validate_body(&req.body, true) {
         return Err(OperationError::Invalid {
             code: "validation_error",
             message: message.to_owned(),
@@ -710,14 +710,14 @@ pub(super) async fn prepare_comment(
 }
 
 async fn save_comment(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     broadcaster: &NotificationBroadcaster,
-    user: &codeyard_db_core::models::User,
-    repository: &codeyard_db_core::models::Repository,
-    pull_request: &codeyard_db_core::models::PullRequest,
+    user: &codeyard_database::models::User,
+    repository: &codeyard_database::models::Repository,
+    pull_request: &codeyard_database::models::PullRequest,
     location: (String, String),
     prepared: PreparedComment,
-) -> Result<codeyard_db_core::models::PullRequestComment, OperationError> {
+) -> Result<codeyard_database::models::PullRequestComment, OperationError> {
     let (owner, repo) = location;
     let req = &prepared.request;
     let pending = req.pending;
@@ -730,7 +730,7 @@ async fn save_comment(
         req.review_id,
     )
     .await
-    .map_err(codeyard_repos_core::repositories::pull_requests::write_error)?;
+    .map_err(codeyard_git_storage::repositories::pull_requests::write_error)?;
     // Submission owns publication for every comment that was pending when inserted.
     if deferred {
         return Ok(comment);
@@ -801,15 +801,15 @@ async fn save_comment(
 /// Marks a review conversation resolved, or open again. Only a root comment on a file is a
 /// conversation. The pull request's author and anyone with write access may do this.
 pub async fn set_comment_resolved(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     actor_id: i64,
     owner: &str,
     repo: &str,
     number: i32,
     comment_id: i64,
     resolved: bool,
-) -> Result<codeyard_db_core::models::PullRequestComment, OperationError> {
-    let user = codeyard_repos_core::repositories::pull_requests::actor(pool, actor_id).await?;
+) -> Result<codeyard_database::models::PullRequestComment, OperationError> {
+    let user = codeyard_git_storage::repositories::pull_requests::actor(pool, actor_id).await?;
     let repository = codeyard_db_repos::repositories::records::get_repository(pool, owner, repo)
         .await
         .map_err(database_error)?
@@ -817,7 +817,7 @@ pub async fn set_comment_resolved(
             code: "not_found",
             message: "Repository not found".to_owned(),
         })?;
-    codeyard_repos_core::repositories::pull_requests::require_read(pool, &user, &repository)
+    codeyard_git_storage::repositories::pull_requests::require_read(pool, &user, &repository)
         .await?;
     let pull_request =
         codeyard_db_repos::pull_requests::records::get_pull_request(pool, repository.id, number)
@@ -870,7 +870,7 @@ pub async fn set_comment_resolved(
         user.id,
     )
     .await
-    .map_err(codeyard_repos_core::repositories::pull_requests::write_error)?
+    .map_err(codeyard_git_storage::repositories::pull_requests::write_error)?
     .ok_or_else(|| OperationError::Missing {
         code: "not_found",
         message: "Comment not found".to_owned(),
@@ -880,17 +880,17 @@ pub async fn set_comment_resolved(
 /// The pull request and the conversation comment on it, when the user may read them. A comment
 /// filed in a review is not a conversation comment and is not found here.
 async fn conversation_comment_on_pull(
-    pool: &codeyard_db_core::DbPool,
-    user: &codeyard_db_core::models::User,
+    pool: &codeyard_database::DbPool,
+    user: &codeyard_database::models::User,
     owner: &str,
     repo: &str,
     number: i32,
     comment_id: i64,
 ) -> Result<
     (
-        codeyard_db_core::models::Repository,
-        codeyard_db_core::models::PullRequest,
-        codeyard_db_core::models::PullRequestComment,
+        codeyard_database::models::Repository,
+        codeyard_database::models::PullRequest,
+        codeyard_database::models::PullRequestComment,
     ),
     OperationError,
 > {
@@ -901,7 +901,8 @@ async fn conversation_comment_on_pull(
             code: "not_found",
             message: "Repository not found".to_owned(),
         })?;
-    codeyard_repos_core::repositories::pull_requests::require_read(pool, user, &repository).await?;
+    codeyard_git_storage::repositories::pull_requests::require_read(pool, user, &repository)
+        .await?;
     let pull_request =
         codeyard_db_repos::pull_requests::records::get_pull_request(pool, repository.id, number)
             .await
@@ -930,20 +931,20 @@ async fn conversation_comment_on_pull(
 
 /// The author or a repository writer may edit a visible comment in a live repository.
 pub async fn edit_pull_request_comment(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     broadcaster: &NotificationBroadcaster,
     actor_id: i64,
     target: CommentTarget,
     body: String,
     expected_body: Option<&str>,
-) -> Result<codeyard_db_core::models::PullRequestComment, OperationError> {
+) -> Result<codeyard_database::models::PullRequestComment, OperationError> {
     let CommentTarget {
         owner,
         repo,
         number,
         comment_id,
     } = target;
-    let user = codeyard_repos_core::repositories::pull_requests::actor(pool, actor_id).await?;
+    let user = codeyard_git_storage::repositories::pull_requests::actor(pool, actor_id).await?;
     let (repository, pull_request, previous) =
         conversation_comment_on_pull(pool, &user, &owner, &repo, number, comment_id).await?;
     if repository.is_archived {
@@ -965,7 +966,7 @@ pub async fn edit_pull_request_comment(
             message: "The comment changed. Reload before saving.".into(),
         });
     }
-    if let Err(message) = codeyard_model::issue_input::validate_body(&body, true) {
+    if let Err(message) = codeyard_types::issue_input::validate_body(&body, true) {
         return Err(OperationError::Invalid {
             code: "validation_error",
             message: message.to_owned(),
@@ -981,7 +982,7 @@ pub async fn edit_pull_request_comment(
         &previous.body,
     )
     .await
-    .map_err(codeyard_repos_core::repositories::pull_requests::write_error)?
+    .map_err(codeyard_git_storage::repositories::pull_requests::write_error)?
     .ok_or_else(|| match expected_body {
         Some(_) => OperationError::Conflict {
             code: "conflict",
@@ -1035,7 +1036,7 @@ pub async fn edit_pull_request_comment(
 /// Deletes a conversation comment and the notifications about it. The author may delete their own
 /// comment and a repository writer may delete anyone's visible comment.
 pub async fn delete_pull_request_comment(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     actor_id: i64,
     target: CommentTarget,
 ) -> Result<(), OperationError> {
@@ -1045,7 +1046,7 @@ pub async fn delete_pull_request_comment(
         number,
         comment_id,
     } = target;
-    let user = codeyard_repos_core::repositories::pull_requests::actor(pool, actor_id).await?;
+    let user = codeyard_git_storage::repositories::pull_requests::actor(pool, actor_id).await?;
     let (repository, pull_request, previous) =
         conversation_comment_on_pull(pool, &user, &owner, &repo, number, comment_id).await?;
     if repository.is_archived {
@@ -1059,7 +1060,7 @@ pub async fn delete_pull_request_comment(
         comment_id,
     )
     .await
-    .map_err(codeyard_repos_core::repositories::pull_requests::write_error)?;
+    .map_err(codeyard_git_storage::repositories::pull_requests::write_error)?;
     if removed {
         emit_comment_webhook(
             pool,

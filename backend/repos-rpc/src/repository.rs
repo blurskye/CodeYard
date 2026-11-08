@@ -1,7 +1,20 @@
 use crate::RpcHandler;
 use anyhow::Result;
 use codeyard_git::error::RepoError;
-use codeyard_git::MAX_CI_WORKFLOW_BYTES;
+use codeyard_git_storage::cluster::replicas::copy_path;
+use codeyard_git_storage::cluster::replicas::moving;
+use codeyard_git_storage::cluster::replicas::MOVE_WAIT;
+use codeyard_git_storage::repositories::store::RepoStore;
+use codeyard_git_storage::store_types::BlobMetadata;
+use codeyard_git_storage::store_types::GitService;
+use codeyard_git_storage::store_types::WorkflowPayloadEntry;
+use codeyard_git_storage::store_types::MAX_WORKFLOW_PAYLOAD_BYTES;
+use codeyard_git_storage::wire::invalid;
+use codeyard_git_storage::wire::unavailable;
+use codeyard_git_storage::wire::Failure;
+use codeyard_git_storage::wire::Operation;
+use codeyard_git_storage::wire::Request;
+use codeyard_git_storage::wire::MAX_BYTES;
 use codeyard_repos::protection::check_branch_write;
 use codeyard_repos::protection::matching_rules;
 use codeyard_repos::protection::BranchWrite;
@@ -9,20 +22,7 @@ use codeyard_repos::protection::History;
 use codeyard_repos::protection::Refusal;
 use codeyard_repos::protection::WriteVia;
 use codeyard_repos::protection::ANY_TIP;
-use codeyard_repos_core::cluster::replicas::copy_path;
-use codeyard_repos_core::cluster::replicas::moving;
-use codeyard_repos_core::cluster::replicas::MOVE_WAIT;
-use codeyard_repos_core::repositories::store::RepoStore;
-use codeyard_repos_core::store_types::BlobMetadata;
-use codeyard_repos_core::store_types::GitService;
-use codeyard_repos_core::store_types::WorkflowPayloadEntry;
-use codeyard_repos_core::store_types::MAX_WORKFLOW_PAYLOAD_BYTES;
-use codeyard_repos_core::wire::invalid;
-use codeyard_repos_core::wire::unavailable;
-use codeyard_repos_core::wire::Failure;
-use codeyard_repos_core::wire::Operation;
-use codeyard_repos_core::wire::Request;
-use codeyard_repos_core::wire::MAX_BYTES;
+use codeyard_types::ci::MAX_CI_WORKFLOW_BYTES;
 use serde_json::Value;
 use std::path::Path;
 use std::path::PathBuf;
@@ -238,7 +238,7 @@ pub(super) struct ReadAdmission {
 
 /// Blob bytes go in the raw reply body; the JSON value carries only their metadata.
 fn blob_reply(
-    blob: codeyard_repos_core::store_types::BlobBytes,
+    blob: codeyard_git_storage::store_types::BlobBytes,
     output: &mut Vec<u8>,
 ) -> Result<Value, Failure> {
     *output = blob.bytes;
@@ -275,7 +275,7 @@ impl RpcHandler {
                     .map_err(|_| unavailable())?
                     .ok_or_else(unavailable)?;
             if repository.storage_node_id.is_some()
-                && codeyard_db_cluster::cluster::writes::write_settings(pool)
+                && codeyard_db_placement::cluster::writes::write_settings(pool)
                     .await
                     .map_err(|_| unavailable())?
                     .write_quorum
@@ -298,9 +298,9 @@ impl RpcHandler {
         &self,
         store: &RepoStore,
         repo_id: Option<i64>,
-        actor: Option<codeyard_db_core::queries::credentials::Actor>,
+        actor: Option<codeyard_database::queries::credentials::Actor>,
         source: Uuid,
-        options: &codeyard_repos_core::repositories::store::CopyOptions,
+        options: &codeyard_git_storage::repositories::store::CopyOptions,
     ) -> Result<(), RepoError> {
         let (source_repo_id, path) = self.check_repository(source, false, false).await?;
         let source = self.admitted_store(source_repo_id, &path, false).await?;
@@ -327,11 +327,11 @@ impl RpcHandler {
     ) -> Result<(Option<i64>, PathBuf), RepoError> {
         let pool = self.context.database()?;
         let repository =
-            codeyard_db_cluster::cluster::get_repository_by_uuid(pool, &uuid.to_string())
+            codeyard_db_placement::cluster::get_repository_by_uuid(pool, &uuid.to_string())
                 .await
                 .map_err(|_| unavailable())?;
         let primary =
-            codeyard_repos_core::repositories::store::primary_path(&self.context.repos_path, uuid);
+            codeyard_git_storage::repositories::store::primary_path(&self.context.repos_path, uuid);
         let Some(repo) = repository else {
             // Deletion removes the row before its directory.
             if removing {
@@ -340,7 +340,7 @@ impl RpcHandler {
             return Err(RepoError::storage_node_unavailable());
         };
         if repo.storage_node_id.is_some()
-            && codeyard_db_cluster::cluster::writes::write_settings(pool)
+            && codeyard_db_placement::cluster::writes::write_settings(pool)
                 .await
                 .map_err(|_| unavailable())?
                 .write_quorum
@@ -389,7 +389,7 @@ impl RpcHandler {
             return Ok((Some(repo.id), primary));
         }
         if read_only
-            && codeyard_db_cluster::cluster::replica_applied_version(
+            && codeyard_db_placement::cluster::replica_applied_version(
                 pool,
                 repo.id,
                 self.context.node_id,
@@ -439,7 +439,7 @@ impl RpcHandler {
         caller: iroh::PublicKey,
     ) -> Result<(RepoStore, Option<i64>), RepoError> {
         let pool = self.context.database()?;
-        let serving = codeyard_db_cluster::cluster::get_node_by_id(pool, self.context.node_id)
+        let serving = codeyard_db_placement::cluster::get_node_by_id(pool, self.context.node_id)
             .await
             .map_err(|_| unavailable())?
             .is_some_and(|node| {
@@ -450,11 +450,12 @@ impl RpcHandler {
         if !serving {
             return Err(unavailable());
         }
-        let node = codeyard_db_cluster::cluster::get_node_by_public_key(pool, &caller.to_string())
-            .await
-            .map_err(|_| unavailable())?
-            .filter(|node| node.status == "active")
-            .ok_or_else(|| invalid("not an active cluster member"))?;
+        let node =
+            codeyard_db_placement::cluster::get_node_by_public_key(pool, &caller.to_string())
+                .await
+                .map_err(|_| unavailable())?
+                .filter(|node| node.status == "active")
+                .ok_or_else(|| invalid("not an active cluster member"))?;
         let operation =
             authorize_operation(&node.roles, &request.operation).inspect_err(|error| {
                 tracing::warn!(caller = %node.name, %error, "repository RPC refused");
@@ -476,13 +477,13 @@ impl RpcHandler {
             Operation::Initialize { .. }
                 | Operation::InitializeCopy { .. }
                 | Operation::InitializeForeignCopy { .. }
-        ) && codeyard_db_cluster::cluster::writes::write_settings(pool)
+        ) && codeyard_db_placement::cluster::writes::write_settings(pool)
             .await
             .map_err(|_| unavailable())?
             .write_quorum
             .is_some()
         {
-            let row = codeyard_db_cluster::cluster::get_repository_by_uuid(
+            let row = codeyard_db_placement::cluster::get_repository_by_uuid(
                 pool,
                 &request.repository.to_string(),
             )
@@ -490,7 +491,7 @@ impl RpcHandler {
             .map_err(|_| unavailable())?
             .ok_or_else(unavailable)?;
             if row.storage_node_id != Some(self.context.node_id) {
-                let view = codeyard_db_cluster::cluster::writes::recovery_view(pool, row.id)
+                let view = codeyard_db_placement::cluster::writes::recovery_view(pool, row.id)
                     .await
                     .map_err(|_| unavailable())?;
                 if !matches!(
@@ -519,20 +520,20 @@ impl RpcHandler {
         }
         if matches!(request.operation, Operation::ReplicaPack { .. })
             && node.roles.iter().any(|role| role == "storage")
-            && codeyard_db_cluster::cluster::writes::write_settings(pool)
+            && codeyard_db_placement::cluster::writes::write_settings(pool)
                 .await
                 .map_err(|_| unavailable())?
                 .write_quorum
                 .is_some()
         {
-            let repo = codeyard_db_cluster::cluster::get_repository_by_uuid(
+            let repo = codeyard_db_placement::cluster::get_repository_by_uuid(
                 pool,
                 &request.repository.to_string(),
             )
             .await
             .map_err(|_| unavailable())?
             .ok_or_else(unavailable)?;
-            let view = codeyard_db_cluster::cluster::writes::recovery_view(pool, repo.id)
+            let view = codeyard_db_placement::cluster::writes::recovery_view(pool, repo.id)
                 .await
                 .map_err(|_| unavailable())?;
             if !view.serving {
@@ -548,12 +549,12 @@ impl RpcHandler {
                 if !current || !caller_voter {
                     return Err(unavailable());
                 }
-                let path = codeyard_repos_core::context::term_path(
+                let path = codeyard_git_storage::context::term_path(
                     &self.context.repos_path,
                     request.repository,
                     view.term,
                 );
-                codeyard_repos_core::context::literal_directory(&self.context.repos_path, &path)
+                codeyard_git_storage::context::literal_directory(&self.context.repos_path, &path)
                     .await?;
                 return Ok((store_at(&path, self.context.node_id)?, Some(repo.id)));
             }
@@ -569,7 +570,7 @@ impl RpcHandler {
         // have completed while the request was waiting for a connection or read guard.
         if request.operation.is_read_only()
             && directory == copy_path(&self.context.repos_path, request.repository)
-            && !codeyard_db_cluster::cluster::replica_is_current(
+            && !codeyard_db_placement::cluster::replica_is_current(
                 pool,
                 repo_id.ok_or_else(unavailable)?,
                 self.context.node_id,
@@ -584,11 +585,11 @@ impl RpcHandler {
         {
             let copy_held = match repo_id {
                 Some(repo_id) => {
-                    codeyard_db_cluster::cluster::replica_applied_version(pool, repo_id, node.id)
+                    codeyard_db_placement::cluster::replica_applied_version(pool, repo_id, node.id)
                         .await
                         .map_err(|_| unavailable())?
                         .is_some()
-                        || codeyard_db_cluster::cluster::writes::recovery_view(pool, repo_id)
+                        || codeyard_db_placement::cluster::writes::recovery_view(pool, repo_id)
                             .await
                             .is_ok_and(|view| {
                                 view.voters.iter().any(|voter| voter.node_id == node.id)
@@ -647,10 +648,10 @@ impl RpcHandler {
         if matches!(request.operation, Operation::PublishMove { .. }) {
             // Only an operator's move publishes here, and only into a repository this
             // cell is receiving. The store checks again when the write commits.
-            let codeyard_db_core::DbPool::Postgres(postgres) = pool else {
+            let codeyard_database::DbPool::Postgres(postgres) = pool else {
                 return Err(unavailable());
             };
-            if !codeyard_db_cluster::moves::receiving(postgres, repo_id.ok_or_else(unavailable)?)
+            if !codeyard_db_placement::moves::receiving(postgres, repo_id.ok_or_else(unavailable)?)
                 .await
                 .map_err(|_| unavailable())?
             {
@@ -672,7 +673,7 @@ impl RpcHandler {
                         pool,
                         &repo,
                         session.service
-                            == codeyard_repos_core::store_types::GitService::ReceivePack,
+                            == codeyard_git_storage::store_types::GitService::ReceivePack,
                     )
                     .await
                     .map_err(|_| {
@@ -697,7 +698,7 @@ impl RpcHandler {
         request: &Request,
         caller: i64,
     ) -> Result<(RepoStore, Option<i64>), RepoError> {
-        use codeyard_db_cluster::cluster::writes as journal;
+        use codeyard_db_placement::cluster::writes as journal;
         let pool = self.context.database()?;
         let id = match &request.operation {
             Operation::PrepareWrite { id }
@@ -710,7 +711,7 @@ impl RpcHandler {
             .await
             .map_err(|_| unavailable())?
             .ok_or_else(unavailable)?;
-        let repo = codeyard_db_cluster::cluster::get_repository_by_uuid(
+        let repo = codeyard_db_placement::cluster::get_repository_by_uuid(
             pool,
             &request.repository.to_string(),
         )
@@ -755,7 +756,7 @@ impl RpcHandler {
         }
         // Write RPCs must reach a voter whose applied version is still the batch's base.
         // Ordinary serving admission correctly refuses that copy after the SQL decision.
-        let local = codeyard_db_cluster::cluster::get_node_by_id(pool, self.context.node_id)
+        let local = codeyard_db_placement::cluster::get_node_by_id(pool, self.context.node_id)
             .await
             .map_err(|_| unavailable())?
             .ok_or_else(unavailable)?;
@@ -765,12 +766,12 @@ impl RpcHandler {
         {
             return Err(unavailable());
         }
-        let path = codeyard_repos_core::context::term_path(
+        let path = codeyard_git_storage::context::term_path(
             &self.context.repos_path,
             request.repository,
             write.term,
         );
-        codeyard_repos_core::context::literal_directory(&self.context.repos_path, &path).await?;
+        codeyard_git_storage::context::literal_directory(&self.context.repos_path, &path).await?;
         Ok((store_at(&path, self.context.node_id)?, Some(repo.id)))
     }
 
@@ -904,7 +905,7 @@ impl RpcHandler {
                     repo_id,
                     actor.map(Into::into),
                     source,
-                    &codeyard_repos_core::repositories::store::CopyOptions {
+                    &codeyard_git_storage::repositories::store::CopyOptions {
                         default_branch,
                         template: false,
                         default_branch_only: false
@@ -927,7 +928,7 @@ impl RpcHandler {
                     pool,
                     repo_id.ok_or_else(unavailable)?,
                     &admission,
-                    &codeyard_repos_core::repositories::store::CopyOptions {
+                    &codeyard_git_storage::repositories::store::CopyOptions {
                         default_branch,
                         template: false,
                         default_branch_only,
@@ -948,7 +949,7 @@ impl RpcHandler {
                     repo_id,
                     Some(authority),
                     source,
-                    &codeyard_repos_core::repositories::store::CopyOptions {
+                    &codeyard_git_storage::repositories::store::CopyOptions {
                         default_branch,
                         template,
                         default_branch_only,
@@ -1058,7 +1059,7 @@ impl RpcHandler {
                     pool,
                     repo_id.ok_or_else(|| invalid("repository unavailable"))?,
                     source_repo_id,
-                    codeyard_repos_core::store_types::PullHeadActor {
+                    codeyard_git_storage::store_types::PullHeadActor {
                         user: actor
                             .ok_or_else(|| invalid("repository mutation requires an actor"))?,
                         token,
@@ -1399,7 +1400,7 @@ impl RpcHandler {
                         || git_ref == format!("refs/heads/{default_branch}"))
                 {
                     json!(
-                        codeyard_repos_core::repositories::languages::compute_and_store(
+                        codeyard_git_storage::repositories::languages::compute_and_store(
                             pool,
                             &store,
                             &repository,
@@ -1645,7 +1646,7 @@ impl RpcHandler {
             )),
             Operation::Merge { request } => {
                 let result = store.prepare_merge(&request).await.map_err(|_| {
-                    Failure::Merge(codeyard_repos_core::store_types::MergeFailure::CannotMerge)
+                    Failure::Merge(codeyard_git_storage::store_types::MergeFailure::CannotMerge)
                 })?;
                 let repo_id = repo_id.ok_or_else(|| invalid("repository unavailable"))?;
                 let repository =
@@ -1688,7 +1689,7 @@ impl RpcHandler {
                     }
                     Err(_) => {
                         return Err(Failure::Merge(
-                            codeyard_repos_core::store_types::MergeFailure::BranchMoved,
+                            codeyard_git_storage::store_types::MergeFailure::BranchMoved,
                         ));
                     }
                 }
@@ -1795,7 +1796,7 @@ impl RpcHandler {
                 return Err(invalid("Git session requires streaming").into())
             }
             Operation::PrepareWrite { id } => {
-                let limits = codeyard_repos_core::git_transport::WriteLimits::load(pool)
+                let limits = codeyard_git_storage::git_transport::WriteLimits::load(pool)
                     .await
                     .map_err(RepoError::from)?;
                 tokio::time::timeout(limits.timeout, self.prepare_write(&store, &id, limits))
@@ -1805,7 +1806,7 @@ impl RpcHandler {
                 Value::Null
             }
             Operation::ApplyWrite { id } => {
-                let limits = codeyard_repos_core::git_transport::WriteLimits::load(pool)
+                let limits = codeyard_git_storage::git_transport::WriteLimits::load(pool)
                     .await
                     .map_err(RepoError::from)?;
                 tokio::time::timeout(limits.timeout, self.apply_write(&store, &id, limits))

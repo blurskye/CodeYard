@@ -1,14 +1,14 @@
 //! Open pull requests follow their branches. Fork heads are retained in the base
 //! repository so deleting a fork does not remove the commits being reviewed.
-use codeyard_repos_core::receive_ci::RefreshError;
+use codeyard_git_storage::receive_ci::RefreshError;
 
 use crate::runs::CiRuns;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::Repository;
+use codeyard_database::DbPool;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
-use codeyard_repos_core::repositories::store::repo_store;
-use codeyard_repos_core::repositories::store::RepoStore;
+use codeyard_git_storage::repositories::store::repo_store;
+use codeyard_git_storage::repositories::store::RepoStore;
 use codeyard_webhooks::payloads::Scope;
 use std::collections::HashMap;
 use std::time::Duration;
@@ -54,13 +54,13 @@ pub async fn owner_head_repository(
         }
     }
 
-    match codeyard_repos_core::repositories::lifecycle::transfer_target(pool, owner).await {
+    match codeyard_git_storage::repositories::lifecycle::transfer_target(pool, owner).await {
         Ok((owner, _)) => {
             codeyard_db_repos::repositories::discovery::get_owner_fork(pool, owner, base.id).await
         }
         Err(error)
             if error.kind
-                == codeyard_repos_core::repositories::lifecycle::LifecycleFailure::Invalid =>
+                == codeyard_git_storage::repositories::lifecycle::LifecycleFailure::Invalid =>
         {
             Ok(None)
         }
@@ -101,7 +101,7 @@ async fn branch_commit(
 }
 
 pub fn revisions(
-    pull: codeyard_db_core::models::PullRequest,
+    pull: codeyard_database::models::PullRequest,
 ) -> Option<codeyard_db_repos::pull_requests::records::PullRequestRevisions> {
     (pull.state == "open").then_some(
         codeyard_db_repos::pull_requests::records::PullRequestRevisions {
@@ -136,7 +136,7 @@ async fn move_head(
     head_repo: Option<i64>,
     head_branch: &str,
     actor_id: i64,
-    ci_access: Option<codeyard_db_core::models::AccessLevel>,
+    ci_access: Option<codeyard_database::models::AccessLevel>,
 ) -> Result<bool, RefreshError> {
     // GitHub keeps auto-merge only when the recorded pusher of this head may write the base.
     let pusher = match head_repo {
@@ -185,24 +185,25 @@ async fn move_head(
         let (author_id, repository) = (current.author_id, base.clone());
         let before = from.to_owned();
         let store = repo_store(base, ci.cluster.as_ref());
-        let payload = codeyard_repos_core::webhooks::emit(
+        let payload = codeyard_git_storage::webhooks::emit(
             pool,
             base,
-            codeyard_model::webhook_events::PULL_REQUEST,
+            codeyard_types::webhook_events::PULL_REQUEST,
             vec![author_id, actor_id],
             move |owner, people| {
                 let (author, sender) = (people.get(author_id), people.get(actor_id));
-                let mut payload = codeyard_repos_core::repositories::pull_requests::webhook_payload(
-                    "synchronize",
-                    &current,
-                    &author,
-                    Scope {
-                        repo: &repository,
-                        owner,
-                        sender: &sender,
-                    },
-                    &store,
-                );
+                let mut payload =
+                    codeyard_git_storage::repositories::pull_requests::webhook_payload(
+                        "synchronize",
+                        &current,
+                        &author,
+                        Scope {
+                            repo: &repository,
+                            owner,
+                            sender: &sender,
+                        },
+                        &store,
+                    );
                 payload["before"] = serde_json::json!(before);
                 payload["after"] = serde_json::json!(current.head_sha);
                 payload
@@ -238,7 +239,7 @@ pub async fn refresh_one(
     actor_id: i64,
     listed: &mut ListedRefs,
     mut pull: codeyard_db_repos::pull_requests::records::PullRequestRevisions,
-    ci_access: Option<codeyard_db_core::models::AccessLevel>,
+    ci_access: Option<codeyard_database::models::AccessLevel>,
     head_writer: Option<i64>,
 ) -> Result<bool, RefreshError> {
     let context = ci.cluster.as_ref();
@@ -476,7 +477,7 @@ pub async fn refresh_one(
 pub async fn follow_foreign_head(
     pool: &DbPool,
     ci: &CiRuns,
-    pull: &codeyard_db_core::models::PullRequest,
+    pull: &codeyard_database::models::PullRequest,
 ) -> Result<(), RefreshError> {
     let (Some(head_repo_id), Some(publisher)) = (pull.head_repo_id, pull.head_publisher_id) else {
         return Ok(());
@@ -487,7 +488,7 @@ pub async fn follow_foreign_head(
         .filter(|base| !base.is_stub)
         .ok_or(RefreshError::MissingBase)?;
     let store = repo_store(&base, ci.cluster.as_ref());
-    let maximum_bytes = codeyard_repos_core::repositories::store::fork_pack_bytes()
+    let maximum_bytes = codeyard_git_storage::repositories::store::fork_pack_bytes()
         .map_err(|_| RefreshError::Storage)?;
     for attempt in 0..MAX_REFRESH_ATTEMPTS {
         let Some(current) =
@@ -512,8 +513,8 @@ pub async fn follow_foreign_head(
             Err(error) if error.kind == ErrorKind::NotFound => None,
             Err(_) => return Err(RefreshError::Storage),
         };
-        let request = codeyard_db_core::cells::pulls::HeadRequest {
-            binding: codeyard_db_core::cells::pulls::Binding {
+        let request = codeyard_database::cells::pulls::HeadRequest {
+            binding: codeyard_database::cells::pulls::Binding {
                 base_repo_id: base.id,
                 number: current.number,
                 head_repo_id,
@@ -546,7 +547,7 @@ pub async fn follow_foreign_head(
                 Some(head_repo_id),
                 &current.head_branch,
                 publisher,
-                Some(codeyard_db_core::models::AccessLevel::Owner),
+                Some(codeyard_database::models::AccessLevel::Owner),
             )
             .await?
         {
@@ -606,7 +607,7 @@ pub async fn refresh_open_pull_request(
     ci: &CiRuns,
     actor_id: i64,
     pull_request_id: i64,
-    ci_access: Option<codeyard_db_core::models::AccessLevel>,
+    ci_access: Option<codeyard_database::models::AccessLevel>,
 ) -> Result<bool, RefreshError> {
     let Some(pull) =
         codeyard_db_repos::pull_requests::records::get_pull_request_by_id(pool, pull_request_id)
@@ -673,7 +674,7 @@ pub async fn refresh_updated_head(
         actor_id,
         &mut listed,
         pull,
-        Some(codeyard_db_core::models::AccessLevel::Owner),
+        Some(codeyard_database::models::AccessLevel::Owner),
         head_writer,
     )
     .await
@@ -690,7 +691,7 @@ pub async fn refresh_open_pull_requests(
     branches: Option<&[&str]>,
     ci: &CiRuns,
     actor_id: i64,
-    ci_access: codeyard_db_core::models::AccessLevel,
+    ci_access: codeyard_database::models::AccessLevel,
 ) -> Result<usize, RefreshError> {
     if let Err(error) = codeyard_db_security::vulnerabilities::enqueue(pool, repo.id).await {
         tracing::warn!(repo_id=repo.id,%error,"could not queue dependency vulnerability scan");
@@ -729,7 +730,7 @@ pub async fn refresh_open_pull_requests(
             actor_id,
             &mut listed,
             pull,
-            (ci_access != codeyard_db_core::models::AccessLevel::None).then_some(ci_access),
+            (ci_access != codeyard_database::models::AccessLevel::None).then_some(ci_access),
             None,
         )
         .await
@@ -759,7 +760,7 @@ pub async fn branches_moved(pool: &DbPool, repo: &Repository, ci: &CiRuns, actor
         None,
         ci,
         actor_id,
-        codeyard_db_core::models::AccessLevel::Owner,
+        codeyard_database::models::AccessLevel::Owner,
     )
     .await
     {

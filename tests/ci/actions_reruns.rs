@@ -11,10 +11,10 @@ use codeyard_ci::config::CiExecutionMode;
 use codeyard_ci::config::CiPipelineKind;
 use codeyard_ci_engine::queue::RunQueue;
 use codeyard_ci_engine::workers::CiWorkers;
+use codeyard_git_storage::receive_ci::CiRunRequest;
+use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_repos::editor::FileWrite;
-use codeyard_repos_core::receive_ci::CiRunRequest;
-use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_storage::ObjectStore;
 use serde_json::{json, Value};
 use std::{collections::BTreeSet, sync::Arc, time::Duration};
@@ -47,9 +47,9 @@ fn workflow_commit(path: &str, yaml: &str) -> String {
 }
 
 async fn finished(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     run: uuid::Uuid,
-) -> codeyard_db_core::models::CiRun {
+) -> codeyard_database::models::CiRun {
     tokio::time::timeout(Duration::from_secs(60), async {
         loop {
             let run = codeyard_db_actions::ci::get_ci_run_by_run_id(pool, run)
@@ -90,7 +90,7 @@ async fn contract(pg: bool) {
         None,
     );
     let api = create_router(state.clone());
-    let repo = codeyard_repos_core::repositories::lifecycle::provision(
+    let repo = codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
@@ -105,7 +105,7 @@ async fn contract(pg: bool) {
         f.pool(),
         bob,
         repo.id,
-        codeyard_db_core::models::AccessLevel::Write,
+        codeyard_database::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -379,7 +379,7 @@ async fn partial(
     (reader, writer): (&str, &str),
     root: &std::path::Path,
 ) {
-    let repo = codeyard_repos_core::repositories::lifecycle::provision(
+    let repo = codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root,
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
@@ -394,7 +394,7 @@ async fn partial(
         f.pool(),
         bob,
         repo.id,
-        codeyard_db_core::models::AccessLevel::Write,
+        codeyard_database::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -622,7 +622,7 @@ jobs:
             first.id,
             bob,
             false,
-            Some(codeyard_db_core::queries::ci::CiCredential::Token {
+            Some(codeyard_database::queries::ci::CiCredential::Token {
                 id: credential,
                 hash,
                 permission: "actions",

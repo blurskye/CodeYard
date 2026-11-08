@@ -7,10 +7,10 @@ use crate::support::database::Database;
 use crate::support::fake_webui_bundle;
 use axum::http::StatusCode;
 
-use codeyard_db_core::ci_admission::AdmissionError;
+use codeyard_database::ci_admission::AdmissionError;
 
 use codeyard_db_actions::ci::CiRunDeletion;
-use codeyard_model::ci::LogLine;
+use codeyard_types::ci::LogLine;
 use std::collections::BTreeMap;
 
 async fn contract(pg: bool) {
@@ -23,7 +23,7 @@ async fn contract(pg: bool) {
     let mut repos = Vec::new();
     for name in ["project", "other"] {
         repos.push(
-            codeyard_repos_core::repositories::lifecycle::provision(
+            codeyard_git_storage::repositories::lifecycle::provision(
                 (f.pool(), None),
                 root.path(),
                 codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
@@ -91,7 +91,7 @@ async fn contract(pg: bool) {
         f.pool(),
         queued.run_id,
         alice,
-        &codeyard_db_core::queries::ci::CiCredential::Token {
+        &codeyard_database::queries::ci::CiCredential::Token {
             id: read_pat.id,
             hash: codeyard_support::token_hash::token_hash(read_token),
             permission: "actions",
@@ -146,7 +146,7 @@ async fn contract(pg: bool) {
         f.pool(),
         foreign.run_id,
         alice,
-        &codeyard_db_core::queries::ci::CiCredential::Token {
+        &codeyard_database::queries::ci::CiCredential::Token {
             id: write_pat.id,
             hash: codeyard_support::token_hash::token_hash(write_token),
             permission: "actions",

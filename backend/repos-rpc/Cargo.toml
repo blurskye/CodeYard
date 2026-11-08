@@ -7,16 +7,16 @@ license = "LGPL-3.0-or-later"
 [dependencies]
 codeyard-storage.workspace = true
 codeyard-ci-engine.workspace = true
-codeyard-repos-core.workspace = true
-codeyard-cluster-core.workspace = true
+codeyard-git-storage.workspace = true
+codeyard-nodes.workspace = true
 codeyard-ci.workspace = true
 codeyard-repos.workspace = true
 anyhow.workspace = true
 base64.workspace = true
 chrono.workspace = true
 codeyard-db-actions.workspace = true
-codeyard-db-cluster.workspace = true
-codeyard-db-core.workspace = true
+codeyard-db-placement.workspace = true
+codeyard-database.workspace = true
 codeyard-db-identity.workspace = true
 codeyard-db-repos.workspace = true
 codeyard-git.workspace = true
@@ -42,3 +42,6 @@ workspace = true
 [dev-dependencies.tokio]
 workspace = true
 features = ["test-util"]
+
+[dependencies.codeyard-types]
+workspace = true

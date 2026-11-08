@@ -3,8 +3,8 @@
 //! someone asks it to; the stack id is stored, and the order inside a stack is read from the
 //! branch names.
 
-use codeyard_db_core::models::PullRequest;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::PullRequest;
+use codeyard_database::DbPool;
 use std::collections::HashSet;
 
 /// A stack in the order a reader sees it: merged layers first, then the open layers from the

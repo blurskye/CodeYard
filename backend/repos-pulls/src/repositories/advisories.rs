@@ -2,13 +2,13 @@
 
 use crate::services::RepositoryServices;
 use anyhow::Result;
-use codeyard_db_core::cells::authorization::inherit;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::queries::credentials::Actor;
+use codeyard_database::cells::authorization::inherit;
+use codeyard_database::models::Repository;
+use codeyard_database::queries::credentials::Actor;
 use codeyard_db_repos::repositories::creation::CreationAdmission;
 use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
-use codeyard_model::advisories::Refusal;
-use codeyard_repos_core::context::NodeContext;
+use codeyard_git_storage::context::NodeContext;
+use codeyard_types::advisories::Refusal;
 use std::path::Path;
 
 pub async fn private_fork(
@@ -38,7 +38,7 @@ pub async fn private_fork(
 }
 
 async fn private_fork_owned(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     context: Option<&NodeContext>,
     path: &Path,
     authority: Actor,
@@ -74,10 +74,10 @@ async fn private_fork_owned(
         );
         return Ok(fork);
     }
-    let fork = codeyard_repos_core::repositories::lifecycle::provision_with_properties(
+    let fork = codeyard_git_storage::repositories::lifecycle::provision_with_properties(
         (pool, context),
         path,
-        codeyard_repos_core::repositories::lifecycle::CreationInput {
+        codeyard_git_storage::repositories::lifecycle::CreationInput {
             owner: RepositoryCreationOwner::personal(actor),
             properties: &[],
             admission: CreationAdmission {
@@ -102,7 +102,7 @@ async fn private_fork_owned(
         {
             Ok(Some(deleted)) => {
                 if let Err(cleanup) =
-                    codeyard_repos_core::repositories::lifecycle::remove_deleted_repository(
+                    codeyard_git_storage::repositories::lifecycle::remove_deleted_repository(
                         context, &deleted,
                     )
                     .await

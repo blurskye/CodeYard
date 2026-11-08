@@ -6,9 +6,9 @@ use axum::{
     http::{Request, StatusCode},
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
-use codeyard_model::cells::{Cell, Key, KeyKind, Object, ObjectKind, State};
 use codeyard_support::node_identity::{self, NodeKey};
-use codeyard_types::cells::Prefix;
+use codeyard_types::cell_ids::Prefix;
+use codeyard_types::cells::{Cell, Key, KeyKind, Object, ObjectKind, State};
 use sha2::{Digest, Sha512};
 use std::{sync::Arc, time::Duration};
 use tower::ServiceExt;
@@ -19,10 +19,12 @@ async fn cli_move_rolls_back_a_failed_load_then_preserves_git_and_resource_ids()
     let mut source = PostgresDatabase::new().await;
     let mut target = PostgresDatabase::new().await;
     for (database, prefix) in [(&source, 1), (&target, 2)] {
-        codeyard_db_core::cells::initialize(&database.pool, Prefix::new(prefix))
+        codeyard_database::cells::initialize(&database.pool, Prefix::new(prefix))
             .await
             .unwrap();
-        codeyard_db_core::cells::load(&database.pool).await.unwrap();
+        codeyard_database::cells::load(&database.pool)
+            .await
+            .unwrap();
     }
     let mut registry = PostgresDatabase::unmigrated().await;
     let directory =
@@ -61,7 +63,7 @@ async fn cli_move_rolls_back_a_failed_load_then_preserves_git_and_resource_ids()
             .await
             .unwrap();
     }
-    let listener = codeyard_cells_router::directory::Listener::bind(
+    let listener = codeyard_router::directory::Listener::bind(
         directory.clone(),
         &server_key,
         "127.0.0.1:0".parse().unwrap(),
@@ -188,7 +190,7 @@ async fn cli_move_rolls_back_a_failed_load_then_preserves_git_and_resource_ids()
         .execute(&source.raw)
         .await
         .unwrap();
-    codeyard_db_cluster::node_config::upsert_node_configuration(&source.pool, "public", true)
+    codeyard_db_placement::node_config::upsert_node_configuration(&source.pool, "public", true)
         .await
         .unwrap();
     let source_app = codeyard_api_rest::create_router(codeyard_app::app::AppState::new(
@@ -217,8 +219,8 @@ async fn cli_move_rolls_back_a_failed_load_then_preserves_git_and_resource_ids()
             .as_ref(),
         package_bytes
     );
-    let issue_node = codeyard_model::node_id::scoped("I", repo.id, issue).unwrap();
-    let pull_node = codeyard_model::node_id::scoped("PR", repo.id, pull).unwrap();
+    let issue_node = codeyard_types::node_id::scoped("I", repo.id, issue).unwrap();
+    let pull_node = codeyard_types::node_id::scoped("PR", repo.id, pull).unwrap();
     let objects = [
         Object {
             kind: ObjectKind::User,
@@ -281,7 +283,7 @@ async fn cli_move_rolls_back_a_failed_load_then_preserves_git_and_resource_ids()
     };
     // An incoming move must share the destination's move slot with an outgoing one.
     let destination_lease =
-        codeyard_db_cluster::cluster::serving_lock(&target.pool, "account-move")
+        codeyard_db_placement::cluster::serving_lock(&target.pool, "account-move")
             .await
             .unwrap();
     let busy = tokio::time::timeout(Duration::from_secs(30), run().output())
@@ -570,7 +572,7 @@ async fn cli_move_rolls_back_a_failed_load_then_preserves_git_and_resource_ids()
             .target(),
         Some(final_oid)
     );
-    codeyard_db_cluster::node_config::upsert_node_configuration(&target.pool, "public", true)
+    codeyard_db_placement::node_config::upsert_node_configuration(&target.pool, "public", true)
         .await
         .unwrap();
     let app = codeyard_api_rest::create_router(codeyard_app::app::AppState::new(
@@ -731,10 +733,12 @@ async fn cli_move_to_another_region_copies_stored_objects_before_the_switch() {
     let mut source = PostgresDatabase::new().await;
     let mut target = PostgresDatabase::new().await;
     for (database, prefix) in [(&source, 1), (&target, 2)] {
-        codeyard_db_core::cells::initialize(&database.pool, Prefix::new(prefix))
+        codeyard_database::cells::initialize(&database.pool, Prefix::new(prefix))
             .await
             .unwrap();
-        codeyard_db_core::cells::load(&database.pool).await.unwrap();
+        codeyard_database::cells::load(&database.pool)
+            .await
+            .unwrap();
     }
     let mut registry = PostgresDatabase::unmigrated().await;
     let directory =
@@ -777,7 +781,7 @@ async fn cli_move_to_another_region_copies_stored_objects_before_the_switch() {
         .register_cell(cell(2, "b", &target_key, State::Open))
         .await
         .unwrap();
-    let listener = codeyard_cells_router::directory::Listener::bind(
+    let listener = codeyard_router::directory::Listener::bind(
         directory.clone(),
         &server_key,
         "127.0.0.1:0".parse().unwrap(),
@@ -1097,7 +1101,7 @@ async fn cli_move_to_another_region_copies_stored_objects_before_the_switch() {
         "{}",
         String::from_utf8_lossy(&repeated.stderr)
     );
-    codeyard_db_cluster::node_config::upsert_node_configuration(&target.pool, "public", true)
+    codeyard_db_placement::node_config::upsert_node_configuration(&target.pool, "public", true)
         .await
         .unwrap();
     let app = codeyard_api_rest::create_router(codeyard_app::app::AppState::new(

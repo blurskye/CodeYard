@@ -120,7 +120,7 @@ async fn native_invitations(pg: bool) {
         codeyard_db_orgs::organizations::profiles::create_organization(f.pool(), alice, &input)
             .await
             .unwrap(),
-        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(_)
+        codeyard_database::queries::organizations::OrganizationOutcome::Applied(_)
     ));
     let (_, org_repo) = checked(
         &router,

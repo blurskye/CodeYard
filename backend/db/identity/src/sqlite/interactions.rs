@@ -5,10 +5,10 @@ use crate::interactions::InteractionScope;
 use crate::interactions::NewRestriction;
 use crate::interactions::Restriction;
 use anyhow::Result;
-use codeyard_db_core::models::OrgRole;
-use codeyard_db_core::pool::SqlitePool;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_db_core::queries::users::accounts::AccountCredential;
+use codeyard_database::models::OrgRole;
+use codeyard_database::pool::SqlitePool;
+use codeyard_database::queries::organizations::OrganizationOutcome;
+use codeyard_database::queries::users::accounts::AccountCredential;
 use sqlx::SqliteConnection;
 
 const FIELDS: &str = "restriction AS \"limit\",CASE WHEN user_id IS NOT NULL THEN 'user' WHEN org_id IS NOT NULL THEN 'organization' ELSE 'repository' END AS origin,expires_at";
@@ -47,8 +47,8 @@ async fn authorize(
     }
     let allowed = match scope {
         InteractionScope::User(user) => user==actor && sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM users WHERE id=?1 AND NOT is_banned AND NOT must_change_password)").bind(actor).fetch_one(&mut **tx).await?,
-        InteractionScope::Organization(org) => match codeyard_db_core::queries::sqlite::organizations::authority::authority(tx,actor,org).await? {OrganizationOutcome::Applied(OrgRole::Owner)=>true,OrganizationOutcome::Applied(OrgRole::Admin)=>!write,_=>false},
-        InteractionScope::Repository(repo) => codeyard_db_core::queries::sqlite::discussions::lock_archive_authority(tx,actor,repo).await?,
+        InteractionScope::Organization(org) => match codeyard_database::queries::sqlite::organizations::authority::authority(tx,actor,org).await? {OrganizationOutcome::Applied(OrgRole::Owner)=>true,OrganizationOutcome::Applied(OrgRole::Admin)=>!write,_=>false},
+        InteractionScope::Repository(repo) => codeyard_database::queries::sqlite::discussions::lock_archive_authority(tx,actor,repo).await?,
     };
     anyhow::ensure!(allowed, InteractionRefusal::Denied);
     Ok(())
@@ -135,7 +135,7 @@ pub async fn save_proof(
 ) -> Result<bool> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let access =
-        codeyard_db_core::queries::sqlite::repositories::access::user_repo_access_in_transaction(
+        codeyard_database::queries::sqlite::repositories::access::user_repo_access_in_transaction(
             &mut tx,
             actor,
             source.repo_id,

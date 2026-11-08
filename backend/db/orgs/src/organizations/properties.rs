@@ -1,9 +1,9 @@
 use anyhow::ensure;
 use anyhow::Result;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::Repository;
+use codeyard_database::native_operation;
+use codeyard_database::queries::organizations::OrganizationOutcome;
+use codeyard_database::DbPool;
 use std::collections::HashSet;
 
 pub mod query;
@@ -150,42 +150,42 @@ native_operation!(crate::postgres::organizations::properties::catalog,crate::sql
     fn catalog(pool:&DbPool,actor:i64,org:i64)->Result<OrganizationOutcome<Vec<Definition>>>);
 native_operation!(crate::postgres::organizations::properties::summaries,crate::sqlite::organizations::properties::summaries,
     fn summaries(pool:&DbPool,actor:i64,org:i64)->Result<OrganizationOutcome<Vec<DefinitionSummary>>>);
-native_operation!(codeyard_db_core::queries::postgres::organizations::properties::definition,codeyard_db_core::queries::sqlite::organizations::properties::definition,
+native_operation!(codeyard_database::queries::postgres::organizations::properties::definition,codeyard_database::queries::sqlite::organizations::properties::definition,
     fn definition(pool:&DbPool,actor:i64,org:i64,name:&str)->Result<OrganizationOutcome<Option<Definition>>>);
 native_operation!(crate::postgres::organizations::properties::define,crate::sqlite::organizations::properties::define,
-    fn define(pool:&DbPool,actor:impl Into<codeyard_db_core::queries::credentials::Actor>,org:i64,inputs:&[DefinitionInput])->Result<OrganizationOutcome<Vec<Definition>>>);
+    fn define(pool:&DbPool,actor:impl Into<codeyard_database::queries::credentials::Actor>,org:i64,inputs:&[DefinitionInput])->Result<OrganizationOutcome<Vec<Definition>>>);
 native_operation!(crate::postgres::organizations::properties::remove,crate::sqlite::organizations::properties::remove,
-    fn remove(pool:&DbPool,actor:impl Into<codeyard_db_core::queries::credentials::Actor>,org:i64,name:&str,definition:Option<i64>)->Result<OrganizationOutcome<()>>);
+    fn remove(pool:&DbPool,actor:impl Into<codeyard_database::queries::credentials::Actor>,org:i64,name:&str,definition:Option<i64>)->Result<OrganizationOutcome<()>>);
 native_operation!(crate::postgres::organizations::properties::list_values,crate::sqlite::organizations::properties::list_values,
     fn list_values(pool:&DbPool,actor:i64,org:i64,query:&query::RepositoryQuery,window:(i64,i64))->Result<OrganizationOutcome<Vec<RepositoryValues>>>);
 native_operation!(crate::postgres::organizations::properties::set_values,crate::sqlite::organizations::properties::set_values,
-    fn set_values(pool:&DbPool,actor:impl Into<codeyard_db_core::queries::credentials::Actor>,org:i64,repositories:&[String],values:&[ValueInput])->Result<OrganizationOutcome<()>>);
+    fn set_values(pool:&DbPool,actor:impl Into<codeyard_database::queries::credentials::Actor>,org:i64,repositories:&[String],values:&[ValueInput])->Result<OrganizationOutcome<()>>);
 native_operation!(crate::postgres::organizations::properties::repository,crate::sqlite::organizations::properties::repository,
     fn repository(pool:&DbPool,viewer:Option<i64>,repo:i64)->Result<Option<RepositoryMetadata>>);
 native_operation!(crate::postgres::organizations::properties::set_repository_values,crate::sqlite::organizations::properties::set_repository_values,
-    fn set_repository_values(pool:&DbPool,actor:impl Into<codeyard_db_core::queries::credentials::Actor>,repo:i64,values:&[ValueInput])->Result<()>);
+    fn set_repository_values(pool:&DbPool,actor:impl Into<codeyard_database::queries::credentials::Actor>,repo:i64,values:&[ValueInput])->Result<()>);
 
 native_operation!(crate::postgres::organizations::properties::set_repository_value,crate::sqlite::organizations::properties::set_repository_value,
-    fn set_repository_value(pool:&DbPool,actor:impl Into<codeyard_db_core::queries::credentials::Actor>,repo:i64,definition:i64,value:&ValueInput)->Result<()>);
+    fn set_repository_value(pool:&DbPool,actor:impl Into<codeyard_database::queries::credentials::Actor>,repo:i64,definition:i64,value:&ValueInput)->Result<()>);
 
-use codeyard_db_core::queries::organizations::properties::ValueInput;
+use codeyard_database::queries::organizations::properties::ValueInput;
 
-use codeyard_db_core::queries::organizations::properties::DefinitionInput;
+use codeyard_database::queries::organizations::properties::DefinitionInput;
 
-use codeyard_db_core::queries::organizations::properties::Definition;
+use codeyard_database::queries::organizations::properties::Definition;
 
-use codeyard_db_core::queries::organizations::properties::invalid;
+use codeyard_database::queries::organizations::properties::invalid;
 
-use codeyard_db_core::queries::organizations::properties::MAX_VALUE_BYTES;
+use codeyard_database::queries::organizations::properties::MAX_VALUE_BYTES;
 
-use codeyard_db_core::queries::organizations::properties::MAX_ALLOWED_VALUES;
+use codeyard_database::queries::organizations::properties::MAX_ALLOWED_VALUES;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codeyard_db_core::queries::organizations::properties::valid_name;
-    use codeyard_db_core::queries::organizations::properties::EditableBy;
-    use codeyard_db_core::queries::organizations::properties::PropertyValue;
+    use codeyard_database::queries::organizations::properties::valid_name;
+    use codeyard_database::queries::organizations::properties::EditableBy;
+    use codeyard_database::queries::organizations::properties::PropertyValue;
     use serde_json::json;
     #[test]
     fn orgs_property_values_distinguish_unset_from_missing_and_boolean_strings() {

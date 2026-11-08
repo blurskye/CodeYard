@@ -6,12 +6,12 @@ use super::Client;
 use super::Router;
 use super::StatusCode;
 use super::Value;
-use codeyard_db_core::models::AccessLevel;
+use codeyard_database::models::AccessLevel;
 use codeyard_identity::repository_access::change_collaborator;
 
 pub(super) async fn run(
     router: &Router,
-    resource: (&codeyard_db_core::DbPool, i64, i64, i64),
+    resource: (&codeyard_database::DbPool, i64, i64, i64),
     base: &str,
     tokens: (&str, &str, &str),
     sha: &str,

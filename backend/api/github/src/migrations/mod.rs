@@ -19,11 +19,11 @@ use axum::Json;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
 use codeyard_db_repos::source_imports::SourceImport;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
-use codeyard_model::urls::repo_url;
-use codeyard_repos_core::api_shared::github::contents::store_error;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_git_storage::api_shared::github::contents::store_error;
+use codeyard_git_storage::repositories::store::repo_store;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
+use codeyard_types::urls::repo_url;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -59,7 +59,7 @@ async fn administrator(
     name: &str,
     write: bool,
 ) -> Result<(
-    codeyard_db_core::models::Repository,
+    codeyard_database::models::Repository,
     codeyard_identity::github_auth::Authentication,
 )> {
     let (repo, actor) = repository(state, headers, owner, name, write).await?;
@@ -84,7 +84,7 @@ fn document(import: &SourceImport, owner: &str, name: &str) -> Value {
         "status_text": match status { "complete" => "Import complete", "error" => "Import failed; retry with updated credentials", _ => "Importing Git data" },
         "error_message": if status == "error" { Some("Import failed or timed out. Git data already published is retained.") } else { None },
         "url": format!("{base}/import"), "repository_url": base,
-        "html_url": format!("{}/{}/{}", codeyard_model::http_config::link_origin(), codeyard_types::paths::encode_component(owner), codeyard_types::paths::encode_component(name)),
+        "html_url": format!("{}/{}/{}", codeyard_types::http_config::link_origin(), codeyard_types::paths::encode_component(owner), codeyard_types::paths::encode_component(name)),
         "authors_url": format!("{base}/import/authors"),
     })
 }
@@ -127,7 +127,7 @@ fn credentials(input: &Input) -> Result<Option<codeyard_repos::imports::Credenti
 
 async fn begin(
     state: Arc<AppState>,
-    repo: codeyard_db_core::models::Repository,
+    repo: codeyard_database::models::Repository,
     actor: codeyard_identity::github_auth::Authentication,
     input: Input,
     url: &str,
@@ -194,12 +194,12 @@ async fn retry(
         .ok_or_else(Error::missing)?;
     let bytes = to_bytes(request.into_body(), 16 * 1024)
         .await
-        .map_err(codeyard_model::github_error::json_bytes_error)?;
+        .map_err(codeyard_types::github_error::json_bytes_error)?;
     let input = if bytes.is_empty() {
         Input::default()
     } else {
         serde_json::from_slice::<Option<Input>>(&bytes)
-            .map_err(codeyard_model::github_error::json_parse_error)?
+            .map_err(codeyard_types::github_error::json_parse_error)?
             .unwrap_or_default()
     };
     let import = begin(state, repo, actor, input, &previous.vcs_url).await?;

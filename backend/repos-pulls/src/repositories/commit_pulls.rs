@@ -1,14 +1,14 @@
 //! Associations are derived from published Git ancestry, not commit-message references.
 
-use codeyard_db_core::models::PullRequest;
-use codeyard_db_core::models::Repository;
+use codeyard_database::models::PullRequest;
+use codeyard_database::models::Repository;
 use codeyard_git as git;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
 use codeyard_git::CommitInfo;
-use codeyard_repos_core::context::NodeContext;
-use codeyard_repos_core::repositories::store::repo_store;
-use codeyard_repos_core::repositories::store::RepoStore;
+use codeyard_git_storage::context::NodeContext;
+use codeyard_git_storage::repositories::store::repo_store;
+use codeyard_git_storage::repositories::store::RepoStore;
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -98,7 +98,7 @@ async fn introduced(
 /// and commits elsewhere include open and merged requests. Already-present base commits do not count.
 /// Pagination is over matches, never over the database candidates that were inspected.
 pub async fn associated_pulls(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     cluster: Option<&NodeContext>,
     query: CommitPullQuery<'_>,
 ) -> Result<CommitPullPage, AssociationError> {

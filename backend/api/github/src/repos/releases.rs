@@ -18,9 +18,9 @@ use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
-use codeyard_repos_core::repositories::releases::ReleaseError;
+use codeyard_git_storage::repositories::releases::ReleaseError;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -40,7 +40,7 @@ pub(crate) fn release_error(error: ReleaseError) -> Error {
         ReleaseError::Conflict => Error::new(StatusCode::CONFLICT, "Release changed"),
         ReleaseError::TargetRequired => Error::invalid("target_commitish is required"),
         ReleaseError::Git(error) => {
-            codeyard_repos_core::api_shared::github::contents::store_error(error)
+            codeyard_git_storage::api_shared::github::contents::store_error(error)
         }
         ReleaseError::Ref(error) => crate::git::refs::ref_error(error),
         ReleaseError::Upload(codeyard_storage::files::uploads::UploadError::Invalid) => {
@@ -57,10 +57,10 @@ pub(crate) async fn asset_document(
     state: &AppState,
     owner: &str,
     name: &str,
-    release: &codeyard_db_core::models::Release,
-    asset: &codeyard_db_core::models::ReleaseAsset,
+    release: &codeyard_database::models::Release,
+    asset: &codeyard_database::models::ReleaseAsset,
 ) -> Result<Value> {
-    codeyard_repos_core::webhooks::documents::release_asset(
+    codeyard_git_storage::webhooks::documents::release_asset(
         &state.pool,
         owner,
         name,
@@ -97,7 +97,7 @@ pub(crate) async fn document(
     {
         value["discussion_url"] = Value::String(format!(
             "{}/{}/{}/discussions/{number}",
-            codeyard_model::http_config::link_origin(),
+            codeyard_types::http_config::link_origin(),
             codeyard_types::paths::encode_component(owner),
             codeyard_types::paths::encode_component(name)
         ));
@@ -109,7 +109,7 @@ pub(crate) async fn document(
     value["reactions"] = codeyard_webhooks::payloads::reaction_rollup(
         &format!(
             "{}/releases/{}/reactions",
-            codeyard_model::urls::repo_url(owner, name),
+            codeyard_types::urls::repo_url(owner, name),
             release.id
         ),
         &counts,
@@ -287,7 +287,7 @@ async fn discussion_category(
 async fn start_discussion(
     state: &AppState,
     auth: &codeyard_identity::github_auth::Authentication,
-    release: &codeyard_db_core::models::Release,
+    release: &codeyard_database::models::Release,
     category: Option<i64>,
 ) -> Result<()> {
     let pool = &state.pool;
@@ -525,7 +525,7 @@ async fn upload(
         std::time::Duration::from_secs(60),
         axum::body::to_bytes(
             request.into_body(),
-            codeyard_model::release_integrity::MAX_ASSET_BYTES,
+            codeyard_db_repos::release_integrity::MAX_ASSET_BYTES,
         ),
     )
     .await

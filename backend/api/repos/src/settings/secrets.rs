@@ -36,56 +36,56 @@ fn secrets_unavailable() -> (StatusCode, Json<ApiError>) {
 }
 
 pub(crate) fn secret_error(
-    error: codeyard_db_core::queries::secrets::SecretsError,
+    error: codeyard_database::queries::secrets::SecretsError,
 ) -> (StatusCode, Json<ApiError>) {
     match error {
-        codeyard_db_core::queries::secrets::SecretsError::Denied => (
+        codeyard_database::queries::secrets::SecretsError::Denied => (
             StatusCode::FORBIDDEN,
             Json(ApiError::new(
                 "forbidden",
                 "Repository secret access denied",
             )),
         ),
-        codeyard_db_core::queries::secrets::SecretsError::NotFound => (
+        codeyard_database::queries::secrets::SecretsError::NotFound => (
             StatusCode::NOT_FOUND,
             Json(ApiError::new("not_found", "Secret not found")),
         ),
-        codeyard_db_core::queries::secrets::SecretsError::InvalidName => (
+        codeyard_database::queries::secrets::SecretsError::InvalidName => (
             StatusCode::BAD_REQUEST,
             Json(ApiError::new(
                 "validation_error",
                 "Secret names must be 1 to 255 ASCII letters, digits, or underscores and start with a letter or underscore",
             )),
         ),
-        codeyard_db_core::queries::secrets::SecretsError::ReservedName => (
+        codeyard_database::queries::secrets::SecretsError::ReservedName => (
             StatusCode::BAD_REQUEST,
             Json(ApiError::new(
                 "validation_error",
                 "Secret names beginning with GITHUB_ are reserved",
             )),
         ),
-        codeyard_db_core::queries::secrets::SecretsError::ValueContainsNul => (
+        codeyard_database::queries::secrets::SecretsError::ValueContainsNul => (
             StatusCode::BAD_REQUEST,
             Json(ApiError::new(
                 "validation_error",
                 "Secret values cannot contain NUL",
             )),
         ),
-        codeyard_db_core::queries::secrets::SecretsError::ValueTooLarge => (
+        codeyard_database::queries::secrets::SecretsError::ValueTooLarge => (
             StatusCode::BAD_REQUEST,
             Json(ApiError::new(
                 "validation_error",
                 "Secret values cannot exceed 48 KiB",
             )),
         ),
-        codeyard_db_core::queries::secrets::SecretsError::TooManySecrets => (
+        codeyard_database::queries::secrets::SecretsError::TooManySecrets => (
             StatusCode::BAD_REQUEST,
             Json(ApiError::new(
                 "validation_error",
                 "A repository can have at most 100 secrets",
             )),
         ),
-        codeyard_db_core::queries::secrets::SecretsError::TotalTooLarge => (
+        codeyard_database::queries::secrets::SecretsError::TotalTooLarge => (
             StatusCode::BAD_REQUEST,
             Json(ApiError::new(
                 "validation_error",
@@ -117,7 +117,7 @@ pub async fn create_or_update_secret(
         &name,
         &body.value,
         Some(user.id),
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &codeyard_api_http::session::extract_session_id(&headers).unwrap_or_default(),
         ),
     )
@@ -164,7 +164,7 @@ pub async fn delete_secret(
         user.id,
         repository.id,
         &name,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &codeyard_api_http::session::extract_session_id(&headers).unwrap_or_default(),
         ),
     )
@@ -204,7 +204,7 @@ pub(crate) async fn form(
     let name = field(form, "name");
     let session = codeyard_api_http::session::extract_session_id(&ctx.headers).unwrap_or_default();
     let credential =
-        codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session);
+        codeyard_database::queries::users::accounts::AccountCredential::Session(&session);
     let result = if action == "secret-save" {
         match ctx.state.secret_encryptor.as_deref() {
             Some(encryptor) => codeyard_db_actions::secrets::create_or_update_secret_for(
@@ -237,7 +237,7 @@ pub(crate) async fn form(
                 Ok(())
             } else {
                 Err(secret_error(
-                    codeyard_db_core::queries::secrets::SecretsError::NotFound,
+                    codeyard_database::queries::secrets::SecretsError::NotFound,
                 ))
             }
         })
@@ -255,32 +255,32 @@ mod tests {
     #[test]
     fn secret_errors_are_typed_and_sanitized() {
         let (status, Json(error)) =
-            secret_error(codeyard_db_core::queries::secrets::SecretsError::Denied);
+            secret_error(codeyard_database::queries::secrets::SecretsError::Denied);
         assert_eq!(status, StatusCode::FORBIDDEN);
         assert_eq!(error.error, "forbidden");
         for (error, message) in [
             (
-                codeyard_db_core::queries::secrets::SecretsError::InvalidName,
+                codeyard_database::queries::secrets::SecretsError::InvalidName,
                 "Secret names must be 1 to 255 ASCII letters, digits, or underscores and start with a letter or underscore",
             ),
             (
-                codeyard_db_core::queries::secrets::SecretsError::ReservedName,
+                codeyard_database::queries::secrets::SecretsError::ReservedName,
                 "Secret names beginning with GITHUB_ are reserved",
             ),
             (
-                codeyard_db_core::queries::secrets::SecretsError::ValueContainsNul,
+                codeyard_database::queries::secrets::SecretsError::ValueContainsNul,
                 "Secret values cannot contain NUL",
             ),
             (
-                codeyard_db_core::queries::secrets::SecretsError::ValueTooLarge,
+                codeyard_database::queries::secrets::SecretsError::ValueTooLarge,
                 "Secret values cannot exceed 48 KiB",
             ),
             (
-                codeyard_db_core::queries::secrets::SecretsError::TooManySecrets,
+                codeyard_database::queries::secrets::SecretsError::TooManySecrets,
                 "A repository can have at most 100 secrets",
             ),
             (
-                codeyard_db_core::queries::secrets::SecretsError::TotalTooLarge,
+                codeyard_database::queries::secrets::SecretsError::TotalTooLarge,
                 "A repository's secrets can total at most 1 MiB",
             ),
         ] {
@@ -294,10 +294,10 @@ mod tests {
             }
         }
         for error in [
-            codeyard_db_core::queries::secrets::SecretsError::Authority(anyhow::anyhow!(
+            codeyard_database::queries::secrets::SecretsError::Authority(anyhow::anyhow!(
                 "private SQL encrypted_value nonce plaintext /filesystem/key"
             )),
-            codeyard_db_core::queries::secrets::SecretsError::Encryption(
+            codeyard_database::queries::secrets::SecretsError::Encryption(
                 codeyard_support::secrets::SecretError::EncryptionFailed,
             ),
         ] {

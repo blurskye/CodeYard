@@ -15,10 +15,10 @@ use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
-use codeyard_model::node_id;
-use codeyard_model::urls::repo_url;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
+use codeyard_types::node_id;
+use codeyard_types::urls::repo_url;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -37,7 +37,7 @@ async fn metadata(
 async fn document(
     state: &AppState,
     headers: &HeaderMap,
-    repo: &codeyard_db_core::models::Repository,
+    repo: &codeyard_database::models::Repository,
     owner: &str,
     meta: &codeyard_db_repos::pull_requests::records::StackMetadata,
     detail: bool,
@@ -131,7 +131,7 @@ async fn change(
         return Err(Error::new(StatusCode::FORBIDDEN, "Stack write denied"));
     }
     let input: Members =
-        serde_json::from_slice(&body).map_err(codeyard_model::github_error::json_parse_error)?;
+        serde_json::from_slice(&body).map_err(codeyard_types::github_error::json_parse_error)?;
     if input.pull_requests.len() < if number.is_none() { 2 } else { 1 }
         || input.pull_requests.len() > 100
     {

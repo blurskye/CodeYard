@@ -13,9 +13,9 @@ use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::app::AppState;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_database::queries::organizations::OrganizationOutcome;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde_json::json;
 use std::sync::Arc;
 
@@ -25,7 +25,7 @@ async fn report(
     name: &str,
     offset: i64,
     limit: i64,
-) -> Result<codeyard_db_core::queries::action_objects::OrganizationCacheUsage> {
+) -> Result<codeyard_database::queries::action_objects::OrganizationCacheUsage> {
     let actor = codeyard_identity::github_auth::authenticate(state, headers, true)
         .await?
         .ok_or_else(codeyard_identity::github_auth::required)?

@@ -5,8 +5,8 @@ use axum::http::Uri;
 use axum::response::IntoResponse;
 use axum::response::Response;
 use axum::Json;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde::Deserialize;
 use serde_json::Value;
 pub fn page_size(value: Option<usize>) -> usize {
@@ -81,7 +81,7 @@ impl Pagination {
                 .finish();
             format!(
                 "<{}{}?{query}>; rel=\"{relation}\"",
-                codeyard_model::http_config::link_origin(),
+                codeyard_types::http_config::link_origin(),
                 uri.path()
             )
         };

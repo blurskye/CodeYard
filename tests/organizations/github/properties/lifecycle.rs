@@ -2,7 +2,7 @@ use super::*;
 use codeyard_db_orgs::organizations::properties;
 fn definition(
     value: Value,
-) -> codeyard_db_core::queries::organizations::properties::DefinitionInput {
+) -> codeyard_database::queries::organizations::properties::DefinitionInput {
     serde_json::from_value(value).unwrap()
 }
 pub(super) async fn contract(
@@ -49,7 +49,7 @@ pub(super) async fn contract(
     assert_ne!(
         matches!(
             updated,
-            Ok(codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(_))
+            Ok(codeyard_database::queries::organizations::OrganizationOutcome::Applied(_))
         ),
         written.is_ok(),
         "a definition change and an incompatible value write cannot both commit"
@@ -153,8 +153,8 @@ pub(super) async fn contract(
     .await
     .unwrap_err();
     assert!(matches!(
-        refused.downcast_ref::<codeyard_db_core::queries::organizations::properties::Refusal>(),
-        Some(codeyard_db_core::queries::organizations::properties::Refusal::Invalid { .. })
+        refused.downcast_ref::<codeyard_database::queries::organizations::properties::Refusal>(),
+        Some(codeyard_database::queries::organizations::properties::Refusal::Invalid { .. })
     ));
     assert_eq!(
         codeyard_db_repos::repositories::records::get_repository_by_id(f.pool(), repos[0])

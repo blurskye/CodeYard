@@ -4,9 +4,9 @@ use crate::email::EmailLink;
 use crate::email::NewEmailSettings;
 use crate::email::RESEND_SECONDS;
 use anyhow::Result;
-use codeyard_db_core::models::EmailSettings;
-use codeyard_db_core::models::OutboxMessage;
-use codeyard_db_core::pool::SqlitePool;
+use codeyard_database::models::EmailSettings;
+use codeyard_database::models::OutboxMessage;
+use codeyard_database::pool::SqlitePool;
 use sqlx::SqliteConnection;
 
 pub async fn get_email_settings(pool: &SqlitePool) -> Result<Option<EmailSettings>> {
@@ -26,7 +26,7 @@ pub async fn save_email_settings(
 ) -> Result<bool> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     if !crate::sqlite::users::transitions::active_admin(&mut tx, actor).await?
-        || !codeyard_db_core::queries::sqlite::users::transitions::live_session(
+        || !codeyard_database::queries::sqlite::users::transitions::live_session(
             &mut tx, actor, session,
         )
         .await?
@@ -128,7 +128,7 @@ pub async fn queue_email(
     let saved: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM email_settings WHERE id=1)")
         .fetch_one(&mut *connection)
         .await?;
-    if !saved && !codeyard_model::mail_config::environment_configured() {
+    if !saved && !codeyard_types::mail_config::environment_configured() {
         return Ok(());
     }
     sqlx::query("INSERT INTO email_outbox(to_address,subject,body_text,organization_invitation_id) VALUES (?1,?2,?3,?4)")
@@ -232,7 +232,7 @@ pub async fn remove_old_email(pool: &SqlitePool, max_attempts: i32, days: i64) -
 pub async fn get_email_notifications(
     pool: &SqlitePool,
     user_id: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
 ) -> Result<bool> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     crate::sqlite::users::transitions::require_account(&mut tx, user_id, credential).await?;
@@ -247,7 +247,7 @@ pub async fn get_email_notifications(
 pub async fn set_email_notifications(
     pool: &SqlitePool,
     user_id: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     enabled: bool,
 ) -> Result<()> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;

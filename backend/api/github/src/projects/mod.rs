@@ -16,9 +16,9 @@ use codeyard_app::app::AppState;
 use codeyard_db_repos::projects;
 use codeyard_db_repos::projects::Owner;
 use codeyard_db_repos::projects::Project;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
-use codeyard_model::urls::api_url;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
+use codeyard_types::urls::api_url;
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -28,12 +28,12 @@ mod items;
 type Params = HashMap<String, String>;
 
 pub(super) fn project_error(error: anyhow::Error) -> Error {
-    match error.downcast_ref::<codeyard_model::project_query::Refusal>() {
-        Some(codeyard_model::project_query::Refusal::Missing) => Error::missing(),
-        Some(codeyard_model::project_query::Refusal::Denied) => {
+    match error.downcast_ref::<codeyard_types::project_query::Refusal>() {
+        Some(codeyard_types::project_query::Refusal::Missing) => Error::missing(),
+        Some(codeyard_types::project_query::Refusal::Denied) => {
             Error::new(StatusCode::FORBIDDEN, "Project write denied")
         }
-        Some(codeyard_model::project_query::Refusal::Invalid) => {
+        Some(codeyard_types::project_query::Refusal::Invalid) => {
             Error::validation("ProjectV2", "fields", "invalid")
         }
         None => Error::unavailable(error),
@@ -100,11 +100,11 @@ pub(super) async fn document(state: &AppState, project: &Project, name: &str) ->
         )));
         owner["html_url"] = serde_json::json!(format!(
             "{}{}",
-            codeyard_model::http_config::link_origin(),
+            codeyard_types::http_config::link_origin(),
             codeyard_types::paths::profile_path(name)
         ));
         owner["node_id"] =
-            serde_json::json!(codeyard_model::node_id::encode("O", project.owner_id));
+            serde_json::json!(codeyard_types::node_id::encode("O", project.owner_id));
     }
     Ok(codeyard_webhooks::payloads::project(
         project,
@@ -271,7 +271,7 @@ async fn add_field(
     >,
 ) -> Result<Response> {
     let (project, name, auth) = context(&state, &headers, &params, true, false).await?;
-    let Json(input) = input.map_err(codeyard_model::github_error::json_error)?;
+    let Json(input) = input.map_err(codeyard_types::github_error::json_error)?;
     let auth = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     let field = codeyard_db_repos::projects::add_field(
         &state.pool,

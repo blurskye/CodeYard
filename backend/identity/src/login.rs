@@ -9,7 +9,7 @@ use crate::two_factor::TwoFactorError;
 use crate::AuthenticatedAccount;
 use codeyard_support::secrets::SecretEncryptor;
 
-use codeyard_db_core::DbPool;
+use codeyard_database::DbPool;
 
 /// The result of the password step. An account with two-factor sign-in gets no session yet:
 /// `pending` is the sealed token the second-factor page sends back with its code.
@@ -132,7 +132,7 @@ pub async fn password_login(
 /// Stores the password again at the current cost. This is best effort: a failure is logged and
 /// the old hash keeps working. If another login stored a new hash first, the session is issued
 /// against that hash, as long as it accepts the same password.
-async fn upgrade_hash(pool: &DbPool, user: &mut codeyard_db_core::models::User, password: &str) {
+async fn upgrade_hash(pool: &DbPool, user: &mut codeyard_database::models::User, password: &str) {
     let Some(old) = user.password_hash.clone() else {
         return;
     };
@@ -156,7 +156,7 @@ async fn upgrade_hash(pool: &DbPool, user: &mut codeyard_db_core::models::User, 
 /// a real password change in between keeps the old hash, so the session is refused.
 async fn adopt_current_hash(
     pool: &DbPool,
-    user: &mut codeyard_db_core::models::User,
+    user: &mut codeyard_database::models::User,
     password: &str,
 ) {
     let Ok(Some(current)) =

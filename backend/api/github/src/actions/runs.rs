@@ -16,9 +16,9 @@ use chrono::Utc;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
 use codeyard_db_actions::action_runs::RunQuery;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_git_storage::repositories::store::repo_store;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -103,7 +103,7 @@ impl Documents {
     async fn load(
         state: &AppState,
         repo: i64,
-        runs: &[codeyard_db_core::models::CiRun],
+        runs: &[codeyard_database::models::CiRun],
     ) -> Result<Self> {
         let ids: Vec<_> = runs.iter().map(|run| run.id).collect();
         let metadata = codeyard_db_actions::action_runs::metadata(&state.pool, repo, &ids)
@@ -151,9 +151,9 @@ async fn referenced_document(
 async fn document(
     state: &Arc<AppState>,
     auth: Option<&codeyard_identity::github_auth::Authentication>,
-    repo: &codeyard_db_core::models::Repository,
+    repo: &codeyard_database::models::Repository,
     owner: &str,
-    run: &codeyard_db_core::models::CiRun,
+    run: &codeyard_database::models::CiRun,
     exclude: bool,
     documents: &mut Documents,
 ) -> Result<Value> {
@@ -219,7 +219,7 @@ async fn document(
                     ) => {}
                 Err(error) => {
                     return Err(
-                        codeyard_repos_core::api_shared::github::contents::store_error(error),
+                        codeyard_git_storage::api_shared::github::contents::store_error(error),
                     )
                 }
             }
@@ -260,12 +260,12 @@ async fn document(
         pull_requests,
     );
     let mut workflow_name =
-        codeyard_repos_core::workflows::workflow_name_from_path(&run.workflow_path);
+        codeyard_git_storage::workflows::workflow_name_from_path(&run.workflow_path);
     if let Some(sha) = &run.head_sha {
         if !documents.workflows.contains_key(sha) {
             // Discovery owns bounded background parsing and its immutable cross-request cache.
             // Git enrichment is optional; durable execution history remains readable offline.
-            let definitions = codeyard_repos_core::workflows::list_workflows_for_ref(
+            let definitions = codeyard_git_storage::workflows::list_workflows_for_ref(
                 &repo_store(repo, state.cluster.as_ref()),
                 sha,
             )

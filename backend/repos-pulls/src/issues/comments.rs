@@ -1,6 +1,6 @@
 use crate::issues::database_error;
 use crate::issues::OperationError;
-use codeyard_db_core::queries::users::accounts::AccountCredential;
+use codeyard_database::queries::users::accounts::AccountCredential;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_notifications::create::create_and_broadcast_notification;
 use codeyard_notifications::create::NotificationRequest;
@@ -29,15 +29,15 @@ pub struct CommentTarget {
 
 /// The repository and issue a comment belongs to, when the user may read them.
 async fn read_issue(
-    pool: &codeyard_db_core::DbPool,
-    user: &codeyard_db_core::models::User,
+    pool: &codeyard_database::DbPool,
+    user: &codeyard_database::models::User,
     owner: &str,
     repo: &str,
     number: i32,
 ) -> Result<
     (
-        codeyard_db_core::models::Repository,
-        codeyard_db_core::models::Issue,
+        codeyard_database::models::Repository,
+        codeyard_database::models::Issue,
     ),
     OperationError,
 > {
@@ -61,10 +61,10 @@ async fn read_issue(
 
 /// The comment with this id, when it is on the issue.
 async fn issue_comment(
-    pool: &codeyard_db_core::DbPool,
-    issue: &codeyard_db_core::models::Issue,
+    pool: &codeyard_database::DbPool,
+    issue: &codeyard_database::models::Issue,
     comment_id: i64,
-) -> Result<codeyard_db_core::models::IssueComment, OperationError> {
+) -> Result<codeyard_database::models::IssueComment, OperationError> {
     codeyard_db_repos::issues::get_issue_comment(pool, comment_id)
         .await
         .map_err(database_error)?
@@ -76,10 +76,10 @@ async fn issue_comment(
 }
 
 async fn require_change(
-    pool: &codeyard_db_core::DbPool,
-    user: &codeyard_db_core::models::User,
-    repository: &codeyard_db_core::models::Repository,
-    issue: &codeyard_db_core::models::Issue,
+    pool: &codeyard_database::DbPool,
+    user: &codeyard_database::models::User,
+    repository: &codeyard_database::models::Repository,
+    issue: &codeyard_database::models::Issue,
 ) -> Result<(), OperationError> {
     if repository.is_archived {
         return Err(OperationError::Denied {
@@ -105,7 +105,7 @@ async fn require_change(
     reason = "Explicit actor and resources keep operations HTTP-free."
 )]
 pub async fn create_issue_comment(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     broadcaster: &NotificationBroadcaster,
     actor_id: i64,
     credential: &AccountCredential<'_>,
@@ -113,12 +113,12 @@ pub async fn create_issue_comment(
     repo: String,
     number: i32,
     req: CreateCommentRequest,
-) -> Result<codeyard_db_core::models::IssueComment, OperationError> {
+) -> Result<codeyard_database::models::IssueComment, OperationError> {
     let user = crate::issues::actor(pool, actor_id).await?;
     let (repository, issue) = read_issue(pool, &user, &owner, &repo, number).await?;
     require_change(pool, &user, &repository, &issue).await?;
 
-    if let Err(message) = codeyard_model::issue_input::validate_body(&req.body, true) {
+    if let Err(message) = codeyard_types::issue_input::validate_body(&req.body, true) {
         return Err(OperationError::Invalid {
             code: "validation_error",
             message: message.to_owned(),
@@ -210,20 +210,20 @@ pub async fn create_issue_comment(
 
 /// Sends the issue_comment webhook for a comment change that has committed.
 async fn emit_comment_webhook(
-    pool: &codeyard_db_core::DbPool,
-    repository: &codeyard_db_core::models::Repository,
-    issue: &codeyard_db_core::models::Issue,
-    comment: &codeyard_db_core::models::IssueComment,
+    pool: &codeyard_database::DbPool,
+    repository: &codeyard_database::models::Repository,
+    issue: &codeyard_database::models::Issue,
+    comment: &codeyard_database::models::IssueComment,
     sender_id: i64,
     (action, previous_body): (&'static str, Option<String>),
 ) {
     let (issue, comment, repository_for_hook) =
         (issue.clone(), comment.clone(), repository.clone());
     let (issue_author_id, comment_author_id) = (issue.author_id, comment.author_id);
-    codeyard_repos_core::webhooks::emit(
+    codeyard_git_storage::webhooks::emit(
         pool,
         repository,
-        codeyard_model::webhook_events::ISSUE_COMMENT,
+        codeyard_types::webhook_events::ISSUE_COMMENT,
         vec![issue_author_id, comment_author_id, sender_id],
         move |owner, people| {
             let (issue_author, comment_author, sender) = (
@@ -251,14 +251,14 @@ async fn emit_comment_webhook(
 
 /// The author or a repository writer may edit; locked threads remain writable by writers.
 pub async fn edit_issue_comment(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     broadcaster: &NotificationBroadcaster,
     actor_id: i64,
     credential: &AccountCredential<'_>,
     target: CommentTarget,
     req: CreateCommentRequest,
     expected_body: Option<&str>,
-) -> Result<codeyard_db_core::models::IssueComment, OperationError> {
+) -> Result<codeyard_database::models::IssueComment, OperationError> {
     let CommentTarget {
         owner,
         repo,
@@ -285,7 +285,7 @@ pub async fn edit_issue_comment(
             message: "The comment changed. Your draft is preserved; reload before saving.".into(),
         });
     }
-    if let Err(message) = codeyard_model::issue_input::validate_body(&req.body, true) {
+    if let Err(message) = codeyard_types::issue_input::validate_body(&req.body, true) {
         return Err(OperationError::Invalid {
             code: "validation_error",
             message: message.to_owned(),
@@ -354,7 +354,7 @@ pub async fn edit_issue_comment(
 /// Deletes a comment and the notifications about it. The author may delete their own comment and
 /// a repository writer may delete anyone's.
 pub async fn delete_issue_comment(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     actor_id: i64,
     credential: &AccountCredential<'_>,
     target: CommentTarget,

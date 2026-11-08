@@ -41,7 +41,7 @@ impl World {
         let root = tempfile::tempdir().unwrap();
         let mut proj = None;
         for (name, private) in [("proj", false), ("vault", true)] {
-            let repository = codeyard_repos_core::repositories::lifecycle::provision(
+            let repository = codeyard_git_storage::repositories::lifecycle::provision(
                 (database.pool(), None),
                 root.path(),
                 codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(
@@ -64,7 +64,7 @@ impl World {
                 database.pool(),
                 user,
                 proj,
-                codeyard_db_core::models::AccessLevel::Read,
+                codeyard_database::models::AccessLevel::Read,
             )
             .await
             .unwrap();
@@ -88,7 +88,7 @@ impl World {
         }
     }
 
-    fn pool(&self) -> &codeyard_db_core::DbPool {
+    fn pool(&self) -> &codeyard_database::DbPool {
         self.database.pool()
     }
 
@@ -111,7 +111,7 @@ async fn notices(
     world: &World,
     user: i64,
     kind: &str,
-) -> Vec<codeyard_db_core::models::Notification> {
+) -> Vec<codeyard_database::models::Notification> {
     codeyard_db_repos::notifications::records::list_notifications_for_user(
         world.pool(),
         user,
@@ -226,7 +226,7 @@ async fn deleted_comments_take_their_mention_notices(pg: bool) {
             .unwrap();
     let delayed = codeyard_db_repos::notifications::records::create_notification(
         world.pool(),
-        codeyard_db_core::queries::notifications::records::NewNotification {
+        codeyard_database::queries::notifications::records::NewNotification {
             user_id: world.bob_id,
             actor_id: Some(world.alice_id),
             repo_id: Some(repo.id),
@@ -240,10 +240,10 @@ async fn deleted_comments_take_their_mention_notices(pg: bool) {
     .await;
     assert!(delayed
         .unwrap_err()
-        .is::<codeyard_db_core::queries::notifications::records::NotificationSuppressed>());
+        .is::<codeyard_database::queries::notifications::records::NotificationSuppressed>());
     let delayed_pull = codeyard_db_repos::notifications::records::create_notification(
         world.pool(),
-        codeyard_db_core::queries::notifications::records::NewNotification {
+        codeyard_database::queries::notifications::records::NewNotification {
             user_id: world.bob_id,
             actor_id: Some(world.alice_id),
             repo_id: Some(repo.id),
@@ -257,7 +257,7 @@ async fn deleted_comments_take_their_mention_notices(pg: bool) {
     .await;
     assert!(delayed_pull
         .unwrap_err()
-        .is::<codeyard_db_core::queries::notifications::records::NotificationSuppressed>());
+        .is::<codeyard_database::queries::notifications::records::NotificationSuppressed>());
     assert!(mentions(&world, world.bob_id).await.is_empty());
     world.close().await;
 }
@@ -665,7 +665,7 @@ async fn unreadable_names_are_bounded_per_write(pg: bool) {
             world.pool(),
             user,
             vault,
-            codeyard_db_core::models::AccessLevel::Read,
+            codeyard_database::models::AccessLevel::Read,
         )
         .await
         .unwrap();

@@ -16,7 +16,7 @@ use crate::code_scanning::Upload;
 use crate::code_scanning::ANALYSIS_COLUMNS;
 use anyhow::ensure;
 use anyhow::Result;
-use codeyard_db_core::pool::PgPool;
+use codeyard_database::pool::PgPool;
 use sqlx::PgConnection;
 pub(crate) mod list;
 pub(crate) mod pulls;
@@ -25,13 +25,13 @@ pub(crate) mod read;
 pub async fn enqueue(pool: &PgPool, input: &NewUpload<'_>) -> Result<Upload> {
     let mut tx = pool.begin().await?;
     ensure!(
-        codeyard_db_core::queries::postgres::discussions::lock_write_authority(
+        codeyard_database::queries::postgres::discussions::lock_write_authority(
             &mut tx,
             input.actor.user_id,
             input.repo
         )
         .await?
-            && codeyard_db_core::queries::postgres::credentials::repository(
+            && codeyard_database::queries::postgres::credentials::repository(
                 &mut tx,
                 &input.actor,
                 input.repo,
@@ -50,7 +50,7 @@ pub async fn enqueue(pool: &PgPool, input: &NewUpload<'_>) -> Result<Upload> {
         .execute(&mut *tx)
         .await?;
     let recent: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM code_scanning_uploads WHERE actor_id=$1 AND created_at>=$2 AND (repo_id=$3 OR NOT EXISTS(SELECT 1 FROM users WHERE id=$1 AND username=$4))")
-        .bind(input.actor.user_id).bind(chrono::Utc::now()-chrono::Duration::hours(1)).bind(input.repo).bind(codeyard_db_core::queries::ci_tokens::BOT).fetch_one(&mut *tx).await?;
+        .bind(input.actor.user_id).bind(chrono::Utc::now()-chrono::Duration::hours(1)).bind(input.repo).bind(codeyard_database::queries::ci_tokens::BOT).fetch_one(&mut *tx).await?;
     ensure!(recent < 1000, Refusal::RateLimited);
     let id = uuid::Uuid::new_v4().to_string();
     let upload = sqlx::query_as("INSERT INTO code_scanning_uploads(id,repo_id,actor_id,ref_name,commit_sha,sarif,checkout_uri,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *")
@@ -229,15 +229,16 @@ pub async fn organization_alert_page(
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         .execute(&mut *tx)
         .await?;
-    let role = codeyard_db_core::queries::postgres::organizations::authority::read_authority(
+    let role = codeyard_database::queries::postgres::organizations::authority::read_authority(
         &mut tx, actor, org,
     )
     .await?;
     ensure!(
         matches!(
             role,
-            codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(
-                codeyard_db_core::models::OrgRole::Owner | codeyard_db_core::models::OrgRole::Admin
+            codeyard_database::queries::organizations::OrganizationOutcome::Applied(
+                codeyard_database::models::OrgRole::Owner
+                    | codeyard_database::models::OrgRole::Admin
             )
         ),
         Refusal::Denied
@@ -252,7 +253,7 @@ pub async fn organization_alert_page(
     .await?;
     let mut result = Vec::with_capacity(rows.len());
     for alert in rows {
-        let repository: codeyard_db_core::models::Repository =
+        let repository: codeyard_database::models::Repository =
             sqlx::query_as("SELECT * FROM repositories WHERE id=$1")
                 .bind(alert.repo_id)
                 .fetch_one(&mut *tx)
@@ -310,7 +311,7 @@ pub async fn instances_filtered(
 
 pub async fn dismiss(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo: i64,
     number: i64,
     input: &Dismissal<'_>,
@@ -328,7 +329,7 @@ pub async fn dismiss(
                 error
             }
         })?;
-    let mut allowed = codeyard_db_core::queries::postgres::discussions::lock_write_authority(
+    let mut allowed = codeyard_database::queries::postgres::discussions::lock_write_authority(
         &mut tx, actor, repo,
     )
     .await?;
@@ -336,7 +337,7 @@ pub async fn dismiss(
         let org: Option<i64> = sqlx::query_scalar("SELECT owner_org_id FROM repositories WHERE id=$1 AND NOT is_archived AND owner_kind='org'")
             .bind(repo).fetch_optional(&mut *tx).await?.flatten();
         if let Some(org) = org {
-            allowed = codeyard_db_core::queries::postgres::organizations::roles::manages_security(
+            allowed = codeyard_database::queries::postgres::organizations::roles::manages_security(
                 &mut tx, actor, org,
             )
             .await?;
@@ -344,7 +345,7 @@ pub async fn dismiss(
     }
     ensure!(
         allowed
-            && codeyard_db_core::queries::postgres::credentials::repository(
+            && codeyard_database::queries::postgres::credentials::repository(
                 &mut tx,
                 &credential,
                 repo,
@@ -368,7 +369,7 @@ pub async fn dismiss(
 
 pub async fn delete_analysis(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo: i64,
     id: i64,
     confirm: bool,
@@ -377,11 +378,11 @@ pub async fn delete_analysis(
     let actor = credential.user_id;
     let mut tx = pool.begin().await?;
     ensure!(
-        codeyard_db_core::queries::postgres::discussions::lock_admin_authority(
+        codeyard_database::queries::postgres::discussions::lock_admin_authority(
             &mut tx, actor, repo
         )
         .await?
-            && codeyard_db_core::queries::postgres::credentials::repository(
+            && codeyard_database::queries::postgres::credentials::repository(
                 &mut tx,
                 &credential,
                 repo,

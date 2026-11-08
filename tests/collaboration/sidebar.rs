@@ -29,7 +29,7 @@ async fn contract(pg: bool) {
     let bob_id = f.actor("bob").await;
     let carol_id = f.actor("carol").await;
     let root = tempfile::tempdir().unwrap();
-    let proj = codeyard_repos_core::repositories::lifecycle::provision(
+    let proj = codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
@@ -40,7 +40,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    codeyard_repos_core::repositories::lifecycle::provision(
+    codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
@@ -55,7 +55,7 @@ async fn contract(pg: bool) {
         f.pool(),
         bob_id,
         proj.id,
-        codeyard_db_core::models::AccessLevel::Read,
+        codeyard_database::models::AccessLevel::Read,
     )
     .await
     .unwrap();
@@ -481,7 +481,7 @@ async fn new_issue_picks(pg: bool) {
     let bob_id = f.actor("bob").await;
     let carol_id = f.actor("carol").await;
     let root = tempfile::tempdir().unwrap();
-    let proj = codeyard_repos_core::repositories::lifecycle::provision(
+    let proj = codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
@@ -496,7 +496,7 @@ async fn new_issue_picks(pg: bool) {
         f.pool(),
         bob_id,
         proj.id,
-        codeyard_db_core::models::AccessLevel::Write,
+        codeyard_database::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -504,7 +504,7 @@ async fn new_issue_picks(pg: bool) {
         f.pool(),
         carol_id,
         proj.id,
-        codeyard_db_core::models::AccessLevel::Read,
+        codeyard_database::models::AccessLevel::Read,
     )
     .await
     .unwrap();
@@ -634,7 +634,7 @@ async fn new_issue_chooser(pg: bool) {
     let alice_id = f.actor("alice").await;
     let bob_id = f.actor("bob").await;
     let root = tempfile::tempdir().unwrap();
-    let _proj = codeyard_repos_core::repositories::lifecycle::provision(
+    let _proj = codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),

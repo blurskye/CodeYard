@@ -9,8 +9,8 @@ use crate::support::git_server::write_token;
 use crate::support::github_spec::assert_github_schema;
 use crate::support::native_database as native;
 
-use codeyard_db_core::queries::users::accounts::AccountCredential;
-use codeyard_model::repositories::DeployKeyError;
+use codeyard_database::queries::users::accounts::AccountCredential;
+use codeyard_types::repositories::DeployKeyError;
 use reqwest::{Client, Method, StatusCode};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -119,7 +119,7 @@ async fn current_copies(database: &native::PostgresDatabase, repositories: &[i64
                         .fetch_one(&database.raw)
                         .await
                         .unwrap();
-                current &= codeyard_db_cluster::cluster::list_replicas(&database.pool, *id)
+                current &= codeyard_db_placement::cluster::list_replicas(&database.pool, *id)
                     .await
                     .unwrap()
                     .iter()
@@ -141,7 +141,7 @@ async fn gists_http_ssh_remote_and_promotion() {
     crate::support::native_database::enable_cluster(&database.pool)
         .await
         .unwrap();
-    codeyard_db_cluster::node_config::upsert_node_configuration(&database.pool, "public", true)
+    codeyard_db_placement::node_config::upsert_node_configuration(&database.pool, "public", true)
         .await
         .unwrap();
     let alice =
@@ -210,7 +210,7 @@ async fn gists_http_ssh_remote_and_promotion() {
     .unwrap()
     .unwrap();
     assert_eq!(repo.storage_node_id, Some(storage.node_id));
-    let uuid = codeyard_repos_core::wire::repository_uuid(&repo.disk_path).unwrap();
+    let uuid = codeyard_git_storage::wire::repository_uuid(&repo.disk_path).unwrap();
     let disk = storage_root.join("repos").join(format!("{uuid}.git"));
     assert!(disk.is_dir());
     let http = format!("{}/gists/{id}.git", web.base);
@@ -436,7 +436,7 @@ async fn gists_http_ssh_remote_and_promotion() {
         alice.id,
     )
     .await;
-    codeyard_db_cluster::cluster::set_replicas(&database.pool, "2")
+    codeyard_db_placement::cluster::set_replicas(&database.pool, "2")
         .await
         .unwrap();
     current_copies(&database, &[repo.id, fork_meta.repo_id], copy.node_id).await;
@@ -479,7 +479,7 @@ async fn gists_http_ssh_remote_and_promotion() {
         .unwrap();
     // The fixture cannot hold the child process's mutation guard: advance the version only
     // after publishing so its copy loop cannot advertise the old tree at the new version.
-    assert!(codeyard_db_cluster::cluster::bump_write_version(
+    assert!(codeyard_db_placement::cluster::bump_write_version(
         &database.pool,
         repo.id,
         Some(Some(storage.node_id))
@@ -495,7 +495,7 @@ async fn gists_http_ssh_remote_and_promotion() {
             .storage_node_id,
         Some(storage.node_id)
     );
-    let moved = codeyard_cluster::replicas::promote::promote(
+    let moved = codeyard_placement::replicas::promote::promote(
         &database.pool,
         repo.id,
         Some(copy.node_id),

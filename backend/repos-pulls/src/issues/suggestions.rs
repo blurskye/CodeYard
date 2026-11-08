@@ -1,17 +1,17 @@
 //! Shared post-commit effects for REST and native suggestion review.
 
 use anyhow::Result;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::models::User;
+use codeyard_database::models::Repository;
+use codeyard_database::models::User;
 use codeyard_notifications::assignments::Assignment;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_webhooks::payloads::Scope;
 
 pub async fn resolve(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     broadcaster: &NotificationBroadcaster,
     actor: &User,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     (repo, owner): (&Repository, &str),
     (issue_id, suggestion_id): (i64, i64),
     approve: bool,
@@ -65,10 +65,10 @@ pub async fn resolve(
         .await;
         let (author, sender) = (issue.author_id, actor.id);
         let repository = repo.clone();
-        codeyard_repos_core::webhooks::emit(
+        codeyard_git_storage::webhooks::emit(
             pool,
             repo,
-            codeyard_model::webhook_events::ISSUES,
+            codeyard_types::webhook_events::ISSUES,
             vec![author, sender],
             move |owner, people| {
                 codeyard_webhooks::payloads::issues(

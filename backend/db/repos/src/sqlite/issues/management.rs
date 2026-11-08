@@ -3,9 +3,9 @@ use crate::issues::management::LinkedBranch;
 use crate::issues::management::Refusal;
 use anyhow::ensure;
 use anyhow::Result;
-use codeyard_db_core::models::Issue;
-use codeyard_db_core::pool::SqlitePool;
-use codeyard_db_core::queries::credentials::Actor;
+use codeyard_database::models::Issue;
+use codeyard_database::pool::SqlitePool;
+use codeyard_database::queries::credentials::Actor;
 use codeyard_types::credentials::AccountRestricted;
 use sqlx::Sqlite;
 use sqlx::Transaction;
@@ -21,12 +21,12 @@ pub async fn closing_candidates(
     scope: &str,
     number: i32,
     before: i64,
-) -> Result<Vec<codeyard_db_core::models::PullRequest>> {
+) -> Result<Vec<codeyard_database::models::PullRequest>> {
     Ok(sqlx::query_as(&format!(
         "SELECT p.* FROM pull_requests p JOIN repositories r ON r.id=p.repo_id LEFT JOIN users u ON u.id=$1
          WHERE (p.body LIKE $2 OR p.body LIKE $5) AND (p.repo_id=$3 OR p.body LIKE $4) AND p.base_branch=r.default_branch AND ($6<=0 OR p.id<$6) AND {}
          ORDER BY p.id DESC LIMIT 100",
-        codeyard_db_core::queries::sqlite::repositories::access::readable_condition()
+        codeyard_database::queries::sqlite::repositories::access::readable_condition()
     ))
     .bind(viewer)
     .bind(format!("%#{number}%"))
@@ -78,7 +78,7 @@ pub async fn pin(
     let actor = authority.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     ensure!(
-        codeyard_db_core::queries::sqlite::discussions::lock_write_authority(&mut tx, actor, repo)
+        codeyard_database::queries::sqlite::discussions::lock_write_authority(&mut tx, actor, repo)
             .await?,
         Refusal::Denied
     );
@@ -121,7 +121,7 @@ pub async fn delete(pool: &SqlitePool, actor: impl Into<Actor>, repo: i64, id: i
     let actor = authority.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     ensure!(
-        codeyard_db_core::queries::sqlite::discussions::lock_admin_authority(&mut tx, actor, repo)
+        codeyard_database::queries::sqlite::discussions::lock_admin_authority(&mut tx, actor, repo)
             .await?,
         Refusal::Denied
     );
@@ -159,7 +159,7 @@ pub async fn transfer(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     for repo in [repo.min(destination), repo.max(destination)] {
         ensure!(
-            codeyard_db_core::queries::sqlite::discussions::lock_write_authority(
+            codeyard_database::queries::sqlite::discussions::lock_write_authority(
                 &mut tx, actor, repo
             )
             .await?,
@@ -250,7 +250,7 @@ pub async fn transfer(
     .bind(number)
     .bind(milestone)
     .bind(id)
-    .bind(codeyard_db_core::queries::sqlite::time::next_revision(old.updated_at)?)
+    .bind(codeyard_database::queries::sqlite::time::next_revision(old.updated_at)?)
     .fetch_one(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -273,7 +273,7 @@ pub async fn close_duplicate_with_previous(
     let actor = authority.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     ensure!(
-        codeyard_db_core::queries::sqlite::discussions::lock_write_authority(&mut tx, actor, repo)
+        codeyard_database::queries::sqlite::discussions::lock_write_authority(&mut tx, actor, repo)
             .await?,
         Refusal::Denied
     );
@@ -284,10 +284,10 @@ pub async fn close_duplicate_with_previous(
         .fetch_optional(&mut *tx)
         .await?
         .ok_or(Refusal::Missing)?;
-    let visible: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=$1 WHERE r.id=$2 AND {})",codeyard_db_core::queries::sqlite::repositories::access::readable_condition())).bind(actor).bind(target_repo).fetch_one(&mut *tx).await?;
+    let visible: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=$1 WHERE r.id=$2 AND {})",codeyard_database::queries::sqlite::repositories::access::readable_condition())).bind(actor).bind(target_repo).fetch_one(&mut *tx).await?;
     ensure!(visible, Refusal::Missing);
     issue(&mut tx, target_repo, duplicate).await?;
-    let next = codeyard_db_core::queries::sqlite::time::next_revision(existing.updated_at)?;
+    let next = codeyard_database::queries::sqlite::time::next_revision(existing.updated_at)?;
     sqlx::query("INSERT INTO issue_duplicates(issue_id,duplicate_id) VALUES($1,$2) ON CONFLICT(issue_id) DO UPDATE SET duplicate_id=excluded.duplicate_id").bind(id).bind(duplicate).execute(&mut *tx).await?;
     let result: Issue = sqlx::query_as("UPDATE issues SET state='closed',state_reason='duplicate',closed_by_id=CASE WHEN state='open' THEN $1 ELSE closed_by_id END,closed_at=COALESCE(closed_at,strftime('%Y-%m-%dT%H:%M:%f000Z','now')),updated_at=$3 WHERE id=$2 RETURNING *").bind(actor).bind(id).bind(next).fetch_one(&mut *tx).await?;
     for (kind, detail, old) in crate::timeline::edit_events(
@@ -325,7 +325,7 @@ pub async fn link_branch(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     for repo in [repo.min(branch_repo), repo.max(branch_repo)] {
         ensure!(
-            codeyard_db_core::queries::sqlite::discussions::lock_write_authority(
+            codeyard_database::queries::sqlite::discussions::lock_write_authority(
                 &mut tx, actor, repo
             )
             .await?,

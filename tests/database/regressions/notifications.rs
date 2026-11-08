@@ -9,7 +9,7 @@ async fn refollows_keep_a_durable_per_actor_notification_cooldown() {
         let broadcaster = notifications::NotificationBroadcaster::new(f.pool());
         let session = crate::support::live_session(f.pool(), actor).await;
         let credential =
-            codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session);
+            codeyard_database::queries::users::accounts::AccountCredential::Session(&session);
         for _ in 0..5 {
             codeyard_notifications::following::change(
                 f.pool(),

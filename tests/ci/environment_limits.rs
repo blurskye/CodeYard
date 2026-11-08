@@ -4,7 +4,7 @@ use codeyard_db_actions::environment_values as values;
 use codeyard_db_actions::environment_values::Save;
 use codeyard_db_actions::environment_values::ValueError;
 use codeyard_db_orgs::organization_values::Kind;
-use codeyard_repos_core::repositories::lifecycle;
+use codeyard_git_storage::repositories::lifecycle;
 use codeyard_support::secrets::SecretEncryptor;
 
 async fn limits(pg: bool) {

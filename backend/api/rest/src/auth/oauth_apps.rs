@@ -20,8 +20,8 @@ use codeyard_api_http::shared::user::responses::field;
 use codeyard_app::app::AppState;
 use codeyard_db_identity::oauth_apps::Exchange;
 use codeyard_db_identity::oauth_apps::Grant;
-use codeyard_model::http_config::link_origin;
 use codeyard_support::token_hash::token_hash;
+use codeyard_types::http_config::link_origin;
 use codeyard_webui::app::Page;
 use codeyard_webui::pages::account;
 use serde_json::json;
@@ -108,7 +108,7 @@ fn failure(headers: &HeaderMap, code: &str) -> Response {
 }
 
 async fn admit(state: &AppState, headers: &HeaderMap, key: &str) -> Result<(), Response> {
-    if codeyard_db_cluster::node_config::get_node_configuration(&state.pool)
+    if codeyard_db_placement::node_config::get_node_configuration(&state.pool)
         .await
         .ok()
         .flatten()
@@ -221,7 +221,7 @@ async fn access_token(
         return failure(&headers, "incorrect_client_credentials");
     }
     let code = field(&form, if device { "device_code" } else { "code" });
-    if codeyard_types::cells::Secret::cookie(code)
+    if codeyard_types::cell_ids::Secret::cookie(code)
         .ok()
         .is_none_or(|code| !state.pool.owns_prefix(code.cell))
     {

@@ -81,7 +81,7 @@ async fn templates_use_exact_default_branch_even_when_it_resembles_a_full_ref() 
         "fixture",
     )
     .unwrap();
-    let store = codeyard_repos_core::repositories::store::repo_store(&repo, None);
+    let store = codeyard_git_storage::repositories::store::repo_store(&repo, None);
     use codeyard_repos_pulls::repositories::issue_templates::issue_templates;
     use codeyard_repos_pulls::repositories::issue_templates::pull_request_template;
     assert_eq!(

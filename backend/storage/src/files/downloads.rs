@@ -1,7 +1,7 @@
 use crate::Download;
 use crate::ObjectStore;
-use codeyard_db_core::models::File;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::File;
+use codeyard_database::DbPool;
 use serde::Serialize;
 use tokio::sync::OwnedSemaphorePermit;
 use uuid::Uuid;

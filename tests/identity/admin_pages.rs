@@ -13,7 +13,7 @@ use codeyard_identity::passwords;
 use codeyard_webui::app::Page;
 use codeyard_webui::pages::account;
 
-async fn user(f: &Database, name: &str) -> codeyard_db_core::models::User {
+async fn user(f: &Database, name: &str) -> codeyard_database::models::User {
     codeyard_db_identity::users::accounts::get_user_by_username(f.pool(), name)
         .await
         .unwrap()
@@ -23,7 +23,7 @@ async fn user(f: &Database, name: &str) -> codeyard_db_core::models::User {
 async fn admin_forms(pg: bool) {
     fake_webui_bundle::install();
     let mut f = Database::new(pg).await;
-    codeyard_db_cluster::node_config::upsert_node_configuration(f.pool(), "private", true)
+    codeyard_db_placement::node_config::upsert_node_configuration(f.pool(), "private", true)
         .await
         .unwrap();
     let admin = f.actor("forms_admin").await;

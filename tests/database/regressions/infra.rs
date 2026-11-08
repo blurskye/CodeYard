@@ -53,7 +53,7 @@ async fn retargeting_a_pull_request_excludes_checks_for_its_previous_target() {
         let mut f = Database::new(pg).await;
         let owner = f.actor("retarget_owner").await;
         let r = repo(&f, owner, "retarget").await;
-        let node = codeyard_db_cluster::cluster::register_own_node(
+        let node = codeyard_db_placement::cluster::register_own_node(
             f.pool(),
             &"ab".repeat(32),
             "ci-retention",
@@ -63,7 +63,7 @@ async fn retargeting_a_pull_request_excludes_checks_for_its_previous_target() {
         .await
         .unwrap();
         assert!(
-            codeyard_db_cluster::cluster::place_repository(f.pool(), r.id, node.id)
+            codeyard_db_placement::cluster::place_repository(f.pool(), r.id, node.id)
                 .await
                 .unwrap()
         );
@@ -109,7 +109,7 @@ async fn retargeting_a_pull_request_excludes_checks_for_its_previous_target() {
         .await
         .unwrap();
         assert_eq!(
-            codeyard_db_cluster::cluster::get_write_version(f.pool(), r.id)
+            codeyard_db_placement::cluster::get_write_version(f.pool(), r.id)
                 .await
                 .unwrap(),
             Some(1)
@@ -278,7 +278,7 @@ async fn native_notification_projections_refresh_links_before_returning() {
 
 #[tokio::test]
 async fn webhook_settings_reads_recheck_repository_and_organization_authority() {
-    use codeyard_db_core::queries::webhooks::WebhookFields;
+    use codeyard_database::queries::webhooks::WebhookFields;
     use codeyard_db_repos::webhooks;
     use codeyard_db_repos::webhooks::HookOwner;
     for pg in [false, true] {
@@ -305,7 +305,7 @@ async fn webhook_settings_reads_recheck_repository_and_organization_authority() 
                 f.pool(),
                 scope,
                 owner,
-                &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+                &codeyard_database::queries::users::accounts::AccountCredential::Session(
                     &crate::support::live_session(f.pool(), owner).await,
                 ),
                 &WebhookFields {
@@ -325,7 +325,7 @@ async fn webhook_settings_reads_recheck_repository_and_organization_authority() 
             webhooks::insert_delivery(
                 f.pool(),
                 hook,
-                &codeyard_db_core::queries::webhooks::NewDelivery {
+                &codeyard_database::queries::webhooks::NewDelivery {
                     redelivery: false,
                     guid: uuid::Uuid::new_v4().to_string(),
                     event: "push".into(),
@@ -350,7 +350,7 @@ async fn webhook_settings_reads_recheck_repository_and_organization_authority() 
                 f.pool(),
                 scope,
                 owner,
-                &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&revoked),
+                &codeyard_database::queries::users::accounts::AccountCredential::Session(&revoked),
                 hook
             )
             .await
@@ -360,7 +360,7 @@ async fn webhook_settings_reads_recheck_repository_and_organization_authority() 
                 f.pool(),
                 scope,
                 admin,
-                &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+                &codeyard_database::queries::users::accounts::AccountCredential::Session(
                     &crate::support::live_session(f.pool(), admin).await,
                 ),
                 Some(hook),
@@ -399,7 +399,7 @@ async fn webhook_settings_reads_recheck_repository_and_organization_authority() 
                 f.pool(),
                 scope,
                 admin,
-                &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+                &codeyard_database::queries::users::accounts::AccountCredential::Session(
                     &crate::support::live_session(f.pool(), admin).await
                 ),
                 Some(hook),

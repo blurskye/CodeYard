@@ -8,15 +8,15 @@ use codeyard_app::app::AppState;
 use codeyard_app::gists;
 use codeyard_app::gists::CreateGist;
 use codeyard_ci::config::CiConfig;
-use codeyard_db_core::queries::users::accounts::AccountCredential;
+use codeyard_database::queries::users::accounts::AccountCredential;
 use codeyard_git::gist_types::GistEdit;
 use codeyard_git::gist_types::GistFileChange;
 use codeyard_git::gist_types::MAX_GIST_BYTES;
+use codeyard_git_storage::repositories::lifecycle;
+use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_identity::tokens;
 use codeyard_identity::tokens::TokenInput;
 use codeyard_repos::gists::GistCredential;
-use codeyard_repos_core::repositories::lifecycle;
-use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_storage::ObjectStore;
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, path::Path, sync::Arc};
@@ -182,7 +182,7 @@ async fn authority(pg: bool) {
         .await
         .unwrap();
         if published {
-            assert!(codeyard_db_cluster::cluster::bump_write_version(
+            assert!(codeyard_db_placement::cluster::bump_write_version(
                 f.pool(),
                 repo.id,
                 Some(None)

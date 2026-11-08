@@ -1,7 +1,7 @@
 use crate::pull_requests::records::IssueConversionRefusal;
 use anyhow::Result;
-use codeyard_db_core::models::Issue;
-use codeyard_db_core::models::PullRequest;
+use codeyard_database::models::Issue;
+use codeyard_database::models::PullRequest;
 use sqlx::Sqlite;
 use sqlx::Transaction;
 
@@ -12,7 +12,7 @@ pub(super) async fn read_source(
     number: i32,
 ) -> Result<Issue> {
     anyhow::ensure!(
-        codeyard_db_core::queries::sqlite::discussions::lock_write_authority(tx, actor, repo)
+        codeyard_database::queries::sqlite::discussions::lock_write_authority(tx, actor, repo)
             .await?,
         crate::sqlite::discussions::AUTHORITY_DENIED
     );

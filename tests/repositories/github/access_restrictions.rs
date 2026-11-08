@@ -3,8 +3,8 @@ use super::protection::call;
 use super::request;
 use super::Router;
 use super::Value;
+use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_identity::tokens;
-use codeyard_repos_core::repositories::store::repo_store;
 
 #[tokio::test]
 async fn sqlite_app_access_restrictions() {
@@ -286,7 +286,7 @@ async fn app_contract(pg: bool) {
 
 pub(super) async fn run(
     router: &Router,
-    resource: (&codeyard_db_core::DbPool, i64, i64, i64),
+    resource: (&codeyard_database::DbPool, i64, i64, i64),
     base: &str,
     tokens: (&str, &str, &str),
     sha: &str,
@@ -401,7 +401,7 @@ pub(super) async fn run(
         alice,
         repo,
         "bob",
-        Some(codeyard_db_core::models::AccessLevel::Write),
+        Some(codeyard_database::models::AccessLevel::Write),
     )
     .await
     .unwrap();

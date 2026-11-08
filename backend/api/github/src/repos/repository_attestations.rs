@@ -20,11 +20,11 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_app::app::AppState;
-use codeyard_db_core::queries::attestation_validation::AttestationError;
+use codeyard_database::queries::attestation_validation::AttestationError;
 use codeyard_db_security::attestation_validation as store;
 use codeyard_db_security::attestation_validation::PreparedBundle;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -73,7 +73,7 @@ async fn create(
             .await?;
     let auth = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     auth.require_write()?;
-    let Json(body) = body.map_err(codeyard_model::github_error::json_error)?;
+    let Json(body) = body.map_err(codeyard_types::github_error::json_error)?;
     let bundle = PreparedBundle::new(&body.bundle).map_err(error)?;
     let id = store::create(&state.pool, auth.database_actor(), repo.id, &bundle)
         .await
@@ -120,7 +120,7 @@ fn link(uri: &Uri, relation: &str, id: i64) -> String {
     );
     format!(
         "<{}{}?{}>; rel=\"{relation}\"",
-        codeyard_model::http_config::link_origin(),
+        codeyard_types::http_config::link_origin(),
         uri.path(),
         query.finish()
     )
@@ -139,7 +139,7 @@ async fn list(
     let Query(query) = query.map_err(|_| Error::invalid("Invalid attestation pagination"))?;
     let after = decode_cursor(query.after.as_deref(), "after")?;
     let before = decode_cursor(query.before.as_deref(), "before")?;
-    let page = codeyard_db_core::queries::attestation_validation::Page {
+    let page = codeyard_database::queries::attestation_validation::Page {
         after,
         before,
         limit: codeyard_api_http::shared::github::pagination::page_size(query.per_page) as i64,
@@ -174,7 +174,7 @@ async fn list(
                 .map_err(Error::unavailable)?,
         );
     }
-    let base = codeyard_model::urls::repo_url(&owner, &name);
+    let base = codeyard_types::urls::repo_url(&owner, &name);
     let mut attestations = Vec::new();
     for row in rows {
         let bundle: Value = serde_json::from_str(&row.bundle).map_err(Error::unavailable)?;

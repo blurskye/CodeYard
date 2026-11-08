@@ -178,7 +178,7 @@ async fn twirp(
                 )
                 .await?
                 .is_some_and(|repository| repository.is_private);
-                codeyard_db_core::queries::action_settings::retention(
+                codeyard_database::queries::action_settings::retention(
                     &repo_policy,
                     &org_policy,
                     site.artifact_retention_days,

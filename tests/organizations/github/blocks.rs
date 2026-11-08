@@ -10,8 +10,8 @@ use codeyard_db_repos::repositories::creation::NewRepository;
 use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
 use codeyard_db_repos::repositories::creation::RepositoryTarget;
 
-use codeyard_db_core::models::AccessLevel;
-use codeyard_db_core::models::OrgRole;
+use codeyard_database::models::AccessLevel;
+use codeyard_database::models::OrgRole;
 use codeyard_identity::tokens::TokenInput;
 use serde_json::{json, Value};
 
@@ -433,7 +433,7 @@ async fn contract(pg: bool) {
     let metadata = json!({"comment_id":owner_comment["id"]});
     let notification = codeyard_db_repos::notifications::records::create_notification(
         f.pool(),
-        codeyard_db_core::queries::notifications::records::NewNotification {
+        codeyard_database::queries::notifications::records::NewNotification {
             user_id: outsider,
             actor_id: Some(owner),
             repo_id: Some(repos[0].id),
@@ -448,7 +448,7 @@ async fn contract(pg: bool) {
     assert!(notification
         .err()
         .unwrap()
-        .is::<codeyard_db_core::queries::notifications::records::NotificationSuppressed>());
+        .is::<codeyard_database::queries::notifications::records::NotificationSuppressed>());
     let fork = codeyard_db_repos::repositories::creation::insert_repository(
         f.pool(),
         NewRepository {
@@ -498,7 +498,7 @@ async fn contract(pg: bool) {
         )
         .await
         .unwrap(),
-        codeyard_db_core::queries::organizations::OrganizationOutcome::Denied
+        codeyard_database::queries::organizations::OrganizationOutcome::Denied
     ));
     // Even grants retained by a future repository transfer cannot override the organization block.
     f.execute(

@@ -1,19 +1,19 @@
 use base64::Engine;
 use codeyard_ci_engine::runs::CiRuns;
-use codeyard_cluster_core::transport::IrohDialer;
-use codeyard_cluster_core::transport::NodeAddress;
-use codeyard_cluster_core::transport::Relay;
-use codeyard_db_core::models::RefValue;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::RefValue;
+use codeyard_database::DbPool;
 use codeyard_git::error::RepoError;
 use codeyard_git::repository::process as git_process;
+use codeyard_git_storage::context::NodeContext;
+use codeyard_git_storage::repositories::git_sessions::broker::{Gateway, HookState, Operation};
+use codeyard_git_storage::repositories::git_sessions::private_files;
+use codeyard_git_storage::repositories::git_sessions::protocol::TransactionPhase;
+use codeyard_git_storage::repositories::git_sessions::ReceiveCredential;
+use codeyard_nodes::transport::IrohDialer;
+use codeyard_nodes::transport::NodeAddress;
+use codeyard_nodes::transport::Relay;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_repos::validation::RefUpdate;
-use codeyard_repos_core::context::NodeContext;
-use codeyard_repos_core::repositories::git_sessions::broker::{Gateway, HookState, Operation};
-use codeyard_repos_core::repositories::git_sessions::private_files;
-use codeyard_repos_core::repositories::git_sessions::protocol::TransactionPhase;
-use codeyard_repos_core::repositories::git_sessions::ReceiveCredential;
 use codeyard_support::node_identity::NodeKey;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -45,11 +45,11 @@ async fn prepared_hook_waits_for_a_decision_and_missing_voter_refuses_without_mo
                 .foreign_keys(true),
         )
         .await
-        .map(codeyard_db_core::pool::Pool::from)
+        .map(codeyard_database::pool::Pool::from)
         .unwrap();
     let pool = DbPool::from(native.clone());
-    codeyard_db_core::run_migrations(&pool).await.unwrap();
-    codeyard_db_cluster::node_config::upsert_node_configuration(&pool, "public", true)
+    codeyard_database::run_migrations(&pool).await.unwrap();
+    codeyard_db_placement::node_config::upsert_node_configuration(&pool, "public", true)
         .await
         .unwrap();
     sqlx::query(
@@ -59,7 +59,7 @@ async fn prepared_hook_waits_for_a_decision_and_missing_voter_refuses_without_mo
     .await
     .unwrap();
     let key = NodeKey::generate();
-    let primary = codeyard_db_cluster::cluster::register_own_node(
+    let primary = codeyard_db_placement::cluster::register_own_node(
         &pool,
         &key.public_hex(),
         "primary",
@@ -70,7 +70,7 @@ async fn prepared_hook_waits_for_a_decision_and_missing_voter_refuses_without_mo
     .unwrap()
     .id;
     let follower_key = NodeKey::generate();
-    let follower = codeyard_db_cluster::cluster::register_own_node(
+    let follower = codeyard_db_placement::cluster::register_own_node(
         &pool,
         &follower_key.public_hex(),
         "follower",
@@ -86,7 +86,7 @@ async fn prepared_hook_waits_for_a_decision_and_missing_voter_refuses_without_mo
         tcp: vec![listener.local_addr().unwrap()],
         ..Default::default()
     };
-    codeyard_db_cluster::cluster::record_node_heartbeat(
+    codeyard_db_placement::cluster::record_node_heartbeat(
         &pool,
         &follower_key.public_hex(),
         "test",
@@ -110,7 +110,7 @@ async fn prepared_hook_waits_for_a_decision_and_missing_voter_refuses_without_mo
             .unwrap();
     let root = directory.path().join("repos");
     std::fs::create_dir(&root).unwrap();
-    let path = codeyard_repos_core::context::term_path(&root, uuid::Uuid::new_v4(), 1);
+    let path = codeyard_git_storage::context::term_path(&root, uuid::Uuid::new_v4(), 1);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     let repository = git2::Repository::init_bare(&path).unwrap();
     let old = commit(&repository, "old");
@@ -135,11 +135,11 @@ async fn prepared_hook_waits_for_a_decision_and_missing_voter_refuses_without_mo
     .await
     .unwrap();
     assert!(
-        codeyard_db_cluster::cluster::place_repository(&pool, repo.id, primary)
+        codeyard_db_placement::cluster::place_repository(&pool, repo.id, primary)
             .await
             .unwrap()
     );
-    codeyard_db_cluster::cluster::writes::bootstrap_writes(
+    codeyard_db_placement::cluster::writes::bootstrap_writes(
         &pool,
         repo.id,
         primary,
@@ -159,13 +159,13 @@ async fn prepared_hook_waits_for_a_decision_and_missing_voter_refuses_without_mo
     )
     .await
     .unwrap();
-    assert!(codeyard_db_cluster::cluster::writes::mark_write_applied(
+    assert!(codeyard_db_placement::cluster::writes::mark_write_applied(
         &pool, repo.id, follower, 1, 0
     )
     .await
     .unwrap());
     assert!(
-        codeyard_db_cluster::cluster::writes::enable_write_family(&pool, &[(repo.id, 1)])
+        codeyard_db_placement::cluster::writes::enable_write_family(&pool, &[(repo.id, 1)])
             .await
             .unwrap()
     );
@@ -238,7 +238,7 @@ async fn prepared_hook_waits_for_a_decision_and_missing_voter_refuses_without_mo
         !task.is_finished(),
         "prepared hook must remain held without a decision"
     );
-    let view = codeyard_db_cluster::cluster::writes::recovery_view(&pool, repo.id)
+    let view = codeyard_db_placement::cluster::writes::recovery_view(&pool, repo.id)
         .await
         .unwrap();
     let pending = view.unfinished.unwrap();
@@ -261,7 +261,7 @@ async fn prepared_hook_waits_for_a_decision_and_missing_voter_refuses_without_mo
         error.downcast_ref::<RepoError>().unwrap().message,
         "write quorum unavailable"
     );
-    let decided = codeyard_db_cluster::cluster::writes::load_write(&pool, &pending.id)
+    let decided = codeyard_db_placement::cluster::writes::load_write(&pool, &pending.id)
         .await
         .unwrap()
         .unwrap();

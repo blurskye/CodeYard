@@ -4,8 +4,8 @@
 
 use anyhow::Result;
 use base64::Engine;
-use codeyard_db_core::models::User;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::User;
+use codeyard_database::DbPool;
 use codeyard_db_identity::users::gpg_keys::GpgKey;
 use codeyard_db_identity::users::signing_keys::SigningKeyOwner;
 use pgp::{

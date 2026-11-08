@@ -263,8 +263,8 @@ pub(super) async fn contract(f: &Database, router: &Router, actors: [i64; 3], ta
     .await
     .unwrap_err();
     assert!(matches!(
-        stale.downcast_ref::<codeyard_db_core::queries::organizations::properties::Refusal>(),
-        Some(codeyard_db_core::queries::organizations::properties::Refusal::Missing)
+        stale.downcast_ref::<codeyard_database::queries::organizations::properties::Refusal>(),
+        Some(codeyard_database::queries::organizations::properties::Refusal::Missing)
     ));
     assert!(properties::repository(f.pool(), Some(actors[0]), target.1)
         .await

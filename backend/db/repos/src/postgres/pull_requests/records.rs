@@ -15,9 +15,9 @@ use crate::pull_requests::records::StackJoin;
 use crate::pull_requests::records::StackRefusal;
 use crate::pull_requests::records::ViewerPullRequestEntry;
 use anyhow::Result;
-use codeyard_db_core::models::PullRequest;
-use codeyard_db_core::pool::PgPool;
-use codeyard_db_core::queries::discussions::contains_pattern;
+use codeyard_database::models::PullRequest;
+use codeyard_database::pool::PgPool;
+use codeyard_database::queries::discussions::contains_pattern;
 
 pub async fn commit_association_candidates(
     pool: &PgPool,
@@ -122,7 +122,7 @@ pub async fn move_open_pull_request_head(
     pusher: Option<i64>,
 ) -> Result<bool> {
     let mut tx = pool.begin().await?;
-    codeyard_db_core::queries::postgres::users::transitions::lock_accounts_shared(
+    codeyard_database::queries::postgres::users::transitions::lock_accounts_shared(
         &mut tx,
         &pusher.into_iter().collect::<Vec<_>>(),
     )
@@ -140,7 +140,7 @@ pub async fn move_open_pull_request_head(
     .rows_affected();
     if changed == 1 && old_head != new_head {
         let access =
-            codeyard_db_core::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL;
+            codeyard_database::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL;
         sqlx::query(&format!("DELETE FROM pull_request_auto_merges WHERE pull_request_id=$1 AND NOT EXISTS(SELECT 1 FROM pull_requests p JOIN repositories r ON r.id=p.repo_id JOIN users u ON u.id=$2 WHERE p.id=$1 AND ({access})>=3)"))
             .bind(pull_request_id).bind(pusher).execute(&mut *tx).await?;
     }
@@ -203,7 +203,7 @@ pub async fn approve_pull_request_workflows(
         .fetch_optional(&mut *tx)
         .await?;
     let Some(repo) = repo else { return Ok(false) };
-    if !codeyard_db_core::queries::postgres::discussions::lock_write_authority(
+    if !codeyard_database::queries::postgres::discussions::lock_write_authority(
         &mut tx, actor_id, repo,
     )
     .await?
@@ -217,7 +217,7 @@ pub async fn approve_pull_request_workflows(
     .fetch_one(&mut *tx)
     .await?;
     if fork
-        && !codeyard_db_core::queries::postgres::action_settings::fork_runs_allowed(&mut tx, repo)
+        && !codeyard_database::queries::postgres::action_settings::fork_runs_allowed(&mut tx, repo)
             .await?
     {
         return Ok(false);
@@ -256,7 +256,7 @@ pub async fn set_pull_request_draft(
         return Ok(ReadyOutcome::Missing);
     };
     crate::postgres::pull_caps::lock_author(&mut tx, author).await?;
-    let writer = codeyard_db_core::queries::postgres::discussions::lock_write_authority(
+    let writer = codeyard_database::queries::postgres::discussions::lock_write_authority(
         &mut tx, actor_id, repo,
     )
     .await?;
@@ -306,11 +306,11 @@ async fn admit_creation_head(
     pool: &PgPool,
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     input: &NewPullRequest<'_>,
-    head: &codeyard_db_core::models::Repository,
-    foreign: Option<&codeyard_db_core::cells::repositories::Admission>,
+    head: &codeyard_database::models::Repository,
+    foreign: Option<&codeyard_database::cells::repositories::Admission>,
 ) -> Result<()> {
     crate::pull_requests::records::check_foreign_head(
-        &codeyard_db_core::DbPool::Postgres(pool.clone()),
+        &codeyard_database::DbPool::Postgres(pool.clone()),
         input,
         head,
         foreign,
@@ -318,7 +318,7 @@ async fn admit_creation_head(
     .await?;
     if let Some(foreign) = foreign {
         anyhow::ensure!(
-            codeyard_db_core::queries::postgres::credentials::repository(
+            codeyard_database::queries::postgres::credentials::repository(
                 tx,
                 &foreign.actor,
                 input.repo_id,
@@ -326,7 +326,7 @@ async fn admit_creation_head(
                 true,
             )
             .await?
-                && codeyard_db_core::queries::postgres::credentials::repository(
+                && codeyard_database::queries::postgres::credentials::repository(
                     tx,
                     &foreign.actor,
                     input.repo_id,
@@ -347,7 +347,7 @@ pub async fn create_pull_request(pool: &PgPool, input: NewPullRequest<'_>) -> Re
 pub async fn create_pull_request_with_head(
     pool: &PgPool,
     input: NewPullRequest<'_>,
-    foreign: Option<&codeyard_db_core::cells::repositories::Admission>,
+    foreign: Option<&codeyard_database::cells::repositories::Admission>,
 ) -> Result<PullRequest> {
     let mut tx = pool.begin().await?;
     // Conversion retains the issue author; serialize that author's quota before repository locks.
@@ -390,7 +390,7 @@ pub async fn create_pull_request_with_head(
         crate::pull_requests::records::IssueConversionRefusal::Invalid
     );
     let head_id = input.head_repo_id.unwrap_or(input.repo_id);
-    let head = sqlx::query_as::<_, codeyard_db_core::models::Repository>(
+    let head = sqlx::query_as::<_, codeyard_database::models::Repository>(
         "SELECT * FROM repositories WHERE id = $1 FOR SHARE",
     )
     .bind(head_id)
@@ -398,7 +398,7 @@ pub async fn create_pull_request_with_head(
     .await?
     .ok_or(crate::postgres::discussions::AUTHORITY_DENIED)?;
     let access =
-        codeyard_db_core::queries::postgres::repositories::access::user_repo_access_in_transaction(
+        codeyard_database::queries::postgres::repositories::access::user_repo_access_in_transaction(
             &mut tx,
             input.author_id,
             head_id,
@@ -561,7 +561,7 @@ pub async fn list_filtered_pull_requests(
     offset: i64,
     limit: i64,
 ) -> Result<Vec<PullRequest>> {
-    let readable = codeyard_db_core::queries::postgres::repositories::access::readable_condition();
+    let readable = codeyard_database::queries::postgres::repositories::access::readable_condition();
     let rows = sqlx::query_as::<_, PullRequest>(&format!(
         "SELECT p.* FROM pull_requests p LEFT JOIN repositories h ON h.id = p.head_repo_id
          LEFT JOIN users u ON u.id = h.owner_user_id LEFT JOIN organizations o ON o.id = h.owner_org_id
@@ -646,7 +646,7 @@ pub async fn list_viewer_pull_requests(
     limit: i64,
 ) -> Result<Vec<ViewerPullRequestEntry>> {
     anyhow::ensure!(limit >= 0, "Result limit must be nonnegative");
-    let access = codeyard_db_core::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL;
+    let access = codeyard_database::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL;
     let relation_sql = viewer_pull_request_sql(relation);
     let prs = sqlx::query_as::<_, ViewerPullRequestEntry>(&format!(
         r"SELECT p.number, p.title, p.state, p.created_at,
@@ -675,7 +675,7 @@ pub async fn count_viewer_pull_requests(
     viewer_id: i64,
     relation: PullRequestRelation,
 ) -> Result<StateCounts> {
-    let access = codeyard_db_core::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL;
+    let access = codeyard_database::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL;
     let relation_sql = viewer_pull_request_sql(relation);
     let rows = sqlx::query_as::<_, (String, i64)>(&format!(
         r"SELECT CASE WHEN p.state = 'open' THEN 'open' ELSE 'closed' END AS bucket, COUNT(*)
@@ -785,7 +785,7 @@ pub async fn update_pull_request(
         crate::postgres::discussions::lock_exclusive_write_authority(&mut tx, edit.actor_id, repo)
             .await?
     } else {
-        codeyard_db_core::queries::postgres::discussions::lock_write_authority(
+        codeyard_database::queries::postgres::discussions::lock_write_authority(
             &mut tx,
             edit.actor_id,
             repo,
@@ -793,7 +793,7 @@ pub async fn update_pull_request(
         .await?
     };
     let head = if maintainer_can_modify.is_some() {
-        sqlx::query_as::<_, codeyard_db_core::models::Repository>(
+        sqlx::query_as::<_, codeyard_database::models::Repository>(
             "SELECT * FROM repositories WHERE id=$1 FOR SHARE",
         )
         .bind(head_id)

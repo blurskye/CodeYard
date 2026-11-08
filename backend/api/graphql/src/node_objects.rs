@@ -5,12 +5,12 @@ use crate::url;
 use crate::RequestContext;
 use crate::Result;
 use codeyard_identity::repository_access as access;
-use codeyard_model::node_id;
+use codeyard_types::node_id;
 use serde_json::json;
 use serde_json::Value;
 
 pub(super) async fn review(
-    row: &codeyard_db_core::models::PullRequestReview,
+    row: &codeyard_database::models::PullRequestReview,
     request: &RequestContext,
 ) -> Result<Value> {
     let pull = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(
@@ -38,7 +38,7 @@ pub(super) async fn review(
 }
 
 pub(super) async fn review_comment(
-    row: &codeyard_db_core::models::PullRequestComment,
+    row: &codeyard_database::models::PullRequestComment,
     request: &RequestContext,
 ) -> Result<Value> {
     let pull = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(
@@ -75,7 +75,7 @@ pub(super) async fn review_comment(
 }
 
 pub(super) async fn release(
-    row: &codeyard_db_core::models::Release,
+    row: &codeyard_database::models::Release,
     request: &RequestContext,
 ) -> Result<Value> {
     let repo = crate::repository::by_id(row.repo_id, request).await?;
@@ -93,7 +93,7 @@ pub(super) async fn release(
 
 pub(super) async fn asset(
     repo: i64,
-    row: &codeyard_db_core::models::ReleaseAsset,
+    row: &codeyard_database::models::ReleaseAsset,
     request: &RequestContext,
 ) -> Result<Value> {
     let repo = crate::repository::by_id(repo, request).await?;
@@ -232,7 +232,7 @@ pub(super) async fn database(kind: &str, id: i64, request: &RequestContext) -> R
                 "pull_request" => ("PR", row.subject_id),
                 "issue_comment" => (
                     "IC",
-                    codeyard_model::webhook_ids::conversation_comment_id(row.subject_id, false),
+                    codeyard_types::webhook_ids::conversation_comment_id(row.subject_id, false),
                 ),
                 "pr_comment" => {
                     let comment =
@@ -246,7 +246,7 @@ pub(super) async fn database(kind: &str, id: i64, request: &RequestContext) -> R
                     if comment.path.is_none() && comment.review_id.is_none() {
                         (
                             "IC",
-                            codeyard_model::webhook_ids::conversation_comment_id(
+                            codeyard_types::webhook_ids::conversation_comment_id(
                                 row.subject_id,
                                 true,
                             ),

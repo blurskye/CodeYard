@@ -21,10 +21,10 @@ use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_app::app::AppState;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
-use codeyard_model::urls::repo_url;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_git_storage::repositories::store::repo_store;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
+use codeyard_types::urls::repo_url;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -160,7 +160,7 @@ async fn upload(
             | codeyard_git::error::ErrorKind::Invalid => {
                 Error::validation("Sarif", "commit_sha", "invalid")
             }
-            _ => codeyard_repos_core::api_shared::github::contents::store_error(error),
+            _ => codeyard_git_storage::api_shared::github::contents::store_error(error),
         })?;
     let upload = codeyard_db_security::code_scanning::enqueue(
         &state.pool,

@@ -17,12 +17,12 @@ pub(super) async fn exercise(
         actors.0,
         repo,
         "graphql-bob",
-        Some(codeyard_db_core::models::AccessLevel::Read),
+        Some(codeyard_database::models::AccessLevel::Read),
     )
     .await
     .unwrap();
     // Fork provisioning is fixture setup through the same domain operation as the web form.
-    let fork = codeyard_repos_core::repositories::lifecycle::fork(
+    let fork = codeyard_git_storage::repositories::lifecycle::fork(
         &state.pool,
         None,
         &state.repos_path,

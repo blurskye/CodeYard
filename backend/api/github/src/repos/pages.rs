@@ -19,11 +19,11 @@ use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
-use codeyard_model::urls::repo_url;
-use codeyard_repos_core::api_shared::github::contents::store_error;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_git_storage::api_shared::github::contents::store_error;
+use codeyard_git_storage::repositories::store::repo_store;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
+use codeyard_types::urls::repo_url;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -59,7 +59,7 @@ async fn visible(
     params: &Params,
     write: bool,
 ) -> Result<(
-    codeyard_db_core::models::Repository,
+    codeyard_database::models::Repository,
     Option<codeyard_identity::github_auth::Authentication>,
 )> {
     repository(state, headers, &params["owner"], &params["repo"], write).await
@@ -147,7 +147,7 @@ async fn mutate(
     let site = codeyard_db_repos::pages::save(
         &state.pool,
         actor.user.id,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Token(
+        &codeyard_database::queries::users::accounts::AccountCredential::Token(
             actor.token.id,
             &actor.token.token_hash,
         ),
@@ -182,7 +182,7 @@ async fn remove(
     codeyard_db_repos::pages::delete(
         &state.pool,
         actor.user.id,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Token(
+        &codeyard_database::queries::users::accounts::AccountCredential::Token(
             actor.token.id,
             &actor.token.token_hash,
         ),
@@ -359,7 +359,7 @@ async fn create_deployment(
         .unwrap_or_else(|| {
             format!(
                 "{}/{}/{}/pages",
-                codeyard_model::http_config::link_origin(),
+                codeyard_types::http_config::link_origin(),
                 codeyard_types::paths::encode_component(&params["owner"]),
                 codeyard_types::paths::encode_component(&params["repo"])
             )

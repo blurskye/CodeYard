@@ -78,7 +78,7 @@ pub async fn post_rebase(
     codeyard_repos_pulls::repositories::pull_requests::restack::rebase_stack(
         &state.pool,
         &state.ci_runs,
-        codeyard_db_core::queries::credentials::Actor::from((
+        codeyard_database::queries::credentials::Actor::from((
             current_actor.id,
             codeyard_api_http::session::extract_session_id(&headers).unwrap_or_default(),
         )),

@@ -2,7 +2,7 @@ use crate::activity::ActivityBatch;
 use crate::activity::ActivityViewer;
 use crate::activity::ScannedActivity;
 use anyhow::Result;
-use codeyard_db_core::pool::SqlitePool;
+use codeyard_database::pool::SqlitePool;
 
 pub async fn record_repository_push(
     pool: &SqlitePool,
@@ -34,7 +34,7 @@ pub async fn list_user_activity(
     offset: i64,
 ) -> Result<ActivityBatch> {
     let (limit, offset, prefix) = crate::activity::scan_window(limit, offset);
-    let readable = codeyard_db_core::queries::sqlite::repositories::access::readable_condition();
+    let readable = codeyard_database::queries::sqlite::repositories::access::readable_condition();
     let rows = sqlx::query_as::<_, ScannedActivity>(&crate::activity::activity_sql(
         &readable,
         "julianday(s.expires_at)>julianday('now')",

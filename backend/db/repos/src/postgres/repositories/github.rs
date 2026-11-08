@@ -2,8 +2,8 @@ use crate::repositories::github::count_sql;
 use crate::repositories::github::list_sql;
 use crate::repositories::github::RepositoryListQuery;
 use anyhow::Result;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::pool::PgPool;
+use codeyard_database::models::Repository;
+use codeyard_database::pool::PgPool;
 
 pub async fn repository_teams(
     pool: &PgPool,
@@ -13,7 +13,7 @@ pub async fn repository_teams(
     offset: i64,
 ) -> Result<Option<Vec<crate::repositories::github::RepositoryTeam>>> {
     use crate::repositories::github::REPOSITORY_TEAMS_SQL;
-    use codeyard_db_core::queries::organizations::OrganizationOutcome;
+    use codeyard_database::queries::organizations::OrganizationOutcome;
 
     anyhow::ensure!(
         (1..=101).contains(&limit) && offset >= 0,
@@ -21,9 +21,9 @@ pub async fn repository_teams(
     );
     // Repository access, organization role and team rows come from one snapshot.
     let mut tx =
-        codeyard_db_core::queries::postgres::organizations::authority::begin_read(pool).await?;
+        codeyard_database::queries::postgres::organizations::authority::begin_read(pool).await?;
     // Anyone who can read the repository may list the teams of its organization they can see.
-    if !codeyard_db_core::queries::postgres::repositories::access::user_repo_access_in_transaction(
+    if !codeyard_database::queries::postgres::repositories::access::user_repo_access_in_transaction(
         &mut tx, actor, repo_id,
     )
     .await?
@@ -41,7 +41,7 @@ pub async fn repository_teams(
         return Ok(Some(vec![]));
     };
     let OrganizationOutcome::Applied(role) =
-        codeyard_db_core::queries::postgres::organizations::authority::read_authority(
+        codeyard_database::queries::postgres::organizations::authority::read_authority(
             &mut tx, actor, org,
         )
         .await?
@@ -50,7 +50,7 @@ pub async fn repository_teams(
     };
     let privileged = matches!(
         role,
-        codeyard_db_core::models::OrgRole::Owner | codeyard_db_core::models::OrgRole::Admin
+        codeyard_database::models::OrgRole::Owner | codeyard_database::models::OrgRole::Admin
     );
     let mut teams: Vec<crate::repositories::github::RepositoryTeam> =
         sqlx::query_as(REPOSITORY_TEAMS_SQL)
@@ -67,7 +67,7 @@ pub async fn repository_teams(
         .filter(|row| row.team.privacy == "visible")
         .filter_map(|row| row.team.parent_team_id)
         .collect();
-    let parents: Vec<codeyard_db_core::models::Team> =
+    let parents: Vec<codeyard_database::models::Team> =
         sqlx::query_as("SELECT * FROM teams WHERE id=ANY($1) AND org_id=$2 AND privacy='visible'")
             .bind(parents)
             .bind(org)
@@ -101,8 +101,8 @@ pub async fn list_repositories(
 ) -> Result<Vec<Repository>> {
     let sql = list_sql(
         &query,
-        codeyard_db_core::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL,
-        &codeyard_db_core::queries::postgres::repositories::access::readable_condition(),
+        codeyard_database::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL,
+        &codeyard_database::queries::postgres::repositories::access::readable_condition(),
     );
     Ok(sqlx::query_as(&sql)
         .bind(query.viewer)
@@ -119,8 +119,8 @@ pub async fn list_repositories(
 pub async fn count_repositories(pool: &PgPool, query: RepositoryListQuery<'_>) -> Result<i64> {
     let sql = count_sql(
         &query,
-        codeyard_db_core::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL,
-        &codeyard_db_core::queries::postgres::repositories::access::readable_condition(),
+        codeyard_database::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL,
+        &codeyard_database::queries::postgres::repositories::access::readable_condition(),
     );
     Ok(sqlx::query_scalar(&sql)
         .bind(query.viewer)

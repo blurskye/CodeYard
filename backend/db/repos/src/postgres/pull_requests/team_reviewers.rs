@@ -2,9 +2,9 @@ use crate::pull_requests::team_reviewers::InvalidReviewTeam;
 use crate::pull_requests::team_reviewers::ReviewTeamAction;
 use anyhow::ensure;
 use anyhow::Result;
-use codeyard_db_core::models::PullRequest;
-use codeyard_db_core::models::Team;
-use codeyard_db_core::pool::PgPool;
+use codeyard_database::models::PullRequest;
+use codeyard_database::models::Team;
+use codeyard_database::pool::PgPool;
 
 const SCOPED: &str = "SELECT t.*,o.name AS org_slug,COALESCE(a.permission,0)::SMALLINT AS permission FROM teams t JOIN repositories r ON r.owner_kind='org' AND r.owner_org_id=t.org_id AND r.owner_user_id IS NULL JOIN organizations o ON o.id=t.org_id LEFT JOIN effective_team_repo_access a ON a.team_id=t.id AND a.repo_id=r.id WHERE r.id=$1 AND (t.privacy='visible' OR EXISTS(SELECT 1 FROM org_memberships om WHERE om.org_id=t.org_id AND om.user_id=$2 AND om.role IN ('owner','admin')) OR EXISTS(SELECT 1 FROM effective_team_memberships tm JOIN org_memberships om ON om.org_id=t.org_id AND om.user_id=tm.user_id WHERE tm.team_id=t.id AND tm.user_id=$2 AND tm.role IN ('member','maintainer') AND om.role IN ('owner','admin','member')))";
 
@@ -19,7 +19,7 @@ pub async fn request_page(
     let sql = crate::pull_requests::team_reviewers::request_roster_sql(
         "$",
         SCOPED,
-        &codeyard_db_core::queries::postgres::repositories::access::readable_condition(),
+        &codeyard_database::queries::postgres::repositories::access::readable_condition(),
     );
     let mut tx = pool.begin().await?;
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
@@ -64,7 +64,7 @@ pub async fn by_ids(
     ids: &[i64],
 ) -> Result<Vec<Team>> {
     ensure!(ids.len() <= 100, InvalidReviewTeam);
-    let readable = codeyard_db_core::queries::postgres::repositories::access::readable_condition();
+    let readable = codeyard_database::queries::postgres::repositories::access::readable_condition();
     Ok(sqlx::query_as(&format!("{SCOPED} AND t.id=ANY($3) AND EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=$2 WHERE r.id=$1 AND {readable})")).bind(repo).bind(viewer).bind(ids).fetch_all(pool).await?)
 }
 
@@ -83,8 +83,8 @@ pub async fn members(
     repo: i64,
     teams: &[i64],
     after: i64,
-) -> Result<Vec<codeyard_db_core::models::User>> {
-    let access = codeyard_db_core::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL;
+) -> Result<Vec<codeyard_database::models::User>> {
+    let access = codeyard_database::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL;
     Ok(sqlx::query_as(&format!("SELECT DISTINCT u.* FROM effective_team_memberships m JOIN teams t ON t.id=m.team_id JOIN org_memberships o ON o.org_id=t.org_id AND o.user_id=m.user_id JOIN users u ON u.id=m.user_id JOIN repositories r ON r.owner_kind='org' AND r.owner_org_id=t.org_id AND r.owner_user_id IS NULL WHERE r.id=$1 AND t.id=ANY($2) AND u.id>$3 AND t.notifications_enabled AND m.role IN ('member','maintainer') AND o.role IN ('owner','admin','member') AND NOT r.is_archived AND NOT EXISTS(SELECT 1 FROM repository_migration_locks WHERE repo_id=r.id) AND ({access})>=3 AND EXISTS(SELECT 1 FROM effective_team_repo_access a WHERE a.team_id=t.id AND a.repo_id=r.id AND a.permission BETWEEN 3 AND 5) ORDER BY u.id LIMIT 100"))
         .bind(repo).bind(teams).bind(after).fetch_all(pool).await?)
 }
@@ -96,7 +96,7 @@ pub async fn set_requests(
     input: &crate::pull_requests::team_reviewers::ReviewRequests<'_>,
 ) -> Result<crate::pull_requests::team_reviewers::ReviewRequestChanges> {
     use crate::pull_requests::team_reviewers::ReviewRequestChanges;
-    use codeyard_db_core::models::User;
+    use codeyard_database::models::User;
     ensure!(
         input.users.len() + input.teams.len() <= 100,
         InvalidReviewTeam
@@ -141,7 +141,7 @@ pub async fn set_requests(
         }
         ensure!(
             *id != author
-                && codeyard_db_core::queries::postgres::discussions::lock_write_authority(
+                && codeyard_database::queries::postgres::discussions::lock_write_authority(
                     &mut tx, *id, repo
                 )
                 .await?,

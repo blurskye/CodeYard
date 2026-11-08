@@ -8,7 +8,7 @@ use crate::unavailable;
 use crate::url;
 use crate::RequestContext;
 use crate::Result;
-use codeyard_model::node_id;
+use codeyard_types::node_id;
 
 pub(super) fn error(error: anyhow::Error) -> Error {
     match error.downcast_ref::<codeyard_db_repos::issues::management::Refusal>() {
@@ -27,7 +27,7 @@ pub(super) async fn linked(
 type LinkedSnapshots = std::collections::HashMap<
     i64,
     Option<(
-        codeyard_db_core::models::Repository,
+        codeyard_database::models::Repository,
         std::collections::HashMap<String, String>,
     )>,
 >;
@@ -47,7 +47,7 @@ async fn linked_target(
             .await
             .map_err(unavailable)?
             {
-                let refs = codeyard_repos_core::repositories::store::repo_store(
+                let refs = codeyard_git_storage::repositories::store::repo_store(
                     &repo,
                     request.state.cluster.as_ref(),
                 )
@@ -94,7 +94,7 @@ pub(super) async fn resolve(
     field: &str,
     ctx: &Arguments,
     request: &RequestContext,
-    repo: &codeyard_db_core::models::Repository,
+    repo: &codeyard_database::models::Repository,
     id: i64,
 ) -> Result<Value> {
     match field {
@@ -183,7 +183,7 @@ pub(super) async fn mutation(
     field: &str,
     input: &Value,
     request: &RequestContext,
-    repo: &codeyard_db_core::models::Repository,
+    repo: &codeyard_database::models::Repository,
     id: i64,
 ) -> Result<Value> {
     let pool = &request.state.pool;

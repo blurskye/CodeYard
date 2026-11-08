@@ -18,15 +18,15 @@ use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
 use std::sync::Arc;
 
-fn document(owner: &str, name: &str, watch: &codeyard_db_core::models::Watch) -> Value {
-    let url = codeyard_model::urls::repo_url(owner, name);
+fn document(owner: &str, name: &str, watch: &codeyard_database::models::Watch) -> Value {
+    let url = codeyard_types::urls::repo_url(owner, name);
     json!({"subscribed":matches!(watch.level.as_str(),"watching"|"custom"),"ignored":watch.level=="ignoring","reason":null,"created_at":watch.created_at,"url":format!("{url}/subscription"),"repository_url":url})
 }
 

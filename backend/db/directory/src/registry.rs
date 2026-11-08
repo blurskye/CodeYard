@@ -1,7 +1,7 @@
 use super::{Directory, Refusal};
 use anyhow::{ensure, Result};
-use codeyard_model::cells::{Cell, State};
-use codeyard_types::cells::Prefix;
+use codeyard_types::cell_ids::Prefix;
+use codeyard_types::cells::{Cell, State};
 
 const COLUMNS: &str = "c.id,c.name,c.region,c.state,c.web_urls::text,c.ssh_addresses::text,c.rpc_addresses::text,c.database_bytes,c.write_rate,c.maximum_database_bytes,c.maximum_write_rate,c.read_regions::text,(SELECT COALESCE(json_agg(public_key)::text,'[]') FROM (SELECT public_key FROM directory_node_keys WHERE cell_id=c.id ORDER BY public_key LIMIT 1001) keys) AS node_keys";
 
@@ -207,7 +207,7 @@ impl Directory {
 
     pub async fn choose_cell_for(&self, peer: Option<&str>, region: &str) -> Result<Option<Cell>> {
         self.run(async {
-            codeyard_model::cells::validate_region(region).map_err(|_| Refusal::Invalid)?;
+            codeyard_types::cells::validate_region(region).map_err(|_| Refusal::Invalid)?;
             let mut tx = self.begin().await?;
             if let Some(peer) = peer { super::read_owner(&mut tx, peer).await?; }
             let row: Option<Row> = sqlx::query_as(&format!("SELECT {COLUMNS} FROM directory_cells c WHERE region=$1 AND state='open' AND database_bytes::numeric<maximum_database_bytes::numeric/2 AND write_rate::numeric<maximum_write_rate::numeric/2 AND observed_at>clock_timestamp()-$2::bigint*INTERVAL '1 second' ORDER BY database_bytes::numeric/maximum_database_bytes,id LIMIT 1"))

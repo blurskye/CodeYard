@@ -37,7 +37,7 @@ impl World {
         let carol_id = database.actor("carol").await;
         let dave_id = database.actor("dave").await;
         let root = tempfile::tempdir().unwrap();
-        let repository = codeyard_repos_core::repositories::lifecycle::provision(
+        let repository = codeyard_git_storage::repositories::lifecycle::provision(
             (database.pool(), None),
             root.path(),
             codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
@@ -49,9 +49,9 @@ impl World {
         .await
         .unwrap();
         for (user, level) in [
-            (bob_id, codeyard_db_core::models::AccessLevel::Write),
-            (carol_id, codeyard_db_core::models::AccessLevel::Write),
-            (dave_id, codeyard_db_core::models::AccessLevel::Read),
+            (bob_id, codeyard_database::models::AccessLevel::Write),
+            (carol_id, codeyard_database::models::AccessLevel::Write),
+            (dave_id, codeyard_database::models::AccessLevel::Read),
         ] {
             codeyard_db_repos::repositories::access::grant_repo_access(
                 database.pool(),
@@ -402,7 +402,7 @@ async fn reader_merge_form_leaves_the_stored_head(pg: bool) {
     .await
     .unwrap()
     .unwrap();
-    let second = codeyard_repos_core::repositories::store::repo_store(&repository, None)
+    let second = codeyard_git_storage::repositories::store::repo_store(&repository, None)
         .save_file_as(
             world.database.pool(),
             repository.id,
@@ -1260,7 +1260,7 @@ async fn requested_reviewers(alice: &Client, number: i64) -> Vec<Value> {
 
 /// The review-request notifications a user holds, as (title, link) pairs.
 async fn review_requests_for(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     user_id: i64,
 ) -> Vec<(String, Option<String>)> {
     codeyard_db_repos::notifications::records::list_notifications_for_user(

@@ -1,8 +1,8 @@
 #![recursion_limit = "256"]
 use crate::delivery::Outgoing;
-use codeyard_db_core::{models::Webhook, DbPool};
+use codeyard_database::{models::Webhook, DbPool};
 use codeyard_db_repos::webhooks::HookOwner;
-use codeyard_model::webhook_events as events;
+use codeyard_types::webhook_events as events;
 use serde_json::Value;
 use std::{
     collections::HashMap,
@@ -324,7 +324,7 @@ mod tests {
     #[tokio::test]
     async fn owners_have_separate_capacity_and_manual_rate_limits() {
         let pool = DbPool::Sqlite(
-            codeyard_db_core::pool::SqlitePool::connect("sqlite::memory:")
+            codeyard_database::pool::SqlitePool::connect("sqlite::memory:")
                 .await
                 .unwrap(),
         );
@@ -352,7 +352,7 @@ mod tests {
         assert!(queue.take(&pool, other, Some(3), true, 0).is_none());
         assert!(queue.take(&pool, other, Some(3), false, 0).is_some());
         let other_pool = DbPool::Sqlite(
-            codeyard_db_core::pool::SqlitePool::connect("sqlite::memory:")
+            codeyard_database::pool::SqlitePool::connect("sqlite::memory:")
                 .await
                 .unwrap(),
         );
@@ -362,7 +362,7 @@ mod tests {
     #[tokio::test]
     async fn construction_and_delivery_share_the_queue_limit() {
         let pool = DbPool::Sqlite(
-            codeyard_db_core::pool::SqlitePool::connect("sqlite::memory:")
+            codeyard_database::pool::SqlitePool::connect("sqlite::memory:")
                 .await
                 .unwrap(),
         );
@@ -384,7 +384,7 @@ mod tests {
     #[tokio::test]
     async fn queued_bodies_share_one_byte_budget() {
         let pool = DbPool::Sqlite(
-            codeyard_db_core::pool::SqlitePool::connect("sqlite::memory:")
+            codeyard_database::pool::SqlitePool::connect("sqlite::memory:")
                 .await
                 .unwrap(),
         );

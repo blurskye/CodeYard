@@ -1,7 +1,7 @@
 //! Repository advisories and confidential reports share the native disclosure workflow.
 use axum::response::IntoResponse;
 use base64::Engine;
-use codeyard_model::advisories;
+use codeyard_types::advisories;
 
 use axum::extract::OriginalUri;
 use axum::extract::Path;
@@ -25,13 +25,13 @@ use codeyard_app::app::AppState;
 use codeyard_db_security::advisories::Listing;
 use codeyard_db_security::advisories::Scope;
 use codeyard_db_security::advisories::Sort;
-use codeyard_model::advisories::Advisory;
-use codeyard_model::advisories::Data;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
-use codeyard_model::urls::repo_url;
-use codeyard_repos_core::repositories::lifecycle::LifecycleFailure;
-use codeyard_repos_core::repositories::lifecycle::StorageError;
+use codeyard_git_storage::repositories::lifecycle::LifecycleFailure;
+use codeyard_git_storage::repositories::lifecycle::StorageError;
+use codeyard_types::advisories::Advisory;
+use codeyard_types::advisories::Data;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
+use codeyard_types::urls::repo_url;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::json;
@@ -42,9 +42,9 @@ use std::sync::Arc;
 type Params = HashMap<String, String>;
 pub(crate) fn failure(error: anyhow::Error) -> Error {
     if let Some(
-        graph @ (codeyard_model::dependency_graph::GraphError::Limit
-        | codeyard_model::dependency_graph::GraphError::Disabled),
-    ) = error.downcast_ref::<codeyard_model::dependency_graph::GraphError>()
+        graph @ (codeyard_types::dependency_graph::GraphError::Limit
+        | codeyard_types::dependency_graph::GraphError::Disabled),
+    ) = error.downcast_ref::<codeyard_types::dependency_graph::GraphError>()
     {
         return Error::new(StatusCode::UNPROCESSABLE_ENTITY, graph.to_string());
     }
@@ -54,15 +54,15 @@ pub(crate) fn failure(error: anyhow::Error) -> Error {
             "A live unrestricted credential is required",
         );
     }
-    match error.downcast_ref::<codeyard_model::advisories::Refusal>() {
-        Some(codeyard_model::advisories::Refusal::Denied) => {
+    match error.downcast_ref::<codeyard_types::advisories::Refusal>() {
+        Some(codeyard_types::advisories::Refusal::Denied) => {
             return Error::new(StatusCode::FORBIDDEN, "Advisory administration denied")
         }
-        Some(codeyard_model::advisories::Refusal::Missing) => return Error::missing(),
-        Some(codeyard_model::advisories::Refusal::Invalid) => {
+        Some(codeyard_types::advisories::Refusal::Missing) => return Error::missing(),
+        Some(codeyard_types::advisories::Refusal::Invalid) => {
             return Error::validation("RepositoryAdvisory", "configuration", "invalid")
         }
-        Some(codeyard_model::advisories::Refusal::Conflict) => {
+        Some(codeyard_types::advisories::Refusal::Conflict) => {
             return Error::new(
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "The advisory state does not allow this operation",
@@ -70,18 +70,18 @@ pub(crate) fn failure(error: anyhow::Error) -> Error {
         }
         None => {}
     }
-    match error.downcast_ref::<codeyard_model::security_reports::Refusal>() {
-        Some(codeyard_model::security_reports::Refusal::Denied) => {
+    match error.downcast_ref::<codeyard_types::security_reports::Refusal>() {
+        Some(codeyard_types::security_reports::Refusal::Denied) => {
             return Error::new(
                 StatusCode::FORBIDDEN,
                 "Private vulnerability reporting denied",
             )
         }
-        Some(codeyard_model::security_reports::Refusal::Missing) => return Error::missing(),
-        Some(codeyard_model::security_reports::Refusal::Invalid(_)) => {
+        Some(codeyard_types::security_reports::Refusal::Missing) => return Error::missing(),
+        Some(codeyard_types::security_reports::Refusal::Invalid(_)) => {
             return Error::validation("RepositoryAdvisory", "report", "invalid")
         }
-        Some(codeyard_model::security_reports::Refusal::Limit) => {
+        Some(codeyard_types::security_reports::Refusal::Limit) => {
             return Error::new(
                 StatusCode::TOO_MANY_REQUESTS,
                 "Security reporting limit reached",
@@ -171,7 +171,7 @@ async fn document(
         Value::Null
     };
     Ok(
-        json!({"ghsa_id":row.ghsa_id,"cve_id":data.cve_id,"url":format!("{}/security-advisories/{}",repo_url(&owner,&repo.name),row.ghsa_id),"html_url":format!("{}/{}/{}/security/advisories/{}",codeyard_model::http_config::link_origin(),codeyard_types::paths::encode_component(&owner),codeyard_types::paths::encode_component(&repo.name),row.ghsa_id),"summary":data.summary,"description":data.description,"severity":data.severity,"author":author,"publisher":person(state,row.publisher_id).await?,"identifiers":identifiers,"state":row.state,"created_at":row.created_at,"updated_at":row.updated_at,"published_at":row.published_at,"closed_at":row.closed_at,"withdrawn_at":null,"submission":row.report_id.map(|_|json!({"accepted":row.report_accepted})),"vulnerabilities":data.vulnerabilities,"cvss":cvss,"cwes":null,"cwe_ids":data.cwe_ids,"credits":data.credits,"credits_detailed":null,"collaborating_users":[],"collaborating_teams":[],"private_fork":fork}),
+        json!({"ghsa_id":row.ghsa_id,"cve_id":data.cve_id,"url":format!("{}/security-advisories/{}",repo_url(&owner,&repo.name),row.ghsa_id),"html_url":format!("{}/{}/{}/security/advisories/{}",codeyard_types::http_config::link_origin(),codeyard_types::paths::encode_component(&owner),codeyard_types::paths::encode_component(&repo.name),row.ghsa_id),"summary":data.summary,"description":data.description,"severity":data.severity,"author":author,"publisher":person(state,row.publisher_id).await?,"identifiers":identifiers,"state":row.state,"created_at":row.created_at,"updated_at":row.updated_at,"published_at":row.published_at,"closed_at":row.closed_at,"withdrawn_at":null,"submission":row.report_id.map(|_|json!({"accepted":row.report_accepted})),"vulnerabilities":data.vulnerabilities,"cvss":cvss,"cwes":null,"cwe_ids":data.cwe_ids,"credits":data.credits,"credits_detailed":null,"collaborating_users":[],"collaborating_teams":[],"private_fork":fork}),
     )
 }
 #[derive(Default, Deserialize)]
@@ -205,7 +205,7 @@ fn link(uri: &Uri, cursor: &str, before: bool, limit: usize) -> String {
         .finish();
     format!(
         "<{}{}?{query}>; rel=\"{}\"",
-        codeyard_model::http_config::link_origin(),
+        codeyard_types::http_config::link_origin(),
         uri.path(),
         if before { "prev" } else { "next" }
     )
@@ -388,8 +388,8 @@ async fn create(
             Err(error) if report => {
                 // The report is already committed; optional remediation cannot reject it.
                 let denied = matches!(
-                    error.downcast_ref::<codeyard_model::advisories::Refusal>(),
-                    Some(codeyard_model::advisories::Refusal::Denied)
+                    error.downcast_ref::<codeyard_types::advisories::Refusal>(),
+                    Some(codeyard_types::advisories::Refusal::Denied)
                 ) || error
                     .downcast_ref::<StorageError>()
                     .is_some_and(|error| matches!(error.kind, LifecycleFailure::Denied));

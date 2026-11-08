@@ -1,6 +1,6 @@
 use anyhow::Result;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 
 /// The reactions a user can pick, in display order.
 pub const CONTENTS: [&str; 8] = [
@@ -68,11 +68,11 @@ pub struct Target {
 
 native_operation!(crate::postgres::reactions::create_reaction,
     crate::sqlite::reactions::create_reaction,
-    fn create_reaction(pool: &DbPool, actor_id: i64, credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>, target: Target, content: &str) -> Result<(Reaction, bool)>);
+    fn create_reaction(pool: &DbPool, actor_id: i64, credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>, target: Target, content: &str) -> Result<(Reaction, bool)>);
 
 native_operation!(crate::postgres::reactions::delete_reaction,
     crate::sqlite::reactions::delete_reaction,
-    fn delete_reaction(pool: &DbPool, actor_id: i64, credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>, target: Target, reaction_id: i64) -> Result<bool>);
+    fn delete_reaction(pool: &DbPool, actor_id: i64, credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>, target: Target, reaction_id: i64) -> Result<bool>);
 
 native_operation!(crate::postgres::reactions::find_reaction,
     crate::sqlite::reactions::find_reaction,
@@ -95,7 +95,7 @@ pub struct ReactionCount {
 // The reactor's access, the item and the subject are checked in the same transaction as the change.
 native_operation!(crate::postgres::reactions::toggle_reaction,
     crate::sqlite::reactions::toggle_reaction,
-    fn toggle_reaction(pool: &DbPool, actor_id: i64, credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>, repo_id: i64, item_id: i64, subject: Subject, subject_id: i64, content: &str) -> Result<bool>);
+    fn toggle_reaction(pool: &DbPool, actor_id: i64, credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>, repo_id: i64, item_id: i64, subject: Subject, subject_id: i64, content: &str) -> Result<bool>);
 
 native_operation!(crate::postgres::reactions::reaction_counts,
     crate::sqlite::reactions::reaction_counts,

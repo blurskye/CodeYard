@@ -11,15 +11,15 @@ use axum::routing::put;
 use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_app::app::AppState;
-use codeyard_db_core::queries::users::accounts::AccountCredential;
+use codeyard_database::queries::users::accounts::AccountCredential;
 use codeyard_db_identity::interactions::InteractionScope;
 use codeyard_db_repos::pull_caps::CapUpdate;
 use codeyard_db_repos::pull_caps::PullCap;
 use codeyard_db_repos::pull_caps::PullCapRefusal;
 use codeyard_db_repos::pull_caps::PullCapScope;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
 use codeyard_types::credentials::AccountRestricted;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
@@ -111,7 +111,7 @@ async fn update(
     input: std::result::Result<Json<CapUpdate>, JsonRejection>,
 ) -> Result<Json<PullCap>> {
     let (actor, scope) = actor_scope(&state, &headers, scope, true).await?;
-    let Json(input) = input.map_err(codeyard_model::github_error::json_error)?;
+    let Json(input) = input.map_err(codeyard_types::github_error::json_error)?;
     Ok(Json(
         codeyard_db_repos::pull_caps::update_cap(
             &state.pool,
@@ -185,7 +185,7 @@ async fn change_bypass(
 ) -> Result<StatusCode> {
     let (actor, scope) =
         actor_scope(&state, &headers, ScopeName::Repository(owner, repo), true).await?;
-    let Json(input) = input.map_err(codeyard_model::github_error::json_error)?;
+    let Json(input) = input.map_err(codeyard_types::github_error::json_error)?;
     codeyard_db_repos::pull_caps::change_bypass(
         &state.pool,
         actor.user.id,

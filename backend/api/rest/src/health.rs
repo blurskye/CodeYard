@@ -6,7 +6,7 @@ use axum::Json;
 use axum::Router;
 use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_app::app::AppState;
-use codeyard_model::node_roles::NodeRole;
+use codeyard_types::node_roles::NodeRole;
 use std::io::Write;
 use std::net::SocketAddr;
 use std::path::Path;
@@ -47,7 +47,7 @@ fn storage_check(root: &Path, minimum: u64) -> Result<(), &'static str> {
     probe
         .close()
         .map_err(|_| "repository storage not writable")?;
-    let free = codeyard_cluster::disk_free(root).map_err(|_| "storage free space unavailable")?;
+    let free = codeyard_placement::disk_free(root).map_err(|_| "storage free space unavailable")?;
     if u64::try_from(free).unwrap_or(0) < minimum {
         return Err("storage free space below minimum");
     }
@@ -58,7 +58,7 @@ pub(crate) async fn accepting(state: &AppState) -> bool {
     let Some(context) = &state.cluster else {
         return true;
     };
-    matches!(tokio::time::timeout(Duration::from_secs(2), codeyard_db_cluster::cluster::get_node_by_id(&state.pool, context.node_id)).await,
+    matches!(tokio::time::timeout(Duration::from_secs(2), codeyard_db_placement::cluster::get_node_by_id(&state.pool, context.node_id)).await,
         Ok(Ok(Some(node))) if node.state == "active" && node.status == "active")
 }
 

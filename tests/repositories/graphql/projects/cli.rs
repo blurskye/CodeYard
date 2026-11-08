@@ -5,7 +5,7 @@ use async_graphql_parser::{
     types::{ExecutableDocument, Selection, SelectionSet},
 };
 use codeyard_identity::tokens;
-use codeyard_model::node_id;
+use codeyard_types::node_id;
 
 macro_rules! document {
     ($name:literal) => {
@@ -118,7 +118,7 @@ async fn cli_contract(pg: bool) {
         .unwrap(),
     );
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard_repos_core::repositories::lifecycle::provision(
+    let repo = codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
@@ -269,7 +269,7 @@ async fn cli_contract(pg: bool) {
     let org_project = codeyard_db_repos::projects::create(
         f.pool(),
         alice,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), alice).await,
         ),
         codeyard_db_repos::projects::Owner::Organization(org.id),
@@ -506,7 +506,7 @@ async fn cli_contract(pg: bool) {
     let iteration = codeyard_db_repos::projects::add_field(
         f.pool(),
         alice,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), alice).await,
         ),
         project_id,
@@ -539,7 +539,7 @@ async fn cli_contract(pg: bool) {
     codeyard_db_repos::projects::add_item(
         f.pool(),
         alice,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), alice).await,
         ),
         org_project.id,

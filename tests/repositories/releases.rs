@@ -38,7 +38,7 @@ async fn setup(pg: bool) -> World {
     let carol_id = database.actor("carol").await;
     let root = tempfile::tempdir().unwrap();
     for name in ["proj", "vault"] {
-        codeyard_repos_core::repositories::lifecycle::provision(
+        codeyard_git_storage::repositories::lifecycle::provision(
             (database.pool(), None),
             root.path(),
             codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
@@ -117,7 +117,7 @@ async fn upload(
 }
 
 async fn release_creation_uses_the_checked_repository_id(pg: bool) {
-    use codeyard_repos_core::repositories::lifecycle;
+    use codeyard_git_storage::repositories::lifecycle;
     use codeyard_repos_pulls::repositories::releases;
     use codeyard_repos_pulls::repositories::releases::ReleaseInput;
     let mut world = setup(pg).await;
@@ -235,7 +235,7 @@ async fn long_release_target(pg: bool) {
     .unwrap()
     .unwrap();
     assert!(
-        !codeyard_repos_core::repositories::store::repo_store(&repository, None)
+        !codeyard_git_storage::repositories::store::repo_store(&repository, None)
             .refs()
             .await
             .unwrap()
@@ -1085,7 +1085,7 @@ async fn release_validation_and_atomic_files(pg: bool) {
             StatusCode::UNPROCESSABLE_ENTITY,
         )
         .await;
-    let store = codeyard_repos_core::repositories::store::repo_store(&repo, None);
+    let store = codeyard_git_storage::repositories::store::repo_store(&repo, None);
     assert!(!store
         .refs()
         .await
@@ -1140,8 +1140,8 @@ async fn release_validation_and_atomic_files(pg: bool) {
             filename: "tool.bin",
             content_type: "application/octet-stream",
             file_size: 1,
-            reason: codeyard_db_core::models::FileReason::ReleaseAsset,
-            visibility: codeyard_db_core::models::FileVisibility::Owner,
+            reason: codeyard_database::models::FileReason::ReleaseAsset,
+            visibility: codeyard_database::models::FileVisibility::Owner,
             sha256_hex: &"a".repeat(64),
         },
     )
@@ -1158,7 +1158,7 @@ async fn release_validation_and_atomic_files(pg: bool) {
     assert!(codeyard_db_repos::releases::add_release_asset(
         pool,
         actor,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(pool, actor).await
         ),
         repo.id,
@@ -1178,7 +1178,7 @@ async fn release_validation_and_atomic_files(pg: bool) {
     let asset = codeyard_db_repos::releases::add_release_asset(
         pool,
         actor,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(pool, actor).await,
         ),
         repo.id,
@@ -1229,8 +1229,8 @@ async fn release_validation_and_atomic_files(pg: bool) {
             filename: "second.bin",
             content_type: "application/octet-stream",
             file_size: 1,
-            reason: codeyard_db_core::models::FileReason::ReleaseAsset,
-            visibility: codeyard_db_core::models::FileVisibility::Owner,
+            reason: codeyard_database::models::FileReason::ReleaseAsset,
+            visibility: codeyard_database::models::FileVisibility::Owner,
             sha256_hex: &"b".repeat(64),
         },
     )
@@ -1242,7 +1242,7 @@ async fn release_validation_and_atomic_files(pg: bool) {
     codeyard_db_repos::releases::add_release_asset(
         pool,
         actor,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(pool, actor).await,
         ),
         repo.id,
@@ -1325,7 +1325,7 @@ async fn repository_deletion_removes_asset_uploads(pg: bool) {
     .await
     .unwrap()
     .unwrap();
-    codeyard_repos_core::repositories::lifecycle::delete(
+    codeyard_git_storage::repositories::lifecycle::delete(
         world.database.pool(),
         None,
         repository.owner_id(),
@@ -1340,14 +1340,14 @@ async fn repository_deletion_removes_asset_uploads(pg: bool) {
             .is_none()
     );
     let queued: bool = match world.database.pool() {
-        codeyard_db_core::DbPool::Postgres(pool) => sqlx::query_scalar(
+        codeyard_database::DbPool::Postgres(pool) => sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM pending_object_deletions WHERE object_key=$1)",
         )
         .bind(&file.object_key)
         .fetch_one(pool)
         .await
         .unwrap(),
-        codeyard_db_core::DbPool::Sqlite(pool) => sqlx::query_scalar(
+        codeyard_database::DbPool::Sqlite(pool) => sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM pending_object_deletions WHERE object_key=?1)",
         )
         .bind(&file.object_key)

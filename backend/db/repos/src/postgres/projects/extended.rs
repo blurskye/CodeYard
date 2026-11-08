@@ -65,7 +65,7 @@ pub async fn by_id_at(
     id: i64,
     include_deleted: bool,
 ) -> Result<Project> {
-    codeyard_db_core::queries::postgres::retry_on_conflict(|| {
+    codeyard_database::queries::postgres::retry_on_conflict(|| {
         by_id_at_once(pool, viewer, id, include_deleted)
     })
     .await
@@ -87,7 +87,7 @@ async fn by_id_at_once(
     Ok(project)
 }
 pub async fn field_by_id(pool: &PgPool, viewer: Option<i64>, id: i64) -> Result<Field> {
-    codeyard_db_core::queries::postgres::retry_on_conflict(|| field_by_id_once(pool, viewer, id))
+    codeyard_database::queries::postgres::retry_on_conflict(|| field_by_id_once(pool, viewer, id))
         .await
 }
 
@@ -112,7 +112,7 @@ pub async fn item_by_id_at(
     id: i64,
     include_deleted: bool,
 ) -> Result<Item> {
-    codeyard_db_core::queries::postgres::retry_on_conflict(|| {
+    codeyard_database::queries::postgres::retry_on_conflict(|| {
         item_by_id_at_once(pool, viewer, id, include_deleted)
     })
     .await
@@ -147,7 +147,7 @@ pub async fn metadata(
     template: Option<bool>,
 ) -> Result<Project> {
     anyhow::ensure!(
-        readme.is_none_or(|text| codeyard_model::issue_input::validate_body(text, false).is_ok()),
+        readme.is_none_or(|text| codeyard_types::issue_input::validate_body(text, false).is_ok()),
         Refusal::Invalid
     );
     let mut tx = pool.begin().await?;
@@ -265,7 +265,7 @@ pub async fn copy(
     owner_authority(&mut tx, actor, owner, true).await?;
     let (kind, id) = owner.parts();
     anyhow::ensure!(
-        codeyard_db_core::queries::postgres::users::transitions::credential_live(
+        codeyard_database::queries::postgres::users::transitions::credential_live(
             &mut tx, actor, credential, true
         )
         .await?,

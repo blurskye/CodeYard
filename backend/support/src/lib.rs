@@ -13,9 +13,6 @@ pub mod secrets;
 pub mod fs;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub mod ssh_mode;
-
-#[cfg(not(target_arch = "wasm32"))]
 pub mod node_identity;
 
 #[cfg(not(target_arch = "wasm32"))]

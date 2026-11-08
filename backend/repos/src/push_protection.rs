@@ -16,8 +16,8 @@ pub struct ApprovedBypass {
 /// push protection blocks. Returns the hashes of the secrets that the actor's bypass allows. The
 /// caller records their use once the publication has succeeded.
 pub async fn refuse_blocked_secrets(
-    pool: &codeyard_db_core::DbPool,
-    repo: &codeyard_db_core::models::Repository,
+    pool: &codeyard_database::DbPool,
+    repo: &codeyard_database::models::Repository,
     actor: i64,
     path: &Path,
     quarantine: Option<&Path>,
@@ -58,7 +58,7 @@ pub async fn refuse_blocked_secrets(
         {
             let link = format!(
                 "{}/{}/{}/security/secret-scanning/unblock-secret/{}",
-                codeyard_model::http_config::link_origin(),
+                codeyard_types::http_config::link_origin(),
                 codeyard_types::paths::encode_component(&owner),
                 codeyard_types::paths::encode_component(&repo.name),
                 placeholder.id

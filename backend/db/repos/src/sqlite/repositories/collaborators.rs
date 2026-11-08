@@ -5,15 +5,15 @@ use crate::repositories::collaborators::Invitation;
 use crate::repositories::collaborators::InvitationSummary;
 use crate::repositories::collaborators::Refusal;
 use anyhow::Result;
-use codeyard_db_core::models::AccessLevel;
-use codeyard_db_core::models::User;
-use codeyard_db_core::pool::SqlitePool;
+use codeyard_database::models::AccessLevel;
+use codeyard_database::models::User;
+use codeyard_database::pool::SqlitePool;
 use sqlx::Sqlite;
 use sqlx::Transaction;
 
 async fn admin(tx: &mut Transaction<'_, Sqlite>, actor: i64, repo: i64) -> Result<()> {
     anyhow::ensure!(
-        codeyard_db_core::queries::sqlite::discussions::lock_admin_authority(tx, actor, repo)
+        codeyard_database::queries::sqlite::discussions::lock_admin_authority(tx, actor, repo)
             .await?,
         Refusal::Denied
     );
@@ -22,7 +22,7 @@ async fn admin(tx: &mut Transaction<'_, Sqlite>, actor: i64, repo: i64) -> Resul
 
 pub async fn add(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     username: &str,
     permission: AccessLevel,
@@ -32,7 +32,7 @@ pub async fn add(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     admin(&mut tx, actor, repo_id).await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::sqlite::credentials::writes(
+        codeyard_database::queries::sqlite::credentials::writes(
             &mut tx,
             &authority,
             Some(repo_id),
@@ -117,7 +117,7 @@ pub async fn list(
 }
 
 fn administration(user: &str) -> String {
-    let access = codeyard_db_core::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
+    let access = codeyard_database::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
     format!("EXISTS(SELECT 1 FROM users u WHERE u.id={user} AND NOT u.is_banned AND NOT u.must_change_password
         AND NOT r.is_gist AND NOT r.is_archived
         AND ((r.owner_kind='user' AND u.is_admin) OR ({access})>=5)
@@ -196,7 +196,7 @@ pub async fn update_invitation(
 
 pub async fn respond(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     id: i64,
     accept: bool,
 ) -> Result<()> {

@@ -34,7 +34,7 @@ async fn contract(pg: bool) {
     )
     .await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard_repos_core::repositories::lifecycle::provision(
+    let repo = codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
@@ -300,7 +300,7 @@ async fn rest_settings(pg: bool) {
     )
     .await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard_repos_core::repositories::lifecycle::provision(
+    let repo = codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         RepositoryCreationOwner {
@@ -318,7 +318,7 @@ async fn rest_settings(pg: bool) {
         f.pool(),
         bob,
         repo.id,
-        codeyard_db_core::models::AccessLevel::Write,
+        codeyard_database::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -757,7 +757,7 @@ async fn rest_settings(pg: bool) {
             .await
             .unwrap()
             .unwrap();
-        let permissions: codeyard_model::permissions::Permissions =
+        let permissions: codeyard_types::permissions::Permissions =
             serde_json::from_str(&token.permissions).unwrap();
         assert_eq!(permissions.allows("contents", true), expected);
         codeyard_db_actions::ci::finish_ci_run(f.pool(), claim.run.id, "settings", "success", None)
@@ -955,7 +955,7 @@ async fn rest_reviews(pg: bool) {
     let bob = f.actor("bob").await;
     let carol = f.actor("carol").await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard_repos_core::repositories::lifecycle::provision(
+    let repo = codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         RepositoryCreationOwner::personal(alice),
@@ -966,7 +966,7 @@ async fn rest_reviews(pg: bool) {
     )
     .await
     .unwrap();
-    let fork = codeyard_repos_core::repositories::lifecycle::provision(
+    let fork = codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         RepositoryCreationOwner::personal(bob),
@@ -987,7 +987,7 @@ async fn rest_reviews(pg: bool) {
             f.pool(),
             actor,
             repo.id,
-            codeyard_db_core::models::AccessLevel::Read,
+            codeyard_database::models::AccessLevel::Read,
         )
         .await
         .unwrap();

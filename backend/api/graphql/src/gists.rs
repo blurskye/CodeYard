@@ -1,6 +1,6 @@
 //! gh's gist picker uses creation order and loads file text only when requested.
 use base64::Engine;
-use codeyard_model::node_id;
+use codeyard_types::node_id;
 
 use crate::arguments::Arguments;
 use crate::missing;
@@ -10,7 +10,7 @@ use crate::Result;
 use async_graphql::Error;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use codeyard_db_repos::gists::Gist;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_git_storage::repositories::store::repo_store;
 use serde_json::json;
 use serde_json::Value;
 

@@ -13,9 +13,9 @@ use axum::http::StatusCode;
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
 use codeyard_ci::config::CiConfig;
-use codeyard_repos_core::repositories::pull_requests::OperationError;
-use codeyard_repos_core::repositories::store::repo_store;
-use codeyard_repos_core::store_types::RestackMove;
+use codeyard_git_storage::repositories::pull_requests::OperationError;
+use codeyard_git_storage::repositories::store::repo_store;
+use codeyard_git_storage::store_types::RestackMove;
 use codeyard_repos_pulls::repositories::pull_requests::restack;
 use codeyard_storage::ObjectStore;
 use database::Database;
@@ -29,7 +29,7 @@ struct App {
     alice: Client,
     bob: Client,
     owner: i64,
-    repository: codeyard_db_core::models::Repository,
+    repository: codeyard_database::models::Repository,
 }
 
 async fn setup(f: &mut Database, root: &Path) -> App {
@@ -37,7 +37,7 @@ async fn setup(f: &mut Database, root: &Path) -> App {
     f.complete_setup().await;
     let owner = f.actor("alice").await;
     let bob_id = f.actor("bob").await;
-    let repository = codeyard_repos_core::repositories::lifecycle::provision(
+    let repository = codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root,
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),
@@ -52,7 +52,7 @@ async fn setup(f: &mut Database, root: &Path) -> App {
         f.pool(),
         bob_id,
         repository.id,
-        codeyard_db_core::models::AccessLevel::Read,
+        codeyard_database::models::AccessLevel::Read,
     )
     .await
     .unwrap();

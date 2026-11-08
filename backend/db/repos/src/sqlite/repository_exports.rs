@@ -2,9 +2,9 @@ use crate::repository_exports::ExportOptions;
 use crate::repository_exports::ExportRefusal;
 use crate::repository_exports::RepositoryExport;
 use anyhow::Result;
-use codeyard_db_core::models::OrgRole;
-use codeyard_db_core::pool::SqlitePool;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
+use codeyard_database::models::OrgRole;
+use codeyard_database::pool::SqlitePool;
+use codeyard_database::queries::organizations::OrganizationOutcome;
 use sqlx::SqliteConnection;
 
 async fn authority(
@@ -14,7 +14,7 @@ async fn authority(
 ) -> Result<bool> {
     if let Some(org) = org {
         return Ok(matches!(
-            codeyard_db_core::queries::sqlite::organizations::authority::authority(
+            codeyard_database::queries::sqlite::organizations::authority::authority(
                 connection, actor, org
             )
             .await?,

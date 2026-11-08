@@ -8,7 +8,7 @@ use axum::http::Uri;
 use axum::response::Response;
 use codeyard_api_http::context::PageContext;
 use codeyard_app::app::AppState;
-use codeyard_db_core::cells::search::Filter;
+use codeyard_database::cells::search::Filter;
 use codeyard_db_repos::repositories::records::RepositoryFilter;
 use codeyard_db_repos::repositories::records::RepositoryKind;
 use codeyard_db_repos::repositories::records::RepositorySort;
@@ -196,7 +196,7 @@ async fn indexed(
         other => other,
     };
     // The index answers the first 1000 results, as search does; later pages list this cell.
-    if offset >= codeyard_db_core::cells::search::MAXIMUM_OFFSET as usize {
+    if offset >= codeyard_database::cells::search::MAXIMUM_OFFSET as usize {
         return None;
     }
     match codeyard_api_github::search::global::public_repositories(

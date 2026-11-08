@@ -4,15 +4,15 @@
 //! requests add and remove an organization's presence.
 use super::cells_frontend::Server;
 use crate::support::native_database::PostgresDatabase;
-use codeyard_cells_router::{
+use codeyard_db_directory::Directory;
+use codeyard_router::{
     directory, frontend,
     http::Transport,
     routes::{self, Routes},
 };
-use codeyard_db_directory::Directory;
-use codeyard_model::cells::{Cell, Key, KeyKind, Object, ObjectKind, ReadRegion, State};
 use codeyard_support::node_identity::NodeKey;
-use codeyard_types::cells::Prefix;
+use codeyard_types::cell_ids::Prefix;
+use codeyard_types::cells::{Cell, Key, KeyKind, Object, ObjectKind, ReadRegion, State};
 use std::time::Duration;
 
 /// A stand-in cell web node that names itself in every response. On `/alice/stamp` it also
@@ -26,7 +26,7 @@ async fn web_node(name: &'static str) -> Server {
               _body: axum::body::Bytes| async move {
             let mut reply = format!("{name} {method} {}", uri.path());
             if uri.path() == "/alice/stamp" {
-                for region in headers.get_all(codeyard_model::cells::REGION_HEADER) {
+                for region in headers.get_all(codeyard_types::cells::REGION_HEADER) {
                     reply.push(' ');
                     reply.push_str(region.to_str().unwrap());
                 }
@@ -223,7 +223,7 @@ async fn regions_place_signups_keep_homes_and_serve_present_organizations_nearby
     for (router, region) in [(&a, "a"), (&b, "b")] {
         assert_eq!(
             answered(
-                get(router, "/alice/stamp").header(codeyard_model::cells::REGION_HEADER, "evil")
+                get(router, "/alice/stamp").header(codeyard_types::cells::REGION_HEADER, "evil")
             )
             .await,
             format!("zero GET /alice/stamp {region}")
@@ -333,8 +333,10 @@ async fn regions_place_signups_keep_homes_and_serve_present_organizations_nearby
     listener.stop().await;
 }
 
-async fn counted(pool: &codeyard_db_core::pool::PgPool) -> Vec<(i64, String, i64)> {
-    codeyard_db_core::cells::regions::flush(pool).await.unwrap();
+async fn counted(pool: &codeyard_database::pool::PgPool) -> Vec<(i64, String, i64)> {
+    codeyard_database::cells::regions::flush(pool)
+        .await
+        .unwrap();
     sqlx::query_as(
         "SELECT user_id,region,requests FROM cell_request_counts ORDER BY user_id,region",
     )
@@ -344,7 +346,12 @@ async fn counted(pool: &codeyard_db_core::pool::PgPool) -> Vec<(i64, String, i64
 }
 
 /// Sets each of the last seven days' counts for one account and region.
-async fn set_counts(pool: &codeyard_db_core::pool::PgPool, user: i64, region: &str, requests: i64) {
+async fn set_counts(
+    pool: &codeyard_database::pool::PgPool,
+    user: i64,
+    region: &str,
+    requests: i64,
+) {
     sqlx::query("DELETE FROM cell_request_counts WHERE user_id=$1 AND region=$2")
         .bind(user)
         .bind(region)
@@ -362,14 +369,14 @@ async fn set_counts(pool: &codeyard_db_core::pool::PgPool, user: i64, region: &s
     }
 }
 
-async fn local_presence(pool: &codeyard_db_core::pool::PgPool) -> Vec<String> {
+async fn local_presence(pool: &codeyard_database::pool::PgPool) -> Vec<String> {
     sqlx::query_scalar("SELECT region FROM cell_presence ORDER BY region")
         .fetch_all(pool)
         .await
         .unwrap()
 }
 
-async fn audits(pool: &codeyard_db_core::pool::PgPool, action: &str) -> i64 {
+async fn audits(pool: &codeyard_database::pool::PgPool, action: &str) -> i64 {
     sqlx::query_scalar("SELECT COUNT(*) FROM audit_log WHERE action=$1")
         .bind(action)
         .fetch_one(pool)
@@ -379,7 +386,7 @@ async fn audits(pool: &codeyard_db_core::pool::PgPool, action: &str) -> i64 {
 
 #[tokio::test]
 async fn counted_member_requests_add_and_remove_organization_presence() {
-    use codeyard_db_cluster::regions::{self, Change};
+    use codeyard_db_placement::regions::{self, Change};
     use codeyard_types::cluster::RegionPolicy;
     crate::support::fake_webui_bundle::install();
     let registry = PostgresDatabase::unmigrated().await;
@@ -388,7 +395,7 @@ async fn counted_member_requests_add_and_remove_organization_presence() {
         .unwrap();
     directory.migrate().await.unwrap();
     let zero = PostgresDatabase::new().await;
-    let codeyard_db_core::DbPool::Postgres(pool) = &zero.pool else {
+    let codeyard_database::DbPool::Postgres(pool) = &zero.pool else {
         unreachable!()
     };
     let (mut alice_server, alice, alice_token) =
@@ -461,7 +468,7 @@ async fn counted_member_requests_add_and_remove_organization_presence() {
     let response = client
         .get(format!("{}/api/v3/user", alice_server.url()))
         .bearer_auth(&alice_token)
-        .header(codeyard_model::cells::REGION_HEADER, "b")
+        .header(codeyard_types::cells::REGION_HEADER, "b")
         .send()
         .await
         .unwrap();
@@ -494,7 +501,7 @@ async fn counted_member_requests_add_and_remove_organization_presence() {
     let send = |token: Option<&str>| {
         let request = client
             .get(format!("{}/", counting.url()))
-            .header(codeyard_model::cells::REGION_HEADER, "b");
+            .header(codeyard_types::cells::REGION_HEADER, "b");
         let request = match token {
             Some(token) => request.bearer_auth(token),
             None => request,

@@ -1,10 +1,14 @@
 //! Web editor and API file writes: check who may write where, then have the store
 //! commit the file and move the branch, failing if it changed since the editor loaded.
 use codeyard_ci_engine::runs::CiRuns;
-use codeyard_db_core::cells::authorization::inherit;
+use codeyard_database::cells::authorization::inherit;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
 use codeyard_git::CommitInfo;
+use codeyard_git_storage::context::NodeContext;
+use codeyard_git_storage::push_workflows::RefUpdate;
+use codeyard_git_storage::repositories::store::repo_store;
+use codeyard_git_storage::repositories::store::RepoStore;
 use codeyard_repos::editor::CommitIdentities;
 use codeyard_repos::editor::FileWrite;
 use codeyard_repos::editor::PreparedFile;
@@ -16,15 +20,11 @@ use codeyard_repos::protection::History;
 use codeyard_repos::protection::Refusal;
 use codeyard_repos::protection::WriteVia;
 use codeyard_repos::protection::ANY_TIP;
-use codeyard_repos_core::context::NodeContext;
-use codeyard_repos_core::push_workflows::RefUpdate;
-use codeyard_repos_core::repositories::store::repo_store;
-use codeyard_repos_core::repositories::store::RepoStore;
 use std::collections::HashMap;
 
 pub struct FileSave {
     pub commit: CommitInfo,
-    pub actor: codeyard_db_core::models::User,
+    pub actor: codeyard_database::models::User,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -166,9 +166,9 @@ enum CommitOrigin {
 }
 
 async fn check_web_signoff(
-    pool: &codeyard_db_core::DbPool,
-    repository: &codeyard_db_core::models::Repository,
-    user: &codeyard_db_core::models::User,
+    pool: &codeyard_database::DbPool,
+    repository: &codeyard_database::models::Repository,
+    user: &codeyard_database::models::User,
     message: &str,
 ) -> Result<(), WriteError> {
     let required = codeyard_db_orgs::organizations::settings::repository_requires_web_signoff(
@@ -202,10 +202,10 @@ async fn check_web_signoff(
     reason = "Explicit actor and resources keep operations HTTP-free."
 )]
 pub async fn write_file(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor_id: impl Into<codeyard_database::queries::credentials::Actor>,
     owner: &str,
     repository_id: i64,
     input: FileWrite,
@@ -239,9 +239,9 @@ pub async fn write_file(
 /// Whether the branch rules refuse `user` a direct commit to `branch` at `revision`. The pages
 /// then offer a commit on a new branch instead, as GitHub does for a protected branch.
 pub async fn direct_commit_refused(
-    pool: &codeyard_db_core::DbPool,
-    repository: &codeyard_db_core::models::Repository,
-    user: &codeyard_db_core::models::User,
+    pool: &codeyard_database::DbPool,
+    repository: &codeyard_database::models::Repository,
+    user: &codeyard_database::models::User,
     branch: &str,
     revision: &str,
 ) -> bool {
@@ -296,8 +296,8 @@ fn check_new_branch_name(name: &str) -> Result<(), WriteError> {
 /// repository and an unreadable one get the same answer, so no refusal reveals which private
 /// names exist. The JSON handlers call this before they decode the body.
 pub async fn ensure_readable(
-    pool: &codeyard_db_core::DbPool,
-    user: &codeyard_db_core::models::User,
+    pool: &codeyard_database::DbPool,
+    user: &codeyard_database::models::User,
     owner: &str,
     name: &str,
 ) -> Result<i64, WriteError> {
@@ -323,10 +323,10 @@ pub async fn ensure_readable(
 /// The repository at `owner/name`. A missing one is refused like an unreadable one, by the
 /// callers that check access.
 pub async fn named_repository(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     owner: &str,
     name: &str,
-) -> Result<codeyard_db_core::models::Repository, WriteError> {
+) -> Result<codeyard_database::models::Repository, WriteError> {
     codeyard_db_repos::repositories::records::get_repository(pool, owner, name)
         .await
         .map_err(|_| unavailable())?
@@ -342,10 +342,10 @@ pub async fn named_repository(
     reason = "Explicit actor and resources keep operations HTTP-free."
 )]
 pub async fn write_file_bytes(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor_id: impl Into<codeyard_database::queries::credentials::Actor>,
     owner: &str,
     repository_id: i64,
     input: FileWrite,
@@ -375,10 +375,10 @@ pub async fn write_file_bytes(
     reason = "Explicit actor and resources keep operations HTTP-free."
 )]
 pub async fn delete_file(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor_id: impl Into<codeyard_database::queries::credentials::Actor>,
     owner: &str,
     repository_id: i64,
     input: FileWrite,
@@ -406,10 +406,10 @@ pub async fn delete_file(
     reason = "Explicit actor and resources keep operations HTTP-free."
 )]
 pub async fn delete_file_web(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor_id: impl Into<codeyard_database::queries::credentials::Actor>,
     owner: &str,
     repository_id: i64,
     input: FileWrite,
@@ -447,7 +447,7 @@ pub fn default_commit_message(input: &FileWrite) -> String {
 /// runs only after that. The actor must then be able to write the branch, and the branch's
 /// protection rules must accept the commit.
 async fn authorize_write(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     actor_id: i64,
     repository_id: i64,
     branch: &str,
@@ -455,8 +455,8 @@ async fn authorize_write(
     check: impl FnOnce() -> Result<(), WriteError>,
 ) -> Result<
     (
-        codeyard_db_core::models::User,
-        codeyard_db_core::models::Repository,
+        codeyard_database::models::User,
+        codeyard_database::models::Repository,
     ),
     WriteError,
 > {
@@ -519,10 +519,10 @@ async fn authorize_write(
     reason = "Explicit actor and resources keep operations HTTP-free."
 )]
 async fn save_file(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor_id: impl Into<codeyard_database::queries::credentials::Actor>,
     _owner: &str,
     repository_id: i64,
     mut input: FileWrite,
@@ -632,11 +632,11 @@ async fn save_file(
 /// requests that use the branch follow it, and push workflows are queued for the paths that
 /// changed.
 async fn publish_commit(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     store: &RepoStore,
     ci: &CiRuns,
-    repository: &codeyard_db_core::models::Repository,
-    user: codeyard_db_core::models::User,
+    repository: &codeyard_database::models::Repository,
+    user: codeyard_database::models::User,
     prepared: &PreparedFile,
     new_branch: Option<&str>,
 ) -> Result<FileSave, WriteError> {
@@ -700,7 +700,7 @@ async fn publish_commit(
         Some(&[branch][..]),
         ci,
         user.id,
-        codeyard_db_core::models::AccessLevel::Owner,
+        codeyard_database::models::AccessLevel::Owner,
     )
     .await
     .is_ok();
@@ -742,10 +742,10 @@ async fn publish_commit(
     reason = "Explicit actor and resources keep operations HTTP-free."
 )]
 pub async fn upload_files(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor_id: impl Into<codeyard_database::queries::credentials::Actor>,
     _owner: &str,
     repository_id: i64,
     write: UploadWrite,

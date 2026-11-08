@@ -13,11 +13,11 @@ use axum::routing::put;
 use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_app::app::AppState;
-use codeyard_db_core::queries::organizations::roles::SECURITY_MANAGER_ROLE_ID;
+use codeyard_database::queries::organizations::roles::SECURITY_MANAGER_ROLE_ID;
 use codeyard_db_orgs::organizations::roles::RoleTarget;
 use codeyard_db_repos::repositories::push_teams::TeamAccess;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -52,7 +52,7 @@ async fn product(
         .await
         .map_err(Error::unavailable)?,
     )?;
-    if role != codeyard_db_core::models::OrgRole::Owner {
+    if role != codeyard_database::models::OrgRole::Owner {
         return Err(Error::new(
             StatusCode::FORBIDDEN,
             "Must be an organization owner",
@@ -80,7 +80,7 @@ async fn product(
     let input: Value = if body.is_empty() {
         Value::Null
     } else {
-        serde_json::from_slice(&body).map_err(codeyard_model::github_error::json_parse_error)?
+        serde_json::from_slice(&body).map_err(codeyard_types::github_error::json_parse_error)?
     };
     if !input.is_null() {
         let fields = input

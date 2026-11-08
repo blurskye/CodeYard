@@ -1,8 +1,8 @@
 use chrono::DateTime;
 use chrono::Utc;
 use codeyard_db_repos::assignees::AssignedItem;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde_json::Value;
 use std::collections::HashMap;
 pub struct Comment {
@@ -40,7 +40,7 @@ fn item_key(item: AssignedItem) -> (bool, i64) {
     }
 }
 
-pub async fn find(pool: &codeyard_db_core::DbPool, repo_id: i64, id: i64) -> Result<Comment> {
+pub async fn find(pool: &codeyard_database::DbPool, repo_id: i64, id: i64) -> Result<Comment> {
     if id < 2 {
         return Err(Error::missing());
     }
@@ -93,8 +93,8 @@ pub async fn find(pool: &codeyard_db_core::DbPool, repo_id: i64, id: i64) -> Res
 }
 
 pub async fn document(
-    pool: &codeyard_db_core::DbPool,
-    repo: &codeyard_db_core::models::Repository,
+    pool: &codeyard_database::DbPool,
+    repo: &codeyard_database::models::Repository,
     owner: &str,
     comment: &Comment,
 ) -> Result<Value> {
@@ -105,8 +105,8 @@ pub async fn document(
 }
 
 pub async fn documents(
-    pool: &codeyard_db_core::DbPool,
-    repo: &codeyard_db_core::models::Repository,
+    pool: &codeyard_database::DbPool,
+    repo: &codeyard_database::models::Repository,
     owner: &str,
     comments: &[Comment],
 ) -> Result<Vec<Value>> {

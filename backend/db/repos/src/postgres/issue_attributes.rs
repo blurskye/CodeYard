@@ -7,8 +7,8 @@ use crate::issue_attributes::Refusal;
 use crate::issue_attributes::SelectOption;
 use crate::issue_attributes::ValueInput;
 use anyhow::Result;
-use codeyard_db_core::pool::PgPool;
-use codeyard_db_core::queries::credentials::Actor;
+use codeyard_database::pool::PgPool;
+use codeyard_database::queries::credentials::Actor;
 use codeyard_types::credentials::AccountRestricted;
 use serde_json::json;
 use serde_json::Value;
@@ -101,7 +101,7 @@ pub async fn values(
         .execute(&mut *tx)
         .await?;
     // Repository privacy can change after the caller's access check; read it in this snapshot.
-    let readable: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=$2 WHERE r.id=$1 AND {})", codeyard_db_core::queries::postgres::repositories::access::readable_condition()))
+    let readable: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=$2 WHERE r.id=$1 AND {})", codeyard_database::queries::postgres::repositories::access::readable_condition()))
         .bind(repo)
         .bind(viewer)
         .fetch_one(&mut *tx)
@@ -163,7 +163,7 @@ async fn begin_write<'a>(
     let actor = authority.user_id;
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::postgres::discussions::lock_write_authority(
+        codeyard_database::queries::postgres::discussions::lock_write_authority(
             &mut tx, actor, repo
         )
         .await?,
@@ -172,7 +172,7 @@ async fn begin_write<'a>(
     require_actor(&mut tx, authority).await?;
     lock_metadata(&mut tx).await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::postgres::credentials::repository(
+        codeyard_database::queries::postgres::credentials::repository(
             &mut tx, authority, repo, "issues", true
         )
         .await?,
@@ -407,12 +407,12 @@ pub async fn organization_catalog(
     actor: i64,
     kind: &str,
 ) -> Result<Vec<Attribute>> {
-    use codeyard_db_core::queries::organizations::OrganizationOutcome;
+    use codeyard_database::queries::organizations::OrganizationOutcome;
     let mut tx = pool.begin().await?;
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         .execute(&mut *tx)
         .await?;
-    match codeyard_db_core::queries::postgres::organizations::authority::read_authority(
+    match codeyard_database::queries::postgres::organizations::authority::read_authority(
         &mut tx, actor, org,
     )
     .await?
@@ -430,23 +430,23 @@ async fn begin_organization_write<'a>(
     org: i64,
     authority: &Actor,
 ) -> Result<Transaction<'a, Postgres>> {
-    use codeyard_db_core::queries::organizations::OrganizationOutcome;
+    use codeyard_database::queries::organizations::OrganizationOutcome;
 
     let actor = authority.user_id;
     let mut tx = pool.begin().await?;
-    match codeyard_db_core::queries::postgres::organizations::authority::authority(
+    match codeyard_database::queries::postgres::organizations::authority::authority(
         &mut tx, actor, org,
     )
     .await?
     {
-        OrganizationOutcome::Applied(codeyard_db_core::models::OrgRole::Owner) => {}
+        OrganizationOutcome::Applied(codeyard_database::models::OrgRole::Owner) => {}
         OrganizationOutcome::Missing => return Err(Refusal::Missing.into()),
         _ => return Err(Refusal::Denied.into()),
     }
     require_actor(&mut tx, authority).await?;
     lock_metadata(&mut tx).await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::postgres::credentials::organization(
+        codeyard_database::queries::postgres::credentials::organization(
             &mut tx,
             authority,
             org,

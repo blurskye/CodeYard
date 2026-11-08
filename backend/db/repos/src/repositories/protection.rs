@@ -1,8 +1,8 @@
 use anyhow::Result;
-use codeyard_db_core::models::BranchProtectionRule;
-use codeyard_db_core::models::CommitStatus;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::BranchProtectionRule;
+use codeyard_database::models::CommitStatus;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum ProtectionWriteRefusal {
@@ -40,7 +40,7 @@ pub struct ProtectionSnapshot {
 
 native_operation!(crate::postgres::repositories::protection::read_protection_snapshot,
     crate::sqlite::repositories::protection::read_protection_snapshot,
-    fn read_protection_snapshot(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo_id: i64) -> Result<ProtectionSnapshot>);
+    fn read_protection_snapshot(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, repo_id: i64) -> Result<ProtectionSnapshot>);
 
 /// Room for the longest server-owned context, `gitserv/workflow/` and a workflow path.
 const MAX_CHECK_BYTES: usize = 512;
@@ -97,7 +97,7 @@ pub fn normalize_check_bindings(
 /// an omitted setting means.
 pub struct BranchProtectionRuleUpsert<'a> {
     pub actor_id: i64,
-    pub credential: Option<codeyard_db_core::queries::users::accounts::AccountCredential<'a>>,
+    pub credential: Option<codeyard_database::queries::users::accounts::AccountCredential<'a>>,
     pub repo_id: i64,
     pub pattern: &'a str,
     pub require_pull_request: bool,
@@ -116,7 +116,7 @@ pub struct BranchProtectionRuleUpsert<'a> {
     pub enforce_admins: bool,
     pub require_conversation_resolution: bool,
     pub require_code_owner_review: bool,
-    pub github_settings: Option<codeyard_db_core::models::BranchProtectionSettings>,
+    pub github_settings: Option<codeyard_database::models::BranchProtectionSettings>,
 }
 
 impl Default for BranchProtectionRuleUpsert<'_> {
@@ -258,7 +258,7 @@ impl ProtectionUpdate {
 }
 
 pub(crate) fn prune_check_bindings(
-    settings: &mut codeyard_db_core::models::BranchProtectionSettings,
+    settings: &mut codeyard_database::models::BranchProtectionSettings,
     enabled: bool,
     contexts: &[String],
 ) {
@@ -524,14 +524,14 @@ native_operation!(crate::postgres::repositories::protection::delete_branch_prote
     crate::sqlite::repositories::protection::delete_branch_protection_rule,
     fn delete_branch_protection_rule(
     pool: &DbPool,
-    actor_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor_id: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     pattern: &str,
 ) -> Result<bool>);
 
 native_operation!(crate::postgres::repositories::protection::update_branch_protection_rule,
     crate::sqlite::repositories::protection::update_branch_protection_rule,
-    fn update_branch_protection_rule(pool: &DbPool, actor_id: impl Into<codeyard_db_core::queries::credentials::Actor>, repo_id: i64, pattern: &str, update: ProtectionUpdate) -> Result<BranchProtectionRule>);
+    fn update_branch_protection_rule(pool: &DbPool, actor_id: impl Into<codeyard_database::queries::credentials::Actor>, repo_id: i64, pattern: &str, update: ProtectionUpdate) -> Result<BranchProtectionRule>);
 
 native_operation!(crate::postgres::repositories::protection::branch_redirect,
     crate::sqlite::repositories::protection::branch_redirect,
@@ -583,8 +583,8 @@ native_operation!(crate::postgres::repositories::protection::commit_status_histo
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codeyard_model::workflow_glob::branch_pattern_matches;
-    use codeyard_model::workflow_glob::WorkflowMatchBudget;
+    use codeyard_types::workflow_glob::branch_pattern_matches;
+    use codeyard_types::workflow_glob::WorkflowMatchBudget;
 
     #[test]
     fn push_allowance_validation_deduplicates_new_users_but_does_not_revalidate_removals() {

@@ -3,17 +3,17 @@ use crate::repositories::protection::BranchProtectionRuleUpsert;
 use crate::repositories::protection::CommitStatusUpsert;
 use crate::repositories::protection::ProtectionWriteRefusal;
 use anyhow::Result;
-use codeyard_db_core::models::BranchProtectionRule;
-use codeyard_db_core::models::CommitStatus;
-use codeyard_db_core::pool::PgPool;
+use codeyard_database::models::BranchProtectionRule;
+use codeyard_database::models::CommitStatus;
+use codeyard_database::pool::PgPool;
 
 pub async fn read_protection_snapshot(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
 ) -> Result<crate::repositories::protection::ProtectionSnapshot> {
     let actor = actor.into();
-    codeyard_db_core::queries::postgres::retry_on_conflict(|| {
+    codeyard_database::queries::postgres::retry_on_conflict(|| {
         read_protection_snapshot_once(pool, &actor, repo_id)
     })
     .await
@@ -21,7 +21,7 @@ pub async fn read_protection_snapshot(
 
 async fn read_protection_snapshot_once(
     pool: &PgPool,
-    actor: &codeyard_db_core::queries::credentials::Actor,
+    actor: &codeyard_database::queries::credentials::Actor,
     repo_id: i64,
 ) -> Result<crate::repositories::protection::ProtectionSnapshot> {
     let mut tx = pool.begin().await?;
@@ -29,7 +29,7 @@ async fn read_protection_snapshot_once(
         .execute(&mut *tx)
         .await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::postgres::discussions::lock_settings_read_authority(
+        codeyard_database::queries::postgres::discussions::lock_settings_read_authority(
             &mut tx,
             actor.user_id,
             repo_id,
@@ -109,7 +109,7 @@ pub async fn upsert_branch_protection_rule(
 ) -> Result<BranchProtectionRule> {
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::postgres::discussions::lock_repository_mutation_authority(
+        codeyard_database::queries::postgres::discussions::lock_repository_mutation_authority(
             &mut tx,
             input.actor_id,
             input.repo_id,
@@ -119,9 +119,9 @@ pub async fn upsert_branch_protection_rule(
     );
     if let Some(credential) = input.credential.as_ref() {
         let authority =
-            codeyard_db_core::queries::credentials::Actor::from((input.actor_id, credential));
+            codeyard_database::queries::credentials::Actor::from((input.actor_id, credential));
         anyhow::ensure!(
-            codeyard_db_core::queries::postgres::credentials::repository(
+            codeyard_database::queries::postgres::credentials::repository(
                 &mut tx,
                 &authority,
                 input.repo_id,
@@ -133,7 +133,7 @@ pub async fn upsert_branch_protection_rule(
         );
     }
     let previous: Option<String> = sqlx::query_scalar("SELECT github_settings FROM branch_protection_rules WHERE repo_id=$1 AND pattern=$2 FOR UPDATE").bind(input.repo_id).bind(input.pattern).fetch_optional(&mut *tx).await?;
-    let previous: codeyard_db_core::models::BranchProtectionSettings = previous
+    let previous: codeyard_database::models::BranchProtectionSettings = previous
         .map(|value| serde_json::from_str(&value))
         .transpose()?
         .unwrap_or_default();
@@ -262,7 +262,7 @@ pub async fn upsert_branch_protection_rule(
 
 pub async fn delete_branch_protection_rule(
     pool: &PgPool,
-    actor_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor_id: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     pattern: &str,
 ) -> Result<bool> {
@@ -270,14 +270,14 @@ pub async fn delete_branch_protection_rule(
     let actor_id = authority.user_id;
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::postgres::discussions::lock_admin_authority(
+        codeyard_database::queries::postgres::discussions::lock_admin_authority(
             &mut tx, actor_id, repo_id,
         )
         .await?,
         ProtectionWriteRefusal::Denied
     );
     anyhow::ensure!(
-        codeyard_db_core::queries::postgres::credentials::repository(
+        codeyard_database::queries::postgres::credentials::repository(
             &mut tx,
             &authority,
             repo_id,
@@ -300,7 +300,7 @@ pub async fn delete_branch_protection_rule(
 
 pub async fn update_branch_protection_rule(
     pool: &PgPool,
-    actor_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor_id: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     pattern: &str,
     update: crate::repositories::protection::ProtectionUpdate,
@@ -309,14 +309,14 @@ pub async fn update_branch_protection_rule(
     let actor_id = authority.user_id;
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::postgres::discussions::lock_admin_authority(
+        codeyard_database::queries::postgres::discussions::lock_admin_authority(
             &mut tx, actor_id, repo_id
         )
         .await?,
         ProtectionWriteRefusal::Denied
     );
     anyhow::ensure!(
-        codeyard_db_core::queries::postgres::credentials::repository(
+        codeyard_database::queries::postgres::credentials::repository(
             &mut tx,
             &authority,
             repo_id,
@@ -393,7 +393,7 @@ pub async fn rename_branch_settings(
     let admin: bool = sqlx::query_scalar("SELECT default_branch=$2 OR EXISTS(SELECT 1 FROM branch_protection_rules WHERE repo_id=$1 AND pattern=$2) FROM repositories WHERE id=$1").bind(repo).bind(old).fetch_one(&mut *tx).await?;
     if admin {
         anyhow::ensure!(
-            codeyard_db_core::queries::postgres::discussions::lock_admin_authority(
+            codeyard_database::queries::postgres::discussions::lock_admin_authority(
                 &mut tx, actor, repo
             )
             .await?,
@@ -553,7 +553,7 @@ pub async fn commit_status_page(
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         .execute(&mut *tx)
         .await?;
-    let visible: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=$2 WHERE r.id=$1 AND NOT r.is_gist AND (NOT r.is_private OR (r.owner_kind='user' AND (u.is_admin OR r.owner_user_id=u.id)) OR ({})>=1))", codeyard_db_core::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL))
+    let visible: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=$2 WHERE r.id=$1 AND NOT r.is_gist AND (NOT r.is_private OR (r.owner_kind='user' AND (u.is_admin OR r.owner_user_id=u.id)) OR ({})>=1))", codeyard_database::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL))
         .bind(repo).bind(viewer).fetch_one(&mut *tx).await?;
     if !visible {
         return Ok(None);

@@ -1,9 +1,9 @@
 use anyhow::Result;
 use chrono::DateTime;
 use chrono::Utc;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
-use codeyard_model::advisories::Advisory;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
+use codeyard_types::advisories::Advisory;
 use serde_json::Value;
 
 #[derive(Clone, Copy)]
@@ -47,7 +47,7 @@ pub struct Listing<'a> {
 
 /// A UI/preflight projection, never a mutation permit.
 pub(crate) fn administration_sql(level: &str) -> String {
-    let manager = codeyard_db_core::queries::organizations::roles::security_manager_condition(
+    let manager = codeyard_database::queries::organizations::roles::security_manager_condition(
         "u.id",
         "r.owner_org_id",
     );
@@ -61,12 +61,12 @@ native_operation!(crate::postgres::advisories::list,crate::sqlite::advisories::l
 native_operation!(crate::postgres::advisories::get,crate::sqlite::advisories::get,
     fn get(pool:&DbPool,actor:Option<i64>,repo:i64,ghsa:&str)->Result<Option<Advisory>>);
 native_operation!(crate::postgres::advisories::create,crate::sqlite::advisories::create,
-    fn create(pool:&DbPool,actor:impl Into<codeyard_db_core::queries::credentials::Actor>,repo:i64,value:&Value,report:bool)->Result<Advisory>);
+    fn create(pool:&DbPool,actor:impl Into<codeyard_database::queries::credentials::Actor>,repo:i64,value:&Value,report:bool)->Result<Advisory>);
 native_operation!(crate::postgres::advisories::discard_created,crate::sqlite::advisories::discard_created,
     fn discard_created(pool:&DbPool,actor:i64,created:&Advisory)->Result<bool>);
 native_operation!(crate::postgres::advisories::update,crate::sqlite::advisories::update,
-    fn update(pool:&DbPool,actor:impl Into<codeyard_db_core::queries::credentials::Actor>,repo:i64,ghsa:&str,patch:&Value)->Result<Advisory>);
+    fn update(pool:&DbPool,actor:impl Into<codeyard_database::queries::credentials::Actor>,repo:i64,ghsa:&str,patch:&Value)->Result<Advisory>);
 native_operation!(crate::postgres::advisories::request_cve,crate::sqlite::advisories::request_cve,
-    fn request_cve(pool:&DbPool,actor:impl Into<codeyard_db_core::queries::credentials::Actor>,repo:i64,ghsa:&str)->Result<()>);
+    fn request_cve(pool:&DbPool,actor:impl Into<codeyard_database::queries::credentials::Actor>,repo:i64,ghsa:&str)->Result<()>);
 native_operation!(crate::postgres::advisories::attach_fork,crate::sqlite::advisories::attach_fork,
-    fn attach_fork(pool:&DbPool,actor:impl Into<codeyard_db_core::queries::credentials::Actor>,repo:i64,ghsa:&str,fork:i64)->Result<()>);
+    fn attach_fork(pool:&DbPool,actor:impl Into<codeyard_database::queries::credentials::Actor>,repo:i64,ghsa:&str,fork:i64)->Result<()>);

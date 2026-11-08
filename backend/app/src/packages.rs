@@ -5,10 +5,10 @@ use anyhow::ensure;
 use anyhow::Result;
 use codeyard_db_repos::packages::Blob;
 use codeyard_db_repos::packages::Refusal;
-use codeyard_model::package_input::valid_name;
 use codeyard_storage::ObjectStore;
 use codeyard_storage::Upload;
 use codeyard_types::object_limits::MAX_OBJECT_BYTES;
+use codeyard_types::package_input::valid_name;
 use sha2::Sha256;
 
 pub fn digest(bytes: &[u8]) -> String {
@@ -61,7 +61,7 @@ pub fn valid_package_name(kind: &str, name: &str) -> bool {
 }
 
 pub async fn store(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     storage: &ObjectStore,
     package: i64,
     token: i64,
@@ -115,7 +115,7 @@ pub async fn read(storage: &ObjectStore, blob: &Blob) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
-pub async fn collect(pool: &codeyard_db_core::DbPool, storage: &ObjectStore) -> Result<()> {
+pub async fn collect(pool: &codeyard_database::DbPool, storage: &ObjectStore) -> Result<()> {
     let Some(_collecting) = codeyard_db_repos::packages::collector_lock(pool).await? else {
         return Ok(());
     };

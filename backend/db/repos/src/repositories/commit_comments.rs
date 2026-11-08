@@ -1,7 +1,7 @@
 use anyhow::Result;
-use codeyard_db_core::models::CommitComment;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::CommitComment;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 
 #[derive(Debug, thiserror::Error)]
 pub enum CommentRefusal {
@@ -15,7 +15,7 @@ pub enum CommentRefusal {
 
 pub struct CommentCreate<'a> {
     /// The caller and the session or token it signed in with.
-    pub actor: codeyard_db_core::queries::credentials::Actor,
+    pub actor: codeyard_database::queries::credentials::Actor,
     pub repo_id: i64,
     pub sha: &'a str,
     pub body: &'a str,
@@ -26,7 +26,7 @@ pub struct CommentCreate<'a> {
 
 pub struct CommentEdit<'a> {
     /// The caller and the session or token it signed in with.
-    pub actor: codeyard_db_core::queries::credentials::Actor,
+    pub actor: codeyard_database::queries::credentials::Actor,
     pub repo_id: i64,
     pub id: i64,
     pub body: &'a str,
@@ -83,7 +83,7 @@ native_operation!(crate::postgres::repositories::commit_comments::edit_comment,
     fn edit_comment(pool: &DbPool, input: CommentEdit<'_>) -> Result<Option<CommentEdited>>);
 native_operation!(crate::postgres::repositories::commit_comments::delete_comment,
     crate::sqlite::repositories::commit_comments::delete_comment,
-    fn delete_comment(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo: i64, id: i64, expected_revision: Option<&str>) -> Result<Option<CommitComment>>);
+    fn delete_comment(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, repo: i64, id: i64, expected_revision: Option<&str>) -> Result<Option<CommitComment>>);
 native_operation!(crate::postgres::repositories::commit_comments::get_comment,
     crate::sqlite::repositories::commit_comments::get_comment,
     fn get_comment(pool: &DbPool, repo: i64, id: i64) -> Result<Option<CommitComment>>);

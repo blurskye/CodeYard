@@ -11,7 +11,7 @@ use base64::{
     Engine,
 };
 
-use codeyard_repos_core::repositories::lifecycle;
+use codeyard_git_storage::repositories::lifecycle;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
@@ -80,7 +80,7 @@ async fn contract(pg: bool) {
         f.pool(),
         reader_id,
         repos[0].id,
-        codeyard_db_core::models::AccessLevel::Read,
+        codeyard_database::models::AccessLevel::Read,
     )
     .await
     .unwrap();

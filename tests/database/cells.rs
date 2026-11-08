@@ -1,6 +1,6 @@
 //! The operator CLI reserves ranges atomically and preserves existing cell-zero IDs.
 use crate::support::native_database::{NativeDatabase, PostgresDatabase};
-use codeyard_types::cells::{Prefix, IDS_PER_PREFIX};
+use codeyard_types::cell_ids::{Prefix, IDS_PER_PREFIX};
 use std::{path::Path, process::Output, time::Duration};
 
 fn command(root: &Path, url: &str, prefix: &str) -> tokio::process::Command {
@@ -39,7 +39,9 @@ async fn cell_one_issues_exact_bounded_ids_and_initialization_never_rewinds_them
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    codeyard_db_core::cells::load(&database.pool).await.unwrap();
+    codeyard_database::cells::load(&database.pool)
+        .await
+        .unwrap();
     assert_eq!(database.pool.cell_prefix(), Prefix::new(1));
     assert_eq!(database.pool.cell_id(), Prefix::new(1));
     let initialized: bool =
@@ -93,7 +95,9 @@ async fn reinitializing_an_issuer_range_preserves_the_cells_stable_identity() {
         .await
         .unwrap();
     assert!(initialize(root.path(), &url, "2").await.status.success());
-    codeyard_db_core::cells::load(&database.pool).await.unwrap();
+    codeyard_database::cells::load(&database.pool)
+        .await
+        .unwrap();
     assert_eq!(database.pool.cell_id(), Prefix::new(1));
     assert_eq!(database.pool.cell_prefix(), Prefix::new(2));
     database.finish().await;
@@ -200,14 +204,16 @@ async fn renew(root: &Path, url: &str, address: std::net::SocketAddr, key: &str)
 #[tokio::test]
 async fn renewing_a_range_retries_its_directory_reservation_and_rolls_back_partial_activation() {
     crate::support::fake_webui_bundle::install();
-    use codeyard_model::cells::{Cell, State};
     use codeyard_support::node_identity::{load_or_create, NodeKey};
+    use codeyard_types::cells::{Cell, State};
     let mut database = PostgresDatabase::new().await;
     let mut registry = PostgresDatabase::unmigrated().await;
     let root = root();
     let url = database.connection_url();
     assert!(initialize(root.path(), &url, "1").await.status.success());
-    codeyard_db_core::cells::load(&database.pool).await.unwrap();
+    codeyard_database::cells::load(&database.pool)
+        .await
+        .unwrap();
     let first = codeyard_db_identity::users::accounts::create_user(&database.pool, "before", None)
         .await
         .unwrap();
@@ -231,7 +237,7 @@ async fn renewing_a_range_retries_its_directory_reservation_and_rolls_back_parti
             "POST",
             "/login/device/code",
             "application/x-www-form-urlencoded",
-            format!("client_id={}", codeyard_model::identity::CLI_CLIENT).into_bytes(),
+            format!("client_id={}", codeyard_types::identity::CLI_CLIENT).into_bytes(),
         )
         .await;
     assert_eq!(
@@ -270,7 +276,7 @@ async fn renewing_a_range_retries_its_directory_reservation_and_rolls_back_parti
         })
         .await
         .unwrap();
-    let listener = codeyard_cells_router::directory::Listener::bind(
+    let listener = codeyard_router::directory::Listener::bind(
         directory.clone(),
         &server,
         "127.0.0.1:0".parse().unwrap(),
@@ -307,7 +313,9 @@ async fn renewing_a_range_retries_its_directory_reservation_and_rolls_back_parti
     let output = renew(root.path(), &url, listener.address, &server.public_hex()).await;
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("injected range activation failure"));
-    codeyard_db_core::cells::load(&database.pool).await.unwrap();
+    codeyard_database::cells::load(&database.pool)
+        .await
+        .unwrap();
     assert_eq!(database.pool.cell_prefix(), Prefix::new(1));
     assert!(!database.pool.owns_prefix(Prefix::new(2)));
     let bounds: (i64, i64) = sqlx::query_as("SELECT min_value,max_value FROM pg_sequences WHERE schemaname=current_schema() AND sequencename='users_id_seq'")
@@ -330,7 +338,9 @@ async fn renewing_a_range_retries_its_directory_reservation_and_rolls_back_parti
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    codeyard_db_core::cells::load(&database.pool).await.unwrap();
+    codeyard_database::cells::load(&database.pool)
+        .await
+        .unwrap();
     assert_eq!(database.pool.cell_id(), Prefix::new(1));
     assert_eq!(database.pool.cell_prefix(), Prefix::new(2));
     assert!(database.pool.owns_prefix(Prefix::new(1)));
@@ -357,7 +367,7 @@ async fn renewing_a_range_retries_its_directory_reservation_and_rolls_back_parti
         approval.text()
     );
     let body = url::form_urlencoded::Serializer::new(String::new())
-        .append_pair("client_id", codeyard_model::identity::CLI_CLIENT)
+        .append_pair("client_id", codeyard_types::identity::CLI_CLIENT)
         .append_pair("device_code", &grant["device_code"])
         .append_pair("grant_type", "urn:ietf:params:oauth:grant-type:device_code")
         .finish();

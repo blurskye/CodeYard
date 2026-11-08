@@ -95,10 +95,10 @@ async fn contract(pg: bool) {
         f.pool(),
         codeyard_db_repos::webhooks::HookOwner::Repository(repo.id),
         alice,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), alice).await,
         ),
-        &codeyard_db_core::queries::webhooks::WebhookFields {
+        &codeyard_database::queries::webhooks::WebhookFields {
             username: None,
             password: None,
             payload_url: "https://example.test/scanning".into(),
@@ -650,7 +650,7 @@ async fn contract(pg: bool) {
         codeyard_db_orgs::organizations::profiles::create_organization(f.pool(), alice, &input)
             .await
             .unwrap(),
-        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(_)
+        codeyard_database::queries::organizations::OrganizationOutcome::Applied(_)
     ));
     call(
         &router,
@@ -690,7 +690,7 @@ async fn contract(pg: bool) {
 
 async fn workflow_tokens(
     router: &Router,
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     repo: i64,
     actor: i64,
     sha: &str,

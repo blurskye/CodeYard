@@ -35,13 +35,13 @@ impl Fixture {
         authorization: Option<Arc<dyn crate::handler::RouterAuthorization>>,
     ) -> Self {
         let root = tempfile::tempdir().unwrap();
-        let pool = codeyard_db_core::init_db(&format!(
+        let pool = codeyard_database::init_db(&format!(
             "sqlite://{}",
             root.path().join("app.sqlite").display()
         ))
         .await
         .unwrap();
-        codeyard_db_core::run_migrations(&pool).await.unwrap();
+        codeyard_database::run_migrations(&pool).await.unwrap();
         let user = codeyard_db_identity::users::accounts::create_user(&pool, name, None)
             .await
             .unwrap();
@@ -54,7 +54,7 @@ impl Fixture {
         )
         .await
         .unwrap();
-        codeyard_repos_core::repositories::lifecycle::provision(
+        codeyard_git_storage::repositories::lifecycle::provision(
             (&pool, None),
             root.path(),
             codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(user.id),
@@ -283,7 +283,7 @@ impl crate::router::Directory for RouterDirectory {
     }
 }
 async fn route_entry(name: &str, fixture: &Fixture) -> (String, String, SocketAddr, String) {
-    let key = codeyard_db_cluster::node_config::get_cluster_ssh_host_key(&fixture.pool)
+    let key = codeyard_db_placement::node_config::get_cluster_ssh_host_key(&fixture.pool)
         .await
         .unwrap()
         .unwrap();
@@ -412,17 +412,17 @@ async fn public_ssh_router_pins_native_cells_preserves_identity_and_rechecks_rou
 }
 
 struct ForeignHome {
-    user: codeyard_db_core::models::User,
+    user: codeyard_database::models::User,
     fingerprint: String,
     live: Arc<std::sync::atomic::AtomicBool>,
 }
-impl codeyard_db_core::cells::authorization::Home for ForeignHome {
+impl codeyard_database::cells::authorization::Home for ForeignHome {
     fn user<'a>(
         &'a self,
         name: &'a str,
     ) -> std::pin::Pin<
         Box<
-            dyn std::future::Future<Output = Result<Option<codeyard_db_core::models::User>>>
+            dyn std::future::Future<Output = Result<Option<codeyard_database::models::User>>>
                 + Send
                 + 'a,
         >,
@@ -436,22 +436,22 @@ impl codeyard_db_core::cells::authorization::Home for ForeignHome {
     }
     fn authorize<'a>(
         &'a self,
-        proof: &'a codeyard_db_core::cells::authorization::Proof,
+        proof: &'a codeyard_database::cells::authorization::Proof,
     ) -> std::pin::Pin<
         Box<
             dyn std::future::Future<
-                    Output = Result<Option<codeyard_db_core::cells::authorization::Answer>>,
+                    Output = Result<Option<codeyard_database::cells::authorization::Answer>>,
                 > + Send
                 + 'a,
         >,
     > {
         Box::pin(async move {
-            use codeyard_db_core::cells::authorization::{Answer, Authority, Proof};
+            use codeyard_database::cells::authorization::{Answer, Authority, Proof};
             Ok((self.live.load(std::sync::atomic::Ordering::SeqCst)
                 && matches!(proof,Proof::Ssh {fingerprint} if fingerprint==&self.fingerprint))
             .then(|| Answer {
                 heartbeat: std::time::SystemTime::now().into(),
-                home: codeyard_types::cells::Prefix::new(1),
+                home: codeyard_types::cell_ids::Prefix::new(1),
                 user: self.user.clone(),
                 credential_id: Some(self.user.id + 7),
                 write: true,
@@ -494,7 +494,7 @@ async fn foreign_collaborator_pushes_and_clones_through_public_ssh_then_loses_ac
         .await
         .unwrap()
         .unwrap();
-    remote.id = *codeyard_types::cells::Prefix::new(1).ids().start();
+    remote.id = *codeyard_types::cell_ids::Prefix::new(1).ids().start();
     remote.home_cell = 1;
     remote.email = None;
     remote.password_hash = None;
@@ -508,9 +508,9 @@ async fn foreign_collaborator_pushes_and_clones_through_public_ssh_then_loses_ac
         live: live.clone(),
     }));
     // The unsigned key hint grants no repository access. The signed session revalidates it.
-    codeyard_db_core::cells::authorization::admit(
+    codeyard_database::cells::authorization::admit(
         &alice.pool,
-        &codeyard_db_core::cells::authorization::Proof::Ssh { fingerprint },
+        &codeyard_database::cells::authorization::Proof::Ssh { fingerprint },
     )
     .await
     .unwrap()
@@ -524,7 +524,7 @@ async fn foreign_collaborator_pushes_and_clones_through_public_ssh_then_loses_ac
         &alice.pool,
         remote.id,
         repo.id,
-        codeyard_db_core::models::AccessLevel::Write,
+        codeyard_database::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -612,7 +612,7 @@ async fn foreign_collaborator_pushes_and_clones_through_public_ssh_then_loses_ac
         .unwrap()
         .target()
         .unwrap();
-    let codeyard_db_core::DbPool::Sqlite(raw) = &alice.pool else {
+    let codeyard_database::DbPool::Sqlite(raw) = &alice.pool else {
         unreachable!()
     };
     sqlx::query("DELETE FROM repo_access WHERE repo_id=$1 AND user_id=$2")
@@ -650,7 +650,7 @@ async fn foreign_collaborator_pushes_and_clones_through_public_ssh_then_loses_ac
         &alice.pool,
         remote.id,
         repo.id,
-        codeyard_db_core::models::AccessLevel::Write,
+        codeyard_database::models::AccessLevel::Write,
     )
     .await
     .unwrap();

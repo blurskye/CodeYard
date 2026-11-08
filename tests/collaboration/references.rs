@@ -58,7 +58,7 @@ async fn references(pg: bool) {
         ("vault", true),
         ("notes", false),
     ] {
-        codeyard_repos_core::repositories::lifecycle::provision(
+        codeyard_git_storage::repositories::lifecycle::provision(
             (f.pool(), None),
             root.path(),
             codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),

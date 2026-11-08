@@ -4,28 +4,28 @@ use crate::organizations::profiles::OrganizationProfile;
 use crate::organizations::OrganizationPage;
 use crate::postgres::organizations::authority::metadata;
 use anyhow::Result;
-use codeyard_db_core::pool::PgPool;
-use codeyard_db_core::queries::organizations::administers;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_db_core::queries::postgres::organizations::authority::active;
-use codeyard_db_core::queries::postgres::organizations::authority::begin;
-use codeyard_db_core::queries::postgres::organizations::authority::begin_read;
-use codeyard_db_core::queries::postgres::organizations::authority::read_active;
-use codeyard_db_core::require_read_org_postgres;
+use codeyard_database::pool::PgPool;
+use codeyard_database::queries::organizations::administers;
+use codeyard_database::queries::organizations::OrganizationOutcome;
+use codeyard_database::queries::postgres::organizations::authority::active;
+use codeyard_database::queries::postgres::organizations::authority::begin;
+use codeyard_database::queries::postgres::organizations::authority::begin_read;
+use codeyard_database::queries::postgres::organizations::authority::read_active;
+use codeyard_database::require_read_org_postgres;
 use OrganizationOutcome::Applied;
 use OrganizationOutcome::Conflict;
 use OrganizationOutcome::Denied;
 
 pub async fn create_organization(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     input: &NewOrganization,
 ) -> Result<OrganizationOutcome<OrganizationMetadata>> {
     let owner = actor.into();
     let actor = owner.user_id;
     let mut tx = begin(pool).await?;
     // Ownership and namespace locks precede the new organization and membership.
-    codeyard_db_core::queries::postgres::users::transitions::lock_accounts_shared(
+    codeyard_database::queries::postgres::users::transitions::lock_accounts_shared(
         &mut tx,
         &[actor],
     )
@@ -39,7 +39,7 @@ pub async fn create_organization(
         return Ok(Denied);
     }
     if let Some(credential) = owner.credential() {
-        if !codeyard_db_core::queries::postgres::users::transitions::credential_live(
+        if !codeyard_database::queries::postgres::users::transitions::credential_live(
             &mut tx,
             actor,
             &credential,
@@ -55,7 +55,7 @@ pub async fn create_organization(
     if occupied {
         return Ok(Conflict);
     }
-    let id: Option<i64> = sqlx::query_scalar(&format!("INSERT INTO organizations(home_cell,name,display_name,description) VALUES({cell_home},$1,$2,$3) ON CONFLICT DO NOTHING RETURNING id", cell_home = codeyard_db_core::cells::LOCAL_HOME_SQL))
+    let id: Option<i64> = sqlx::query_scalar(&format!("INSERT INTO organizations(home_cell,name,display_name,description) VALUES({cell_home},$1,$2,$3) ON CONFLICT DO NOTHING RETURNING id", cell_home = codeyard_database::cells::LOCAL_HOME_SQL))
         .bind(&input.slug).bind(input.profile.display_name.clone().flatten()).bind(input.profile.description.clone().flatten()).fetch_optional(&mut *tx).await?;
     let Some(id) = id else {
         return Ok(Conflict);
@@ -66,19 +66,20 @@ pub async fn create_organization(
         .execute(&mut *tx)
         .await?;
     let result = metadata(&mut tx, id).await?;
-    let object = codeyard_model::cells::Object {
-        kind: codeyard_model::cells::ObjectKind::Organization,
+    let object = codeyard_types::cells::Object {
+        kind: codeyard_types::cells::ObjectKind::Organization,
         id,
     };
-    let keys = [codeyard_model::cells::Key::new(
-        codeyard_model::cells::KeyKind::Name,
+    let keys = [codeyard_types::cells::Key::new(
+        codeyard_types::cells::KeyKind::Name,
         &input.slug,
     )?];
-    if !codeyard_db_core::cells::directory::postgres::publish(pool, &mut tx, object, &keys).await? {
+    if !codeyard_database::cells::directory::postgres::publish(pool, &mut tx, object, &keys).await?
+    {
         return Ok(Conflict);
     }
     if let Some(credential) = owner.credential() {
-        if !codeyard_db_core::queries::postgres::users::transitions::credential_live(
+        if !codeyard_database::queries::postgres::users::transitions::credential_live(
             &mut tx,
             actor,
             &credential,
@@ -95,7 +96,7 @@ pub async fn create_organization(
 pub async fn update_organization_profile(
     pool: &PgPool,
     actor: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     org: i64,
     input: &OrganizationProfile,
 ) -> Result<OrganizationOutcome<OrganizationMetadata>> {
@@ -105,7 +106,7 @@ pub async fn update_organization_profile(
         return Ok(Denied);
     }
     // The browser session or token that sent the change must still be live when it commits.
-    if !codeyard_db_core::queries::postgres::users::transitions::credential_live(
+    if !codeyard_database::queries::postgres::users::transitions::credential_live(
         &mut tx, actor, credential, true,
     )
     .await?
@@ -170,7 +171,7 @@ pub async fn set_organization_avatar(
         .execute(&mut *tx)
         .await?;
     if let Some(old) = previous.filter(|old| Some(*old) != file) {
-        codeyard_db_core::queries::postgres::files::delete_unreferenced_file_in_transaction(
+        codeyard_database::queries::postgres::files::delete_unreferenced_file_in_transaction(
             &mut tx, old,
         )
         .await?;
@@ -195,7 +196,7 @@ pub async fn get_organization_avatar(
 pub async fn get_public_organization(
     pool: &PgPool,
     name: &str,
-) -> Result<Option<codeyard_db_core::models::Organization>> {
+) -> Result<Option<codeyard_database::models::Organization>> {
     // Governance-suspended means no active owner, as in get_organization_metadata.
     Ok(sqlx::query_as(
         "SELECT o.* FROM organizations o WHERE o.name=$1 AND EXISTS(SELECT 1 FROM org_memberships m JOIN users u ON u.id=m.user_id WHERE m.org_id=o.id AND m.role='owner' AND NOT u.is_banned AND NOT u.must_change_password)",
@@ -207,7 +208,7 @@ pub async fn get_public_organization(
 pub async fn get_public_organization_by_id(
     pool: &PgPool,
     id: i64,
-) -> Result<Option<codeyard_db_core::models::Organization>> {
+) -> Result<Option<codeyard_database::models::Organization>> {
     Ok(sqlx::query_as(
         "SELECT o.* FROM organizations o WHERE o.id=$1 AND EXISTS(SELECT 1 FROM org_memberships m JOIN users u ON u.id=m.user_id WHERE m.org_id=o.id AND m.role='owner' AND NOT u.is_banned AND NOT u.must_change_password)",
     ).bind(id).fetch_optional(pool).await?)

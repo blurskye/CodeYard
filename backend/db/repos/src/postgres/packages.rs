@@ -12,7 +12,7 @@ use crate::packages::Upload;
 use crate::packages::Version;
 use anyhow::ensure;
 use anyhow::Result;
-use codeyard_db_core::pool::PgPool;
+use codeyard_database::pool::PgPool;
 use sqlx::Postgres;
 use sqlx::Transaction;
 
@@ -82,13 +82,13 @@ async fn actor<'a>(
                     .await?;
             ensure!(accounts.len() == 1, Refusal::Unauthorized);
             let account = accounts[0];
-            codeyard_db_core::queries::postgres::users::transitions::lock_accounts_shared(
+            codeyard_database::queries::postgres::users::transitions::lock_accounts_shared(
                 tx,
                 &[account],
             )
             .await?;
             ensure!(
-                codeyard_db_core::queries::postgres::users::transitions::live_session(
+                codeyard_database::queries::postgres::users::transitions::live_session(
                     tx, account, session
                 )
                 .await?,
@@ -103,7 +103,7 @@ async fn actor<'a>(
             .fetch_optional(&mut **tx)
             .await?;
     let account = account.ok_or(Refusal::Unauthorized)?;
-    codeyard_db_core::queries::postgres::users::transitions::lock_accounts_shared(tx, &[account])
+    codeyard_database::queries::postgres::users::transitions::lock_accounts_shared(tx, &[account])
         .await?;
     let row: Option<(i64, String, String)> = sqlx::query_as("SELECT u.id,u.username,t.scope FROM users u JOIN personal_access_tokens t ON t.user_id=u.id WHERE t.id=$1 AND NOT u.is_banned AND NOT u.must_change_password AND (t.expires_at IS NULL OR t.expires_at>clock_timestamp()) FOR SHARE OF t")
         .bind(token).fetch_optional(&mut **tx).await?;
@@ -120,21 +120,21 @@ async fn actor<'a>(
             .await?;
     ensure!(
         oauth.is_none_or(
-            |scopes| !write && codeyard_model::oauth_apps::has_scope(&scopes, "read:packages")
+            |scopes| !write && codeyard_types::oauth_apps::has_scope(&scopes, "read:packages")
         ),
         Refusal::Forbidden
     );
     ensure!(!write || scope == "write", Refusal::Forbidden);
     let mut owner = None;
     let mut selected = None;
-    let mut classic = name != codeyard_db_core::queries::ci_tokens::BOT;
+    let mut classic = name != codeyard_database::queries::ci_tokens::BOT;
     let _: Option<i64> =
         sqlx::query_scalar("SELECT token_id FROM fine_grained_tokens WHERE token_id=$1 FOR SHARE")
             .bind(token)
             .fetch_optional(&mut **tx)
             .await?;
-    let bounds: Option<codeyard_db_core::queries::fine_grained_tokens::Bounds> =
-        sqlx::query_as(codeyard_db_core::queries::postgres::fine_grained_tokens::BOUNDS)
+    let bounds: Option<codeyard_database::queries::fine_grained_tokens::Bounds> =
+        sqlx::query_as(codeyard_database::queries::postgres::fine_grained_tokens::BOUNDS)
             .bind(token)
             .fetch_optional(&mut **tx)
             .await?;
@@ -157,13 +157,13 @@ async fn actor<'a>(
         });
     }
     let mut repo = None;
-    if name == codeyard_db_core::queries::ci_tokens::BOT {
+    if name == codeyard_database::queries::ci_tokens::BOT {
         let job =
-            codeyard_db_core::queries::postgres::ci_tokens::get_in_connection(&mut *tx, token)
+            codeyard_database::queries::postgres::ci_tokens::get_in_connection(&mut *tx, token)
                 .await?
                 .ok_or(Refusal::Unauthorized)?;
         let (repo_id, permissions) = (job.repo_id, job.permissions);
-        let permissions: codeyard_model::permissions::Permissions =
+        let permissions: codeyard_types::permissions::Permissions =
             serde_json::from_str(&permissions)?;
         ensure!(permissions.allows("packages", write), Refusal::Forbidden);
         repo = Some(repo_id);
@@ -180,7 +180,7 @@ async fn actor<'a>(
 fn read_condition(actor: &Actor) -> String {
     crate::packages::read_condition(
         actor,
-        codeyard_db_core::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL,
+        codeyard_database::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL,
     )
 }
 
@@ -255,11 +255,11 @@ async fn authorize<'a>(
         let user = actor.id.ok_or(Refusal::Unauthorized)?;
         let mut level = owner_level(tx, &package, user).await?;
         if let Some(repo) = package.repo_id {
-            let locked = codeyard_db_core::queries::postgres::repositories::access::lock_user_repo_access_in_transaction(
+            let locked = codeyard_database::queries::postgres::repositories::access::lock_user_repo_access_in_transaction(
                 &mut *tx,
                 user,
                 repo,
-                codeyard_db_core::queries::postgres::repositories::access::RepositoryRowLock::Shared,
+                codeyard_database::queries::postgres::repositories::access::RepositoryRowLock::Shared,
                 matches!(permission, Permission::Admin),
             )
             .await?
@@ -289,7 +289,7 @@ pub async fn container_namespace(pool: &PgPool, owner: &Owner) -> Result<String>
     if let Some(namespace) = sqlx::query_scalar::<_, String>("SELECT namespace FROM registry_namespaces WHERE ($1='user' AND owner_user_id=$2) OR ($1='org' AND owner_org_id=$2)")
         .bind(&owner.kind).bind(owner.id).fetch_optional(&mut *tx).await? { return Ok(namespace); }
     let base = owner.name.to_ascii_lowercase();
-    let base = if codeyard_model::package_input::valid_name(&base) {
+    let base = if codeyard_types::package_input::valid_name(&base) {
         base
     } else {
         format!("cy-{}-{}", owner.kind, owner.id)
@@ -320,7 +320,7 @@ pub async fn container_namespace(pool: &PgPool, owner: &Owner) -> Result<String>
 }
 
 pub async fn container_owner(pool: &PgPool, namespace: &str) -> Result<Option<Owner>> {
-    if !codeyard_model::package_input::valid_name(namespace) || namespace.contains('/') {
+    if !codeyard_types::package_input::valid_name(namespace) || namespace.contains('/') {
         return Ok(None);
     }
     let mapped: Option<Owner> = sqlx::query_as("SELECT u.id,u.username AS name,'user' AS kind FROM registry_namespaces n JOIN users u ON u.id=n.owner_user_id WHERE n.namespace=$1 UNION ALL SELECT o.id,o.name,'org' AS kind FROM registry_namespaces n JOIN organizations o ON o.id=n.owner_org_id WHERE n.namespace=$1")
@@ -489,11 +489,11 @@ pub async fn create(
     let owner_access = owner_level(&mut tx, &candidate, user).await?;
     let mut allowed = owner_access >= 3;
     if let Some(repo) = repo {
-        let locked = codeyard_db_core::queries::postgres::repositories::access::lock_user_repo_access_in_transaction(
+        let locked = codeyard_database::queries::postgres::repositories::access::lock_user_repo_access_in_transaction(
             &mut tx,
             user,
             repo,
-            codeyard_db_core::queries::postgres::repositories::access::RepositoryRowLock::Shared,
+            codeyard_database::queries::postgres::repositories::access::RepositoryRowLock::Shared,
             false,
         )
         .await?
@@ -854,7 +854,7 @@ pub async fn put_maven_file(
     .await?;
     // Keep snapshot-referenced bytes available to an online backup after their final reference goes.
     sqlx::query("UPDATE package_blobs SET expires_at=GREATEST(expires_at,$2) WHERE digest IN (SELECT vb.digest FROM package_version_blobs vb JOIN package_versions v ON v.id=vb.version_id JOIN packages p ON p.id=v.package_id WHERE p.repo_id=$1 AND p.package_type='maven' AND NOT EXISTS(SELECT 1 FROM package_files f WHERE f.version_id=vb.version_id AND f.digest=vb.digest))")
-        .bind(p.repo_id).bind(now + codeyard_db_core::queries::files::RESTORE_WINDOW_SECONDS).execute(&mut *tx).await?;
+        .bind(p.repo_id).bind(now + codeyard_database::queries::files::RESTORE_WINDOW_SECONDS).execute(&mut *tx).await?;
     sqlx::query("DELETE FROM package_version_blobs WHERE version_id IN (SELECT v.id FROM package_versions v JOIN packages p ON p.id=v.package_id WHERE p.repo_id=$1 AND p.package_type='maven') AND NOT EXISTS(SELECT 1 FROM package_files f WHERE f.version_id=package_version_blobs.version_id AND f.digest=package_version_blobs.digest)").bind(p.repo_id).execute(&mut *tx).await?;
     // Repository/group index updates do not replace the version's artifact digest.
     sqlx::query("UPDATE package_versions SET digest=CASE WHEN $4 THEN digest ELSE $2 END,updated_at=$3 WHERE id=$1")
@@ -1031,11 +1031,11 @@ pub async fn settings(
         if let Some(repo) = repo {
             let actor = actor(&mut tx, Some(token), Permission::Admin).await?;
             let user = actor.id.ok_or(Refusal::Unauthorized)?;
-            let locked = codeyard_db_core::queries::postgres::repositories::access::lock_user_repo_access_in_transaction(
+            let locked = codeyard_database::queries::postgres::repositories::access::lock_user_repo_access_in_transaction(
                 &mut tx,
                 user,
                 repo,
-                codeyard_db_core::queries::postgres::repositories::access::RepositoryRowLock::Shared,
+                codeyard_database::queries::postgres::repositories::access::RepositoryRowLock::Shared,
                 false,
             )
             .await?
@@ -1113,7 +1113,7 @@ pub async fn reserve_blob(
         Charge::Assembled => {}
     }
     sqlx::query("INSERT INTO package_blobs(digest,size,expires_at) VALUES($1,$2,$3) ON CONFLICT(digest) DO NOTHING")
-        .bind(&blob.digest).bind(blob.size).bind(now + codeyard_db_core::queries::files::RESTORE_WINDOW_SECONDS).execute(&mut *tx).await?;
+        .bind(&blob.digest).bind(blob.size).bind(now + codeyard_database::queries::files::RESTORE_WINDOW_SECONDS).execute(&mut *tx).await?;
     let (size, ready, deleting): (i64, bool, bool) =
         sqlx::query_as("SELECT size,ready,deleting FROM package_blobs WHERE digest=$1 FOR UPDATE")
             .bind(&blob.digest)
@@ -1122,7 +1122,7 @@ pub async fn reserve_blob(
     ensure!(size == blob.size && !deleting, Refusal::Blob);
     sqlx::query("UPDATE package_blobs SET expires_at=GREATEST(expires_at,$2) WHERE digest=$1")
         .bind(&blob.digest)
-        .bind(now + codeyard_db_core::queries::files::RESTORE_WINDOW_SECONDS)
+        .bind(now + codeyard_database::queries::files::RESTORE_WINDOW_SECONDS)
         .execute(&mut *tx)
         .await?;
     sqlx::query("INSERT INTO package_blob_grants(package_id,digest,expires_at) VALUES($1,$2,$3) ON CONFLICT(package_id,digest) DO UPDATE SET expires_at=excluded.expires_at")
@@ -1256,7 +1256,7 @@ pub async fn garbage(pool: &PgPool) -> Result<Vec<String>> {
     sqlx::query("SELECT digest FROM package_blobs WHERE digest IN (SELECT vb.digest FROM package_version_blobs vb JOIN package_versions v ON v.id=vb.version_id JOIN packages p ON p.id=v.package_id WHERE p.id=ANY($2) AND (v.deleted_at<=$1 OR p.deleted_at<=$1)) ORDER BY digest FOR UPDATE")
         .bind(now - 30 * 86400).bind(&expired).execute(&mut *tx).await?;
     sqlx::query("UPDATE package_blobs SET expires_at=GREATEST(expires_at,$2) WHERE digest IN (SELECT vb.digest FROM package_version_blobs vb JOIN package_versions v ON v.id=vb.version_id JOIN packages p ON p.id=v.package_id WHERE p.id=ANY($3) AND (v.deleted_at<=$1 OR p.deleted_at<=$1))")
-        .bind(now - 30 * 86400).bind(now + codeyard_db_core::queries::files::RESTORE_WINDOW_SECONDS).bind(&expired).execute(&mut *tx).await?;
+        .bind(now - 30 * 86400).bind(now + codeyard_database::queries::files::RESTORE_WINDOW_SECONDS).bind(&expired).execute(&mut *tx).await?;
     sqlx::query("DELETE FROM packages WHERE id=ANY($2) AND deleted_at<=$1")
         .bind(now - 30 * 86400)
         .bind(&expired)
@@ -1315,7 +1315,7 @@ pub async fn registry_token(
 pub async fn registry_source(
     pool: &PgPool,
     id: i64,
-) -> Result<Option<codeyard_db_core::models::PersonalAccessToken>> {
+) -> Result<Option<codeyard_database::models::PersonalAccessToken>> {
     Ok(sqlx::query_as("SELECT id,user_id,name,scope,expires_at,created_at FROM personal_access_tokens WHERE id=$1").bind(id).fetch_optional(pool).await?)
 }
 
@@ -1323,7 +1323,7 @@ pub async fn registry_source(
 /// holds it. The lock is keyed by the schema, so installations sharing a database collect on
 /// their own, and it ends with the connection.
 pub async fn collector_lock(pool: &PgPool) -> Result<Option<sqlx::PgConnection>> {
-    let mut connection = codeyard_db_core::connection::session_connection(pool).await?;
+    let mut connection = codeyard_database::connection::session_connection(pool).await?;
     let taken: bool = sqlx::query_scalar(
         "SELECT pg_try_advisory_lock(hashtext(COALESCE(current_schema(),'')), 723947123)",
     )

@@ -11,8 +11,8 @@ use codeyard_api_http::context::PageContext;
 use codeyard_api_http::shared::repos::chrome::load_database;
 use codeyard_api_http::shared::user::responses::field;
 use codeyard_app::app::AppState;
+use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_repos::imports::ImportCredential;
-use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_webui::app::Page;
 use codeyard_webui::pages::discovery as view;
 use codeyard_webui::pages::discovery::FormError;
@@ -124,7 +124,7 @@ pub(super) async fn create(
         ..Default::default()
     };
     if let Err(error) =
-        codeyard_repos_core::repositories::lifecycle::validate_name(field(&input, "name"))
+        codeyard_git_storage::repositories::lifecycle::validate_name(field(&input, "name"))
     {
         return render(
             &ctx,
@@ -181,7 +181,7 @@ pub(super) async fn create(
             }
         },
     };
-    let repo = match codeyard_repos_core::repositories::lifecycle::provision(
+    let repo = match codeyard_git_storage::repositories::lifecycle::provision(
         (&ctx.state.pool, ctx.state.cluster.as_ref()),
         &ctx.state.repos_path,
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner {

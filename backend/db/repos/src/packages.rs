@@ -1,6 +1,6 @@
 use anyhow::Result;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -76,7 +76,7 @@ impl Actor {
 // then uses the shared live-session check in the same package transaction.
 pub(crate) fn session_account_query(now: &str) -> String {
     let proofs =
-        codeyard_db_core::cells::authorization::session_relation(now == "clock_timestamp()");
+        codeyard_database::cells::authorization::session_relation(now == "clock_timestamp()");
     format!("SELECT u.id FROM users u WHERE NOT u.is_banned AND NOT u.must_change_password AND ((NOT u.is_stub AND EXISTS(SELECT 1 FROM sessions s WHERE s.user_id=u.id AND s.id=$1)) OR (u.is_stub AND EXISTS(SELECT 1 FROM {proofs} f WHERE f.user_id=u.id AND f.kind='session' AND f.credential_hash=$2 AND f.expires_at>{now}))) LIMIT 2")
 }
 
@@ -267,7 +267,7 @@ native_operation!(crate::postgres::packages::registry_token,
     fn registry_token(pool: &DbPool, hash: &str) -> Result<Option<RegistryToken>>);
 native_operation!(crate::postgres::packages::registry_source,
     crate::sqlite::packages::registry_source,
-    fn registry_source(pool: &DbPool, id: i64) -> Result<Option<codeyard_db_core::models::PersonalAccessToken>>);
+    fn registry_source(pool: &DbPool, id: i64) -> Result<Option<codeyard_database::models::PersonalAccessToken>>);
 
 pub fn now() -> i64 {
     chrono::Utc::now().timestamp()

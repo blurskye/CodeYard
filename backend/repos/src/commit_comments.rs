@@ -1,4 +1,4 @@
-use codeyard_db_core::models::CommitComment;
+use codeyard_database::models::CommitComment;
 pub fn comment_link(owner: &str, name: &str, comment: &CommitComment) -> String {
     format!(
         "/{}/{}/commit/{}?comment={}#commitcomment-{}",

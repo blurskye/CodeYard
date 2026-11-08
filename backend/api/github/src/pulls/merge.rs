@@ -9,9 +9,9 @@ use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
-use codeyard_repos_core::store_types::MergeMethod;
+use codeyard_git_storage::store_types::MergeMethod;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -26,9 +26,9 @@ struct Merge {
 }
 
 fn operation_error(
-    error: codeyard_repos_core::repositories::pull_requests::OperationError,
+    error: codeyard_git_storage::repositories::pull_requests::OperationError,
 ) -> Error {
-    use codeyard_repos_core::repositories::pull_requests::OperationError;
+    use codeyard_git_storage::repositories::pull_requests::OperationError;
     match error {
         OperationError::Conflict {
             code: "revision_conflict",
@@ -71,7 +71,7 @@ async fn merge_pull(
     let input: Merge = if body.is_empty() {
         Merge::default()
     } else {
-        serde_json::from_slice(&body).map_err(codeyard_model::github_error::json_parse_error)?
+        serde_json::from_slice(&body).map_err(codeyard_types::github_error::json_parse_error)?
     };
     let method = MergeMethod::parse(input.merge_method.as_deref().unwrap_or("merge"))
         .ok_or_else(|| Error::invalid("Invalid merge method"))?;
@@ -83,7 +83,7 @@ async fn merge_pull(
             &state.ci_runs,
             actor.id,
             pull.id,
-            Some(codeyard_db_core::models::AccessLevel::Owner),
+            Some(codeyard_database::models::AccessLevel::Owner),
         )
         .await
         .map_err(Error::unavailable)?;
@@ -167,7 +167,7 @@ async fn update_branch(
     let input: Option<UpdateBranch> = if body.is_empty() {
         None
     } else {
-        serde_json::from_slice(&body).map_err(codeyard_model::github_error::json_parse_error)?
+        serde_json::from_slice(&body).map_err(codeyard_types::github_error::json_parse_error)?
     };
     let input = input.unwrap_or_default();
     codeyard_repos_pulls::repositories::pull_requests::update_branch::update_branch(
@@ -184,7 +184,7 @@ async fn update_branch(
     Ok((
         StatusCode::ACCEPTED,
         Json(
-            json!({"message":"Pull request branch is up to date.","url":format!("{}/pulls/{number}",codeyard_model::urls::repo_url(&owner,&name))}),
+            json!({"message":"Pull request branch is up to date.","url":format!("{}/pulls/{number}",codeyard_types::urls::repo_url(&owner,&name))}),
         ),
     ))
 }

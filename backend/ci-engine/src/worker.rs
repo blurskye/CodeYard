@@ -11,8 +11,8 @@ use anyhow::Result;
 use codeyard_ci::config::podman_socket_path;
 use codeyard_ci::config::CiExecutionMode;
 use codeyard_ci::runner_labels::labels_from_value;
-use codeyard_db_core::models::CiRun;
-use codeyard_model::ci::LogLine;
+use codeyard_database::models::CiRun;
+use codeyard_types::ci::LogLine;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_yaml::Mapping;
@@ -110,7 +110,7 @@ pub(super) async fn run(
             } = &service.queue
             {
                 ensure!(
-                    codeyard_db_cluster::cluster::get_node_by_id(pool, context.node_id)
+                    codeyard_db_placement::cluster::get_node_by_id(pool, context.node_id)
                         .await?
                         .is_some_and(|node| {
                             node.public_key == context.key.public_hex()
@@ -213,7 +213,7 @@ async fn execute(
             let root = match &service.config.process_cgroup_root {
                 Some(root) => Some(std::fs::canonicalize(root)?),
                 None if service.config.mode == CiExecutionMode::Local => {
-                    Some(codeyard_actions::process::Cgroup::current_root()?)
+                    Some(codeyard_runner::process::Cgroup::current_root()?)
                 }
                 None => None,
             };
@@ -501,7 +501,7 @@ async fn run_workflows(
     force: watch::Receiver<bool>,
     cleaned: oneshot::Sender<()>,
     workspace_owner: &mut Option<Workspace>,
-    scope: Option<&codeyard_actions::process::Cgroup>,
+    scope: Option<&codeyard_runner::process::Cgroup>,
     log_sequence: &mut i64,
 ) -> Result<bool> {
     let timeout = claim
@@ -553,7 +553,7 @@ async fn run_workflows(
     {
         let definition = workspace.definition(workflow);
         let preparing = async {
-            let permit = codeyard_model::workflow_yaml::PARSING_SLOTS
+            let permit = codeyard_types::workflow_yaml::PARSING_SLOTS
                 .acquire()
                 .await?;
             let path = definition.clone();
@@ -667,13 +667,13 @@ async fn run_workflows(
             let grace = if native {
                 crate::process::Grace {
                     interrupt: Duration::ZERO,
-                    terminate: codeyard_actions::runner::SHUTDOWN_GRACE,
+                    terminate: codeyard_runner::runner::SHUTDOWN_GRACE,
                 }
             } else {
                 // act cancels its job on SIGINT and runs the steps that clean up after it, as the
                 // native runner does on SIGTERM. SIGTERM makes act stop at once.
                 crate::process::Grace {
-                    interrupt: codeyard_actions::runner::CLEANUP_GRACE,
+                    interrupt: codeyard_runner::runner::CLEANUP_GRACE,
                     terminate: Duration::from_secs(3),
                 }
             };
@@ -693,7 +693,7 @@ async fn run_workflows(
                     };
                     let progress = if native && !claim.github_tokens.completion_secret.is_empty() {
                         line.strip_prefix(&progress_prefix)
-                            .map(serde_json::from_str::<codeyard_actions::progress::Event>)
+                            .map(serde_json::from_str::<codeyard_runner::progress::Event>)
                     } else {
                         None
                     };
@@ -723,7 +723,7 @@ async fn run_workflows(
                         if let Some(event) = progress {
                             let event = event.context("invalid authenticated runner progress")?;
                             let key = (event.job.clone(), event.variant);
-                            if let codeyard_actions::progress::Update::Log { step, text } =
+                            if let codeyard_runner::progress::Update::Log { step, text } =
                                 &event.update
                             {
                                 let id = records
@@ -738,7 +738,7 @@ async fn run_workflows(
                             } else {
                                 if matches!(
                                     event.update,
-                                    codeyard_actions::progress::Update::Finished { .. }
+                                    codeyard_runner::progress::Update::Finished { .. }
                                 ) {
                                     flush_log_lines(&lines_tx).await?;
                                 }
@@ -754,7 +754,7 @@ async fn run_workflows(
                                 .await?;
                                 if matches!(
                                     event.update,
-                                    codeyard_actions::progress::Update::Concurrency { .. }
+                                    codeyard_runner::progress::Update::Concurrency { .. }
                                 ) {
                                     admissions
                                         .lock()
@@ -763,7 +763,7 @@ async fn run_workflows(
                                 }
                                 if matches!(
                                     event.update,
-                                    codeyard_actions::progress::Update::Finished { .. }
+                                    codeyard_runner::progress::Update::Finished { .. }
                                 ) {
                                     admissions
                                         .lock()
@@ -820,7 +820,7 @@ async fn run_workflows(
         let (status, sent) = tokio::join!(running, sending);
         sent?;
         let status = status?;
-        if native && status.code() == Some(codeyard_actions::runner::CANCELLED_EXIT_CODE) {
+        if native && status.code() == Some(codeyard_runner::runner::CANCELLED_EXIT_CODE) {
             return Err(Stopped::Cancelled.into());
         }
         if !status.success() {
@@ -1022,7 +1022,7 @@ fn act_command(
     }
     // Workflow URLs come from the core, so a runner without PUBLIC_URL still names the forge.
     let origin = if claim.forge_origin.is_empty() {
-        codeyard_model::http_config::link_origin()
+        codeyard_types::http_config::link_origin()
     } else {
         claim.forge_origin.clone()
     };
@@ -1206,9 +1206,9 @@ fn prepare_workflow_for_engine(
     native: bool,
     limits: &str,
 ) -> Result<BTreeSet<String>> {
-    let mut value = codeyard_model::workflow_yaml::parse_yaml(&std::fs::read(path)?)?;
+    let mut value = codeyard_types::workflow_yaml::parse_yaml(&std::fs::read(path)?)?;
     ensure!(
-        native || !codeyard_actions::workflow::has_job_concurrency(&value),
+        native || !codeyard_runner::workflow::has_job_concurrency(&value),
         "Job concurrency requires the codeyard-actions engine"
     );
     if config.mode != CiExecutionMode::Local {
@@ -1342,7 +1342,7 @@ struct ContainerOwnership {
     _lock: std::fs::File,
     path: PathBuf,
     record: ContainerRecord,
-    group: Option<codeyard_actions::process::Cgroup>,
+    group: Option<codeyard_runner::process::Cgroup>,
 }
 
 impl Drop for ContainerOwnership {
@@ -1382,7 +1382,7 @@ impl ContainerOwnership {
         // Persist recovery identity before creating anything in the delegated hierarchy.
         let group = cgroup_root
             .map(|root| {
-                codeyard_actions::process::Cgroup::create(root, &format!("codeyard-{run_id}"))
+                codeyard_runner::process::Cgroup::create(root, &format!("codeyard-{run_id}"))
             })
             .transpose()?;
         Ok(Self {
@@ -1491,7 +1491,7 @@ pub(super) async fn reconcile_containers(directory: &Path) -> Result<()> {
             let record: ContainerRecord = serde_json::from_reader(&file)?;
             let group = match record.cgroup.as_deref() {
                 Some(path) => match std::fs::symlink_metadata(path) {
-                    Ok(_) => Some(codeyard_actions::process::Cgroup::open(path)?),
+                    Ok(_) => Some(codeyard_runner::process::Cgroup::open(path)?),
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
                     Err(error) => return Err(error.into()),
                 },
@@ -1807,8 +1807,8 @@ async fn send_log_batches(
     Ok(())
 }
 
-fn credential_masker(claim: &ClaimedRun) -> codeyard_actions::runner::Masker {
-    let masker = codeyard_actions::runner::Masker::default();
+fn credential_masker(claim: &ClaimedRun) -> codeyard_runner::runner::Masker {
+    let masker = codeyard_runner::runner::Masker::default();
     let values = std::iter::once(&claim.runtime.token)
         .chain(std::iter::once(&claim.github_tokens.act))
         .chain(std::iter::once(&claim.github_tokens.completion_secret))
@@ -1925,7 +1925,7 @@ impl Workspace {
         for workflow in called {
             ensure!(
                 workflow.starts_with(".github/workflows/codeyard-call-")
-                    && codeyard_repos_core::workflows::is_safe_workflow_path(workflow),
+                    && codeyard_git_storage::workflows::is_safe_workflow_path(workflow),
                 "Invalid called workflow path"
             );
             let target = checkout.join(workflow);
@@ -1955,7 +1955,7 @@ impl Workspace {
         tokio::fs::create_dir_all(directory).await?;
         let workspace = Self {
             temp: Some(
-                codeyard_actions::fs::private_tempdir("workspace-", Some(directory))
+                codeyard_runner::fs::private_tempdir("workspace-", Some(directory))
                     .context("could not create a CI workspace")?,
             ),
             cleanups,
@@ -1976,7 +1976,7 @@ impl Workspace {
         for (path, id) in blobs {
             let content = if let Some(content) = crate::reusable::content(id) {
                 ensure!(
-                    codeyard_repos_core::workflows::is_safe_workflow_path(path),
+                    codeyard_git_storage::workflows::is_safe_workflow_path(path),
                     "invalid workflow path"
                 );
                 content.as_bytes().to_vec()
@@ -2022,7 +2022,7 @@ impl Workspace {
     async fn read_job_state(
         &self,
         workflow: &str,
-    ) -> Result<Option<codeyard_actions::progress::State>> {
+    ) -> Result<Option<codeyard_runner::progress::State>> {
         use tokio::io::AsyncReadExt;
         let file = match tokio::fs::File::open(self.job_state_path(workflow)).await {
             Ok(file) => file,
@@ -2030,11 +2030,11 @@ impl Workspace {
             Err(error) => return Err(error.into()),
         };
         let mut body = Vec::new();
-        file.take((codeyard_actions::progress::MAX_STATE_BYTES + 1) as u64)
+        file.take((codeyard_runner::progress::MAX_STATE_BYTES + 1) as u64)
             .read_to_end(&mut body)
             .await?;
         ensure!(
-            body.len() <= codeyard_actions::progress::MAX_STATE_BYTES,
+            body.len() <= codeyard_runner::progress::MAX_STATE_BYTES,
             "job state exceeds the native limit"
         );
         Ok(Some(
@@ -2133,7 +2133,7 @@ impl Workspace {
                 .collect();
             codeyard_db_actions::secrets::validate_repository_secrets(&secrets)?;
             ensure!(
-                scope.variables.len() <= codeyard_actions::values::MAX_SCOPE_VALUES,
+                scope.variables.len() <= codeyard_runner::values::MAX_SCOPE_VALUES,
                 "Too many environment variables"
             );
             let variables: Vec<_> = scope
@@ -2147,7 +2147,7 @@ impl Workspace {
         let bytes =
             serde_json::to_vec(&serde_json::json!({"jobs":jobs,"environments":environments}))?;
         ensure!(
-            bytes.len() <= codeyard_actions::values::MAX_ENVIRONMENT_FILE_BYTES,
+            bytes.len() <= codeyard_runner::values::MAX_ENVIRONMENT_FILE_BYTES,
             "Environment values file is too large"
         );
         let path = self
@@ -2165,7 +2165,7 @@ impl Workspace {
     fn write_replay(
         &self,
         workflow: &str,
-        replay: &codeyard_actions::progress::Replay,
+        replay: &codeyard_runner::progress::Replay,
     ) -> Result<PathBuf> {
         use std::os::unix::fs::OpenOptionsExt;
         let path = self
@@ -2306,7 +2306,7 @@ fn file_name(workflow: &str) -> &str {
 mod tests {
     use super::*;
     use codeyard_ci::config::CiConfig;
-    use codeyard_repos_core::repositories::store::RepoStore;
+    use codeyard_git_storage::repositories::store::RepoStore;
 
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -2324,7 +2324,7 @@ mod tests {
         let labels = prepare_workflow(&path, &config, run_id).unwrap();
         assert!(labels.contains("ubuntu-latest"));
         let value =
-            codeyard_model::workflow_yaml::parse_yaml(&std::fs::read(&path).unwrap()).unwrap();
+            codeyard_types::workflow_yaml::parse_yaml(&std::fs::read(&path).unwrap()).unwrap();
         // The workflow keeps its public name; act's resource names carry the run instead.
         assert_eq!(value["name"].as_str(), Some("Test"));
         assert!(value["jobs"]["build"]["container"]["options"]
@@ -2334,7 +2334,7 @@ mod tests {
         std::fs::write(&path, source).unwrap();
         prepare_workflow_for_engine(&path, &config, run_id, true, "").unwrap();
         let native =
-            codeyard_model::workflow_yaml::parse_yaml(&std::fs::read(&path).unwrap()).unwrap();
+            codeyard_types::workflow_yaml::parse_yaml(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(native["name"].as_str(), Some("Test"));
         assert!(native["jobs"]["build"]["container"]["options"]
             .as_str()
@@ -2355,10 +2355,10 @@ mod tests {
 
     async fn queued_fixture(root: &Path) -> (CiWorkers, CiRun) {
         let pool =
-            codeyard_db_core::init_db(&format!("sqlite://{}", root.join("test.db").display()))
+            codeyard_database::init_db(&format!("sqlite://{}", root.join("test.db").display()))
                 .await
                 .unwrap();
-        codeyard_db_core::run_migrations(&pool).await.unwrap();
+        codeyard_database::run_migrations(&pool).await.unwrap();
         let log_objects = Arc::new(
             codeyard_storage::ObjectStore::open(root, None)
                 .await
@@ -2479,11 +2479,11 @@ mod tests {
         let RunQueue::Database { pool, .. } = &service.queue else {
             unreachable!()
         };
-        let codeyard_db_core::DbPool::Sqlite(raw) = pool else {
+        let codeyard_database::DbPool::Sqlite(raw) = pool else {
             unreachable!()
         };
         sqlx::query("UPDATE ci_runs SET log_lines = ? WHERE id = ?")
-            .bind(codeyard_model::ci::MAX_RUN_LOG_LINES - 2)
+            .bind(codeyard_types::ci::MAX_RUN_LOG_LINES - 2)
             .bind(run.id)
             .execute(raw)
             .await
@@ -2506,7 +2506,7 @@ mod tests {
                     .fetch_one(raw)
                     .await
                     .unwrap();
-                if stored == codeyard_model::ci::MAX_RUN_LOG_LINES {
+                if stored == codeyard_types::ci::MAX_RUN_LOG_LINES {
                     break;
                 }
                 tokio::time::sleep(Duration::from_millis(5)).await;
@@ -2798,7 +2798,7 @@ mod tests {
             ),
             (
                 "VALID_NAME",
-                "x".repeat(codeyard_actions::values::MAX_VALUE_BYTES + 1),
+                "x".repeat(codeyard_runner::values::MAX_VALUE_BYTES + 1),
                 "Repository secret value exceeds 48 KiB",
             ),
         ] {
@@ -3133,7 +3133,7 @@ jobs:
         )
         .unwrap();
         let mut yaml =
-            codeyard_model::workflow_yaml::parse_yaml(&std::fs::read(path).unwrap()).unwrap();
+            codeyard_types::workflow_yaml::parse_yaml(&std::fs::read(path).unwrap()).unwrap();
         add_container_options(&mut yaml, &run_container_options(&label)).unwrap();
         let jobs = yaml.get("jobs").unwrap();
         assert_eq!(
@@ -3456,7 +3456,7 @@ jobs:
         let cleanups = Arc::new(Mutex::new(JoinSet::new()));
         let (cleaned, cleanup) = oneshot::channel();
         let workspace_parent = tempfile::tempdir().unwrap();
-        let pool = codeyard_db_core::init_db("sqlite::memory:").await.unwrap();
+        let pool = codeyard_database::init_db("sqlite::memory:").await.unwrap();
         let queue = RunQueue::Database {
             pool: pool.clone(),
             config: Arc::new(CiConfig::default()),
@@ -3669,10 +3669,10 @@ jobs:
             .max_connections(1)
             .connect("sqlite::memory:")
             .await
-            .map(codeyard_db_core::pool::Pool::from)
+            .map(codeyard_database::pool::Pool::from)
             .unwrap();
-        let pool = codeyard_db_core::DbPool::from(native);
-        codeyard_db_core::run_migrations(&pool).await.unwrap();
+        let pool = codeyard_database::DbPool::from(native);
+        codeyard_database::run_migrations(&pool).await.unwrap();
         let owner = codeyard_db_identity::users::accounts::create_user(&pool, "result_owner", None)
             .await
             .unwrap();

@@ -19,13 +19,13 @@ use codeyard_git::CommitFilter;
 use codeyard_git::CommitInfo;
 use codeyard_git::DiffFileInfo;
 use codeyard_git::DiffInfo;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
-use codeyard_model::urls::repo_url;
-use codeyard_repos_core::api_shared::github::contents::store_error;
-use codeyard_repos_core::repositories::store::repo_store;
-use codeyard_repos_core::repositories::store::RepoStore;
+use codeyard_git_storage::api_shared::github::contents::store_error;
+use codeyard_git_storage::repositories::store::repo_store;
+use codeyard_git_storage::repositories::store::RepoStore;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use codeyard_types::ref_path::encode_path as path_url;
+use codeyard_types::urls::repo_url;
 use codeyard_webhooks::payloads::git_commit as commit_json;
 use codeyard_webhooks::payloads::Person;
 use serde::Deserialize;
@@ -80,7 +80,7 @@ pub(crate) async fn documents(
         .flat_map(|commit| [&commit.author_email, &commit.committer_email])
         .cloned()
         .collect::<Vec<_>>();
-    let users = codeyard_repos_core::repositories::reads::commit_authors(&state.pool, &emails)
+    let users = codeyard_git_storage::repositories::reads::commit_authors(&state.pool, &emails)
         .await
         .map_err(Error::unavailable)?;
     let people: HashMap<String, Person> = users
@@ -202,8 +202,8 @@ pub(crate) fn diff_files(
         let mut value = json!({
             "sha": file.blob_sha, "filename": file.filename, "status": file_status(&file.status),
             "additions": file.additions, "deletions": file.deletions, "changes": file.additions + file.deletions,
-            "blob_url": format!("{}/{owner}/{name}/blob/{sha}/{}", codeyard_model::http_config::link_origin(), path_url(&file.filename)),
-            "raw_url": format!("{}/{owner}/{name}/raw/{sha}/{}", codeyard_model::http_config::link_origin(), path_url(&file.filename)),
+            "blob_url": format!("{}/{owner}/{name}/blob/{sha}/{}", codeyard_types::http_config::link_origin(), path_url(&file.filename)),
+            "raw_url": format!("{}/{owner}/{name}/raw/{sha}/{}", codeyard_types::http_config::link_origin(), path_url(&file.filename)),
             "contents_url": format!("{}/contents/{}?ref={sha}", repo_url(owner, name), path_url(&file.filename)),
         });
         if !file.patch.is_empty() {
@@ -285,7 +285,7 @@ struct List {
 }
 
 async fn identity_emails(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     value: Option<&str>,
 ) -> Result<Option<Vec<String>>> {
     match value.map(str::trim) {
@@ -391,7 +391,7 @@ async fn blob(
         return Ok(([(header::CONTENT_TYPE, "application/octet-stream")], bytes).into_response());
     }
     Ok(Json(
-        json!({"sha":sha.to_ascii_lowercase(),"node_id":codeyard_model::node_id::git_object("B", repo.id, &sha.to_ascii_lowercase()),"url":format!("{}/git/blobs/{sha}", repo_url(&owner, &name)),"size":bytes.len(),"encoding":"base64","content":STANDARD.encode(bytes)}),
+        json!({"sha":sha.to_ascii_lowercase(),"node_id":codeyard_types::node_id::git_object("B", repo.id, &sha.to_ascii_lowercase()),"url":format!("{}/git/blobs/{sha}", repo_url(&owner, &name)),"size":bytes.len(),"encoding":"base64","content":STANDARD.encode(bytes)}),
     ).into_response())
 }
 

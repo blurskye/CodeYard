@@ -7,8 +7,8 @@ use crate::url;
 use crate::RequestContext;
 use crate::Result;
 use async_graphql::Error;
-use codeyard_repos_core::repositories::store::repo_store;
-use codeyard_repos_core::repositories::store::RepoStore;
+use codeyard_git_storage::repositories::store::repo_store;
+use codeyard_git_storage::repositories::store::RepoStore;
 use serde_json::json;
 use serde_json::Value;
 
@@ -32,7 +32,7 @@ async fn texts(store: &RepoStore, branch: &str, paths: &[&str]) -> Result<Vec<(S
 }
 
 fn yaml(text: &str) -> Result<serde_yaml::Value> {
-    codeyard_model::workflow_yaml::parse_yaml_with_limit(
+    codeyard_types::workflow_yaml::parse_yaml_with_limit(
         text.as_bytes(),
         4 * codeyard_types::git_limits::MAX_TEMPLATE_BYTES as usize,
     )
@@ -43,7 +43,7 @@ pub(super) async fn resolve(
     field: &str,
     ctx: &Arguments,
     request: &RequestContext,
-    repo: &codeyard_db_core::models::Repository,
+    repo: &codeyard_database::models::Repository,
 ) -> Result<Value> {
     let pool = &request.state.pool;
     let actor = &request.auth.user;

@@ -1,10 +1,10 @@
 use crate::ObjectStore;
 use crate::StorageError;
 use crate::Upload;
-use codeyard_db_core::models::File;
-use codeyard_db_core::models::FileReason;
-use codeyard_db_core::models::FileVisibility;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::File;
+use codeyard_database::models::FileReason;
+use codeyard_database::models::FileVisibility;
+use codeyard_database::DbPool;
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -101,7 +101,7 @@ pub async fn reserve_and_sign_upload(
     input: UploadDeclaration<'_>,
 ) -> Result<UploadReservation, UploadError> {
     let file = reserve(pool, actor_id, &input).await?;
-    let seconds = codeyard_db_core::queries::files::PUT_LIFETIME_SECONDS as u64;
+    let seconds = codeyard_database::queries::files::PUT_LIFETIME_SECONDS as u64;
     let target = store
         .upload_target(
             &upload(&file),
@@ -115,7 +115,7 @@ pub async fn reserve_and_sign_upload(
             pool,
             file.id,
             actor_id,
-            codeyard_db_core::queries::files::PUT_LIFETIME_SECONDS,
+            codeyard_database::queries::files::PUT_LIFETIME_SECONDS,
         )
         .await
         .map_err(|_| UploadError::SigningUnavailable { file_id: file.id })?

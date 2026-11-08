@@ -9,10 +9,10 @@ psql "$GITSERV_TEST_DATABASE_URL" -X -v ON_ERROR_STOP=1 -q \
     -f schema/postgres/0001.schema.sql -c ROLLBACK
 artifacts=$(mktemp)
 trap 'rm -f "$artifacts"' EXIT
-cargo build --locked -p codeyard -p codeyard-actions --bin codeyard --bin codeyard-actions --message-format=json >"$artifacts"
+cargo build --locked -p codeyard -p codeyard-runner --bin codeyard --bin codeyard-actions --message-format=json >"$artifacts"
 export GITSERV_TEST_OPENSSH_HELPER=$(python3 -I scripts/cargo-executable.py codeyard <"$artifacts")
 export CODEYARD_ACTIONS_BIN=$(python3 -I scripts/cargo-executable.py codeyard-actions <"$artifacts")
-libraries=(-p codeyard-model -p codeyard-db-core -p codeyard-db-cluster -p codeyard-db-directory -p codeyard-cells-router -p codeyard-git)
+libraries=(-p codeyard-types -p codeyard-database -p codeyard-db-placement -p codeyard-db-directory -p codeyard-router -p codeyard-git)
 # Compile everything first so the time limits below cover only the tests, and one hung
 # test cannot hold the shared test slot.
 cargo test --locked --no-run -p codeyard --test database --test cluster

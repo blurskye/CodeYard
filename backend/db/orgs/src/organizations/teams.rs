@@ -3,12 +3,12 @@ use crate::organizations::profiles::validate_name;
 use crate::organizations::OrganizationInputError;
 use crate::organizations::OrganizationPage;
 use anyhow::Result;
-use codeyard_db_core::models::Team;
-use codeyard_db_core::models::TeamMembership;
-use codeyard_db_core::models::TeamRepoAccess;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::Team;
+use codeyard_database::models::TeamMembership;
+use codeyard_database::models::TeamRepoAccess;
+use codeyard_database::native_operation;
+use codeyard_database::queries::organizations::OrganizationOutcome;
+use codeyard_database::DbPool;
 
 /// A lean identity read: credential, organization policy and team visibility share one snapshot.
 pub enum TeamIdentity<'a> {
@@ -20,12 +20,12 @@ native_operation!(crate::postgres::organizations::teams::team_identity,
     fn team_identity(pool: &DbPool, actor: i64, token: i64, identity: TeamIdentity<'_>) -> Result<Option<Team>>);
 
 native_operation!(crate::postgres::organizations::teams::create_organization_team, crate::sqlite::organizations::teams::create_organization_team,
-    fn create_organization_team(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, org: i64, input: &NewTeam) -> Result<OrganizationOutcome<Team>>);
+    fn create_organization_team(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, org: i64, input: &NewTeam) -> Result<OrganizationOutcome<Team>>);
 native_operation!(crate::postgres::organizations::teams::update_organization_team, crate::sqlite::organizations::teams::update_organization_team,
-    fn update_organization_team(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, org: i64, team: i64, input: &TeamProfile) -> Result<OrganizationOutcome<Team>>);
+    fn update_organization_team(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, org: i64, team: i64, input: &TeamProfile) -> Result<OrganizationOutcome<Team>>);
 // Deleting a team deletes its child teams with it, as on GitHub.
 native_operation!(crate::postgres::organizations::teams::delete_organization_team, crate::sqlite::organizations::teams::delete_organization_team,
-    fn delete_organization_team(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, org: i64, team: i64) -> Result<OrganizationOutcome<()>>);
+    fn delete_organization_team(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, org: i64, team: i64) -> Result<OrganizationOutcome<()>>);
 native_operation!(crate::postgres::organizations::teams::list_organization_teams, crate::sqlite::organizations::teams::list_organization_teams,
     fn list_organization_teams(pool: &DbPool, actor: i64, org: i64, page: OrganizationPage) -> Result<OrganizationOutcome<Vec<TeamListing>>>);
 // Teams a reader may see, counted the same way the public team list shows them.
@@ -42,13 +42,13 @@ native_operation!(crate::postgres::organizations::teams::exports::list_direct_or
 native_operation!(crate::postgres::organizations::teams::exports::list_direct_organization_team_repositories, crate::sqlite::organizations::teams::exports::list_direct_organization_team_repositories,
     fn list_direct_organization_team_repositories(pool: &DbPool, actor: i64, org: i64, team: i64, page: OrganizationPage) -> Result<OrganizationOutcome<Vec<TeamRepositoryGrant>>>);
 native_operation!(crate::postgres::organizations::teams::add_organization_team_member, crate::sqlite::organizations::teams::add_organization_team_member,
-    fn add_organization_team_member(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, org: i64, team: i64, target: i64, role: TeamRole) -> Result<OrganizationOutcome<TeamMembership>>);
+    fn add_organization_team_member(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, org: i64, team: i64, target: i64, role: TeamRole) -> Result<OrganizationOutcome<TeamMembership>>);
 native_operation!(crate::postgres::organizations::teams::remove_organization_team_member, crate::sqlite::organizations::teams::remove_organization_team_member,
-    fn remove_organization_team_member(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, org: i64, team: i64, target: i64) -> Result<OrganizationOutcome<()>>);
+    fn remove_organization_team_member(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, org: i64, team: i64, target: i64) -> Result<OrganizationOutcome<()>>);
 native_operation!(crate::postgres::organizations::teams::grant_organization_team_repository, crate::sqlite::organizations::teams::grant_organization_team_repository,
-    fn grant_organization_team_repository(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, org: i64, team: i64, repo: i64, permission: TeamRepositoryPermission) -> Result<OrganizationOutcome<TeamRepoAccess>>);
+    fn grant_organization_team_repository(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, org: i64, team: i64, repo: i64, permission: TeamRepositoryPermission) -> Result<OrganizationOutcome<TeamRepoAccess>>);
 native_operation!(crate::postgres::organizations::teams::revoke_organization_team_repository, crate::sqlite::organizations::teams::revoke_organization_team_repository,
-    fn revoke_organization_team_repository(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, org: i64, team: i64, repo: i64) -> Result<OrganizationOutcome<()>>);
+    fn revoke_organization_team_repository(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, org: i64, team: i64, repo: i64) -> Result<OrganizationOutcome<()>>);
 native_operation!(crate::postgres::organizations::teams::list_organization_team_repositories, crate::sqlite::organizations::teams::list_organization_team_repositories,
     fn list_organization_team_repositories(pool: &DbPool, actor: i64, org: i64, team: i64, page: OrganizationPage) -> Result<OrganizationOutcome<Vec<TeamRepositoryGrant>>>);
 // Team pages are for active organization members only. Each read answers `None` when the viewer
@@ -211,7 +211,7 @@ impl TeamProfile {
         notifications_enabled: Option<bool>,
     ) -> std::result::Result<Self, OrganizationInputError> {
         if let Some(slug) = slug {
-            codeyard_model::account_input::validate_namespace(slug, 1)
+            codeyard_types::account_input::validate_namespace(slug, 1)
                 .map_err(|_| OrganizationInputError::Slug)?;
         }
         self.slug = slug.map(str::to_owned);
@@ -235,7 +235,7 @@ impl NewTeam {
         slug: &str,
         profile: TeamProfile,
     ) -> std::result::Result<Self, OrganizationInputError> {
-        codeyard_model::account_input::validate_namespace(slug, 1)
+        codeyard_types::account_input::validate_namespace(slug, 1)
             .map_err(|_| OrganizationInputError::Slug)?;
         let name = profile.name.clone().ok_or(OrganizationInputError::Name)?;
         let privacy = profile.privacy.ok_or(OrganizationInputError::Privacy)?;

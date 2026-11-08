@@ -6,7 +6,7 @@ use axum::routing::post;
 use axum::Json;
 use axum::Router;
 use codeyard_app::app::AppState;
-use codeyard_db_core::ci_admission::AdmissionError;
+use codeyard_database::ci_admission::AdmissionError;
 use std::sync::Arc;
 pub fn repository_router() -> Router<Arc<AppState>> {
     Router::new()

@@ -1,8 +1,8 @@
 use anyhow::Result;
 use chrono::DateTime;
 use chrono::Utc;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 use serde::Deserialize;
 
 #[derive(Debug, thiserror::Error)]
@@ -51,7 +51,7 @@ pub struct Status {
 }
 
 pub struct NewDeployment<'a> {
-    pub actor: codeyard_db_core::queries::credentials::Actor,
+    pub actor: codeyard_database::queries::credentials::Actor,
     pub repo: i64,
     pub sha: &'a str,
     pub reference: &'a str,
@@ -163,11 +163,11 @@ native_operation!(crate::postgres::deployments::list,
     fn list(pool: &DbPool, viewer: Option<i64>, repo: i64, filter: &Filter, offset: i64, limit: i64) -> Result<Vec<Deployment>>);
 native_operation!(crate::postgres::deployments::delete,
     crate::sqlite::deployments::delete,
-    fn delete(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo: i64, id: i64) -> Result<()>);
+    fn delete(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, repo: i64, id: i64) -> Result<()>);
 native_operation!(crate::postgres::deployments::create_status,
     crate::sqlite::deployments::create_status,
     /// Every status the call saved, each with its deployment after the change; the new status is last.
-    fn create_status(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo: i64, deployment: i64, input: &NewStatus) -> Result<Vec<(Deployment, Status)>>);
+    fn create_status(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, repo: i64, deployment: i64, input: &NewStatus) -> Result<Vec<(Deployment, Status)>>);
 /// Pairs the inactive statuses written for older deployments with those deployments.
 pub(crate) fn pair(
     deployments: Vec<Deployment>,

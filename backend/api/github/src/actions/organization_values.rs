@@ -26,8 +26,8 @@ use codeyard_db_orgs::organization_values::OrganizationValue;
 use codeyard_db_orgs::organization_values::Save;
 use codeyard_db_orgs::organization_values::Selection;
 use codeyard_db_orgs::organization_values::ValueError;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -148,8 +148,8 @@ async fn organization(
     .await
     .map_err(Error::unavailable)?
     {
-        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(role)
-            if codeyard_db_core::queries::organizations::administers(role) => {}
+        codeyard_database::queries::organizations::OrganizationOutcome::Applied(role)
+            if codeyard_database::queries::organizations::administers(role) => {}
         _ => {
             return Err(Error::new(
                 StatusCode::FORBIDDEN,
@@ -170,7 +170,7 @@ fn document(org: &str, kind: Kind, row: &OrganizationValue) -> Value {
     value["visibility"] = json!(row.visibility);
     // As on GitHub, only a value shared with selected repositories links to that list.
     if row.visibility == "selected" {
-        value["selected_repositories_url"] = json!(codeyard_model::urls::api_url(&format!(
+        value["selected_repositories_url"] = json!(codeyard_types::urls::api_url(&format!(
             "/orgs/{org}/actions/{}/{}/repositories",
             plural(kind),
             codeyard_types::paths::encode_component(&row.name)
@@ -266,7 +266,7 @@ async fn save_secret(
     body: std::result::Result<Json<SecretInput>, JsonRejection>,
 ) -> Result<Response> {
     let (org, auth) = organization(&state, &headers, &params["org"], true).await?;
-    let Json(body) = body.map_err(codeyard_model::github_error::json_error)?;
+    let Json(body) = body.map_err(codeyard_types::github_error::json_error)?;
     let encryptor = state
         .secret_encryptor
         .as_deref()
@@ -314,7 +314,7 @@ async fn create_variable(
     body: std::result::Result<Json<CreateVariable>, JsonRejection>,
 ) -> Result<Response> {
     let (org, auth) = organization(&state, &headers, &org, true).await?;
-    let Json(body) = body.map_err(codeyard_model::github_error::json_error)?;
+    let Json(body) = body.map_err(codeyard_types::github_error::json_error)?;
     values::save(
         &state.pool,
         None,
@@ -351,7 +351,7 @@ async fn update_variable(
     body: std::result::Result<Json<UpdateVariable>, JsonRejection>,
 ) -> Result<StatusCode> {
     let (org, auth) = organization(&state, &headers, &org, true).await?;
-    let Json(body) = body.map_err(codeyard_model::github_error::json_error)?;
+    let Json(body) = body.map_err(codeyard_types::github_error::json_error)?;
     let previous = previous.to_ascii_uppercase();
     let value = body.value.as_deref().or_else(|| {
         (body.name.is_none() && body.visibility.is_none() && body.selected_repository_ids.is_none())
@@ -443,7 +443,7 @@ async fn set_repositories(
     body: std::result::Result<Json<Repositories>, JsonRejection>,
 ) -> Result<StatusCode> {
     let (org, auth) = organization(&state, &headers, &params["org"], true).await?;
-    let Json(body) = body.map_err(codeyard_model::github_error::json_error)?;
+    let Json(body) = body.map_err(codeyard_types::github_error::json_error)?;
     values::select(
         &state.pool,
         auth.user.id,

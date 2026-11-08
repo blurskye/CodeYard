@@ -8,9 +8,9 @@ use crate::support::organizations::applied;
 use crate::support::production_ci;
 use codeyard_db_orgs::organizations::{blocks, discovery};
 
-use codeyard_db_core::models::OrgRole;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
+use codeyard_database::models::OrgRole;
+use codeyard_database::models::Repository;
+use codeyard_database::queries::organizations::OrganizationOutcome;
 use codeyard_db_orgs::organizations::access::count_organization_profile_repositories;
 use codeyard_db_orgs::organizations::access::get_organization_repo_access;
 use codeyard_db_orgs::organizations::access::list_organization_profile_repositories;
@@ -56,11 +56,11 @@ use OrganizationOutcome::{Applied, Conflict, Denied, Missing};
 
 // Raw driver SQL is fixture-only corruption/observation, never product authority.
 enum Raw {
-    Postgres(codeyard_db_core::pool::PgPool),
-    Sqlite(codeyard_db_core::pool::SqlitePool),
+    Postgres(codeyard_database::pool::PgPool),
+    Sqlite(codeyard_database::pool::SqlitePool),
 }
 struct Database {
-    pool: codeyard_db_core::DbPool,
+    pool: codeyard_database::DbPool,
     raw: Raw,
     _pg: Option<production_ci::Fixture>,
     _sqlite: Option<tempfile::TempDir>,
@@ -92,10 +92,10 @@ impl Database {
                     .busy_timeout(Duration::from_secs(3)),
             )
             .await
-            .map(codeyard_db_core::pool::Pool::from)
+            .map(codeyard_database::pool::Pool::from)
             .expect("owned SQLite connections");
-        let pool: codeyard_db_core::DbPool = raw.clone().into();
-        codeyard_db_core::run_migrations(&pool)
+        let pool: codeyard_database::DbPool = raw.clone().into();
+        codeyard_database::run_migrations(&pool)
             .await
             .expect("required native SQLite migrations");
         Self {
@@ -223,7 +223,7 @@ impl Database {
         org: i64,
         slug: &str,
         privacy: TeamPrivacy,
-    ) -> codeyard_db_core::models::Team {
+    ) -> codeyard_database::models::Team {
         applied(
             create_organization_team(
                 &self.pool,
@@ -330,7 +330,7 @@ async fn profile_repository_access(pg: bool) {
         &database.pool,
         member,
         repo.id,
-        codeyard_db_core::models::AccessLevel::Read,
+        codeyard_database::models::AccessLevel::Read,
     )
     .await
     .unwrap();
@@ -414,7 +414,7 @@ async fn atomic_creation_safe_metadata_namespace_and_validation(database: &Datab
         update_organization_profile(
             &database.pool,
             owner,
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+            &codeyard_database::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(&database.pool, owner).await,
             ),
             organization.id,
@@ -477,7 +477,7 @@ async fn owner_admin_member_rules_and_inactive_actors(database: &Database) {
         update_organization_profile(
             &database.pool,
             outsider,
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+            &codeyard_database::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(&database.pool, outsider).await
             ),
             org.id,
@@ -491,7 +491,7 @@ async fn owner_admin_member_rules_and_inactive_actors(database: &Database) {
         update_organization_profile(
             &database.pool,
             member,
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+            &codeyard_database::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(&database.pool, member).await
             ),
             org.id,
@@ -505,7 +505,7 @@ async fn owner_admin_member_rules_and_inactive_actors(database: &Database) {
         update_organization_profile(
             &database.pool,
             admin,
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+            &codeyard_database::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(&database.pool, admin).await,
             ),
             org.id,
@@ -565,7 +565,7 @@ async fn owner_admin_member_rules_and_inactive_actors(database: &Database) {
             update_organization_profile(
                 &database.pool,
                 admin,
-                &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+                &codeyard_database::queries::users::accounts::AccountCredential::Session(
                     &crate::support::live_session(&database.pool, admin).await
                 ),
                 org.id,
@@ -599,7 +599,7 @@ async fn owner_admin_member_rules_and_inactive_actors(database: &Database) {
         update_organization_profile(
             &database.pool,
             900_000,
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session("missing"),
+            &codeyard_database::queries::users::accounts::AccountCredential::Session("missing"),
             org.id,
             &profile()
         )
@@ -857,7 +857,7 @@ async fn same_org_teams_secret_visibility_and_permissions(database: &Database) {
         )
         .await
         .unwrap(),
-        codeyard_db_core::models::AccessLevel::Write
+        codeyard_database::models::AccessLevel::Write
     );
     for level in 1..=5 {
         applied(
@@ -876,7 +876,7 @@ async fn same_org_teams_secret_visibility_and_permissions(database: &Database) {
             get_organization_repo_access(&database.pool, member, &repo)
                 .await
                 .unwrap(),
-            codeyard_db_core::models::AccessLevel::from(level)
+            codeyard_database::models::AccessLevel::from(level)
         );
     }
     applied(
@@ -919,7 +919,7 @@ async fn same_org_teams_secret_visibility_and_permissions(database: &Database) {
         get_organization_repo_access(&database.pool, member, &repo)
             .await
             .unwrap(),
-        codeyard_db_core::models::AccessLevel::Admin,
+        codeyard_database::models::AccessLevel::Admin,
         "maximum valid same-org team grant wins, never Owner"
     );
     applied(
@@ -931,7 +931,7 @@ async fn same_org_teams_secret_visibility_and_permissions(database: &Database) {
         get_organization_repo_access(&database.pool, member, &repo)
             .await
             .unwrap(),
-        codeyard_db_core::models::AccessLevel::Write
+        codeyard_database::models::AccessLevel::Write
     );
     applied(
         remove_organization_team_member(&database.pool, owner, org.id, visible.id, member)
@@ -946,7 +946,7 @@ async fn same_org_teams_secret_visibility_and_permissions(database: &Database) {
         )
         .await
         .unwrap(),
-        codeyard_db_core::models::AccessLevel::None
+        codeyard_database::models::AccessLevel::None
     );
     assert_eq!(
         codeyard_db_orgs::organizations::access::get_organization_repo_access(
@@ -956,7 +956,7 @@ async fn same_org_teams_secret_visibility_and_permissions(database: &Database) {
         )
         .await
         .unwrap(),
-        codeyard_db_core::models::AccessLevel::Owner
+        codeyard_database::models::AccessLevel::Owner
     );
     assert!(matches!(
         list_organization_team_members(&database.pool, other, org.id, secret.id, page())
@@ -1064,7 +1064,7 @@ async fn same_org_teams_secret_visibility_and_permissions(database: &Database) {
         get_organization_repo_access(&database.pool, other, &foreign_repo)
             .await
             .unwrap(),
-        codeyard_db_core::models::AccessLevel::None
+        codeyard_database::models::AccessLevel::None
     );
     // Active same-org member is required for ADDING, not exact scoped cleanup.
     database
@@ -1149,7 +1149,7 @@ async fn invalid_persisted_roles_levels_and_joins_fail_closed(database: &Databas
             get_organization_repo_access(&database.pool, member, &repo)
                 .await
                 .unwrap(),
-            codeyard_db_core::models::AccessLevel::None
+            codeyard_database::models::AccessLevel::None
         );
         assert!(matches!(
             get_organization_metadata(&database.pool, member, org.id)
@@ -1161,7 +1161,7 @@ async fn invalid_persisted_roles_levels_and_joins_fail_closed(database: &Databas
             update_organization_profile(
                 &database.pool,
                 member,
-                &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+                &codeyard_database::queries::users::accounts::AccountCredential::Session(
                     &crate::support::live_session(&database.pool, member).await
                 ),
                 org.id,
@@ -1200,7 +1200,7 @@ async fn invalid_persisted_roles_levels_and_joins_fail_closed(database: &Databas
         get_organization_repo_access(&database.pool, member, &repo)
             .await
             .unwrap(),
-        codeyard_db_core::models::AccessLevel::None
+        codeyard_database::models::AccessLevel::None
     );
     database
         .execute(
@@ -1219,7 +1219,7 @@ async fn invalid_persisted_roles_levels_and_joins_fail_closed(database: &Databas
             get_organization_repo_access(&database.pool, member, &repo)
                 .await
                 .unwrap(),
-            codeyard_db_core::models::AccessLevel::None
+            codeyard_database::models::AccessLevel::None
         );
     }
     // Corrupt cross-org memberships and grants never become authority.
@@ -1239,7 +1239,7 @@ async fn invalid_persisted_roles_levels_and_joins_fail_closed(database: &Databas
         get_organization_repo_access(&database.pool, member, &repo)
             .await
             .unwrap(),
-        codeyard_db_core::models::AccessLevel::None
+        codeyard_database::models::AccessLevel::None
     );
     database
         .execute(
@@ -1251,7 +1251,7 @@ async fn invalid_persisted_roles_levels_and_joins_fail_closed(database: &Databas
         get_organization_repo_access(&database.pool, member, &repo)
             .await
             .unwrap(),
-        codeyard_db_core::models::AccessLevel::Write
+        codeyard_database::models::AccessLevel::Write
     );
     database
         .execute("UPDATE teams SET privacy='invalid' WHERE id=$1", &[team.id])
@@ -1260,7 +1260,7 @@ async fn invalid_persisted_roles_levels_and_joins_fail_closed(database: &Databas
         get_organization_repo_access(&database.pool, member, &repo)
             .await
             .unwrap(),
-        codeyard_db_core::models::AccessLevel::None
+        codeyard_database::models::AccessLevel::None
     );
     database
         .execute("UPDATE teams SET privacy='secret' WHERE id=$1", &[team.id])
@@ -1275,7 +1275,7 @@ async fn invalid_persisted_roles_levels_and_joins_fail_closed(database: &Databas
         get_organization_repo_access(&database.pool, member, &repo)
             .await
             .unwrap(),
-        codeyard_db_core::models::AccessLevel::None
+        codeyard_database::models::AccessLevel::None
     );
 }
 
@@ -1310,7 +1310,7 @@ async fn revocation_cleanup_cancellation_downgrade_and_collaborator_regrant(data
         get_organization_repo_access(&database.pool, member, &repo)
             .await
             .unwrap(),
-        codeyard_db_core::models::AccessLevel::Admin
+        codeyard_database::models::AccessLevel::Admin
     );
     database.run(repo.id, member, "queued").await;
     database.run(repo.id, member, "running").await;
@@ -1326,7 +1326,7 @@ async fn revocation_cleanup_cancellation_downgrade_and_collaborator_regrant(data
         get_organization_repo_access(&database.pool, member, &repo)
             .await
             .unwrap(),
-        codeyard_db_core::models::AccessLevel::None
+        codeyard_database::models::AccessLevel::None
     );
     assert_eq!(database.stopped_runs(repo.id, member).await, (1, 1));
     // Restore flags solely to observe the later revocation path separately, and queue
@@ -1391,7 +1391,7 @@ async fn revocation_cleanup_cancellation_downgrade_and_collaborator_regrant(data
         get_organization_repo_access(&database.pool, member, &repo)
             .await
             .unwrap(),
-        codeyard_db_core::models::AccessLevel::None
+        codeyard_database::models::AccessLevel::None
     );
     assert_eq!(database.stopped_runs(repo.id, member).await, (3, 1));
     applied(
@@ -1422,7 +1422,7 @@ async fn revocation_cleanup_cancellation_downgrade_and_collaborator_regrant(data
         get_organization_repo_access(&database.pool, member, &repo)
             .await
             .unwrap(),
-        codeyard_db_core::models::AccessLevel::None
+        codeyard_database::models::AccessLevel::None
     );
     assert_eq!(database.stopped_runs(repo.id, member).await, (4, 1));
     applied(
@@ -1464,7 +1464,7 @@ async fn revocation_cleanup_cancellation_downgrade_and_collaborator_regrant(data
         &database.pool,
         member,
         repo.id,
-        codeyard_db_core::models::AccessLevel::Write,
+        codeyard_database::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -1472,7 +1472,7 @@ async fn revocation_cleanup_cancellation_downgrade_and_collaborator_regrant(data
         &database.pool,
         member,
         other_repo.id,
-        codeyard_db_core::models::AccessLevel::Write,
+        codeyard_database::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -1553,20 +1553,20 @@ async fn revocation_cleanup_cancellation_downgrade_and_collaborator_regrant(data
         )
         .await
         .unwrap(),
-        codeyard_db_core::models::AccessLevel::Owner
+        codeyard_database::models::AccessLevel::Owner
     );
     assert_eq!(
         get_organization_repo_access(&database.pool, member, &personal)
             .await
             .unwrap(),
-        codeyard_db_core::models::AccessLevel::None
+        codeyard_database::models::AccessLevel::None
     );
     // A deliberate later independent collaborator grant remains possible.
     codeyard_db_repos::repositories::access::grant_repo_access(
         &database.pool,
         member,
         repo.id,
-        codeyard_db_core::models::AccessLevel::Read,
+        codeyard_database::models::AccessLevel::Read,
     )
     .await
     .unwrap();
@@ -1578,13 +1578,13 @@ async fn revocation_cleanup_cancellation_downgrade_and_collaborator_regrant(data
         )
         .await
         .unwrap(),
-        codeyard_db_core::models::AccessLevel::Read
+        codeyard_database::models::AccessLevel::Read
     );
     assert_eq!(
         get_organization_repo_access(&database.pool, member, &repo)
             .await
             .unwrap(),
-        codeyard_db_core::models::AccessLevel::None
+        codeyard_database::models::AccessLevel::None
     );
 }
 
@@ -1629,7 +1629,7 @@ async fn cancellation_failure_rolls_back_entire_membership_revocation(database: 
         &database.pool,
         member,
         repo.id,
-        codeyard_db_core::models::AccessLevel::Write,
+        codeyard_database::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -1782,13 +1782,13 @@ async fn numeric_user_org_collision_and_personal_owner_unchanged(database: &Data
         get_organization_repo_access(&database.pool, 700000, &repository)
             .await
             .unwrap(),
-        codeyard_db_core::models::AccessLevel::None
+        codeyard_database::models::AccessLevel::None
     );
     assert!(matches!(
         update_organization_profile(
             &database.pool,
             700000,
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session("missing"),
+            &codeyard_database::queries::users::accounts::AccountCredential::Session("missing"),
             700000,
             &profile()
         )
@@ -1800,13 +1800,13 @@ async fn numeric_user_org_collision_and_personal_owner_unchanged(database: &Data
         get_organization_repo_access(&database.pool, owner, &repository)
             .await
             .unwrap(),
-        codeyard_db_core::models::AccessLevel::Owner
+        codeyard_database::models::AccessLevel::Owner
     );
     assert_eq!(
         get_organization_repo_access(&database.pool, 700000, &personal)
             .await
             .unwrap(),
-        codeyard_db_core::models::AccessLevel::None
+        codeyard_database::models::AccessLevel::None
     );
     assert_eq!(
         codeyard_db_repos::repositories::access::get_user_repo_access(
@@ -1816,7 +1816,7 @@ async fn numeric_user_org_collision_and_personal_owner_unchanged(database: &Data
         )
         .await
         .unwrap(),
-        codeyard_db_core::models::AccessLevel::Owner
+        codeyard_database::models::AccessLevel::Owner
     );
     let mut malformed = repository.clone();
     malformed.owner_kind = "unknown".into();
@@ -1824,7 +1824,7 @@ async fn numeric_user_org_collision_and_personal_owner_unchanged(database: &Data
         get_organization_repo_access(&database.pool, owner, &malformed)
             .await
             .unwrap(),
-        codeyard_db_core::models::AccessLevel::None
+        codeyard_database::models::AccessLevel::None
     );
     malformed = repository.clone();
     malformed.owner_user_id = Some(owner);
@@ -1832,7 +1832,7 @@ async fn numeric_user_org_collision_and_personal_owner_unchanged(database: &Data
         get_organization_repo_access(&database.pool, owner, &malformed)
             .await
             .unwrap(),
-        codeyard_db_core::models::AccessLevel::None
+        codeyard_database::models::AccessLevel::None
     );
     malformed = repository.clone();
     malformed.owner_org_id = Some(900000);
@@ -1840,7 +1840,7 @@ async fn numeric_user_org_collision_and_personal_owner_unchanged(database: &Data
         get_organization_repo_access(&database.pool, owner, &malformed)
             .await
             .unwrap(),
-        codeyard_db_core::models::AccessLevel::None
+        codeyard_database::models::AccessLevel::None
     );
 }
 
@@ -1923,7 +1923,7 @@ async fn visible_team_repositories_require_effective_read(database: &Database) {
         &database.pool,
         reader,
         direct.id,
-        codeyard_db_core::models::AccessLevel::Read,
+        codeyard_database::models::AccessLevel::Read,
     )
     .await
     .unwrap();
@@ -2038,7 +2038,7 @@ async fn visible_team_repositories_require_effective_read(database: &Database) {
             &database.pool,
             reader,
             hidden.id,
-            codeyard_db_core::models::AccessLevel::from(level),
+            codeyard_database::models::AccessLevel::from(level),
         )
         .await
         .unwrap();
@@ -2549,7 +2549,7 @@ async fn scoped_cleanup_and_team_deletion(database: &Database) {
         &database.pool,
         member,
         foreign_repo.id,
-        codeyard_db_core::models::AccessLevel::Write,
+        codeyard_database::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -2781,14 +2781,14 @@ async fn suspended_governance_and_explicit_audited_recovery(database: &Database)
         get_organization_repo_access(&database.pool, replacement, &repository)
             .await
             .unwrap(),
-        codeyard_db_core::models::AccessLevel::Read,
+        codeyard_database::models::AccessLevel::Read,
         "suspension retains reads, not tenant write authority"
     );
     assert!(matches!(
         update_organization_profile(
             &database.pool,
             replacement,
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+            &codeyard_database::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(&database.pool, replacement).await
             ),
             org.id,
@@ -3040,7 +3040,7 @@ async fn postgres_organization_writes_finish_before_banning_non_owner_admin() {
                         update_organization_profile(
                             &pool,
                             admin,
-                            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+                            &codeyard_database::queries::users::accounts::AccountCredential::Session(
                                 &crate::support::live_session(&pool, admin).await,
                             ),
                             org,
@@ -3089,7 +3089,7 @@ async fn postgres_organization_writes_finish_before_banning_non_owner_admin() {
             update_organization_profile(
                 &database.pool,
                 admin,
-                &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+                &codeyard_database::queries::users::accounts::AccountCredential::Session(
                     &crate::support::live_session(&database.pool, admin).await
                 ),
                 org,
@@ -3140,7 +3140,7 @@ async fn postgres_account_transition_includes_a_concurrent_owner_promotion() {
         &database.pool,
         runner,
         repository.id,
-        codeyard_db_core::models::AccessLevel::Admin,
+        codeyard_database::models::AccessLevel::Admin,
     )
     .await
     .unwrap();
@@ -3247,7 +3247,7 @@ async fn removal_and_acceptance_race_leaves_no_member(database: &Database) {
 /// Native organization writes recheck the browser session inside their transaction, so a
 /// signed-out session cannot finish a membership, team, block or invitation change.
 async fn ended_sessions_cannot_manage_the_organization(database: &Database) {
-    use codeyard_db_core::queries::credentials::Actor;
+    use codeyard_database::queries::credentials::Actor;
     let owner = database.actor("ended_session_owner").await;
     let member = database.actor("ended_session_member").await;
     let invitee = database.actor("ended_session_invitee").await;

@@ -9,7 +9,7 @@ use crate::support::fake_webui_bundle as bundle;
 use crate::support::http_client as pulls;
 use axum::http::StatusCode;
 
-use codeyard_db_core::models::repositories::AccessLevel;
+use codeyard_database::models::repositories::AccessLevel;
 use database::Database;
 use pulls::Client;
 use serde_json::json;
@@ -39,7 +39,7 @@ async fn setup(pg: bool) -> World {
     let root = tempfile::tempdir().unwrap();
     let mut repositories = Vec::new();
     for (name, private) in [("proj", false), ("docs", false), ("vault", true)] {
-        let repo = codeyard_repos_core::repositories::lifecycle::provision(
+        let repo = codeyard_git_storage::repositories::lifecycle::provision(
             (database.pool(), None),
             root.path(),
             codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
@@ -71,7 +71,7 @@ async fn setup(pg: bool) -> World {
 async fn notify(database: &Database, user: i64, repo: Option<i64>, kind: &str, title: &str) -> i64 {
     codeyard_db_repos::notifications::records::create_notification(
         database.pool(),
-        codeyard_db_core::queries::notifications::records::NewNotification {
+        codeyard_database::queries::notifications::records::NewNotification {
             user_id: user,
             actor_id: None,
             repo_id: repo,
@@ -106,7 +106,7 @@ async fn bounded_previews_and_current_targets(pg: bool) {
     for actor in [w.alice_id, w.bob_id] {
         let notification = codeyard_db_repos::notifications::records::create_notification(
             w.database.pool(),
-            codeyard_db_core::queries::notifications::records::NewNotification {
+            codeyard_database::queries::notifications::records::NewNotification {
                 user_id: w.alice_id,
                 actor_id: Some(actor),
                 repo_id: Some(w.proj),
@@ -137,7 +137,7 @@ async fn bounded_previews_and_current_targets(pg: bool) {
         assert_eq!(item["body"], body);
         assert_eq!(item["link"], "/alice/renamed/issues/7?page=3#comment-9");
     }
-    use codeyard_db_core::queries::organizations::OrganizationOutcome;
+    use codeyard_database::queries::organizations::OrganizationOutcome;
     use codeyard_db_orgs::organizations::profiles::NewOrganization;
     use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
     assert!(matches!(
@@ -151,7 +151,7 @@ async fn bounded_previews_and_current_targets(pg: bool) {
         .unwrap(),
         OrganizationOutcome::Applied(_)
     ));
-    codeyard_repos_core::repositories::lifecycle::transfer(
+    codeyard_git_storage::repositories::lifecycle::transfer(
         w.database.pool(),
         None,
         w.alice_id,
@@ -874,7 +874,7 @@ async fn done_is_never_unread_and_search_finds_the_subject(pg: bool) {
     let mut w = setup(pg).await;
     let subject = codeyard_db_repos::notifications::records::create_notification(
         w.database.pool(),
-        codeyard_db_core::queries::notifications::records::NewNotification {
+        codeyard_database::queries::notifications::records::NewNotification {
             user_id: w.alice_id,
             actor_id: None,
             repo_id: Some(w.proj),

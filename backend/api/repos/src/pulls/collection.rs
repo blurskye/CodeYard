@@ -26,7 +26,7 @@ pub async fn create_pull_request(
     let current_actor = get_current_user(&state.pool, &headers).await?;
     if let Some(id) = req.head_repo_id {
         let session = codeyard_api_http::session::extract_session_id(&headers).unwrap_or_default();
-        let actor = codeyard_db_core::queries::credentials::Actor::from((
+        let actor = codeyard_database::queries::credentials::Actor::from((
             current_actor.id,
             session.clone(),
         ));

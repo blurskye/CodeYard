@@ -1,5 +1,5 @@
 use anyhow::Result;
-use codeyard_db_core::pool::SqlitePool;
+use codeyard_database::pool::SqlitePool;
 use sqlx::Sqlite;
 use sqlx::Transaction;
 
@@ -28,8 +28,8 @@ pub(crate) fn label_names_json(labels: &[String]) -> Result<Option<String>> {
     })
 }
 
-pub(crate) const AUTHORITY_DENIED: codeyard_db_core::queries::discussions::DiscussionWriteRefusal =
-    codeyard_db_core::queries::discussions::DiscussionWriteRefusal::Denied;
+pub(crate) const AUTHORITY_DENIED: codeyard_database::queries::discussions::DiscussionWriteRefusal =
+    codeyard_database::queries::discussions::DiscussionWriteRefusal::Denied;
 
 /// An effect by a configured repository reader, without issue interaction restrictions.
 pub async fn lock_read_authority(
@@ -64,7 +64,7 @@ pub async fn lock_contribution_authority(
         return Ok(false);
     };
     if !(authority.access.can_read() || authority.personal_override)
-        || codeyard_db_core::queries::sqlite::users::blocks::repository_interaction_blocked(
+        || codeyard_database::queries::sqlite::users::blocks::repository_interaction_blocked(
             tx, actor_id, repo_id,
         )
         .await?
@@ -93,8 +93,8 @@ pub(crate) async fn require_contribution_authority(
 }
 
 pub async fn set_lock(
-    pool: &codeyard_db_core::pool::SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    pool: &codeyard_database::pool::SqlitePool,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     item: crate::assignees::AssignedItem,
     locked: bool,
@@ -116,7 +116,7 @@ pub async fn set_lock(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
         lock_triage_authority(&mut tx, actor_id, repo_id).await?
-            && codeyard_db_core::queries::sqlite::credentials::repository(
+            && codeyard_database::queries::sqlite::credentials::repository(
                 &mut tx, &actor, repo_id, permission, true
             )
             .await?,
@@ -135,7 +135,7 @@ pub async fn set_lock(
     .await?
     .ok_or(LockRefusal::Missing)?;
     if previous != locked || previous_reason.as_deref() != reason {
-        let next = codeyard_db_core::queries::sqlite::time::next_revision(updated)?;
+        let next = codeyard_database::queries::sqlite::time::next_revision(updated)?;
         sqlx::query(&format!(
             "UPDATE {table} SET locked=?2,lock_reason=?3,updated_at=?4 WHERE id=?1"
         ))
@@ -176,7 +176,7 @@ pub(crate) async fn lock_issue_contribution(
         .ok_or_else(|| anyhow::anyhow!(AUTHORITY_DENIED))?;
     anyhow::ensure!(
         !locked || lock_write_authority(tx, actor_id, repo).await?,
-        codeyard_db_core::queries::discussions::DiscussionWriteRefusal::Locked
+        codeyard_database::queries::discussions::DiscussionWriteRefusal::Locked
     );
     Ok(())
 }
@@ -195,7 +195,7 @@ pub(crate) async fn lock_pull_request_contribution(
     require_contribution_authority(tx, actor_id, repo).await?;
     anyhow::ensure!(
         !locked || lock_write_authority(tx, actor_id, repo).await?,
-        codeyard_db_core::queries::discussions::DiscussionWriteRefusal::Locked
+        codeyard_database::queries::discussions::DiscussionWriteRefusal::Locked
     );
     Ok(())
 }
@@ -306,8 +306,8 @@ pub async fn list_repo_authors(
     )
 }
 
-use codeyard_db_core::queries::sqlite::discussions::lock_write_authority;
+use codeyard_database::queries::sqlite::discussions::lock_write_authority;
 
-use codeyard_db_core::queries::sqlite::discussions::lock_triage_authority;
+use codeyard_database::queries::sqlite::discussions::lock_triage_authority;
 
-use codeyard_db_core::queries::sqlite::discussions::lock_discussion_authority;
+use codeyard_database::queries::sqlite::discussions::lock_discussion_authority;

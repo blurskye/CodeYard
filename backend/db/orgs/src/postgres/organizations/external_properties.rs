@@ -2,12 +2,12 @@ use crate::organizations::external_properties::Installation;
 use crate::organizations::external_properties::RepositoryValue;
 use crate::postgres::organizations::authority::credential;
 use anyhow::Result;
-use codeyard_db_core::models::OrgRole;
-use codeyard_db_core::pool::PgPool;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_db_core::queries::postgres::organizations::authority::begin;
-use codeyard_db_core::queries::postgres::organizations::authority::begin_read;
-use codeyard_db_core::require_read_org_postgres;
+use codeyard_database::models::OrgRole;
+use codeyard_database::pool::PgPool;
+use codeyard_database::queries::organizations::OrganizationOutcome;
+use codeyard_database::queries::postgres::organizations::authority::begin;
+use codeyard_database::queries::postgres::organizations::authority::begin_read;
+use codeyard_database::require_read_org_postgres;
 use std::collections::HashMap;
 use OrganizationOutcome::Applied;
 use OrganizationOutcome::Conflict;
@@ -29,7 +29,7 @@ pub async fn installations(
 
 pub async fn register(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     org: i64,
     name: &str,
     installation: Option<i64>,
@@ -93,7 +93,7 @@ pub async fn definitions(
 
 pub async fn set_values(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     org: i64,
     values: &[RepositoryValue],
 ) -> Result<OrganizationOutcome<()>> {
@@ -153,7 +153,7 @@ pub async fn set_values(
 
 pub async fn delete_values(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     org: i64,
     property: &str,
 ) -> Result<OrganizationOutcome<()>> {

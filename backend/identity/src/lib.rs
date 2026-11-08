@@ -25,7 +25,7 @@ pub mod signatures;
 pub mod tokens;
 pub mod two_factor;
 
-use codeyard_db_core::models::User;
+use codeyard_database::models::User;
 
 /// Credentials were revalidated by the session transaction, not merely by a KDF.
 /// This record stays server-side; adapters must project a safe account response.

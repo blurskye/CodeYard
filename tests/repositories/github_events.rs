@@ -7,10 +7,10 @@ use axum::{
     Router,
 };
 
+use codeyard_git_storage::repositories::lifecycle;
 use codeyard_identity::tokens;
 use codeyard_identity::tokens::TokenInput;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
-use codeyard_repos_core::repositories::lifecycle;
 use codeyard_repos_pulls::repositories::engagement;
 use codeyard_repos_pulls::repositories::engagement::Engagement;
 use serde_json::{json, Value};
@@ -158,7 +158,7 @@ async fn contract(pg: bool) {
         f.pool(),
         bob_id,
         alice_id,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), bob_id).await,
         ),
     )
@@ -176,7 +176,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    let codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(org) = org else {
+    let codeyard_database::queries::organizations::OrganizationOutcome::Applied(org) = org else {
         panic!("organization creation failed")
     };
     let _org_repo = lifecycle::provision(

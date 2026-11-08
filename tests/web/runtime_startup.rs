@@ -140,7 +140,7 @@ async fn bundle_recovery(url: &str) {
     );
 }
 
-async fn rejected_commands(pool: &codeyard_db_core::DbPool, url: &str) {
+async fn rejected_commands(pool: &codeyard_database::DbPool, url: &str) {
     let root = tempfile::tempdir().unwrap();
     let user = codeyard_db_identity::users::accounts::create_user(pool, "loguser", None)
         .await

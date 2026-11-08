@@ -15,10 +15,10 @@ use tokio::process::Command;
 
 /// An account with an SSH key and a write token.
 async fn account(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     root: &Path,
     name: &str,
-) -> (codeyard_db_core::models::User, PathBuf, String) {
+) -> (codeyard_database::models::User, PathBuf, String) {
     let user = codeyard_db_identity::users::accounts::create_user(pool, name, None)
         .await
         .unwrap();
@@ -105,7 +105,7 @@ async fn base_maintainers_push_a_fork_pull_head_over_ssh() {
     bundle::install();
     let database = native::PostgresDatabase::new().await;
     native::enable_cluster(&database.pool).await.unwrap();
-    codeyard_db_cluster::node_config::upsert_node_configuration(&database.pool, "public", true)
+    codeyard_db_placement::node_config::upsert_node_configuration(&database.pool, "public", true)
         .await
         .unwrap();
     let root = tempfile::tempdir().unwrap();

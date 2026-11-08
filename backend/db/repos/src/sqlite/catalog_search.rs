@@ -4,7 +4,7 @@ use crate::catalog_search::Results;
 use crate::catalog_search::Search;
 use crate::catalog_search::Topic;
 use anyhow::Result;
-use codeyard_db_core::pool::SqlitePool;
+use codeyard_database::pool::SqlitePool;
 
 pub async fn search(
     pool: &SqlitePool,
@@ -19,7 +19,7 @@ pub async fn search(
     let statement = query
         .statement(
             false,
-            &codeyard_db_core::queries::sqlite::repositories::access::readable_condition(),
+            &codeyard_database::queries::sqlite::repositories::access::readable_condition(),
             options.repository,
         )
         .map_err(anyhow::Error::msg)?;
@@ -45,7 +45,7 @@ pub async fn topic(
     let mut connection = crate::sqlite::repositories::discovery::search_connection(pool).await?;
     let mut statement = crate::discussion_search::Statement::new(false);
     let readable = statement.repository_policy(
-        &codeyard_db_core::queries::sqlite::repositories::access::readable_condition(),
+        &codeyard_database::queries::sqlite::repositories::access::readable_condition(),
         policy_token,
     );
     let name = statement.bind(name);

@@ -6,20 +6,20 @@ use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use codeyard_app::app::AppState;
 use codeyard_ci::config::CiConfig;
-use codeyard_repos_core::repositories::git_sessions::ReceiveCredential;
-use codeyard_repos_core::repositories::store::RepoStore;
+use codeyard_git_storage::repositories::git_sessions::ReceiveCredential;
+use codeyard_git_storage::repositories::store::RepoStore;
 use codeyard_storage::ObjectStore;
 
 async fn fixture() -> (tempfile::TempDir, Arc<AppState>, Repository, i64) {
     let root = tempfile::tempdir().unwrap();
-    let pool = codeyard_db_core::init_db(&format!(
+    let pool = codeyard_database::init_db(&format!(
         "sqlite://{}",
         root.path().join("test.db").display()
     ))
     .await
     .unwrap();
-    codeyard_db_core::run_migrations(&pool).await.unwrap();
-    codeyard_db_cluster::node_config::upsert_node_configuration(&pool, "public", true)
+    codeyard_database::run_migrations(&pool).await.unwrap();
+    codeyard_db_placement::node_config::upsert_node_configuration(&pool, "public", true)
         .await
         .unwrap();
     let owner = codeyard_db_identity::users::accounts::create_user(&pool, "owner", None)
@@ -53,7 +53,7 @@ async fn personal_administrator_git_access_keeps_token_scopes_and_org_restrictio
     let actor = codeyard_db_identity::users::accounts::create_user(&state.pool, "admin", None)
         .await
         .unwrap();
-    let codeyard_db_core::DbPool::Sqlite(raw) = &state.pool else {
+    let codeyard_database::DbPool::Sqlite(raw) = &state.pool else {
         unreachable!()
     };
     sqlx::query("UPDATE users SET is_admin=1 WHERE id=?")
@@ -80,7 +80,7 @@ async fn personal_administrator_git_access_keeps_token_scopes_and_org_restrictio
     .await
     .unwrap()
     {
-        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(organization) => {
+        codeyard_database::queries::organizations::OrganizationOutcome::Applied(organization) => {
             organization
         }
         outcome => panic!("organization setup failed: {outcome:?}"),

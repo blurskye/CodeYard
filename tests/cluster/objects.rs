@@ -3,15 +3,15 @@ use crate::support::{database::Database, http_client::Client};
 use axum::http::StatusCode;
 use codeyard_ci::config::CiConfig;
 use codeyard_ci_engine::queue::RunQueue;
-use codeyard_cluster_core::{
+use codeyard_git_storage::{
+    context::NodeContext,
+    wire::{Operation, Request},
+};
+use codeyard_nodes::{
     pairing::PairingHandler,
     transport::{IrohDialer, NodeAddress, Relay},
 };
 use codeyard_notifications::broadcast::NotificationBroadcaster;
-use codeyard_repos_core::{
-    context::NodeContext,
-    wire::{Operation, Request},
-};
 use codeyard_storage::ObjectStore;
 use codeyard_support::node_identity::NodeKey;
 use serde_json::json;
@@ -19,9 +19,9 @@ use std::{path::Path, sync::Arc};
 
 struct Node {
     context: NodeContext,
-    listener: Option<codeyard_cluster::tcp::Listener>,
+    listener: Option<codeyard_placement::tcp::Listener>,
 }
-pub(super) async fn listen(context: &NodeContext) -> codeyard_cluster::tcp::Listener {
+pub(super) async fn listen(context: &NodeContext) -> codeyard_placement::tcp::Listener {
     let pool = context.database().unwrap();
     let queue = RunQueue::Database {
         pool: pool.clone(),
@@ -30,19 +30,19 @@ pub(super) async fn listen(context: &NodeContext) -> codeyard_cluster::tcp::List
         context: Some(context.clone()),
         notifications: Arc::new(NotificationBroadcaster::new(pool)),
     };
-    let listener = codeyard_cluster::tcp::bind(
+    let listener = codeyard_placement::tcp::bind(
         "127.0.0.1:0".parse().unwrap(),
         &context.key,
-        codeyard_cluster::tcp::Services {
+        codeyard_placement::tcp::Services {
             pool: pool.clone(),
             pairing: PairingHandler::new(pool.clone()),
             rpc: Some(codeyard_repos_rpc::RpcHandler::new(context.clone())),
-            events: codeyard_cluster::ci::CiHandler::new(context.clone(), queue),
+            events: codeyard_placement::ci::CiHandler::new(context.clone(), queue),
         },
     )
     .await
     .unwrap();
-    codeyard_db_cluster::cluster::record_node_heartbeat(
+    codeyard_db_placement::cluster::record_node_heartbeat(
         pool,
         &context.key.public_hex(),
         "test",
@@ -55,14 +55,14 @@ pub(super) async fn listen(context: &NodeContext) -> codeyard_cluster::tcp::List
     )
     .await
     .unwrap();
-    codeyard_db_cluster::drain::record_capacity(pool, &context.key.public_hex(), 10_000)
+    codeyard_db_placement::drain::record_capacity(pool, &context.key.public_hex(), 10_000)
         .await
         .unwrap();
     listener
 }
 async fn node(db: &Database, root: &Path, name: &str, role: &str) -> Node {
     let key = NodeKey::generate();
-    let row = codeyard_db_cluster::cluster::register_own_node(
+    let row = codeyard_db_placement::cluster::register_own_node(
         db.pool(),
         &key.public_hex(),
         name,
@@ -95,7 +95,7 @@ async fn router(db: &Database, root: &Path, context: &NodeContext) -> axum::Rout
     let storage = Arc::new(
         ObjectStore::on_nodes(
             root,
-            codeyard_repos_core::objects::Store::new(context.clone()),
+            codeyard_git_storage::objects::Store::new(context.clone()),
         )
         .await
         .unwrap(),
@@ -290,7 +290,7 @@ async fn uploaded_files_survive_web_and_storage_loss_and_drain_without_s3_on_bot
             run.id,
             "log-worker",
             0,
-            &[codeyard_model::ci::LogLine {
+            &[codeyard_types::ci::LogLine {
                 stage: workflow.into(),
                 line: "stored before storage loss".into(),
                 level: "info".into(),
@@ -402,25 +402,25 @@ async fn uploaded_files_survive_web_and_storage_loss_and_drain_without_s3_on_bot
             &[nodes[4].context.node_id],
         )
         .await;
-        codeyard_cluster::drain::change(db.pool(), None, "store-a", false, None)
+        codeyard_placement::drain::change(db.pool(), None, "store-a", false, None)
             .await
             .unwrap();
         assert!(
-            !codeyard_db_cluster::drain::finish(db.pool(), nodes[2].context.node_id)
+            !codeyard_db_placement::drain::finish(db.pool(), nodes[2].context.node_id)
                 .await
                 .unwrap()
         );
-        codeyard_repos_core::objects::maintain(&nodes[4].context)
+        codeyard_git_storage::objects::maintain(&nodes[4].context)
             .await
             .unwrap();
-        codeyard_repos_core::objects::maintain(&nodes[2].context)
+        codeyard_git_storage::objects::maintain(&nodes[2].context)
             .await
             .unwrap();
-        codeyard_cluster::drain::step(&nodes[2].context)
+        codeyard_placement::drain::step(&nodes[2].context)
             .await
             .unwrap();
         assert_eq!(
-            codeyard_db_cluster::cluster::get_node_by_id(db.pool(), nodes[2].context.node_id)
+            codeyard_db_placement::cluster::get_node_by_id(db.pool(), nodes[2].context.node_id)
                 .await
                 .unwrap()
                 .unwrap()

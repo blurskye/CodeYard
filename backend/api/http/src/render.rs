@@ -225,7 +225,7 @@ async fn render_slot(waiters: usize) -> Option<tokio::sync::SemaphorePermit<'sta
 }
 
 pub async fn render_page(
-    axum::Extension(config): axum::Extension<Arc<codeyard_model::http_config::WebConfig>>,
+    axum::Extension(config): axum::Extension<Arc<codeyard_types::http_config::WebConfig>>,
     request: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> Response {
@@ -412,8 +412,8 @@ mod tests {
 
     fn config(
         page_render_waiters: usize,
-    ) -> axum::Extension<Arc<codeyard_model::http_config::WebConfig>> {
-        axum::Extension(Arc::new(codeyard_model::http_config::WebConfig {
+    ) -> axum::Extension<Arc<codeyard_types::http_config::WebConfig>> {
+        axum::Extension(Arc::new(codeyard_types::http_config::WebConfig {
             cors_origins: Vec::new(),
             trusted_proxies: Default::default(),
             page_render_waiters,

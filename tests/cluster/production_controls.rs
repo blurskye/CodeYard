@@ -161,7 +161,7 @@ async fn drain_and_audit_are_atomic_and_audits_recheck_admin_access_across_web_n
             StatusCode::SERVICE_UNAVAILABLE
         );
         assert_eq!(
-            codeyard_db_cluster::cluster::get_node_by_id(db.pool(), node)
+            codeyard_db_placement::cluster::get_node_by_id(db.pool(), node)
                 .await
                 .unwrap()
                 .unwrap()

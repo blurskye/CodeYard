@@ -6,7 +6,7 @@ use crate::support::http_client::Client;
 use crate::support::organizations::applied;
 use axum::http::StatusCode;
 
-use codeyard_db_core::queries::organizations::roles::SECURITY_MANAGER_ROLE_ID;
+use codeyard_database::queries::organizations::roles::SECURITY_MANAGER_ROLE_ID;
 use codeyard_db_orgs::organizations::profiles::NewOrganization;
 use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
 use codeyard_db_orgs::organizations::teams::NewTeam;
@@ -14,8 +14,8 @@ use codeyard_db_orgs::organizations::teams::TeamPrivacy;
 use codeyard_db_orgs::organizations::teams::TeamProfile;
 use codeyard_db_orgs::organizations::teams::TeamRole;
 
-use codeyard_db_core::models::AccessLevel;
-use codeyard_db_core::models::OrgRole;
+use codeyard_database::models::AccessLevel;
+use codeyard_database::models::OrgRole;
 use codeyard_identity::tokens::TokenInput;
 use serde_json::{json, Value};
 const LIST: &str = "orgs/list-security-manager-teams";

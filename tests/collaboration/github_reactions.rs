@@ -13,7 +13,7 @@ async fn reactions(pg: bool) {
     let alice = f.actor("alice").await;
     let bob = f.actor("bob").await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard_repos_core::repositories::lifecycle::provision(
+    let repo = codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
@@ -37,7 +37,7 @@ async fn reactions(pg: bool) {
         issue.id,
         alice,
         "A comment",
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), alice).await,
         ),
     )
@@ -134,7 +134,7 @@ async fn reactions(pg: bool) {
         (
             format!(
                 "{base}/issues/comments/{}/reactions",
-                codeyard_model::webhook_ids::conversation_comment_id(comment.id, false)
+                codeyard_types::webhook_ids::conversation_comment_id(comment.id, false)
             ),
             "reactions/create-for-issue-comment",
             "reactions/list-for-issue-comment",

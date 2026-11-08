@@ -1,11 +1,11 @@
 use anyhow::Result;
 use chrono::DateTime;
 use chrono::Utc;
-use codeyard_db_core::models::PullRequestComment;
-use codeyard_db_core::models::PullRequestReview;
-use codeyard_db_core::models::User;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::PullRequestComment;
+use codeyard_database::models::PullRequestReview;
+use codeyard_database::models::User;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 
 pub const MAX_COMMENT_PATH_BYTES: usize = 4 * 1024;
 
@@ -45,7 +45,7 @@ pub struct ReviewBatch<'a> {
     pub comments: &'a [NewPullRequestComment<'a>],
     pub token: Option<i64>,
     /// The session or token behind the write, checked live in the write transaction.
-    pub credential: &'a codeyard_db_core::queries::users::accounts::AccountCredential<'a>,
+    pub credential: &'a codeyard_database::queries::users::accounts::AccountCredential<'a>,
 }
 native_operation!(crate::postgres::pull_requests::reviews::save_review_batch,
     crate::sqlite::pull_requests::reviews::save_review_batch,
@@ -279,7 +279,7 @@ native_operation!(crate::postgres::pull_requests::reviews::delete_pending_review
 // that draft was started on instead of the current head.
 native_operation!(crate::postgres::pull_requests::reviews::save_pull_request_review,
     crate::sqlite::pull_requests::reviews::save_pull_request_review,
-    fn save_pull_request_review(pool: &DbPool, pr_id: i64, author_id: i64, credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>, state: &str, body: Option<&str>, commit_sha: Option<&str>, expected_pending: Option<Option<i64>>) -> Result<PullRequestReview>);
+    fn save_pull_request_review(pool: &DbPool, pr_id: i64, author_id: i64, credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>, state: &str, body: Option<&str>, commit_sha: Option<&str>, expected_pending: Option<Option<i64>>) -> Result<PullRequestReview>);
 
 native_operation!(crate::postgres::pull_requests::reviews::add_pull_request_review,
     crate::sqlite::pull_requests::reviews::add_pull_request_review,
@@ -287,7 +287,7 @@ native_operation!(crate::postgres::pull_requests::reviews::add_pull_request_revi
     pool: &DbPool,
     pr_id: i64,
     author_id: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     state: &str,
     body: Option<&str>,
     commit_sha: Option<&str>,
@@ -397,7 +397,7 @@ native_operation!(crate::postgres::pull_requests::reviews::request_pull_request_
 // Internal callers supply owners derived from the recorded base's CODEOWNERS, never user input.
 native_operation!(crate::postgres::pull_requests::reviews::request_code_owner_reviews,
     crate::sqlite::pull_requests::reviews::request_code_owner_reviews,
-    fn request_code_owner_reviews(pool: &DbPool, pull: &codeyard_db_core::models::PullRequest, actor_id: i64, owners: &[i64]) -> Result<Vec<User>>);
+    fn request_code_owner_reviews(pool: &DbPool, pull: &codeyard_database::models::PullRequest, actor_id: i64, owners: &[i64]) -> Result<Vec<User>>);
 
 native_operation!(crate::postgres::pull_requests::reviews::remove_pull_request_reviewer,
     crate::sqlite::pull_requests::reviews::remove_pull_request_reviewer,

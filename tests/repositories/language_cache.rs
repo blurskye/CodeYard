@@ -1,8 +1,8 @@
 use crate::support::database::Database;
 
-use codeyard_repos_core::repositories::languages;
-use codeyard_repos_core::repositories::lifecycle;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_git_storage::repositories::languages;
+use codeyard_git_storage::repositories::lifecycle;
+use codeyard_git_storage::repositories::store::repo_store;
 
 async fn empty_language_results_are_cached_by_revision(pg: bool) {
     let mut f = Database::new(pg).await;

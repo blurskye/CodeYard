@@ -51,7 +51,7 @@ fn session_failure(error: anyhow::Error) -> ApiFailure {
 
 /// One authorized page, with an upper cursor retained in each revocation form.
 pub(crate) async fn load_sessions(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     user_id: i64,
     current: Option<&str>,
     before: i64,

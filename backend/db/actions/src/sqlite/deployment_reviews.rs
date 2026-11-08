@@ -5,9 +5,9 @@ use crate::deployments::Deployment;
 use crate::environments::Reviewer;
 use anyhow::ensure;
 use anyhow::Result;
-use codeyard_db_core::models::CiRun;
-use codeyard_db_core::pool::SqlitePool;
-use codeyard_db_core::queries::action_settings::Refusal;
+use codeyard_database::models::CiRun;
+use codeyard_database::pool::SqlitePool;
+use codeyard_database::queries::action_settings::Refusal;
 use sqlx::SqliteConnection;
 
 async fn can_review(
@@ -73,7 +73,7 @@ pub async fn pending(
 
 pub async fn review(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo: i64,
     run: i64,
     input: &Input,
@@ -84,7 +84,7 @@ pub async fn review(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     ensure!(
         codeyard_db_repos::sqlite::discussions::lock_read_authority(&mut tx, actor, repo).await?
-            && codeyard_db_core::queries::sqlite::credentials::repository(
+            && codeyard_database::queries::sqlite::credentials::repository(
                 &mut tx,
                 &credential,
                 repo,

@@ -3,8 +3,8 @@ use crate::discussion_search::Statement;
 use anyhow::Result;
 use chrono::DateTime;
 use chrono::Utc;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 
 pub(crate) const DEFAULT_CATEGORIES: &[(&str, &str, &str, &str, bool)] = &[
     (
@@ -283,13 +283,13 @@ native_operation!(crate::postgres::repository_discussions::comment, crate::sqlit
 native_operation!(crate::postgres::repository_discussions::comments, crate::sqlite::repository_discussions::comments,
     fn comments(pool: &DbPool, discussion: i64, reply: Option<i64>, offset: i64, limit: i64) -> Result<(i64, Vec<Comment>)>);
 native_operation!(crate::postgres::repository_discussions::labels, crate::sqlite::repository_discussions::labels,
-    fn labels(pool: &DbPool, discussion: i64) -> Result<Vec<codeyard_db_core::models::Label>>);
+    fn labels(pool: &DbPool, discussion: i64) -> Result<Vec<codeyard_database::models::Label>>);
 native_operation!(crate::postgres::repository_discussions::list, crate::sqlite::repository_discussions::list,
-    fn list_counted(pool: &DbPool, viewer: i64, credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>, filter: &Filter, offset: i64, limit: i64, count: bool) -> Result<(i64, Vec<Discussion>)>);
+    fn list_counted(pool: &DbPool, viewer: i64, credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>, filter: &Filter, offset: i64, limit: i64, count: bool) -> Result<(i64, Vec<Discussion>)>);
 pub async fn list(
     pool: &DbPool,
     viewer: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     filter: &Filter,
     offset: i64,
     limit: i64,
@@ -299,7 +299,7 @@ pub async fn list(
 pub async fn list_rows(
     pool: &DbPool,
     viewer: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     filter: &Filter,
     offset: i64,
     limit: i64,
@@ -311,7 +311,7 @@ pub async fn list_rows(
     )
 }
 native_operation!(crate::postgres::repository_discussions::write, crate::sqlite::repository_discussions::write,
-    fn write(pool: &DbPool, actor: i64, credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>, repo: i64, discussion: Option<i64>, change: &Write<'_>) -> Result<i64>);
+    fn write(pool: &DbPool, actor: i64, credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>, repo: i64, discussion: Option<i64>, change: &Write<'_>) -> Result<i64>);
 
 pub(crate) fn valid_body(body: &str) -> Result<()> {
     anyhow::ensure!(

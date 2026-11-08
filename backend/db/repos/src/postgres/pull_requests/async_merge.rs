@@ -3,7 +3,7 @@ use crate::pull_requests::async_merge::NewAsyncMerge;
 use crate::pull_requests::async_merge::PENDING_TIMEOUT_SECONDS;
 use crate::pull_requests::async_merge::TIMEOUT_MESSAGE;
 use anyhow::Result;
-use codeyard_db_core::pool::PgPool;
+use codeyard_database::pool::PgPool;
 use serde_json::Value;
 
 pub async fn insert(pool: &PgPool, input: NewAsyncMerge<'_>) -> Result<bool> {

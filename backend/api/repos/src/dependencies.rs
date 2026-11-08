@@ -26,8 +26,8 @@ use codeyard_db_repos::repositories::dependencies::AlertState;
 use codeyard_db_repos::repositories::dependencies::Feature;
 use codeyard_db_repos::repositories::dependencies::Refusal;
 use codeyard_git::error::ErrorKind;
+use codeyard_git_storage::repositories::dependencies::DependencyError;
 use codeyard_identity::repository_access::AccessError;
-use codeyard_repos_core::repositories::dependencies::DependencyError;
 use codeyard_webui::app::Page;
 use codeyard_webui::pages::repos::dependencies::Alert;
 use codeyard_webui::pages::repos::dependencies::Draft;
@@ -49,9 +49,9 @@ pub fn page_router() -> Router<Arc<AppState>> {
 }
 fn failure(error: &anyhow::Error) -> (StatusCode, String) {
     if let Some(
-        graph @ (codeyard_model::dependency_graph::GraphError::Limit
-        | codeyard_model::dependency_graph::GraphError::Disabled),
-    ) = error.downcast_ref::<codeyard_model::dependency_graph::GraphError>()
+        graph @ (codeyard_types::dependency_graph::GraphError::Limit
+        | codeyard_types::dependency_graph::GraphError::Disabled),
+    ) = error.downcast_ref::<codeyard_types::dependency_graph::GraphError>()
     {
         return (StatusCode::UNPROCESSABLE_ENTITY, graph.to_string());
     }
@@ -160,7 +160,7 @@ async fn model(ctx: &PageContext, loaded: Loaded, error: Option<String>, draft: 
     }
     let pool = &ctx.state.pool;
     let repo = loaded.repository.id;
-    let alerts = match codeyard_repos_core::repositories::dependencies::status(
+    let alerts = match codeyard_git_storage::repositories::dependencies::status(
         pool,
         actor,
         repo,
@@ -174,7 +174,7 @@ async fn model(ctx: &PageContext, loaded: Loaded, error: Option<String>, draft: 
             return ctx.error(s, &m);
         }
     };
-    let updates = match codeyard_repos_core::repositories::dependencies::status(
+    let updates = match codeyard_git_storage::repositories::dependencies::status(
         pool,
         actor,
         repo,
@@ -349,11 +349,11 @@ async fn configure(
             "Private dependency export consent is required".into(),
         ))
     } else {
-        codeyard_repos_core::repositories::dependencies::set_enabled(
+        codeyard_git_storage::repositories::dependencies::set_enabled(
             &ctx.state.pool,
             ctx.state.cluster.as_ref(),
             ctx.user.as_ref().unwrap().id,
-            codeyard_db_core::queries::users::accounts::OwnedAccountCredential::Session(
+            codeyard_database::queries::users::accounts::OwnedAccountCredential::Session(
                 codeyard_api_http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
             ),
             loaded.repository.id,

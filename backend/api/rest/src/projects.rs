@@ -51,14 +51,14 @@ pub fn router() -> Router<Arc<AppState>> {
 }
 
 fn failure(ctx: &PageContext, error: anyhow::Error) -> Response {
-    match error.downcast_ref::<codeyard_model::project_query::Refusal>() {
-        Some(codeyard_model::project_query::Refusal::Missing) => {
+    match error.downcast_ref::<codeyard_types::project_query::Refusal>() {
+        Some(codeyard_types::project_query::Refusal::Missing) => {
             ctx.error(StatusCode::NOT_FOUND, "Not Found")
         }
-        Some(codeyard_model::project_query::Refusal::Denied) => {
+        Some(codeyard_types::project_query::Refusal::Denied) => {
             ctx.error(StatusCode::FORBIDDEN, "Project write access is required.")
         }
-        Some(codeyard_model::project_query::Refusal::Invalid) => ctx.error(
+        Some(codeyard_types::project_query::Refusal::Invalid) => ctx.error(
             StatusCode::UNPROCESSABLE_ENTITY,
             "Check the project fields and try again.",
         ),
@@ -117,10 +117,10 @@ async fn model(ctx: &PageContext, params: &Params) -> anyhow::Result<view::Page>
             .map(|value| value.parse::<i64>())
             .transpose()?
             .unwrap_or(1);
-        anyhow::ensure!(number > 0, codeyard_model::project_query::Refusal::Invalid);
+        anyhow::ensure!(number > 0, codeyard_types::project_query::Refusal::Invalid);
         let offset = (number - 1)
             .checked_mul(50)
-            .ok_or(codeyard_model::project_query::Refusal::Invalid)?;
+            .ok_or(codeyard_types::project_query::Refusal::Invalid)?;
         let mut filter = codeyard_db_repos::projects::ListFilter::search(Some(owner), &page.filter);
         filter.order = codeyard_db_repos::projects::ListOrder::Number;
         filter.descending = true;
@@ -140,7 +140,7 @@ async fn model(ctx: &PageContext, params: &Params) -> anyhow::Result<view::Page>
     };
     let number = number
         .parse()
-        .map_err(|_| codeyard_model::project_query::Refusal::Missing)?;
+        .map_err(|_| codeyard_types::project_query::Refusal::Missing)?;
     let project = codeyard_db_repos::projects::get(pool, viewer, owner, number).await?;
     let fields = codeyard_db_repos::projects::fields(pool, viewer, project.id).await?;
     let views = codeyard_db_repos::projects::views(pool, viewer, project.id).await?;
@@ -148,20 +148,20 @@ async fn model(ctx: &PageContext, params: &Params) -> anyhow::Result<view::Page>
         .get("view_number")
         .map(|s| s.parse())
         .transpose()
-        .map_err(|_| codeyard_model::project_query::Refusal::Missing)?
+        .map_err(|_| codeyard_types::project_query::Refusal::Missing)?
         .unwrap_or(1);
     let view = views
         .iter()
         .find(|v| v.number == page.view_number)
-        .ok_or(codeyard_model::project_query::Refusal::Missing)?;
+        .ok_or(codeyard_types::project_query::Refusal::Missing)?;
     let mut config: NewView = serde_json::from_str(&view.configuration)?;
     if let Some(id) = ctx.query.get("sort").filter(|s| !s.is_empty()) {
         let id = id
             .parse()
-            .map_err(|_| codeyard_model::project_query::Refusal::Invalid)?;
+            .map_err(|_| codeyard_types::project_query::Refusal::Invalid)?;
         anyhow::ensure!(
             fields.iter().any(|f| f.id == id),
-            codeyard_model::project_query::Refusal::Invalid
+            codeyard_types::project_query::Refusal::Invalid
         );
         let direction = ctx
             .query
@@ -170,7 +170,7 @@ async fn model(ctx: &PageContext, params: &Params) -> anyhow::Result<view::Page>
             .unwrap_or("asc");
         anyhow::ensure!(
             matches!(direction, "asc" | "desc"),
-            codeyard_model::project_query::Refusal::Invalid
+            codeyard_types::project_query::Refusal::Invalid
         );
         config.sort_by = vec![(id, direction.into())];
     }
@@ -237,11 +237,11 @@ async fn model(ctx: &PageContext, params: &Params) -> anyhow::Result<view::Page>
         .map(|cursor| -> anyhow::Result<usize> {
             let id: i64 = cursor
                 .parse()
-                .map_err(|_| codeyard_model::project_query::Refusal::Invalid)?;
+                .map_err(|_| codeyard_types::project_query::Refusal::Invalid)?;
             items
                 .iter()
                 .position(|item| item.id == id)
-                .ok_or_else(|| codeyard_model::project_query::Refusal::Missing.into())
+                .ok_or_else(|| codeyard_types::project_query::Refusal::Missing.into())
         })
         .transpose()?;
     let total = items.len();
@@ -327,7 +327,7 @@ async fn model(ctx: &PageContext, params: &Params) -> anyhow::Result<view::Page>
     let mut bytes = serde_json::to_vec(&page)?.len();
     anyhow::ensure!(
         bytes < limit,
-        codeyard_model::project_query::Refusal::Invalid
+        codeyard_types::project_query::Refusal::Invalid
     );
     let mut first = None;
     let mut last = None;
@@ -338,7 +338,7 @@ async fn model(ctx: &PageContext, params: &Params) -> anyhow::Result<view::Page>
                 links
                     .get(&item.id)
                     .cloned()
-                    .ok_or(codeyard_model::project_query::Refusal::Missing)?,
+                    .ok_or(codeyard_types::project_query::Refusal::Missing)?,
             )
         } else {
             None
@@ -373,7 +373,7 @@ async fn model(ctx: &PageContext, params: &Params) -> anyhow::Result<view::Page>
         if bytes.saturating_add(cost) > limit {
             anyhow::ensure!(
                 !page.items.is_empty(),
-                codeyard_model::project_query::Refusal::Invalid
+                codeyard_types::project_query::Refusal::Invalid
             );
             break;
         }
@@ -386,7 +386,7 @@ async fn model(ctx: &PageContext, params: &Params) -> anyhow::Result<view::Page>
                 .fields
                 .iter()
                 .find(|f| f.id == field.id)
-                .ok_or(codeyard_model::project_query::Refusal::Missing)?
+                .ok_or(codeyard_types::project_query::Refusal::Missing)?
                 .options;
             let index = options
                 .iter()
@@ -434,12 +434,12 @@ async fn apply(ctx: &PageContext, params: &Params, form: &Fields) -> anyhow::Res
     let actor = ctx
         .user
         .as_ref()
-        .ok_or(codeyard_model::project_query::Refusal::Denied)?
+        .ok_or(codeyard_types::project_query::Refusal::Denied)?
         .id;
     let session = codeyard_api_http::session::extract_session_id(&ctx.headers)
-        .ok_or(codeyard_model::project_query::Refusal::Denied)?;
+        .ok_or(codeyard_types::project_query::Refusal::Denied)?;
     let credential =
-        codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session);
+        codeyard_database::queries::users::accounts::AccountCredential::Session(&session);
     let (owner, _, base) = owner(ctx, params).await?;
     let Some(number) = params.get("project_number") else {
         let project = codeyard_db_repos::projects::create(
@@ -460,14 +460,14 @@ async fn apply(ctx: &PageContext, params: &Params, form: &Fields) -> anyhow::Res
         owner,
         number
             .parse()
-            .map_err(|_| codeyard_model::project_query::Refusal::Missing)?,
+            .map_err(|_| codeyard_types::project_query::Refusal::Missing)?,
     )
     .await?;
     let path = format!("{base}/{}", project.number);
     let integer = |name: &str| {
         field(form, name)
             .parse::<i64>()
-            .map_err(|_| codeyard_model::project_query::Refusal::Invalid)
+            .map_err(|_| codeyard_types::project_query::Refusal::Invalid)
     };
     match field(form, "action") {
         "save" => {
@@ -507,18 +507,18 @@ async fn apply(ctx: &PageContext, params: &Params, form: &Fields) -> anyhow::Res
                 Some(codeyard_db_repos::projects::IterationConfiguration {
                     start_date: field(form, "start_date")
                         .parse()
-                        .map_err(|_| codeyard_model::project_query::Refusal::Invalid)?,
+                        .map_err(|_| codeyard_types::project_query::Refusal::Invalid)?,
                     duration: field(form, "duration")
                         .parse()
-                        .map_err(|_| codeyard_model::project_query::Refusal::Invalid)?,
+                        .map_err(|_| codeyard_types::project_query::Refusal::Invalid)?,
                     iterations: vec![codeyard_db_repos::projects::Iteration {
                         title: "Iteration 1".into(),
                         start_date: field(form, "start_date")
                             .parse()
-                            .map_err(|_| codeyard_model::project_query::Refusal::Invalid)?,
+                            .map_err(|_| codeyard_types::project_query::Refusal::Invalid)?,
                         duration: field(form, "duration")
                             .parse()
-                            .map_err(|_| codeyard_model::project_query::Refusal::Invalid)?,
+                            .map_err(|_| codeyard_types::project_query::Refusal::Invalid)?,
                     }],
                 })
             } else {
@@ -570,7 +570,7 @@ async fn apply(ctx: &PageContext, params: &Params, form: &Fields) -> anyhow::Res
                 field(form, "repo"),
             )
             .await?
-            .ok_or(codeyard_model::project_query::Refusal::Missing)?;
+            .ok_or(codeyard_types::project_query::Refusal::Missing)?;
             if field(form, "action") == "link-repository" {
                 codeyard_db_repos::projects::link_repository(
                     pool,
@@ -586,16 +586,16 @@ async fn apply(ctx: &PageContext, params: &Params, form: &Fields) -> anyhow::Res
             anyhow::ensure!(
                 codeyard_identity::repository_access::can_read(pool, ctx.user.as_ref(), &repo)
                     .await?,
-                codeyard_model::project_query::Refusal::Missing
+                codeyard_types::project_query::Refusal::Missing
             );
             let number = field(form, "number")
                 .parse()
-                .map_err(|_| codeyard_model::project_query::Refusal::Invalid)?;
+                .map_err(|_| codeyard_types::project_query::Refusal::Invalid)?;
             let content = match field(form, "kind") {
                 "Issue" => Content::Issue(
                     codeyard_db_repos::issues::get_issue(pool, repo.id, number)
                         .await?
-                        .ok_or(codeyard_model::project_query::Refusal::Missing)?
+                        .ok_or(codeyard_types::project_query::Refusal::Missing)?
                         .id,
                 ),
                 "PullRequest" => Content::PullRequest(
@@ -603,10 +603,10 @@ async fn apply(ctx: &PageContext, params: &Params, form: &Fields) -> anyhow::Res
                         pool, repo.id, number,
                     )
                     .await?
-                    .ok_or(codeyard_model::project_query::Refusal::Missing)?
+                    .ok_or(codeyard_types::project_query::Refusal::Missing)?
                     .id,
                 ),
-                _ => return Err(codeyard_model::project_query::Refusal::Invalid.into()),
+                _ => return Err(codeyard_types::project_query::Refusal::Invalid.into()),
             };
             codeyard_db_repos::projects::add_item(pool, actor, &credential, project.id, &content)
                 .await?;
@@ -621,7 +621,7 @@ async fn apply(ctx: &PageContext, params: &Params, form: &Fields) -> anyhow::Res
                 let original: String = form
                     .get(&format!("was_{}", f.id))
                     .and_then(|value| serde_json::from_str(value).ok())
-                    .ok_or(codeyard_model::project_query::Refusal::Invalid)?;
+                    .ok_or(codeyard_types::project_query::Refusal::Invalid)?;
                 let value = if f.data_type == "text" {
                     codeyard_repos_pulls::repositories::files::native_text(value.clone(), &original)
                 } else {
@@ -635,7 +635,7 @@ async fn apply(ctx: &PageContext, params: &Params, form: &Fields) -> anyhow::Res
                     Value::Null
                 } else if f.data_type == "number" {
                     serde_json::from_str(&value)
-                        .map_err(|_| codeyard_model::project_query::Refusal::Invalid)?
+                        .map_err(|_| codeyard_types::project_query::Refusal::Invalid)?
                 } else {
                     json!(value)
                 };
@@ -685,7 +685,7 @@ async fn apply(ctx: &PageContext, params: &Params, form: &Fields) -> anyhow::Res
             .await?;
             return Ok(format!("{path}/views/{}", view.number));
         }
-        _ => return Err(codeyard_model::project_query::Refusal::Invalid.into()),
+        _ => return Err(codeyard_types::project_query::Refusal::Invalid.into()),
     }
     Ok(path)
 }

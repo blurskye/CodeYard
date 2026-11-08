@@ -8,7 +8,7 @@ use crate::support::http_client as pulls;
 use axum::http::StatusCode;
 use base64::Engine;
 
-use codeyard_repos_core::repositories::lifecycle;
+use codeyard_git_storage::repositories::lifecycle;
 use codeyard_webui::app::Page;
 use codeyard_webui::pages::repos::issues;
 use database::Database;

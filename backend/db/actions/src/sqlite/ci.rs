@@ -3,12 +3,12 @@ use crate::ci::NewCiRun;
 use anyhow::bail;
 use anyhow::ensure;
 use anyhow::Result;
-use codeyard_db_core::ci_policy::CiAdmissionRefusal;
-use codeyard_db_core::ci_policy::ACCESS_LOST_MESSAGE;
-use codeyard_db_core::models::CiDeployment;
-use codeyard_db_core::models::CiRun;
-use codeyard_db_core::pool::SqlitePool;
-use codeyard_db_core::queries::action_settings::Setting;
+use codeyard_database::ci_policy::CiAdmissionRefusal;
+use codeyard_database::ci_policy::ACCESS_LOST_MESSAGE;
+use codeyard_database::models::CiDeployment;
+use codeyard_database::models::CiRun;
+use codeyard_database::pool::SqlitePool;
+use codeyard_database::queries::action_settings::Setting;
 use sqlx::Sqlite;
 use sqlx::Transaction;
 use uuid::Uuid;
@@ -24,7 +24,7 @@ async fn ci_actor_has_permission(
     trusted_ids: &[i64],
 ) -> Result<bool> {
     let user =
-        sqlx::query_as::<_, codeyard_db_core::models::User>("SELECT * FROM users WHERE id = ?1")
+        sqlx::query_as::<_, codeyard_database::models::User>("SELECT * FROM users WHERE id = ?1")
             .bind(actor)
             .fetch_optional(&mut **tx)
             .await?;
@@ -35,7 +35,7 @@ async fn ci_actor_has_permission(
     {
         return Ok(false);
     }
-    let repo = sqlx::query_as::<_, codeyard_db_core::models::Repository>(
+    let repo = sqlx::query_as::<_, codeyard_database::models::Repository>(
         "SELECT * FROM repositories WHERE id = ?1",
     )
     .bind(repo_id)
@@ -72,7 +72,7 @@ async fn ci_actor_has_permission(
         }
     }
     let access =
-        codeyard_db_core::queries::sqlite::repositories::access::user_repo_access_in_transaction(
+        codeyard_database::queries::sqlite::repositories::access::user_repo_access_in_transaction(
             tx, actor, repo_id,
         )
         .await?;
@@ -102,11 +102,11 @@ pub async fn accept_repository_dispatch(
     pool: &SqlitePool,
     actor: i64,
     repo: i64,
-    credential: &codeyard_db_core::queries::ci::CiCredential,
+    credential: &codeyard_database::queries::ci::CiCredential,
 ) -> Result<bool> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let allowed =
-        codeyard_db_core::queries::sqlite::discussions::lock_write_authority(&mut tx, actor, repo)
+        codeyard_database::queries::sqlite::discussions::lock_write_authority(&mut tx, actor, repo)
             .await?
             && codeyard_db_identity::sqlite::credentials::ci(&mut tx, actor, repo, credential)
                 .await?;
@@ -156,7 +156,7 @@ pub async fn enqueue_ci_run_for_runners(
     trusted_ids: &[i64],
     scheduling: &crate::runners::Scheduling,
     event_payload: Option<&serde_json::Value>,
-    credential: Option<&codeyard_db_core::queries::ci::CiCredential>,
+    credential: Option<&codeyard_database::queries::ci::CiCredential>,
 ) -> Result<crate::ci::Enqueued> {
     enqueue_ci_run_inner(
         pool,
@@ -195,7 +195,7 @@ async fn enqueue_ci_run_inner(
     requested_attempt: Option<crate::ci::NewCiAttempt>,
     scheduling: &crate::runners::Scheduling,
     event_payload: Option<&serde_json::Value>,
-    credential: Option<&codeyard_db_core::queries::ci::CiCredential>,
+    credential: Option<&codeyard_database::queries::ci::CiCredential>,
 ) -> Result<crate::ci::Enqueued> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let cd = matches!(input.pipeline, "cd" | "full") || input.environment.is_some();
@@ -354,7 +354,7 @@ async fn enqueue_ci_run_inner(
         is_fork = fork;
         ensure!(
             !fork
-                || codeyard_db_core::queries::sqlite::action_settings::fork_runs_allowed(
+                || codeyard_database::queries::sqlite::action_settings::fork_runs_allowed(
                     &mut tx,
                     input.repo_id
                 )
@@ -475,8 +475,11 @@ async fn schedule_concurrency(
         let actor: Option<(i64, String)> = sqlx::query_as("SELECT u.id,u.username FROM ci_runs origin JOIN users u ON u.id=origin.triggered_by_id WHERE origin.id=$1")
             .bind(run.workflow_run_id.unwrap_or(run.id)).fetch_optional(&mut **tx).await?;
         let contexts =
-            codeyard_db_core::ci_concurrency_resolve::run_contexts(contexts.clone(), run, actor);
-        Some(codeyard_db_core::ci_concurrency_resolve::resolve(expression.clone(), contexts).await?)
+            codeyard_database::ci_concurrency_resolve::run_contexts(contexts.clone(), run, actor);
+        Some(
+            codeyard_database::ci_concurrency_resolve::resolve(expression.clone(), contexts)
+                .await?,
+        )
     } else {
         scheduling.concurrency.clone()
     };
@@ -606,7 +609,7 @@ async fn claim_queued_run(
     for run in candidates {
         // A private repository's fork switch may have been turned off after admission.
         let fork_refused = run.is_fork
-            && !codeyard_db_core::queries::sqlite::action_settings::fork_runs_allowed(
+            && !codeyard_database::queries::sqlite::action_settings::fork_runs_allowed(
                 &mut tx,
                 run.repo_id,
             )
@@ -669,7 +672,7 @@ async fn claim_queued_run(
                 .execute(&mut *tx)
                 .await?;
         }
-        codeyard_db_core::queries::sqlite::deployment_reviews::sync_execution(
+        codeyard_database::queries::sqlite::deployment_reviews::sync_execution(
             &mut tx, run.id, "running",
         )
         .await?;
@@ -795,7 +798,7 @@ pub async fn request_ci_cancellation_with_credential(
     pool: &SqlitePool,
     run_id: Uuid,
     actor_id: i64,
-    credential: &codeyard_db_core::queries::ci::CiCredential,
+    credential: &codeyard_database::queries::ci::CiCredential,
 ) -> Result<crate::ci::Cancellation> {
     request_cancellation(pool, run_id, actor_id, Some(credential)).await
 }
@@ -804,11 +807,11 @@ async fn request_cancellation(
     pool: &SqlitePool,
     run_id: Uuid,
     actor_id: i64,
-    credential: Option<&codeyard_db_core::queries::ci::CiCredential>,
+    credential: Option<&codeyard_database::queries::ci::CiCredential>,
 ) -> Result<crate::ci::Cancellation> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let user =
-        sqlx::query_as::<_, codeyard_db_core::models::User>("SELECT * FROM users WHERE id = ?1")
+        sqlx::query_as::<_, codeyard_database::models::User>("SELECT * FROM users WHERE id = ?1")
             .bind(actor_id)
             .fetch_optional(&mut *tx)
             .await?
@@ -822,14 +825,14 @@ async fn request_cancellation(
         .fetch_optional(&mut *tx)
         .await?
         .ok_or(CiAdmissionRefusal::Missing("CI run unavailable"))?;
-    let repo = sqlx::query_as::<_, codeyard_db_core::models::Repository>(
+    let repo = sqlx::query_as::<_, codeyard_database::models::Repository>(
         "SELECT * FROM repositories WHERE id = ?1",
     )
     .bind(run.repo_id)
     .fetch_one(&mut *tx)
     .await?;
     let access =
-        codeyard_db_core::queries::sqlite::repositories::access::user_repo_access_in_transaction(
+        codeyard_database::queries::sqlite::repositories::access::user_repo_access_in_transaction(
             &mut tx, actor_id, repo.id,
         )
         .await?;
@@ -842,7 +845,7 @@ async fn request_cancellation(
         );
     }
     let workflow_authorized = match credential {
-        Some(codeyard_db_core::queries::ci::CiCredential::Token { id, .. }) => {
+        Some(codeyard_database::queries::ci::CiCredential::Token { id, .. }) => {
             sqlx::query_scalar::<_, bool>(
                 "SELECT EXISTS(SELECT 1 FROM actions_github_tokens WHERE token_id=$1)",
             )
@@ -853,7 +856,7 @@ async fn request_cancellation(
         _ => false,
     };
     ensure!(
-        user.username != codeyard_db_core::queries::ci_tokens::BOT || workflow_authorized,
+        user.username != codeyard_database::queries::ci_tokens::BOT || workflow_authorized,
         CiAdmissionRefusal::Denied("CI cancellation permission denied")
     );
     ensure!(
@@ -891,7 +894,7 @@ async fn request_cancellation(
 
 pub async fn delete_ci_run_data(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo: i64,
     id: i64,
     kind: crate::ci::CiRunDeletion,
@@ -901,12 +904,12 @@ pub async fn delete_ci_run_data(
     let actor = credential.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     ensure!(
-        codeyard_db_core::queries::sqlite::discussions::lock_write_authority(&mut tx, actor, repo)
+        codeyard_database::queries::sqlite::discussions::lock_write_authority(&mut tx, actor, repo)
             .await?,
         CiAdmissionRefusal::Denied("CI run deletion permission denied")
     );
     ensure!(
-        codeyard_db_core::queries::sqlite::credentials::writes(
+        codeyard_database::queries::sqlite::credentials::writes(
             &mut tx,
             &credential,
             Some(repo),
@@ -1043,7 +1046,7 @@ pub async fn list_filtered_ci_runs(
     limit: i64,
 ) -> Result<Vec<CiRun>> {
     ensure!(limit >= 0, "Result limit must be nonnegative");
-    let access = codeyard_db_core::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
+    let access = codeyard_database::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
     let columns = crate::ci::RUN_METADATA_COLUMNS;
     Ok(sqlx::query_as::<_, CiRun>(&format!(
         "WITH history AS (
@@ -1174,7 +1177,7 @@ pub async fn list_ci_runs_for_user(
     limit: i64,
 ) -> Result<Vec<CiRun>> {
     ensure!(limit >= 0, "Result limit must be nonnegative");
-    let access = codeyard_db_core::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
+    let access = codeyard_database::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
     // Visibility is decided once per repository the user has runs in, in the same
     // statement that orders and limits the runs.
     let columns = crate::ci::RUN_METADATA_COLUMNS;
@@ -1195,7 +1198,7 @@ pub async fn list_ci_runs_for_user(
 async fn validate_log_jobs(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     run_id: i64,
-    lines: &[codeyard_model::ci::LogLine],
+    lines: &[codeyard_types::ci::LogLine],
 ) -> Result<()> {
     let jobs: std::collections::BTreeSet<i64> =
         lines.iter().filter_map(|line| line.job_id).collect();
@@ -1231,7 +1234,7 @@ pub(crate) async fn prepare_ci_log_upload(
     sequence: i64,
     hash: &str,
     key: &str,
-    lines: &[codeyard_model::ci::LogLine],
+    lines: &[codeyard_types::ci::LogLine],
 ) -> Result<crate::ci::log_chunks::Preparation> {
     use crate::ci::log_chunks::Preparation;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
@@ -1261,10 +1264,10 @@ pub(crate) async fn prepare_ci_log_upload(
             "CI upload sequence has different contents"
         );
         return Ok(Preparation::Complete(
-            stored_lines < codeyard_model::ci::MAX_RUN_LOG_LINES,
+            stored_lines < codeyard_types::ci::MAX_RUN_LOG_LINES,
         ));
     }
-    if stored_lines >= codeyard_model::ci::MAX_RUN_LOG_LINES {
+    if stored_lines >= codeyard_types::ci::MAX_RUN_LOG_LINES {
         return Ok(Preparation::Complete(false));
     }
     let next: i64 =
@@ -1294,14 +1297,14 @@ pub(crate) async fn commit_ci_logs(
     run_id: i64,
     worker: &str,
     sequence: i64,
-    lines: &[codeyard_model::ci::LogLine],
+    lines: &[codeyard_types::ci::LogLine],
     upload: &crate::ci::log_chunks::StoredChunk,
 ) -> Result<Option<bool>> {
     ensure!(
         (0..100_000).contains(&sequence),
         "invalid CI upload sequence"
     );
-    let lines = codeyard_db_core::ci_logs::prepare_logs(lines)?;
+    let lines = codeyard_database::ci_logs::prepare_logs(lines)?;
     let hash = crate::ci::log_chunks::request_hash(&lines)?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let totals: Option<(i64, i64, i64)> = sqlx::query_as(
@@ -1330,9 +1333,9 @@ pub(crate) async fn commit_ci_logs(
             previous == hash,
             "CI upload sequence has different contents"
         );
-        return Ok(Some(stored_lines < codeyard_model::ci::MAX_RUN_LOG_LINES));
+        return Ok(Some(stored_lines < codeyard_types::ci::MAX_RUN_LOG_LINES));
     }
-    if stored_lines >= codeyard_model::ci::MAX_RUN_LOG_LINES {
+    if stored_lines >= codeyard_types::ci::MAX_RUN_LOG_LINES {
         return Ok(Some(false));
     }
     if upload.stored_lines != stored_lines || upload.stored_bytes != stored_bytes {
@@ -1345,7 +1348,7 @@ pub(crate) async fn commit_ci_logs(
             .await?;
     ensure!(sequence == next, "CI upload sequence is out of order");
     let (kept, lines_total, bytes_total) =
-        codeyard_db_core::ci_logs::admit_log_lines(stored_lines, stored_bytes, &lines);
+        codeyard_database::ci_logs::admit_log_lines(stored_lines, stored_bytes, &lines);
     let size = kept
         .iter()
         .map(|line| (line.stage.len() + line.line.len()) as i64)
@@ -1368,7 +1371,7 @@ pub(crate) async fn commit_ci_logs(
             .await?;
     }
     tx.commit().await?;
-    Ok(Some(lines_total < codeyard_model::ci::MAX_RUN_LOG_LINES))
+    Ok(Some(lines_total < codeyard_types::ci::MAX_RUN_LOG_LINES))
 }
 pub async fn ci_repository_owner(pool: &SqlitePool, repo_id: i64) -> Result<Option<String>> {
     Ok(sqlx::query_scalar::<_,Option<String>>(r#"SELECT COALESCE(u.username,o.name) FROM repositories r
@@ -1430,8 +1433,8 @@ pub async fn get_ci_deployment_by_run_id(
     Ok(deployment)
 }
 
-use codeyard_db_core::queries::sqlite::ci::ci_commit_status;
+use codeyard_database::queries::sqlite::ci::ci_commit_status;
 
-use codeyard_db_core::queries::sqlite::ci::finish_in_tx;
+use codeyard_database::queries::sqlite::ci::finish_in_tx;
 
-use codeyard_db_core::queries::sqlite::ci::is_deployment;
+use codeyard_database::queries::sqlite::ci::is_deployment;

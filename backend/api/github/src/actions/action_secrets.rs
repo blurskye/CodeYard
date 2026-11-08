@@ -20,8 +20,8 @@ use base64::engine::general_purpose::STANDARD;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::app::AppState;
 use codeyard_db_actions::secrets::SecretKind;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -53,8 +53,8 @@ pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
         .collect()
 }
 
-pub(crate) fn error(error: codeyard_db_core::queries::secrets::SecretsError) -> Error {
-    use codeyard_db_core::queries::secrets::SecretsError;
+pub(crate) fn error(error: codeyard_database::queries::secrets::SecretsError) -> Error {
+    use codeyard_database::queries::secrets::SecretsError;
     match error {
         SecretsError::Denied => {
             Error::new(StatusCode::FORBIDDEN, "Resource not accessible by token")
@@ -226,7 +226,7 @@ pub(crate) fn open_value(
         return Err(Error::validation("Secret", "key_id", "invalid"));
     }
     // Bound the decoded box before allocating or attempting decryption.
-    if encrypted_value.len() > (codeyard_actions::values::MAX_VALUE_BYTES + 48).div_ceil(3) * 4 {
+    if encrypted_value.len() > (codeyard_runner::values::MAX_VALUE_BYTES + 48).div_ceil(3) * 4 {
         return Err(Error::validation("Secret", "encrypted_value", "invalid"));
     }
     let invalid = || Error::validation("Secret", "encrypted_value", "invalid");

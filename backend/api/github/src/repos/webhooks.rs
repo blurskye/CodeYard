@@ -19,15 +19,15 @@ use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_db_core::models::Webhook;
-use codeyard_db_core::models::WebhookDelivery;
+use codeyard_database::models::Webhook;
+use codeyard_database::models::WebhookDelivery;
 use codeyard_db_repos::webhooks::DeliveryOutcome;
 use codeyard_db_repos::webhooks::DeliveryWindow;
 use codeyard_db_repos::webhooks::HookOwner;
 use codeyard_db_repos::webhooks::HookSettings;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
-use codeyard_model::urls::repo_url;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
+use codeyard_types::urls::repo_url;
 use codeyard_webhooks::settings::HookError;
 use codeyard_webhooks::settings::HookForm;
 use codeyard_webhooks::settings::HookPatch;
@@ -233,7 +233,7 @@ async fn save(
     let ssl_verify = config.insecure_ssl.map(ssl).transpose()?;
     let id = match hook_id {
         None => {
-            let events = codeyard_db_core::queries::webhooks::WebhookPatch {
+            let events = codeyard_database::queries::webhooks::WebhookPatch {
                 events: input.events.map(|events| events.join(",")),
                 add_events: input.add_events.unwrap_or_default(),
                 remove_events: input.remove_events.unwrap_or_default(),
@@ -431,7 +431,7 @@ pub(crate) fn delivery_page(
             header::LINK,
             format!(
                 "<{}{}?{query}>; rel=\"next\"",
-                codeyard_model::http_config::link_origin(),
+                codeyard_types::http_config::link_origin(),
                 uri.path()
             )
             .parse()

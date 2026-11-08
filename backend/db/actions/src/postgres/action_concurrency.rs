@@ -1,9 +1,9 @@
 use crate::action_concurrency::Group;
 use crate::action_concurrency::Member;
 use anyhow::Result;
-use codeyard_db_core::ci_concurrency::Configuration;
-use codeyard_db_core::models::CiRun;
-use codeyard_db_core::pool::PgPool;
+use codeyard_database::ci_concurrency::Configuration;
+use codeyard_database::models::CiRun;
+use codeyard_database::pool::PgPool;
 use sqlx::PgConnection;
 
 pub async fn lock(connection: &mut PgConnection, run: &CiRun) -> Result<()> {

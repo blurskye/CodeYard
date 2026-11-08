@@ -2,16 +2,16 @@ use crate::advisories::Listing;
 use crate::advisories::Scope;
 use anyhow::Result;
 use chrono::Utc;
-use codeyard_db_core::pool::SqlitePool;
-use codeyard_model::advisories::identifier;
-use codeyard_model::advisories::Advisory;
-use codeyard_model::advisories::Data;
-use codeyard_model::advisories::Refusal;
+use codeyard_database::pool::SqlitePool;
+use codeyard_types::advisories::identifier;
+use codeyard_types::advisories::Advisory;
+use codeyard_types::advisories::Data;
+use codeyard_types::advisories::Refusal;
 use serde_json::Value;
 
 fn visibility() -> String {
-    let level = codeyard_db_core::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
-    let manager = codeyard_db_core::queries::organizations::roles::security_manager_condition(
+    let level = codeyard_database::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
+    let manager = codeyard_database::queries::organizations::roles::security_manager_condition(
         "u.id",
         "r.owner_org_id",
     );
@@ -19,7 +19,7 @@ fn visibility() -> String {
 }
 pub async fn can_administer(pool: &SqlitePool, actor: i64, repo: i64) -> Result<bool> {
     let sql = crate::advisories::administration_sql(
-        codeyard_db_core::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL,
+        codeyard_database::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL,
     );
     Ok(sqlx::query_scalar(&sql)
         .bind(actor)
@@ -73,7 +73,7 @@ pub async fn get(
 }
 pub async fn create(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo: i64,
     value: &Value,
     report: bool,
@@ -88,7 +88,7 @@ pub async fn create(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let report_id = if report {
         let input =
-            codeyard_model::security_reports::NewReport::new(&data.summary, &data.description)?;
+            codeyard_types::security_reports::NewReport::new(&data.summary, &data.description)?;
         Some(
             codeyard_db_repos::sqlite::repositories::security::create_report_in(
                 &mut tx, actor, repo, &input,
@@ -97,7 +97,7 @@ pub async fn create(
         )
     } else {
         anyhow::ensure!(
-            codeyard_db_core::queries::sqlite::discussions::lock_security_authority(
+            codeyard_database::queries::sqlite::discussions::lock_security_authority(
                 &mut tx, actor, repo, true
             )
             .await?,
@@ -120,7 +120,7 @@ pub async fn create(
 /// Compensates failed provisioning only while the newly created draft is untouched.
 pub async fn discard_created(pool: &SqlitePool, actor: i64, created: &Advisory) -> Result<bool> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    if !codeyard_db_core::queries::sqlite::discussions::lock_admin_authority(
+    if !codeyard_database::queries::sqlite::discussions::lock_admin_authority(
         &mut tx,
         actor,
         created.repo_id,
@@ -137,7 +137,7 @@ pub async fn discard_created(pool: &SqlitePool, actor: i64, created: &Advisory) 
 
 pub async fn update(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo: i64,
     ghsa: &str,
     patch: &Value,
@@ -204,7 +204,7 @@ pub async fn update(
     };
     let updated: Advisory=sqlx::query_as("UPDATE repository_advisories SET revision=revision+1,document=?3,state=?4,updated_at=?5,published_at=?6,publisher_id=?7,closed_at=?8,report_accepted=?9 WHERE repo_id=?1 AND ghsa_id=?2 RETURNING *").bind(repo).bind(ghsa).bind(serde_json::to_string(&data)?).bind(state).bind(now).bind(published_at).bind(publisher).bind(closed_at).bind(row.report_accepted||(row.report_id.is_some()&&state=="draft")).fetch_one(&mut *tx).await?;
     if state == "published" {
-        codeyard_db_core::queries::dependabot_alerts::published(updated.clone())?;
+        codeyard_database::queries::dependabot_alerts::published(updated.clone())?;
     }
     if let Some(report) = row.report_id.filter(|_| state != row.state) {
         sqlx::query("UPDATE repository_security_reports SET state=?2,updated_at=?3 WHERE id=?1 AND repo_id=?4").bind(report).bind(if state=="closed" {"closed"} else {"open"}).bind(now).bind(repo).execute(&mut *tx).await?;
@@ -214,7 +214,7 @@ pub async fn update(
 }
 pub async fn request_cve(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo: i64,
     ghsa: &str,
 ) -> Result<()> {
@@ -247,7 +247,7 @@ pub async fn request_cve(
 }
 pub async fn attach_fork(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo: i64,
     ghsa: &str,
     fork: i64,
@@ -276,4 +276,4 @@ pub async fn attach_fork(
     Ok(())
 }
 
-use codeyard_db_core::queries::sqlite::advisories::administration;
+use codeyard_database::queries::sqlite::advisories::administration;

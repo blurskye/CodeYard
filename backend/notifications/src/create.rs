@@ -3,10 +3,10 @@ use crate::broadcast::NotificationBroadcaster;
 /// The invitation stands even if its notification cannot be stored. Its email was queued in the
 /// transaction that saved it.
 pub async fn organization_invitation(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     broadcaster: &NotificationBroadcaster,
     actor: i64,
-    invitation: &codeyard_db_core::models::OrgInvitation,
+    invitation: &codeyard_database::models::OrgInvitation,
 ) {
     let Some(user_id) = invitation.user_id else {
         return;
@@ -18,7 +18,7 @@ pub async fn organization_invitation(
     )
     .await
     {
-        Ok(codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(metadata)) => {
+        Ok(codeyard_database::queries::organizations::OrganizationOutcome::Applied(metadata)) => {
             metadata.name
         }
         _ => return,
@@ -51,8 +51,8 @@ pub struct NotificationRequest<'a> {
 }
 
 impl NotificationRequest<'_> {
-    fn as_native(&self) -> codeyard_db_core::queries::notifications::records::NewNotification<'_> {
-        codeyard_db_core::queries::notifications::records::NewNotification {
+    fn as_native(&self) -> codeyard_database::queries::notifications::records::NewNotification<'_> {
+        codeyard_database::queries::notifications::records::NewNotification {
             user_id: self.user_id,
             actor_id: self.actor_id,
             repo_id: self.repo_id,
@@ -69,13 +69,13 @@ impl NotificationRequest<'_> {
 /// threads retain the native recipient policy. The ordinary creation path applies ignores
 /// and, for a fork notice, Read on the fork.
 pub async fn notify_subscribers(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     broadcaster: &NotificationBroadcaster,
     request: NotificationRequest<'_>,
     notified: &[i64],
 ) -> Vec<i64> {
     let Some((kind, key)) =
-        codeyard_db_core::queries::notifications::threads::subject(&request.as_native())
+        codeyard_database::queries::notifications::threads::subject(&request.as_native())
     else {
         return Vec::new();
     };
@@ -122,10 +122,10 @@ pub enum CreateError {
 }
 
 pub async fn create_and_broadcast_notification(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     broadcaster: &NotificationBroadcaster,
     request: NotificationRequest<'_>,
-) -> Result<codeyard_db_core::models::Notification, CreateError> {
+) -> Result<codeyard_database::models::Notification, CreateError> {
     if let Some(repo_id) = request.repo_id {
         // A repository notice carries its content into the inbox and the email, so the
         // recipient must still be able to read the repository.
@@ -143,10 +143,10 @@ pub async fn create_and_broadcast_notification(
 /// Stores and delivers a notification without the early Read check. A mention from another
 /// cell names a repository stub, which only the insert's own scope check can decide.
 pub(crate) async fn store(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     broadcaster: &NotificationBroadcaster,
     request: NotificationRequest<'_>,
-) -> Result<codeyard_db_core::models::Notification, CreateError> {
+) -> Result<codeyard_database::models::Notification, CreateError> {
     // The insert rechecks Read, the fork's Read and repository ignores in its transaction.
     let notification = codeyard_db_repos::notifications::records::create_notification(
         pool,
@@ -154,7 +154,8 @@ pub(crate) async fn store(
     )
     .await
     .map_err(|error| {
-        if error.is::<codeyard_db_core::queries::notifications::records::NotificationSuppressed>() {
+        if error.is::<codeyard_database::queries::notifications::records::NotificationSuppressed>()
+        {
             CreateError::Suppressed
         } else {
             CreateError::Unavailable
@@ -167,9 +168,9 @@ pub(crate) async fn store(
 /// Announces a committed notification and queues its email. Every stored notification is
 /// delivered here, whichever transaction wrote it.
 pub(super) async fn deliver(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     broadcaster: &NotificationBroadcaster,
-    notification: &codeyard_db_core::models::Notification,
+    notification: &codeyard_database::models::Notification,
 ) {
     // Delivery reloads the count under the recipient's current authority.
     broadcaster

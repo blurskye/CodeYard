@@ -90,16 +90,16 @@ pub struct UpsertBranchProtectionRuleRequest {
 }
 
 pub(crate) async fn rule_response(
-    pool: &codeyard_db_core::DbPool,
-    rule: codeyard_db_core::models::BranchProtectionRule,
+    pool: &codeyard_database::DbPool,
+    rule: codeyard_database::models::BranchProtectionRule,
     actor: i64,
 ) -> Result<BranchProtectionRuleResponse, (StatusCode, Json<ApiError>)> {
     Ok(rule_responses(pool, vec![rule], actor).await?.remove(0))
 }
 
 pub(crate) async fn rule_responses(
-    pool: &codeyard_db_core::DbPool,
-    rules: Vec<codeyard_db_core::models::BranchProtectionRule>,
+    pool: &codeyard_database::DbPool,
+    rules: Vec<codeyard_database::models::BranchProtectionRule>,
     actor: i64,
 ) -> Result<Vec<BranchProtectionRuleResponse>, (StatusCode, Json<ApiError>)> {
     let mut ids: Vec<_> = rules
@@ -148,7 +148,7 @@ pub(crate) async fn rule_responses(
 }
 
 fn project_rules(
-    rules: Vec<codeyard_db_core::models::BranchProtectionRule>,
+    rules: Vec<codeyard_database::models::BranchProtectionRule>,
     users: &std::collections::HashMap<i64, String>,
     teams: &std::collections::HashMap<(i64, i64), String>,
 ) -> Vec<BranchProtectionRuleResponse> {
@@ -189,8 +189,8 @@ fn project_rules(
 }
 
 pub(crate) async fn authorized_rule_responses(
-    pool: &codeyard_db_core::DbPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    pool: &codeyard_database::DbPool,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repository: i64,
 ) -> Result<Vec<BranchProtectionRuleResponse>, (StatusCode, Json<ApiError>)> {
     let actor = actor.into();
@@ -249,11 +249,11 @@ pub async fn upsert_branch_protection_rule(
 /// they refuse the same input with the same error and store the same rule. Callers check that
 /// the actor administers the repository first.
 pub(crate) async fn save_rule(
-    pool: &codeyard_db_core::DbPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
-    repository: &codeyard_db_core::models::Repository,
+    pool: &codeyard_database::DbPool,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
+    repository: &codeyard_database::models::Repository,
     req: UpsertBranchProtectionRuleRequest,
-) -> Result<codeyard_db_core::models::BranchProtectionRule, (StatusCode, Json<ApiError>)> {
+) -> Result<codeyard_database::models::BranchProtectionRule, (StatusCode, Json<ApiError>)> {
     let authority = actor.into();
     let actor_id = authority.user_id;
     let pattern = req.pattern.trim();
@@ -382,8 +382,8 @@ pub(crate) async fn save_rule(
 
 /// Resolve both lists together, then preserve each list's first-occurrence ordering.
 async fn write_user_ids(
-    pool: &codeyard_db_core::DbPool,
-    repository: &codeyard_db_core::models::Repository,
+    pool: &codeyard_database::DbPool,
+    repository: &codeyard_database::models::Repository,
     lists: [&[String]; 2],
 ) -> Result<[Vec<i64>; 2], (StatusCode, Json<ApiError>)> {
     let fields = ["push_allowances", "force_push_allowances"];
@@ -453,7 +453,7 @@ pub async fn delete_branch_protection_rule(
 
     delete_rule(
         &state.pool,
-        codeyard_db_core::queries::credentials::Actor::from((
+        codeyard_database::queries::credentials::Actor::from((
             actor.id,
             codeyard_api_http::session::extract_session_id(&headers).unwrap_or_default(),
         )),
@@ -467,8 +467,8 @@ pub async fn delete_branch_protection_rule(
 /// Deletes the rule saved for `pattern`. The JSON API and the settings form both delete through
 /// this, so a missing rule is the same not-found answer in both.
 pub(crate) async fn delete_rule(
-    pool: &codeyard_db_core::DbPool,
-    actor_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    pool: &codeyard_database::DbPool,
+    actor_id: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     pattern: &str,
 ) -> Result<(), (StatusCode, Json<ApiError>)> {

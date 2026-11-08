@@ -5,8 +5,8 @@ use crate::code_scanning::PullSelection;
 use crate::code_scanning::PullSnapshot;
 use crate::code_scanning::ANALYSIS_COLUMNS;
 use anyhow::Result;
-use codeyard_db_core::pool::PgPool;
-use codeyard_db_core::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL;
+use codeyard_database::pool::PgPool;
+use codeyard_database::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL;
 use sqlx::PgConnection;
 
 async fn allowed(c: &mut PgConnection, actor: i64, session: &str, repo: i64) -> Result<bool> {
@@ -16,7 +16,7 @@ async fn allowed(c: &mut PgConnection, actor: i64, session: &str, repo: i64) -> 
     match authority {
         Some((_, true)) => Ok(true),
         Some((Some(org), false)) => {
-            codeyard_db_core::queries::postgres::organizations::roles::manages_security(
+            codeyard_database::queries::postgres::organizations::roles::manages_security(
                 c, actor, org,
             )
             .await

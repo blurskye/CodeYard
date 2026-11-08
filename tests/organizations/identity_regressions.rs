@@ -6,9 +6,9 @@ use crate::support::http_client::Client;
 use crate::support::organizations::applied;
 use axum::http::StatusCode;
 
-use codeyard_db_core::models::OrgRole;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
+use codeyard_database::models::OrgRole;
+use codeyard_database::models::Repository;
+use codeyard_database::queries::organizations::OrganizationOutcome;
 use codeyard_db_orgs::organizations::access::count_organization_profile_repositories;
 use codeyard_db_orgs::organizations::access::list_organization_profile_repositories;
 use codeyard_db_orgs::organizations::deletion::delete_organization;
@@ -211,7 +211,7 @@ async fn discovery_and_deletion(pg: bool) {
             )
             .await
             .unwrap(),
-            codeyard_db_core::models::AccessLevel::None
+            codeyard_database::models::AccessLevel::None
         );
         assert_eq!(
             count_organization_profile_repositories(f.pool(), first_org, Some(member))
@@ -239,7 +239,7 @@ async fn discovery_and_deletion(pg: bool) {
     )
     .await
     .unwrap();
-    let credential = codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+    let credential = codeyard_database::queries::users::accounts::AccountCredential::Session(
         &deletion_session.id,
     );
     let initial = applied(
@@ -335,7 +335,7 @@ async fn release_upload_cleanup(pg: bool) {
     let key = format!("uploads/{id}");
     let insert = "INSERT INTO files(id,user_id,filename,original_name,content_type,file_size,sha256_hex,object_key,reason,visibility,is_active,confirmed_at,upload_expires_at) VALUES($1,$2,'asset.bin','asset.bin','application/octet-stream',12,$3,$4,'release_asset','owner',FALSE,'2026-01-01T00:00:00.000000Z','2099-01-01T00:00:00.000000Z')";
     match f.pool() {
-        codeyard_db_core::DbPool::Postgres(raw) => {
+        codeyard_database::DbPool::Postgres(raw) => {
             sqlx::query(insert)
                 .bind(id)
                 .bind(owner)
@@ -345,7 +345,7 @@ async fn release_upload_cleanup(pg: bool) {
                 .await
                 .unwrap();
         }
-        codeyard_db_core::DbPool::Sqlite(raw) => {
+        codeyard_database::DbPool::Sqlite(raw) => {
             sqlx::query(insert)
                 .bind(id)
                 .bind(owner)
@@ -359,7 +359,7 @@ async fn release_upload_cleanup(pg: bool) {
     codeyard_db_repos::releases::add_release_asset(
         f.pool(),
         owner,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), owner).await,
         ),
         repo.id,
@@ -389,7 +389,7 @@ async fn release_upload_cleanup(pg: bool) {
             f.pool(),
             (
                 owner,
-                &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+                &codeyard_database::queries::users::accounts::AccountCredential::Session(
                     &deletion_session.id,
                 ),
             ),
@@ -401,13 +401,13 @@ async fn release_upload_cleanup(pg: bool) {
     );
     let check = "SELECT (SELECT COUNT(*) FROM files WHERE id=$1), (SELECT COUNT(*) FROM pending_object_deletions WHERE object_key=$2)";
     let counts: (i64, i64) = match f.pool() {
-        codeyard_db_core::DbPool::Postgres(raw) => sqlx::query_as(check)
+        codeyard_database::DbPool::Postgres(raw) => sqlx::query_as(check)
             .bind(id)
             .bind(&key)
             .fetch_one(raw)
             .await
             .unwrap(),
-        codeyard_db_core::DbPool::Sqlite(raw) => sqlx::query_as(check)
+        codeyard_database::DbPool::Sqlite(raw) => sqlx::query_as(check)
             .bind(id)
             .bind(&key)
             .fetch_one(raw)

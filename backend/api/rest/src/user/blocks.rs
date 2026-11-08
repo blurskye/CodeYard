@@ -11,7 +11,7 @@ use codeyard_api_http::context::PageContext;
 use codeyard_api_http::shared::user::responses::field;
 use codeyard_api_http::shared::user::responses::Fields;
 use codeyard_app::app::AppState;
-use codeyard_db_core::queries::users::accounts::AccountCredential;
+use codeyard_database::queries::users::accounts::AccountCredential;
 use codeyard_identity::blocks::BlockError;
 use std::sync::Arc;
 

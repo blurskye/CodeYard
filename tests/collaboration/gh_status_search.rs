@@ -10,11 +10,11 @@ use axum::{
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
 
+use codeyard_git_storage::repositories::lifecycle;
+use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_identity::tokens;
 use codeyard_identity::tokens::TokenInput;
 use codeyard_repos::templates;
-use codeyard_repos_core::repositories::lifecycle;
-use codeyard_repos_core::repositories::store::repo_store;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
@@ -496,7 +496,7 @@ async fn discussions(pg: bool) {
         issue.id,
         bob,
         "Needle comment",
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), bob).await,
         ),
     )
@@ -506,7 +506,7 @@ async fn discussions(pg: bool) {
         f.pool(),
         bob,
         repo.id,
-        codeyard_db_core::models::AccessLevel::Write,
+        codeyard_database::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -514,7 +514,7 @@ async fn discussions(pg: bool) {
         f.pool(),
         pull.id,
         bob,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), bob).await,
         ),
         "approved",
@@ -582,7 +582,7 @@ async fn discussions(pg: bool) {
     let project = codeyard_db_repos::projects::create(
         f.pool(),
         alice,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), alice).await,
         ),
         codeyard_db_repos::projects::Owner::User(alice),
@@ -595,7 +595,7 @@ async fn discussions(pg: bool) {
     codeyard_db_repos::projects::add_item(
         f.pool(),
         alice,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), alice).await,
         ),
         project.id,
@@ -606,7 +606,7 @@ async fn discussions(pg: bool) {
     codeyard_db_repos::projects::add_item(
         f.pool(),
         alice,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), alice).await,
         ),
         project.id,
@@ -761,7 +761,7 @@ async fn discussions(pg: bool) {
     .await
     .unwrap()
     {
-        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(org) => org,
+        codeyard_database::queries::organizations::OrganizationOutcome::Applied(org) => org,
         _ => panic!("organization"),
     };
     let org_repo = lifecycle::provision(
@@ -895,7 +895,7 @@ async fn status(pg: bool) {
     .await
     .unwrap()
     {
-        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(org) => org,
+        codeyard_database::queries::organizations::OrganizationOutcome::Applied(org) => org,
         _ => panic!("organization"),
     };
     let repo = lifecycle::provision(

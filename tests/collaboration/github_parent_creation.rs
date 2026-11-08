@@ -22,7 +22,7 @@ async fn parents(pg: bool) {
     let mut repos = Vec::new();
     for (actor, name) in [(alice, "proj"), (alice, "other"), (bob, "foreign")] {
         repos.push(
-            codeyard_repos_core::repositories::lifecycle::provision(
+            codeyard_git_storage::repositories::lifecycle::provision(
                 (f.pool(), None),
                 root.path(),
                 codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(actor),
@@ -40,7 +40,7 @@ async fn parents(pg: bool) {
             f.pool(),
             bob,
             repo.id,
-            codeyard_db_core::models::AccessLevel::Triage,
+            codeyard_database::models::AccessLevel::Triage,
         )
         .await
         .unwrap();
@@ -157,7 +157,7 @@ async fn parents(pg: bool) {
         f.pool(),
         bob,
         repos[1].id,
-        codeyard_db_core::models::AccessLevel::Read,
+        codeyard_database::models::AccessLevel::Read,
     )
     .await
     .unwrap();
@@ -196,7 +196,7 @@ async fn parents(pg: bool) {
             f.pool(),
             bot,
             repo.id,
-            codeyard_db_core::models::AccessLevel::Write,
+            codeyard_database::models::AccessLevel::Write,
         )
         .await
         .unwrap();
@@ -306,7 +306,7 @@ async fn parents(pg: bool) {
         f.pool(),
         repos[0].id,
         alice,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), alice).await,
         ),
         true,
@@ -324,7 +324,7 @@ async fn parents(pg: bool) {
         f.pool(),
         repos[0].id,
         alice,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), alice).await,
         ),
         child,
@@ -338,7 +338,7 @@ async fn parents(pg: bool) {
             f.pool(),
             repos[0].id,
             bot,
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Token(
+            &codeyard_database::queries::users::accounts::AccountCredential::Token(
                 bot_token,
                 BOT_TOKEN_HASH,
             ),
@@ -372,7 +372,7 @@ async fn parents(pg: bool) {
         f.pool(),
         repos[0].id,
         bot,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Token(
+        &codeyard_database::queries::users::accounts::AccountCredential::Token(
             bot_token,
             BOT_TOKEN_HASH,
         ),
@@ -436,13 +436,13 @@ async fn github_parent_creation_postgres() {
 
 /// A new issue under `parent`, created the way the API creates one.
 async fn create_child(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     actor: i64,
     repo: i64,
     parent: i64,
     title: &str,
     body: &str,
-) -> anyhow::Result<codeyard_db_core::models::Issue> {
+) -> anyhow::Result<codeyard_database::models::Issue> {
     codeyard_db_repos::issues::create_issue_with_metadata(
         pool,
         repo,

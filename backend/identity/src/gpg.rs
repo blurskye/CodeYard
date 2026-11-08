@@ -1,11 +1,11 @@
 //! OpenPGP enrollment verifies self-certifications and signing-subkey back signatures.
 
-use codeyard_db_core::queries::users::accounts::AccountCredential;
+use codeyard_database::queries::users::accounts::AccountCredential;
 use codeyard_types::credentials::AccountRestricted;
 
 use base64::Engine;
 use chrono::{DateTime, Utc};
-use codeyard_db_core::DbPool;
+use codeyard_database::DbPool;
 use codeyard_db_identity::users::gpg_keys::GpgKey;
 use codeyard_db_identity::users::gpg_keys::GpgKeyRefusal;
 use codeyard_db_identity::users::gpg_keys::GpgMaterial;
@@ -131,7 +131,7 @@ fn uid_email(uid: &str) -> Option<String> {
         uid
     };
     let address = address.trim().to_ascii_lowercase();
-    codeyard_model::account_input::validate_email(&address)
+    codeyard_types::account_input::validate_email(&address)
         .is_ok()
         .then_some(address)
 }

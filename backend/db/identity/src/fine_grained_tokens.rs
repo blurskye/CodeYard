@@ -1,11 +1,11 @@
 use anyhow::Result;
 use chrono::DateTime;
 use chrono::Utc;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::queries::fine_grained_tokens::Bounds;
-use codeyard_db_core::queries::fine_grained_tokens::Policy;
-use codeyard_db_core::queries::fine_grained_tokens::Token;
-use codeyard_db_core::DbPool;
+use codeyard_database::native_operation;
+use codeyard_database::queries::fine_grained_tokens::Bounds;
+use codeyard_database::queries::fine_grained_tokens::Policy;
+use codeyard_database::queries::fine_grained_tokens::Token;
+use codeyard_database::DbPool;
 
 pub const MAX_REPOSITORIES: usize = 100;
 
@@ -15,7 +15,7 @@ pub struct RepositoryChoices {
 }
 
 native_operation!(crate::postgres::fine_grained_tokens::repository_choices, crate::sqlite::fine_grained_tokens::repository_choices,
-    fn repository_choices(pool: &DbPool, actor: i64, credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>, org: Option<i64>, query: &str, selected: &[i64]) -> Result<RepositoryChoices>);
+    fn repository_choices(pool: &DbPool, actor: i64, credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>, org: Option<i64>, query: &str, selected: &[i64]) -> Result<RepositoryChoices>);
 
 pub struct NewToken<'a> {
     pub name: &'a str,
@@ -42,30 +42,30 @@ native_operation!(crate::postgres::fine_grained_tokens::get, crate::sqlite::fine
 native_operation!(crate::postgres::fine_grained_tokens::list_before, crate::sqlite::fine_grained_tokens::list_before,
     /// The user's newest 100 fine-grained tokens, older than `before` when it is given.
     fn list_before(pool: &DbPool, user: i64, before: Option<i64>) -> Result<Vec<Token>>);
-native_operation!(codeyard_db_core::queries::postgres::fine_grained_tokens::bounds, codeyard_db_core::queries::sqlite::fine_grained_tokens::bounds,
+native_operation!(codeyard_database::queries::postgres::fine_grained_tokens::bounds, codeyard_database::queries::sqlite::fine_grained_tokens::bounds,
     fn bounds(pool: &DbPool, token: i64) -> Result<Option<Bounds>>);
-native_operation!(codeyard_db_core::queries::postgres::fine_grained_tokens::repositories, codeyard_db_core::queries::sqlite::fine_grained_tokens::repositories,
+native_operation!(codeyard_database::queries::postgres::fine_grained_tokens::repositories, codeyard_database::queries::sqlite::fine_grained_tokens::repositories,
     /// The selected repositories' ids and names, at most 100, that are still in the token's
     /// owner domain and readable by `actor`. Only the token's user or an owner of its
     /// organization sees them, through a live `credential`.
-    fn repositories(pool: &DbPool, token: i64, actor: i64, credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>) -> Result<Vec<(i64, String)>>);
+    fn repositories(pool: &DbPool, token: i64, actor: i64, credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>) -> Result<Vec<(i64, String)>>);
 pub async fn selected(pool: &DbPool, token: i64, repo: i64) -> Result<bool> {
     let native = match pool {
         DbPool::Postgres(pool) => {
-            codeyard_db_core::queries::postgres::fine_grained_tokens::selected(pool, token, repo)
+            codeyard_database::queries::postgres::fine_grained_tokens::selected(pool, token, repo)
                 .await?
         }
         DbPool::Sqlite(pool) => {
-            codeyard_db_core::queries::sqlite::fine_grained_tokens::selected(pool, token, repo)
+            codeyard_database::queries::sqlite::fine_grained_tokens::selected(pool, token, repo)
                 .await?
         }
     };
     if native {
         return Ok(true);
     }
-    let cached = codeyard_db_core::cells::authorization::lookup(
+    let cached = codeyard_database::cells::authorization::lookup(
         pool,
-        &codeyard_db_core::cells::authorization::Query {
+        &codeyard_database::cells::authorization::Query {
             kind: "token",
             id: Some(token),
             hash: None,
@@ -75,7 +75,7 @@ pub async fn selected(pool: &DbPool, token: i64, repo: i64) -> Result<bool> {
     .await?;
     Ok(
         cached.is_some_and(|credential| match credential.answer.authority {
-            codeyard_db_core::cells::authorization::Authority::FineGrained {
+            codeyard_database::cells::authorization::Authority::FineGrained {
                 repositories: Some(ids),
                 ..
             } => ids.contains(&repo),
@@ -83,12 +83,12 @@ pub async fn selected(pool: &DbPool, token: i64, repo: i64) -> Result<bool> {
         }),
     )
 }
-native_operation!(codeyard_db_core::queries::postgres::fine_grained_tokens::policy, codeyard_db_core::queries::sqlite::fine_grained_tokens::policy,
+native_operation!(codeyard_database::queries::postgres::fine_grained_tokens::policy, codeyard_database::queries::sqlite::fine_grained_tokens::policy,
     /// The organization's policy, or the defaults when it has none.
     fn policy(pool: &DbPool, org: i64) -> Result<Policy>);
 native_operation!(crate::postgres::fine_grained_tokens::set_policy, crate::sqlite::fine_grained_tokens::set_policy,
     /// Saves the policy while `actor` owns the organization; false when they do not.
-    fn set_policy(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, org: i64, policy: &Policy) -> Result<bool>);
+    fn set_policy(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, org: i64, policy: &Policy) -> Result<bool>);
 /// Which of an organization's tokens a listing shows: those in `status` whose users are still
 /// members and that pass every filter given, newest first unless `ascending`.
 #[derive(Default)]
@@ -130,10 +130,10 @@ native_operation!(crate::postgres::fine_grained_tokens::owner_tokens, crate::sql
 native_operation!(crate::postgres::fine_grained_tokens::review, crate::sqlite::fine_grained_tokens::review,
     /// Moves the organization's tokens in `from` to `status` while `reviewer` owns the
     /// organization, and returns how many changed.
-    fn review(pool: &DbPool, org: i64, reviewer: impl Into<codeyard_db_core::queries::credentials::Actor>, tokens: &[i64], from: &str, status: &str, reason: Option<&str>) -> Result<u64>);
+    fn review(pool: &DbPool, org: i64, reviewer: impl Into<codeyard_database::queries::credentials::Actor>, tokens: &[i64], from: &str, status: &str, reason: Option<&str>) -> Result<u64>);
 native_operation!(crate::postgres::fine_grained_tokens::review_all, crate::sqlite::fine_grained_tokens::review_all,
     /// `review` for every token in `from` whose user is still a member, in one statement.
-    fn review_all(pool: &DbPool, org: i64, reviewer: impl Into<codeyard_db_core::queries::credentials::Actor>, from: &str, status: &str, reason: Option<&str>) -> Result<u64>);
+    fn review_all(pool: &DbPool, org: i64, reviewer: impl Into<codeyard_database::queries::credentials::Actor>, from: &str, status: &str, reason: Option<&str>) -> Result<u64>);
 native_operation!(crate::postgres::fine_grained_tokens::classic_refused, crate::sqlite::fine_grained_tokens::classic_refused,
     /// Whether `token` is a classic personal token and `org` refuses classic tokens. OAuth,
     /// App, job and fine-grained tokens are never classic.

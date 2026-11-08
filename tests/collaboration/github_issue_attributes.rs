@@ -25,12 +25,12 @@ async fn attributes(pg: bool) {
     .await
     .unwrap()
     {
-        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(org) => org,
+        codeyard_database::queries::organizations::OrganizationOutcome::Applied(org) => org,
         _ => panic!("create organization"),
     };
     use codeyard_db_repos::repositories::creation::{RepositoryCreationOwner, RepositoryTarget};
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard_repos_core::repositories::lifecycle::provision(
+    let repo = codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         RepositoryCreationOwner {
@@ -48,7 +48,7 @@ async fn attributes(pg: bool) {
         f.pool(),
         bob,
         repo.id,
-        codeyard_db_core::models::AccessLevel::Write,
+        codeyard_database::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -551,13 +551,13 @@ async fn attributes(pg: bool) {
         alice,
         org.id,
         admin,
-        codeyard_db_core::models::OrgRole::Admin,
+        codeyard_database::models::OrgRole::Admin,
     )
     .await
     .unwrap();
     assert!(matches!(
         added,
-        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(_)
+        codeyard_database::queries::organizations::OrganizationOutcome::Applied(_)
     ));
     let refused = codeyard_db_repos::issue_attributes::configure(
         f.pool(),

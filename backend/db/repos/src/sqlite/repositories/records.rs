@@ -3,9 +3,9 @@ use crate::repositories::records::MergeMethodUpdate;
 use crate::repositories::records::RepositoryFilter;
 use crate::repositories::records::RepositorySort;
 use anyhow::Result;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::models::SharedRepository;
-use codeyard_db_core::pool::SqlitePool;
+use codeyard_database::models::Repository;
+use codeyard_database::models::SharedRepository;
+use codeyard_database::pool::SqlitePool;
 use sqlx::Sqlite;
 use sqlx::Transaction;
 
@@ -32,7 +32,7 @@ pub async fn create_repository(
         INSERT INTO repositories (home_cell,owner_kind, owner_user_id, name, description, is_private, disk_path, created_by_id)
         VALUES ({cell_home},'user', ?1, ?2, ?3, ?4, ?5, ?1)
         RETURNING *
-        "#, cell_home = codeyard_db_core::cells::LOCAL_HOME_SQL),
+        "#, cell_home = codeyard_database::cells::LOCAL_HOME_SQL),
     )
     .bind(owner_id)
     .bind(name)
@@ -42,7 +42,7 @@ pub async fn create_repository(
     .fetch_one(&mut *tx)
     .await?;
 
-    codeyard_db_core::cells::directory::sqlite::repository(pool, &mut tx, &result).await?;
+    codeyard_database::cells::directory::sqlite::repository(pool, &mut tx, &result).await?;
     tx.commit().await?;
     Ok(result)
 }
@@ -203,14 +203,14 @@ pub async fn list_trending_repositories(
          ORDER BY stars_count DESC, created_at DESC, id DESC LIMIT ?3",
     )
     .bind(viewer)
-    .bind(codeyard_db_core::queries::sqlite::search::contains(text.trim()))
+    .bind(codeyard_database::queries::sqlite::search::contains(text.trim()))
     .bind(limit.min(100))
     .fetch_all(pool)
     .await?)
 }
 
 fn shared_repository_condition() -> String {
-    format!("NOT r.is_stub AND NOT r.is_gist AND NOT (r.owner_kind='user' AND r.owner_user_id=u.id) AND ({})>=1 AND (EXISTS(SELECT 1 FROM org_memberships m JOIN organization_settings s ON s.org_id=m.org_id AND s.default_repository_permission IN (1,3,5) WHERE m.org_id=r.owner_org_id AND m.user_id=u.id AND m.role IN ('owner','admin','member')) OR EXISTS(SELECT 1 FROM org_memberships m JOIN organization_role_assignments assigned ON assigned.org_id=m.org_id JOIN organization_roles role ON role.id=assigned.role_id AND role.base_level BETWEEN 1 AND 5 WHERE m.org_id=r.owner_org_id AND m.user_id=u.id AND m.role IN ('owner','admin','member') AND ((assigned.user_id=u.id AND assigned.team_id IS NULL) OR (assigned.user_id IS NULL AND EXISTS(SELECT 1 FROM teams t JOIN effective_team_memberships tm ON tm.team_id=t.id AND tm.user_id=u.id AND tm.role IN ('member','maintainer') WHERE t.id=assigned.team_id AND t.org_id=assigned.org_id AND t.privacy IN ('visible','secret'))))) OR EXISTS(SELECT 1 FROM repo_access a WHERE a.repo_id=r.id AND a.user_id=u.id AND a.access_level BETWEEN 1 AND 5) OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=r.owner_org_id AND m.user_id=u.id AND (m.role IN ('owner','admin') OR (m.role='member' AND EXISTS(SELECT 1 FROM teams t JOIN effective_team_memberships tm ON tm.team_id=t.id AND tm.user_id=u.id AND tm.role IN ('member','maintainer') JOIN team_repo_access a ON a.team_id=t.id AND a.repo_id=r.id AND a.permission BETWEEN 1 AND 5 WHERE t.org_id=m.org_id AND t.privacy IN ('visible','secret'))))))", codeyard_db_core::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL)
+    format!("NOT r.is_stub AND NOT r.is_gist AND NOT (r.owner_kind='user' AND r.owner_user_id=u.id) AND ({})>=1 AND (EXISTS(SELECT 1 FROM org_memberships m JOIN organization_settings s ON s.org_id=m.org_id AND s.default_repository_permission IN (1,3,5) WHERE m.org_id=r.owner_org_id AND m.user_id=u.id AND m.role IN ('owner','admin','member')) OR EXISTS(SELECT 1 FROM org_memberships m JOIN organization_role_assignments assigned ON assigned.org_id=m.org_id JOIN organization_roles role ON role.id=assigned.role_id AND role.base_level BETWEEN 1 AND 5 WHERE m.org_id=r.owner_org_id AND m.user_id=u.id AND m.role IN ('owner','admin','member') AND ((assigned.user_id=u.id AND assigned.team_id IS NULL) OR (assigned.user_id IS NULL AND EXISTS(SELECT 1 FROM teams t JOIN effective_team_memberships tm ON tm.team_id=t.id AND tm.user_id=u.id AND tm.role IN ('member','maintainer') WHERE t.id=assigned.team_id AND t.org_id=assigned.org_id AND t.privacy IN ('visible','secret'))))) OR EXISTS(SELECT 1 FROM repo_access a WHERE a.repo_id=r.id AND a.user_id=u.id AND a.access_level BETWEEN 1 AND 5) OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=r.owner_org_id AND m.user_id=u.id AND (m.role IN ('owner','admin') OR (m.role='member' AND EXISTS(SELECT 1 FROM teams t JOIN effective_team_memberships tm ON tm.team_id=t.id AND tm.user_id=u.id AND tm.role IN ('member','maintainer') JOIN team_repo_access a ON a.team_id=t.id AND a.repo_id=r.id AND a.permission BETWEEN 1 AND 5 WHERE t.org_id=m.org_id AND t.privacy IN ('visible','secret'))))))", codeyard_database::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL)
 }
 
 /// Repositories shared directly or through organization and team authority.
@@ -219,7 +219,7 @@ pub async fn list_shared_repositories(
     user_id: i64,
 ) -> Result<Vec<SharedRepository>> {
     Ok(sqlx::query_as::<_, SharedRepository>(
-        &format!("SELECT r.*, ({}) AS access_level FROM repositories r JOIN users u ON u.id=?1 WHERE {} ORDER BY r.name,r.id", codeyard_db_core::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL, shared_repository_condition()),
+        &format!("SELECT r.*, ({}) AS access_level FROM repositories r JOIN users u ON u.id=?1 WHERE {} ORDER BY r.name,r.id", codeyard_database::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL, shared_repository_condition()),
     )
     .bind(user_id)
     .fetch_all(pool)
@@ -244,7 +244,7 @@ pub async fn list_user_repository_page(
             " AND NOT is_archived"
         }
     );
-    let needle = codeyard_db_core::queries::sqlite::search::contains(text.trim());
+    let needle = codeyard_database::queries::sqlite::search::contains(text.trim());
     let count = sqlx::query_scalar(&format!(
         "SELECT COUNT(*) FROM repositories WHERE {condition}"
     ))
@@ -283,7 +283,7 @@ pub async fn list_shared_repository_page(
             " AND NOT r.is_archived"
         }
     );
-    let needle = codeyard_db_core::queries::sqlite::search::contains(text.trim());
+    let needle = codeyard_database::queries::sqlite::search::contains(text.trim());
     let count = sqlx::query_scalar(&format!(
         "SELECT COUNT(*) FROM repositories r JOIN users u ON u.id=?1 WHERE {condition}"
     ))
@@ -291,7 +291,7 @@ pub async fn list_shared_repository_page(
     .bind(&needle)
     .fetch_one(pool)
     .await?;
-    let rows = sqlx::query_as(&format!("SELECT r.*, ({}) AS access_level FROM repositories r JOIN users u ON u.id=?1 WHERE {condition} ORDER BY r.name,r.id LIMIT ?3 OFFSET ?4", codeyard_db_core::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL))
+    let rows = sqlx::query_as(&format!("SELECT r.*, ({}) AS access_level FROM repositories r JOIN users u ON u.id=?1 WHERE {condition} ORDER BY r.name,r.id LIMIT ?3 OFFSET ?4", codeyard_database::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL))
         .bind(user).bind(&needle).bind(limit.clamp(1,100)).bind(offset.max(0)).fetch_all(pool).await?;
     Ok((rows, count))
 }
@@ -309,7 +309,7 @@ pub async fn search_public_repositories(
 ) -> Result<Vec<Repository>> {
     anyhow::ensure!(limit >= 0, "Result limit must be nonnegative");
     anyhow::ensure!(offset >= 0, "Result offset must be nonnegative");
-    let pattern = codeyard_db_core::queries::sqlite::search::contains(text);
+    let pattern = codeyard_database::queries::sqlite::search::contains(text);
     let (index, order): (&str, std::borrow::Cow<'_, str>) = match sort {
         RepositorySort::Recent => ("", "created_at DESC, id DESC".into()),
         RepositorySort::Stars => (
@@ -359,7 +359,7 @@ pub async fn public_languages(pool: &SqlitePool, limit: i64) -> Result<Vec<Strin
 
 async fn require_settings_actor(
     tx: &mut Transaction<'_, Sqlite>,
-    actor: &codeyard_db_core::queries::credentials::Actor,
+    actor: &codeyard_database::queries::credentials::Actor,
 ) -> Result<()> {
     if let Some(credential) = actor.credential() {
         codeyard_db_identity::sqlite::users::transitions::require_account(
@@ -374,7 +374,7 @@ async fn require_settings_actor(
 
 pub async fn update_repository(
     pool: &SqlitePool,
-    actor_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor_id: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     description: Option<&str>,
     is_private: impl Into<crate::repositories::records::VisibilityUpdate>,
@@ -399,7 +399,7 @@ pub async fn update_repository(
 
 pub async fn patch_repository(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     changes: &crate::repositories::records::RepositoryChanges<&str>,
 ) -> Result<Repository> {
@@ -407,7 +407,7 @@ pub async fn patch_repository(
 }
 pub async fn patch_repository_and_default(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     changes: &crate::repositories::records::RepositoryChanges<&str>,
     name: &str,
@@ -425,7 +425,7 @@ pub async fn patch_repository_and_default(
 }
 async fn patch_core(
     pool: &SqlitePool,
-    authority: codeyard_db_core::queries::credentials::Actor,
+    authority: codeyard_database::queries::credentials::Actor,
     repo_id: i64,
     changes: &crate::repositories::records::RepositoryChanges<&str>,
     default_branch: Option<&str>,
@@ -437,7 +437,7 @@ async fn patch_core(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     require_settings_actor(&mut tx, &authority).await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::sqlite::discussions::lock_archive_authority(
+        codeyard_database::queries::sqlite::discussions::lock_archive_authority(
             &mut tx, actor, repo_id
         )
         .await?,
@@ -524,7 +524,7 @@ async fn patch_core(
     let updated=sqlx::query_as::<_,Repository>("UPDATE repositories SET name=COALESCE(?2,name),description=CASE WHEN ?3 THEN ?4 ELSE description END,website=CASE WHEN ?5 THEN ?6 ELSE website END,is_private=?7,is_archived=?8,is_template=COALESCE(?9,is_template),default_branch=COALESCE(?10,default_branch),is_internal=?11,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id=?1 AND NOT is_archived RETURNING *")
         .bind(repo_id).bind(changes.name).bind(changes.description.is_some()).bind(changes.description.flatten()).bind(website.is_some()).bind(website.as_ref().and_then(|value|value.as_deref())).bind(private).bind(changes.archived.unwrap_or(previous.is_archived)).bind(changes.is_template).bind(default_branch).bind(internal).fetch_one(&mut *tx).await.map_err(name_conflict_error)?;
     if private != previous.is_private {
-        codeyard_db_core::queries::sqlite::secrets::delivery_budget(&mut tx, repo_id).await?;
+        codeyard_database::queries::sqlite::secrets::delivery_budget(&mut tx, repo_id).await?;
     }
     tx.commit().await?;
     Ok(updated)
@@ -532,7 +532,7 @@ async fn patch_core(
 
 pub async fn set_merge_methods(
     pool: &SqlitePool,
-    actor_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor_id: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     update: MergeMethodUpdate,
 ) -> Result<()> {
@@ -542,7 +542,7 @@ pub async fn set_merge_methods(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     require_settings_actor(&mut tx, &authority).await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::sqlite::discussions::lock_admin_authority(
+        codeyard_database::queries::sqlite::discussions::lock_admin_authority(
             &mut tx, actor_id, repo_id
         )
         .await?,
@@ -650,21 +650,21 @@ pub async fn delete_unattached_advisory_fork(
         "DELETE FROM repositories WHERE id=?1 AND is_private AND contribution_version=1 AND NOT EXISTS(SELECT 1 FROM repository_advisories WHERE private_fork_id=?1) RETURNING *",
     ).bind(repo_id).fetch_optional(&mut *tx).await?;
     if deleted.is_some() {
-        codeyard_db_core::cells::outbox::sqlite::forget(
+        codeyard_database::cells::outbox::sqlite::forget(
             pool,
             &mut tx,
-            codeyard_model::cells::Object {
-                kind: codeyard_model::cells::ObjectKind::Repository,
+            codeyard_types::cells::Object {
+                kind: codeyard_types::cells::ObjectKind::Repository,
                 id: repo_id,
             },
         )
         .await?;
     }
     tx.commit().await?;
-    codeyard_db_core::cells::directory::sqlite::finish_forget(
+    codeyard_database::cells::directory::sqlite::finish_forget(
         pool,
-        codeyard_model::cells::Object {
-            kind: codeyard_model::cells::ObjectKind::Repository,
+        codeyard_types::cells::Object {
+            kind: codeyard_types::cells::ObjectKind::Repository,
             id: repo_id,
         },
     )
@@ -684,21 +684,21 @@ pub async fn delete_unwritten_repository(
     .fetch_optional(&mut *tx)
     .await?;
     if deleted.is_some() {
-        codeyard_db_core::cells::outbox::sqlite::forget(
+        codeyard_database::cells::outbox::sqlite::forget(
             pool,
             &mut tx,
-            codeyard_model::cells::Object {
-                kind: codeyard_model::cells::ObjectKind::Repository,
+            codeyard_types::cells::Object {
+                kind: codeyard_types::cells::ObjectKind::Repository,
                 id: repo_id,
             },
         )
         .await?;
     }
     tx.commit().await?;
-    codeyard_db_core::cells::directory::sqlite::finish_forget(
+    codeyard_database::cells::directory::sqlite::finish_forget(
         pool,
-        codeyard_model::cells::Object {
-            kind: codeyard_model::cells::ObjectKind::Repository,
+        codeyard_types::cells::Object {
+            kind: codeyard_types::cells::ObjectKind::Repository,
             id: repo_id,
         },
     )
@@ -710,7 +710,7 @@ pub async fn delete_unwritten_repository(
 /// deleted, so the caller removes the files where that row says they are.
 pub async fn delete_repository(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
 ) -> Result<Repository> {
     use crate::repositories::records::RepositorySettingsRefusal as Refusal;
@@ -718,7 +718,7 @@ pub async fn delete_repository(
     let actor_id = actor.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::sqlite::discussions::lock_archive_authority(
+        codeyard_database::queries::sqlite::discussions::lock_archive_authority(
             &mut tx, actor_id, repo_id
         )
         .await?,
@@ -741,7 +741,8 @@ pub async fn delete_repository(
         .bind(repo_id)
         .execute(&mut *tx)
         .await?;
-    codeyard_db_core::queries::sqlite::runners::remove_repository_runners(&mut tx, repo_id).await?;
+    codeyard_database::queries::sqlite::runners::remove_repository_runners(&mut tx, repo_id)
+        .await?;
     let deleted =
         sqlx::query_as::<_, Repository>("DELETE FROM repositories WHERE id=?1 RETURNING *")
             .bind(repo_id)
@@ -749,25 +750,25 @@ pub async fn delete_repository(
             .await?;
     let deleted = deleted.ok_or(Refusal::Denied)?;
     for file in files {
-        codeyard_db_core::queries::sqlite::files::delete_unreferenced_file_in_transaction(
+        codeyard_database::queries::sqlite::files::delete_unreferenced_file_in_transaction(
             &mut tx, file,
         )
         .await?;
     }
-    codeyard_db_core::cells::outbox::sqlite::forget(
+    codeyard_database::cells::outbox::sqlite::forget(
         pool,
         &mut tx,
-        codeyard_model::cells::Object {
-            kind: codeyard_model::cells::ObjectKind::Repository,
+        codeyard_types::cells::Object {
+            kind: codeyard_types::cells::ObjectKind::Repository,
             id: repo_id,
         },
     )
     .await?;
     tx.commit().await?;
-    codeyard_db_core::cells::directory::sqlite::finish_forget(
+    codeyard_database::cells::directory::sqlite::finish_forget(
         pool,
-        codeyard_model::cells::Object {
-            kind: codeyard_model::cells::ObjectKind::Repository,
+        codeyard_types::cells::Object {
+            kind: codeyard_types::cells::ObjectKind::Repository,
             id: repo_id,
         },
     )
@@ -777,7 +778,7 @@ pub async fn delete_repository(
 
 pub async fn rename_repository(
     pool: &SqlitePool,
-    actor_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor_id: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     new_name: &str,
 ) -> Result<Repository> {
@@ -788,7 +789,7 @@ pub async fn rename_repository(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     require_settings_actor(&mut tx, &authority).await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::sqlite::discussions::lock_admin_authority(
+        codeyard_database::queries::sqlite::discussions::lock_admin_authority(
             &mut tx, actor_id, repo_id
         )
         .await?,
@@ -844,7 +845,7 @@ async fn check_namespace(
 }
 pub async fn transfer_repository(
     pool: &SqlitePool,
-    actor_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor_id: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     target: crate::repositories::creation::RepositoryTarget,
 ) -> Result<Repository> {
@@ -852,7 +853,7 @@ pub async fn transfer_repository(
 }
 pub async fn transfer_repository_checked(
     pool: &SqlitePool,
-    actor_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor_id: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     target: crate::repositories::creation::RepositoryTarget,
     expected_owner: &str,
@@ -869,7 +870,7 @@ pub async fn transfer_repository_checked(
 }
 async fn transfer_repository_inner(
     pool: &SqlitePool,
-    authority: codeyard_db_core::queries::credentials::Actor,
+    authority: codeyard_database::queries::credentials::Actor,
     repo_id: i64,
     target: crate::repositories::creation::RepositoryTarget,
     expected: Option<(&str, &str)>,
@@ -881,7 +882,7 @@ async fn transfer_repository_inner(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     require_settings_actor(&mut tx, &authority).await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::sqlite::discussions::lock_admin_authority(
+        codeyard_database::queries::sqlite::discussions::lock_admin_authority(
             &mut tx, actor_id, repo_id
         )
         .await?,
@@ -1003,8 +1004,8 @@ async fn transfer_repository_inner(
         let pulls: Vec<(i64, String)> = sqlx::query_as("SELECT id,updated_at FROM pull_requests WHERE head_repo_id=?1 AND maintainer_can_modify")
             .bind(repo_id).fetch_all(&mut *tx).await?;
         for (id, revision) in pulls {
-            let next = codeyard_db_core::queries::sqlite::time::next_revision(
-                codeyard_db_core::queries::sqlite::time::decode(&revision)?,
+            let next = codeyard_database::queries::sqlite::time::next_revision(
+                codeyard_database::queries::sqlite::time::decode(&revision)?,
             )?;
             sqlx::query("UPDATE pull_requests SET maintainer_can_modify=0,maintainer_edit_granted_by_id=NULL,updated_at=?2 WHERE id=?1")
                 .bind(id).bind(next).execute(&mut *tx).await?;
@@ -1021,7 +1022,7 @@ async fn transfer_repository_inner(
         .bind(repo_id)
         .execute(&mut *tx)
         .await?;
-        codeyard_db_core::queries::sqlite::code_security::apply_default(&mut tx, &result).await?;
+        codeyard_database::queries::sqlite::code_security::apply_default(&mut tx, &result).await?;
         sqlx::query("DELETE FROM secret_scanning_commits WHERE repo_id=?1")
             .bind(repo_id)
             .execute(&mut *tx)
@@ -1047,11 +1048,11 @@ async fn transfer_repository_inner(
             .await?;
         let runs: Vec<i64> = sqlx::query_scalar("SELECT id FROM ci_runs WHERE repo_id=?1 AND (status IN ('queued','running') OR completed_at > strftime('%Y-%m-%dT%H:%M:%f000Z','now','-1 hour')) ORDER BY id")
             .bind(repo_id).fetch_all(&mut *tx).await?;
-        codeyard_db_core::queries::sqlite::ci::stop_ci_runs(&mut tx, &runs).await?;
-        codeyard_db_core::queries::sqlite::runners::remove_repository_runners(&mut tx, repo_id)
+        codeyard_database::queries::sqlite::ci::stop_ci_runs(&mut tx, &runs).await?;
+        codeyard_database::queries::sqlite::runners::remove_repository_runners(&mut tx, repo_id)
             .await?;
     }
-    codeyard_db_core::queries::sqlite::secrets::delivery_budget(&mut tx, repo_id).await?;
+    codeyard_database::queries::sqlite::secrets::delivery_budget(&mut tx, repo_id).await?;
     tx.commit().await?;
     Ok(result)
 }
@@ -1114,7 +1115,7 @@ pub async fn restore_repository_default_branch(
 /// Archives or unarchives under current administrator authority, including archived rows.
 pub async fn set_repository_archived(
     pool: &SqlitePool,
-    actor_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor_id: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     archived: bool,
 ) -> Result<bool> {
@@ -1123,7 +1124,7 @@ pub async fn set_repository_archived(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     require_settings_actor(&mut tx, &authority).await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::sqlite::discussions::lock_archive_authority(
+        codeyard_database::queries::sqlite::discussions::lock_archive_authority(
             &mut tx, actor_id, repo_id
         )
         .await?,
@@ -1207,7 +1208,7 @@ pub async fn set_repository_wiki(
 ) -> Result<()> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::sqlite::discussions::lock_admin_authority(
+        codeyard_database::queries::sqlite::discussions::lock_admin_authority(
             &mut tx, actor, repo_id
         )
         .await?,
@@ -1227,7 +1228,7 @@ pub async fn set_repository_default_branch(
     branch: &str,
 ) -> Result<bool> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    if !codeyard_db_core::queries::sqlite::discussions::lock_admin_authority(
+    if !codeyard_database::queries::sqlite::discussions::lock_admin_authority(
         &mut tx, actor_id, repo_id,
     )
     .await?

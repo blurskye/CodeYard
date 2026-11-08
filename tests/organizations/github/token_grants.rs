@@ -17,12 +17,12 @@ use codeyard_identity::fine_grained::TokenError;
 
 use codeyard_identity::tokens::TokenInput;
 
-use codeyard_db_core::models::AccessLevel;
-use codeyard_db_core::models::OrgRole;
+use codeyard_database::models::AccessLevel;
+use codeyard_database::models::OrgRole;
 use codeyard_webui::app::Page;
 use serde_json::{json, Value};
 
-async fn classic(pool: &codeyard_db_core::DbPool, user: i64, session: &str) -> String {
+async fn classic(pool: &codeyard_database::DbPool, user: i64, session: &str) -> String {
     let token = codeyard_identity::tokens::create(
         pool,
         user,
@@ -39,7 +39,7 @@ async fn classic(pool: &codeyard_db_core::DbPool, user: i64, session: &str) -> S
 }
 
 async fn fine(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     user: i64,
     session: &str,
     org: i64,
@@ -103,7 +103,7 @@ async fn contract(pg: bool) {
     let mut repos = Vec::new();
     for (name, private) in [("internal", true), ("open", false), ("secret", true)] {
         repos.push(
-            codeyard_repos_core::repositories::lifecycle::provision(
+            codeyard_git_storage::repositories::lifecycle::provision(
                 (f.pool(), None),
                 root.path(),
                 RepositoryCreationOwner {
@@ -319,7 +319,7 @@ async fn contract(pg: bool) {
         f.pool(),
         (
             erin,
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+            &codeyard_database::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(f.pool(), erin).await
             ),
         ),

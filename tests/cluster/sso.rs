@@ -55,7 +55,7 @@ async fn token(
         || form.get("client_secret").map(String::as_str) != Some("owned-client-secret")
         || form.get("redirect_uri") != query.get("redirect_uri")
         || form.get("code_verifier").is_none_or(|v| {
-            codeyard_model::oauth_apps::pkce_challenge(v) != query["code_challenge"]
+            codeyard_types::oauth_apps::pkce_challenge(v) != query["code_challenge"]
         })
     {
         return StatusCode::UNAUTHORIZED.into_response();
@@ -264,7 +264,7 @@ async fn organization_oidc_crosses_web_nodes_and_rechecks_membership_and_audit_f
         use codeyard_db_orgs::organizations::profiles::{NewOrganization, OrganizationProfile};
         let input =
             NewOrganization::new("acme", OrganizationProfile::new(None, None).unwrap()).unwrap();
-        let codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(org) =
+        let codeyard_database::queries::organizations::OrganizationOutcome::Applied(org) =
             codeyard_db_orgs::organizations::profiles::create_organization(
                 db.pool(),
                 owner,
@@ -281,11 +281,11 @@ async fn organization_oidc_crosses_web_nodes_and_rechecks_membership_and_audit_f
                 owner,
                 org.id,
                 member.id,
-                codeyard_db_core::models::OrgRole::Member
+                codeyard_database::models::OrgRole::Member
             )
             .await
             .unwrap(),
-            codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(_)
+            codeyard_database::queries::organizations::OrganizationOutcome::Applied(_)
         ));
         let mut node_keys = Vec::new();
         if pg {
@@ -294,7 +294,7 @@ async fn organization_oidc_crosses_web_nodes_and_rechecks_membership_and_audit_f
                 .unwrap();
             for name in ["first", "second"] {
                 let key = codeyard_support::node_identity::NodeKey::generate();
-                codeyard_db_cluster::cluster::register_own_node(
+                codeyard_db_placement::cluster::register_own_node(
                     db.pool(),
                     &key.public_hex(),
                     name,
@@ -487,7 +487,7 @@ async fn organization_oidc_crosses_web_nodes_and_rechecks_membership_and_audit_f
 
 #[tokio::test]
 async fn private_oidc_enrollment_cli_rechecks_the_administrator_member_and_audit_commit() {
-    use codeyard_db_core::queries::organizations::OrganizationOutcome;
+    use codeyard_database::queries::organizations::OrganizationOutcome;
     use codeyard_db_orgs::organizations::profiles::{NewOrganization, OrganizationProfile};
     for pg in [false, true] {
         let mut db = Database::new(pg).await;
@@ -517,7 +517,7 @@ async fn private_oidc_enrollment_cli_rechecks_the_administrator_member_and_audit
                 owner,
                 org.id,
                 member,
-                codeyard_db_core::models::OrgRole::Member
+                codeyard_database::models::OrgRole::Member
             )
             .await
             .unwrap(),

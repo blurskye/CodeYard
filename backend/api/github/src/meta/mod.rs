@@ -18,11 +18,11 @@ use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
-use codeyard_model::node_id;
-use codeyard_model::urls::api_url;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_git_storage::repositories::store::repo_store;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
+use codeyard_types::node_id;
+use codeyard_types::urls::api_url;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -104,7 +104,7 @@ pub(super) async fn root(
     }
     value["current_user_authorizations_html_url"] = json!(format!(
         "{}/settings/applications{{/client_id}}",
-        codeyard_model::http_config::link_origin()
+        codeyard_types::http_config::link_origin()
     ));
     Ok(Json(value))
 }
@@ -237,12 +237,12 @@ async fn repository_license(
     let revision = store
         .commit(reference)
         .await
-        .map_err(codeyard_repos_core::api_shared::github::contents::store_error)?
+        .map_err(codeyard_git_storage::api_shared::github::contents::store_error)?
         .sha;
     let mut entries = store
         .tree_metadata(&revision, "")
         .await
-        .map_err(codeyard_repos_core::api_shared::github::contents::store_error)?;
+        .map_err(codeyard_git_storage::api_shared::github::contents::store_error)?;
     entries.sort_by_key(|entry| entry.name.to_ascii_lowercase());
     let path = entries
         .iter()
@@ -255,7 +255,7 @@ async fn repository_license(
     let blob = store
         .blob_bytes(&revision, &path)
         .await
-        .map_err(codeyard_repos_core::api_shared::github::contents::store_error)?;
+        .map_err(codeyard_git_storage::api_shared::github::contents::store_error)?;
     if headers
         .get(header::ACCEPT)
         .and_then(|value| value.to_str().ok())
@@ -361,7 +361,7 @@ async fn markdown(
 pub(super) async fn resolve_references(
     state: &AppState,
     authentication: Option<&codeyard_identity::github_auth::Authentication>,
-    repo: &codeyard_db_core::models::Repository,
+    repo: &codeyard_database::models::Repository,
     owner: &str,
     name: &str,
     texts: &[&str],

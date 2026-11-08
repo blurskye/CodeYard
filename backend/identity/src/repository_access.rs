@@ -1,14 +1,14 @@
 use anyhow::Result;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::models::User;
+use codeyard_database::models::Repository;
+use codeyard_database::models::User;
 use codeyard_db_repos::repositories::access::CollaboratorChange;
 /// Retained account identity, without substituting Git permissions for a metadata operation.
 pub async fn credential_user(
-    pool: &codeyard_db_core::DbPool,
-    actor: &codeyard_db_core::queries::credentials::Actor,
+    pool: &codeyard_database::DbPool,
+    actor: &codeyard_database::queries::credentials::Actor,
     write: bool,
 ) -> Result<User> {
-    use codeyard_db_core::queries::users::accounts::OwnedAccountCredential;
+    use codeyard_database::queries::users::accounts::OwnedAccountCredential;
     use codeyard_types::credentials::AccountRestricted;
     let user = match &actor.credential {
         None => codeyard_db_identity::users::accounts::get_user_by_id(pool, actor.user_id).await?,
@@ -16,9 +16,9 @@ pub async fn credential_user(
             codeyard_db_identity::users::sessions::get_session_user(pool, session).await?
         }
         Some(OwnedAccountCredential::ForeignToken(id, hash)) => {
-            codeyard_db_core::cells::authorization::lookup(
+            codeyard_database::cells::authorization::lookup(
                 pool,
-                &codeyard_db_core::cells::authorization::Query {
+                &codeyard_database::cells::authorization::Query {
                     kind: "token",
                     id: Some(*id),
                     hash: Some(hash),
@@ -42,15 +42,15 @@ pub async fn credential_user(
 
 /// The access projection with the personal-repository administrator policy applied.
 pub async fn user_access(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     user: &User,
     repository: &Repository,
-) -> Result<codeyard_db_core::models::AccessLevel> {
+) -> Result<codeyard_database::models::AccessLevel> {
     if repository.is_stub || repository.is_gist || user.is_banned || user.must_change_password {
-        return Ok(codeyard_db_core::models::AccessLevel::None);
+        return Ok(codeyard_database::models::AccessLevel::None);
     }
     if repository.owner_kind == "user" && user.is_admin {
-        return Ok(codeyard_db_core::models::AccessLevel::Owner);
+        return Ok(codeyard_database::models::AccessLevel::Owner);
     }
     codeyard_db_repos::repositories::access::get_user_repo_access(pool, user.id, repository.id)
         .await
@@ -58,31 +58,31 @@ pub async fn user_access(
 
 /// Gists use a distinct clone namespace and never grant ordinary repository access.
 pub async fn user_git_access(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     user: &User,
     repository: &Repository,
-) -> Result<codeyard_db_core::models::AccessLevel> {
+) -> Result<codeyard_database::models::AccessLevel> {
     if repository.is_stub {
-        return Ok(codeyard_db_core::models::AccessLevel::None);
+        return Ok(codeyard_database::models::AccessLevel::None);
     }
     if !repository.is_gist {
         return user_access(pool, user, repository).await;
     }
     if user.is_banned || user.must_change_password {
-        return Ok(codeyard_db_core::models::AccessLevel::None);
+        return Ok(codeyard_database::models::AccessLevel::None);
     }
     let gist = codeyard_db_repos::gists::by_repository(pool, repository.id)
         .await?
         .filter(|gist| gist.ready && Some(gist.owner_id) == repository.owner_user_id);
     Ok(match gist {
-        Some(gist) if gist.owner_id == user.id => codeyard_db_core::models::AccessLevel::Owner,
-        Some(_) => codeyard_db_core::models::AccessLevel::Read,
-        None => codeyard_db_core::models::AccessLevel::None,
+        Some(gist) if gist.owner_id == user.id => codeyard_database::models::AccessLevel::Owner,
+        Some(_) => codeyard_database::models::AccessLevel::Read,
+        None => codeyard_database::models::AccessLevel::None,
     })
 }
 
 pub async fn can_read_git(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     user: Option<&User>,
     repository: &Repository,
 ) -> Result<bool> {
@@ -101,7 +101,7 @@ pub async fn can_read_git(
 }
 
 pub async fn can_read(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     user: Option<&User>,
     repository: &Repository,
 ) -> Result<bool> {
@@ -129,7 +129,7 @@ pub async fn can_read(
 
 /// The author's current relationship to a repository, shared by API presentations.
 pub async fn author_association(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     repository: &Repository,
     user_id: i64,
 ) -> Result<&'static str> {
@@ -143,7 +143,7 @@ pub async fn author_association(
 }
 
 pub async fn author_associations(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     repository: &Repository,
     users: &[i64],
 ) -> Result<std::collections::HashMap<i64, String>> {
@@ -156,7 +156,7 @@ pub async fn author_associations(
 }
 
 pub async fn can_admin(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     user: &User,
     repository: &Repository,
 ) -> Result<bool> {
@@ -176,7 +176,7 @@ pub async fn can_admin(
 /// Write permission for code and metadata: owners and site admins of personal
 /// repositories, plus collaborators/teams with write access.
 pub async fn can_write(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     user: &User,
     repository: &Repository,
 ) -> Result<bool> {
@@ -201,7 +201,7 @@ pub async fn can_write(
 
 /// Triage sets labels, assignees and milestones on issues and pull requests; it cannot edit the repository.
 pub async fn can_triage(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     user: &User,
     repository: &Repository,
 ) -> Result<bool> {
@@ -227,7 +227,7 @@ pub async fn can_triage(
 /// Moderation of other people's comments: maintainers, owners and site administrators of personal
 /// repositories. Archived repositories take no moderation.
 pub async fn can_maintain(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     user: &User,
     repository: &Repository,
 ) -> Result<bool> {
@@ -260,7 +260,7 @@ pub enum AccessError {
 }
 
 pub async fn current_repository(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     id: i64,
 ) -> std::result::Result<Repository, AccessError> {
     codeyard_db_repos::repositories::records::get_repository_by_id(pool, id)
@@ -272,7 +272,7 @@ pub async fn current_repository(
 /// A repository that a caller already resolved and authorized, read again by ID so that a
 /// rename in between cannot switch it, with its owner's current name for links.
 pub async fn current_repository_with_owner(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     id: i64,
 ) -> std::result::Result<(Repository, String), AccessError> {
     let repository = current_repository(pool, id).await?;
@@ -284,7 +284,7 @@ pub async fn current_repository_with_owner(
 }
 
 pub async fn check_read(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     repo_id: i64,
     actor: Option<i64>,
 ) -> std::result::Result<Repository, AccessError> {
@@ -311,7 +311,7 @@ pub async fn check_read(
 }
 
 pub async fn check_admin(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     repo_id: i64,
     actor: i64,
 ) -> std::result::Result<Repository, AccessError> {
@@ -334,7 +334,7 @@ pub async fn check_admin(
 }
 
 pub async fn check_write(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     repo_id: i64,
     actor: i64,
 ) -> std::result::Result<(Repository, User), AccessError> {
@@ -363,11 +363,11 @@ pub async fn check_write(
 
 /// Personal repository owners retain the existing collaborator policy.
 pub async fn change_collaborator(
-    pool: &codeyard_db_core::DbPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    pool: &codeyard_database::DbPool,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     username: &str,
-    permission: Option<codeyard_db_core::models::AccessLevel>,
+    permission: Option<codeyard_database::models::AccessLevel>,
 ) -> std::result::Result<User, AccessError> {
     let actor = actor.into();
     check_admin(pool, repo_id, actor.user_id).await?;

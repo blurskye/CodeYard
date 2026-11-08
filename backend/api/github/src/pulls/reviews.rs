@@ -15,8 +15,8 @@ use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -26,9 +26,9 @@ mod writes;
 async fn document(
     state: &AppState,
     owner: &str,
-    repo: &codeyard_db_core::models::Repository,
-    pull: &codeyard_db_core::models::PullRequest,
-    review: &codeyard_db_core::models::PullRequestReview,
+    repo: &codeyard_database::models::Repository,
+    pull: &codeyard_database::models::PullRequest,
+    review: &codeyard_database::models::PullRequestReview,
 ) -> Result<Value> {
     let user = codeyard_db_identity::users::accounts::get_user_by_id(&state.pool, review.author_id)
         .await
@@ -115,7 +115,7 @@ async fn dismiss(
         .user;
     // GitHub documents this 422 with plain string errors.
     let Json(input) =
-        input.map_err(|error| codeyard_model::github_error::json_error(error).simple())?;
+        input.map_err(|error| codeyard_types::github_error::json_error(error).simple())?;
     if input.message.trim().is_empty()
         || input
             .event
@@ -139,13 +139,13 @@ async fn dismiss(
     )
     .await
     .map_err(|error| match error {
-        codeyard_repos_core::repositories::pull_requests::OperationError::Invalid { message, .. } => {
+        codeyard_git_storage::repositories::pull_requests::OperationError::Invalid { message, .. } => {
             Error::invalid_simple(message)
         }
-        codeyard_repos_core::repositories::pull_requests::OperationError::Missing { .. } => {
+        codeyard_git_storage::repositories::pull_requests::OperationError::Missing { .. } => {
             Error::missing()
         }
-        codeyard_repos_core::repositories::pull_requests::OperationError::Denied { message, .. } => {
+        codeyard_git_storage::repositories::pull_requests::OperationError::Denied { message, .. } => {
             Error::new(StatusCode::FORBIDDEN, message)
         }
         _ => Error::unavailable(()),

@@ -15,12 +15,12 @@ use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
 use codeyard_support::secret_detection::patterns::Create;
 use codeyard_support::secret_detection::patterns::Delete;
 use codeyard_support::secret_detection::patterns::Owner;
 use codeyard_support::secret_detection::patterns::Update;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -29,8 +29,8 @@ use std::sync::Arc;
 
 fn error(error: anyhow::Error) -> Error {
     if matches!(
-        error.downcast_ref::<codeyard_db_core::queries::secret_scanning::Refusal>(),
-        Some(codeyard_db_core::queries::secret_scanning::Refusal::Invalid)
+        error.downcast_ref::<codeyard_database::queries::secret_scanning::Refusal>(),
+        Some(codeyard_database::queries::secret_scanning::Refusal::Invalid)
     ) {
         Error::validation("SecretScanningCustomPattern", "pattern", "invalid")
     } else {

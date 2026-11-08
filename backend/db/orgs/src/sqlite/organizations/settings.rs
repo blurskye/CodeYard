@@ -4,13 +4,13 @@ use crate::organizations::settings::Updated;
 use crate::sqlite::organizations::authority::credential;
 use anyhow::Context;
 use anyhow::Result;
-use codeyard_db_core::models::OrgRole;
-use codeyard_db_core::models::Organization;
-use codeyard_db_core::pool::SqlitePool;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_db_core::queries::sqlite::organizations::authority::begin;
-use codeyard_db_core::queries::sqlite::organizations::authority::begin_read;
-use codeyard_db_core::require_read_org_sqlite;
+use codeyard_database::models::OrgRole;
+use codeyard_database::models::Organization;
+use codeyard_database::pool::SqlitePool;
+use codeyard_database::queries::organizations::OrganizationOutcome;
+use codeyard_database::queries::sqlite::organizations::authority::begin;
+use codeyard_database::queries::sqlite::organizations::authority::begin_read;
+use codeyard_database::require_read_org_sqlite;
 use sqlx::SqliteConnection;
 use OrganizationOutcome::Applied;
 use OrganizationOutcome::Denied;
@@ -50,7 +50,7 @@ pub async fn owned(
 }
 pub async fn change(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     org: i64,
     input: &Changes,
 ) -> Result<OrganizationOutcome<Updated>> {
@@ -73,9 +73,9 @@ pub async fn change(
     let organization=sqlx::query_as::<_,Organization>("UPDATE organizations SET display_name=CASE WHEN ?2 THEN ?3 ELSE display_name END,description=CASE WHEN ?4 THEN ?5 ELSE description END,billing_email=CASE WHEN ?6 THEN ?7 ELSE billing_email END,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id=?1 RETURNING *")
         .bind(org).bind(input.profile.display_name.is_some()).bind(input.profile.display_name.clone().flatten()).bind(input.profile.description.is_some()).bind(input.profile.description.clone().flatten()).bind(input.billing_email.is_some()).bind(input.billing_email.clone().flatten()).fetch_one(&mut *tx).await?;
     if settings.default_repository_permission < previous {
-        let access = codeyard_db_core::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
+        let access = codeyard_database::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
         let runs:Vec<i64>=sqlx::query_scalar(&format!("SELECT c.id FROM ci_runs c JOIN repositories r ON r.id=c.repo_id JOIN users u ON u.id=c.triggered_by_id JOIN org_memberships m ON m.org_id=r.owner_org_id AND m.user_id=u.id AND m.role='member' WHERE r.owner_kind='org' AND r.owner_org_id=?1 AND r.owner_user_id IS NULL AND (c.status IN ('queued','running') OR c.completed_at > strftime('%Y-%m-%dT%H:%M:%f000Z','now','-1 hour')) AND ({access}) < CASE WHEN c.pipeline IN ('cd','full') OR c.environment IS NOT NULL THEN 5 ELSE 3 END ORDER BY c.id")).bind(org).fetch_all(&mut *tx).await?;
-        codeyard_db_core::queries::sqlite::ci::stop_ci_runs(&mut tx, &runs).await?;
+        codeyard_database::queries::sqlite::ci::stop_ci_runs(&mut tx, &runs).await?;
     }
     tx.commit().await?;
     Ok(Applied(Updated {

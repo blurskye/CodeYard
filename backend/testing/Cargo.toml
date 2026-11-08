@@ -1,0 +1,33 @@
+[package]
+name = "codeyard-testing"
+version.workspace = true
+edition.workspace = true
+license = "LGPL-3.0-or-later"
+
+[dependencies]
+codeyard-placement.workspace = true
+codeyard-repos-pulls.workspace = true
+codeyard-git-storage.workspace = true
+codeyard-ci.workspace = true
+codeyard-storage.workspace = true
+codeyard-app.workspace = true
+codeyard-database.workspace = true
+sqlx.workspace = true
+tempfile.workspace = true
+
+[dev-dependencies]
+anyhow.workspace = true
+base64.workspace = true
+chrono.workspace = true
+codeyard-api-rest.workspace = true
+codeyard-db-repos.workspace = true
+codeyard-notifications.workspace = true
+git2.workspace = true
+rand.workspace = true
+sha2.workspace = true
+tokio.workspace = true
+url.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true

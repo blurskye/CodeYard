@@ -1,7 +1,7 @@
 use crate::source_imports::SourceImport;
 use anyhow::Result;
-use codeyard_db_core::pool::PgPool;
-use codeyard_db_core::queries::source_imports::ImportRefusal;
+use codeyard_database::pool::PgPool;
+use codeyard_database::queries::source_imports::ImportRefusal;
 
 pub async fn get(pool: &PgPool, repo: i64) -> Result<Option<SourceImport>> {
     Ok(
@@ -21,7 +21,7 @@ pub async fn start(
 ) -> Result<SourceImport> {
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::postgres::discussions::lock_repository_mutation_authority(
+        codeyard_database::queries::postgres::discussions::lock_repository_mutation_authority(
             &mut tx, actor, repo
         )
         .await?,
@@ -51,7 +51,7 @@ pub async fn finish(pool: &PgPool, repo: i64, generation: &str, success: bool) -
 pub async fn cancel(pool: &PgPool, actor: i64, repo: i64) -> Result<()> {
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::postgres::discussions::lock_archive_authority(
+        codeyard_database::queries::postgres::discussions::lock_archive_authority(
             &mut tx, actor, repo
         )
         .await?,

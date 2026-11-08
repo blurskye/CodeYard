@@ -6,10 +6,10 @@ use crate::support::organizations::applied;
 
 use codeyard_db_repos::discussions::DiscussionEdit;
 
-use codeyard_db_core::models::AccessLevel;
-use codeyard_db_core::models::CiRun;
-use codeyard_db_core::models::OrgRole;
-use codeyard_db_core::models::Repository;
+use codeyard_database::models::AccessLevel;
+use codeyard_database::models::CiRun;
+use codeyard_database::models::OrgRole;
+use codeyard_database::models::Repository;
 use codeyard_db_repos::repositories::creation::insert_repository;
 use codeyard_db_repos::repositories::creation::NewRepository;
 use uuid::Uuid;
@@ -147,7 +147,7 @@ async fn expect_writes(database: &Database, actor: i64, repo: i64, allowed: bool
     assert_eq!(can_merge, allowed, "merge actor={actor}");
 }
 async fn fork(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     actor: i64,
     source: i64,
 ) -> anyhow::Result<Option<Repository>> {
@@ -169,7 +169,7 @@ async fn fork(
     .await
 }
 async fn enqueue(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     actor: i64,
     repo: i64,
     cd: bool,

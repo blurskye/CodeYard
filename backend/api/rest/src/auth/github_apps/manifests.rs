@@ -24,7 +24,7 @@ pub(super) async fn manifest_start(
     uri: Uri,
     form: &Fields,
 ) -> Response {
-    match codeyard_db_cluster::node_config::get_node_configuration(&state.pool).await {
+    match codeyard_db_placement::node_config::get_node_configuration(&state.pool).await {
         Ok(Some(config)) if config.setup_completed => {}
         Ok(_) => return Redirect::to("/setup").into_response(),
         Err(_) => {

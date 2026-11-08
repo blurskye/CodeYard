@@ -9,8 +9,8 @@ use codeyard_notifications::broadcast::NotificationBroadcaster;
 
 /// The issue or pull request whose assignees change, and who changes them.
 pub struct Target<'a> {
-    pub actor: &'a codeyard_db_core::models::User,
-    pub repository: &'a codeyard_db_core::models::Repository,
+    pub actor: &'a codeyard_database::models::User,
+    pub repository: &'a codeyard_database::models::Repository,
     pub owner: &'a str,
     pub item: AssignedItem,
     pub number: i32,
@@ -20,11 +20,11 @@ pub struct Target<'a> {
 /// Assigns `users` in one transaction. Each user who was not assigned before gets an `assigned`
 /// timeline event and a notification. Returns the ids of those users.
 pub async fn assign(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     broadcaster: &NotificationBroadcaster,
     target: &Target<'_>,
-    authority: impl Into<codeyard_db_core::queries::credentials::Actor>,
-    users: &[codeyard_db_core::models::User],
+    authority: impl Into<codeyard_database::queries::credentials::Actor>,
+    users: &[codeyard_database::models::User],
 ) -> anyhow::Result<Vec<i64>> {
     let ids: Vec<i64> = users.iter().map(|user| user.id).collect();
     let added = codeyard_db_repos::assignees::assign_users(
@@ -35,7 +35,7 @@ pub async fn assign(
         &ids,
     )
     .await?;
-    let added_users: Vec<&codeyard_db_core::models::User> = users
+    let added_users: Vec<&codeyard_database::models::User> = users
         .iter()
         .filter(|user| added.contains(&user.id))
         .collect();
@@ -46,9 +46,9 @@ pub async fn assign(
 /// Removes the users named in `usernames` in one transaction and records an `unassigned`
 /// timeline event for each one that was assigned. Returns those names.
 pub async fn unassign(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     target: &Target<'_>,
-    authority: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    authority: impl Into<codeyard_database::queries::credentials::Actor>,
     usernames: &[String],
 ) -> anyhow::Result<Vec<String>> {
     let removed = codeyard_db_repos::assignees::unassign_users(
@@ -64,10 +64,10 @@ pub async fn unassign(
 
 /// Announces assignments already saved with their timeline events.
 pub async fn announce(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     broadcaster: &NotificationBroadcaster,
     target: &Target<'_>,
-    users: &[&codeyard_db_core::models::User],
+    users: &[&codeyard_database::models::User],
 ) {
     if users.is_empty() {
         return;

@@ -1,15 +1,15 @@
-use codeyard_db_core::queries::rulesets::matching::RepositoryContext;
-use codeyard_db_core::queries::rulesets::records::Owner;
-use codeyard_db_core::queries::rulesets::BypassMode;
-use codeyard_db_core::queries::rulesets::Definition;
-use codeyard_db_core::queries::rulesets::Enforcement;
-use codeyard_db_core::queries::rulesets::Rule;
+use codeyard_database::queries::rulesets::matching::RepositoryContext;
+use codeyard_database::queries::rulesets::records::Owner;
+use codeyard_database::queries::rulesets::BypassMode;
+use codeyard_database::queries::rulesets::Definition;
+use codeyard_database::queries::rulesets::Enforcement;
+use codeyard_database::queries::rulesets::Rule;
 use serde_json::json;
 use serde_json::Value;
 
 #[test]
 fn repository_and_ref_selectors_share_native_globs_and_effective_typed_values() {
-    use codeyard_model::workflow_glob::WorkflowMatchBudget;
+    use codeyard_types::workflow_glob::WorkflowMatchBudget;
     let values = std::collections::HashMap::from([
         ("critical".to_owned(), vec!["true".to_owned()]),
         (

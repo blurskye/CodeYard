@@ -5,13 +5,13 @@ use crate::action_logs::ObservedStep;
 use crate::action_logs::Target;
 use anyhow::ensure;
 use anyhow::Result;
-use codeyard_db_core::pool::SqlitePool;
+use codeyard_database::pool::SqlitePool;
 use sqlx::types::Json;
 use sqlx::SqliteConnection;
 
 pub async fn issue(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo: i64,
     resource: &str,
     target: Target,
@@ -27,11 +27,11 @@ pub async fn issue(
         "invalid log capability"
     );
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let readable:bool=sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=$1 WHERE r.id=$2 AND NOT u.is_banned AND NOT u.must_change_password AND {})",codeyard_db_core::queries::sqlite::repositories::access::readable_condition())).bind(actor.user_id).bind(repo).fetch_one(&mut *tx).await?;
+    let readable:bool=sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=$1 WHERE r.id=$2 AND NOT u.is_banned AND NOT u.must_change_password AND {})",codeyard_database::queries::sqlite::repositories::access::readable_condition())).bind(actor.user_id).bind(repo).fetch_one(&mut *tx).await?;
     if !readable {
         return Ok(false);
     }
-    if !codeyard_db_core::queries::sqlite::credentials::repository(
+    if !codeyard_database::queries::sqlite::credentials::repository(
         &mut tx, &actor, repo, "actions", false,
     )
     .await?

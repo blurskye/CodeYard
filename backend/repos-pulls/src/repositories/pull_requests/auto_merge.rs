@@ -2,13 +2,13 @@
 //! background check then merges it through the ordinary merge path, as that writer, so
 //! reviews, checks and branch protection apply exactly as they do to a merge button.
 use crate::services::RepositoryServices;
-use codeyard_db_core::models::PullRequest;
+use codeyard_database::models::PullRequest;
 use codeyard_db_repos::pull_requests::auto_merge::AutoMerge;
 use codeyard_db_repos::pull_requests::auto_merge::AutoMergeRequest;
-use codeyard_repos_core::repositories::pull_requests::actor;
-use codeyard_repos_core::repositories::pull_requests::require_write;
-use codeyard_repos_core::repositories::pull_requests::OperationError;
-use codeyard_repos_core::store_types::MergeMethod;
+use codeyard_git_storage::repositories::pull_requests::actor;
+use codeyard_git_storage::repositories::pull_requests::require_write;
+use codeyard_git_storage::repositories::pull_requests::OperationError;
+use codeyard_git_storage::store_types::MergeMethod;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -35,7 +35,7 @@ pub struct EnableRequest {
 }
 
 async fn writable(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     actor_id: i64,
     pull: &PullRequest,
 ) -> Result<(), OperationError> {
@@ -60,7 +60,7 @@ async fn writable(
 
 /// Turns auto-merge on for `pull`, replacing an earlier request.
 pub async fn enable(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     actor_id: i64,
     pull: &PullRequest,
     request: EnableRequest,
@@ -88,12 +88,12 @@ pub async fn enable(
         request.expected_head.as_deref(),
     )
     .await
-    .map_err(codeyard_repos_core::repositories::pull_requests::write_error)
+    .map_err(codeyard_git_storage::repositories::pull_requests::write_error)
 }
 
 /// Turns auto-merge off for `pull`. Turning it off twice is not an error.
 pub async fn disable(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     actor_id: i64,
     pull: &PullRequest,
 ) -> Result<(), OperationError> {
@@ -183,7 +183,7 @@ async fn run_due_until_stop(
             }
             // A request made with a token merges under that token's live grants, as its merge button would.
             let authority = match entry.token_id {
-                None => codeyard_db_core::queries::credentials::Actor::from(entry.enabled_by),
+                None => codeyard_database::queries::credentials::Actor::from(entry.enabled_by),
                 Some(token) => {
                     match codeyard_db_identity::users::tokens::token_hash(
                         pool,
@@ -192,9 +192,9 @@ async fn run_due_until_stop(
                     )
                     .await?
                     {
-                        Some(hash) => codeyard_db_core::queries::credentials::Actor::from((
+                        Some(hash) => codeyard_database::queries::credentials::Actor::from((
                             entry.enabled_by,
-                            codeyard_db_core::queries::users::accounts::OwnedAccountCredential::Token(
+                            codeyard_database::queries::users::accounts::OwnedAccountCredential::Token(
                                 token, hash,
                             ),
                         )),

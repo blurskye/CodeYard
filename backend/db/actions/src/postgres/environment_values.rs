@@ -2,7 +2,7 @@ use crate::environment_values::EnvironmentValue;
 use crate::environment_values::Save;
 use crate::environment_values::StoredValue;
 use crate::environment_values::ValueError;
-use codeyard_db_core::pool::PgPool as Pool;
+use codeyard_database::pool::PgPool as Pool;
 use codeyard_db_orgs::organization_values::Kind;
 use codeyard_support::secrets::SecretEncryptor;
 use codeyard_support::secrets::SecretError;
@@ -10,19 +10,19 @@ use sqlx::PgConnection as Connection;
 
 async fn authorize(
     connection: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo: i64,
     permission: &str,
 ) -> Result<(), ValueError> {
     let actor = actor.into();
-    let allowed = codeyard_db_core::queries::postgres::discussions::lock_admin_authority(
+    let allowed = codeyard_database::queries::postgres::discussions::lock_admin_authority(
         connection,
         actor.user_id,
         repo,
     )
     .await
     .map_err(ValueError::Authority)?
-        && codeyard_db_core::queries::postgres::credentials::repository(
+        && codeyard_database::queries::postgres::credentials::repository(
             connection, &actor, repo, permission, true,
         )
         .await
@@ -41,7 +41,7 @@ async fn authorize_read(
     repo: i64,
     admin: bool,
 ) -> Result<(), ValueError> {
-    if codeyard_db_core::queries::postgres::discussions::lock_settings_read_authority(
+    if codeyard_database::queries::postgres::discussions::lock_settings_read_authority(
         connection, actor, repo, admin,
     )
     .await
@@ -92,7 +92,7 @@ async fn lock_environment(
 
 pub async fn create(
     pool: &Pool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo: i64,
     name: &str,
 ) -> Result<(), ValueError> {
@@ -163,7 +163,7 @@ pub async fn list(
 pub async fn save(
     pool: &Pool,
     encryptor: Option<&SecretEncryptor>,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo: i64,
     environment: &str,
     input: &Save<'_>,
@@ -195,7 +195,7 @@ pub async fn save(
         .or(old.as_deref())
         .ok_or(ValueError::InvalidValue)?;
     let (count, bytes): (i64, i64) = sqlx::query_as("SELECT COUNT(*),COALESCE(SUM(length(name)+COALESCE(octet_length(encrypted_value),octet_length(value))),0) FROM repo_environment_values WHERE repo_id=$1 AND environment=$2 AND kind=$3 AND name<>$4").bind(repo).bind(&key).bind(input.kind.as_str()).bind(&previous).fetch_one(&mut *tx).await?;
-    if count >= codeyard_actions::values::MAX_SCOPE_VALUES as i64 {
+    if count >= codeyard_runner::values::MAX_SCOPE_VALUES as i64 {
         return Err(ValueError::Limit);
     }
     if input.kind == Kind::Secret {
@@ -204,7 +204,7 @@ pub async fn save(
     }
     if input.kind == Kind::Variable
         && bytes + (name.len() + value.len()) as i64
-            > codeyard_actions::values::MAX_VARIABLE_BYTES as i64
+            > codeyard_runner::values::MAX_VARIABLE_BYTES as i64
     {
         return Err(ValueError::Size);
     }
@@ -228,7 +228,7 @@ pub async fn save(
 
 pub async fn delete(
     pool: &Pool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo: i64,
     environment: &str,
     kind: Kind,

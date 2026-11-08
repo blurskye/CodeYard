@@ -14,7 +14,7 @@ use crate::checks::Suite;
 use crate::checks::SuiteDetails;
 use anyhow::ensure;
 use anyhow::Result;
-use codeyard_db_core::pool::SqlitePool;
+use codeyard_database::pool::SqlitePool;
 use sqlx::types::Json;
 use sqlx::Sqlite;
 use sqlx::Transaction;
@@ -35,10 +35,10 @@ async fn authority(
     };
     ensure!(
         if admin {
-            codeyard_db_core::queries::sqlite::discussions::lock_admin_authority(tx, actor, repo)
+            codeyard_database::queries::sqlite::discussions::lock_admin_authority(tx, actor, repo)
                 .await?
         } else {
-            codeyard_db_core::queries::sqlite::discussions::lock_write_authority(tx, actor, repo)
+            codeyard_database::queries::sqlite::discussions::lock_write_authority(tx, actor, repo)
                 .await?
         },
         Refusal::Denied
@@ -50,7 +50,7 @@ async fn authority(
             .bind(id).fetch_optional(&mut **tx).await?;
         ensure!(
             live.is_some()
-                && codeyard_db_core::queries::sqlite::fine_grained_tokens::repository_permission(
+                && codeyard_database::queries::sqlite::fine_grained_tokens::repository_permission(
                     tx, id, actor, repo, "checks", true
                 )
                 .await?,
@@ -60,8 +60,8 @@ async fn authority(
             .bind(id).fetch_optional(&mut **tx).await?;
         if let Some((client, scopes, app_id, registered)) = oauth {
             ensure!(
-                (registered || client == codeyard_model::identity::CLI_CLIENT)
-                    && codeyard_model::oauth_apps::allows(
+                (registered || client == codeyard_types::identity::CLI_CLIENT)
+                    && codeyard_types::oauth_apps::allows(
                         &scopes,
                         "/repos/owner/repo/check-runs",
                         true
@@ -82,14 +82,14 @@ async fn authority(
         }
         let bot: bool = sqlx::query_scalar("SELECT username=?2 FROM users WHERE id=?1")
             .bind(actor)
-            .bind(codeyard_db_core::queries::ci_tokens::BOT)
+            .bind(codeyard_database::queries::ci_tokens::BOT)
             .fetch_one(&mut **tx)
             .await?;
         if bot {
             let job: Option<(i64, String, i64, String)> = sqlx::query_as("SELECT t.run_id,t.job,r.repo_id,t.permissions FROM actions_github_tokens t JOIN ci_runs r ON r.id=t.run_id WHERE t.token_id=?1 AND t.revoked_at IS NULL AND r.status='running'")
                 .bind(id).fetch_optional(&mut **tx).await?;
             let (run, job, job_repo, permissions) = job.ok_or(Refusal::Denied)?;
-            let permissions: codeyard_model::permissions::Permissions =
+            let permissions: codeyard_types::permissions::Permissions =
                 serde_json::from_str(&permissions)?;
             ensure!(
                 job_repo == repo && permissions.allows("checks", true) && !admin,
@@ -202,7 +202,7 @@ async fn insert_suite(
 }
 pub async fn automatic_suites(
     pool: &SqlitePool,
-    repo: &codeyard_db_core::models::Repository,
+    repo: &codeyard_database::models::Repository,
     sha: &str,
     branch: &str,
     after: i64,
@@ -213,7 +213,7 @@ pub async fn automatic_suites(
         ..Default::default()
     };
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let current: Option<codeyard_db_core::models::Repository> = sqlx::query_as(
+    let current: Option<codeyard_database::models::Repository> = sqlx::query_as(
         "SELECT * FROM repositories WHERE id=?1 AND NOT is_archived AND NOT is_gist",
     )
     .bind(repo.id)
@@ -228,7 +228,7 @@ pub async fn automatic_suites(
     {
         return Ok(page);
     }
-    let access = codeyard_db_core::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
+    let access = codeyard_database::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
     let mut apps: Vec<i64> = sqlx::query_scalar(&format!("SELECT a.id FROM github_app_installations i JOIN github_apps a ON a.id=i.app_id JOIN oauth_applications o ON o.client_id=a.client_id JOIN users owner ON owner.id=a.owner_id JOIN users u ON u.id=a.bot_id JOIN repositories r ON r.id=?1 LEFT JOIN check_suite_preferences p ON p.repo_id=r.id AND p.app_id=a.id WHERE a.id>?2 AND COALESCE(p.setting,1) AND i.suspended_at IS NULL AND NOT owner.is_banned AND NOT owner.must_change_password AND NOT u.is_banned AND NOT u.must_change_password AND json_extract(a.permissions,'$.checks') IN ('write','admin') AND (r.owner_user_id=i.user_id OR r.owner_org_id=i.org_id) AND (i.all_repos OR EXISTS(SELECT 1 FROM github_app_repositories ar WHERE ar.installation_id=i.id AND ar.repo_id=r.id)) AND ({access})>=3 ORDER BY a.id LIMIT 101"))
         .bind(repo.id).bind(after).fetch_all(&mut *tx).await?;
     page.has_next = apps.len() > 100;
@@ -257,7 +257,7 @@ pub async fn automatic_suites(
 /// as on GitHub; its publisher names the run, so no credential can write to it.
 pub(super) async fn insert_workflow_suite(
     connection: &mut sqlx::SqliteConnection,
-    run: &codeyard_db_core::models::CiRun,
+    run: &codeyard_database::models::CiRun,
 ) -> Result<()> {
     let Some(sha) = run.head_sha.as_deref() else {
         return Ok(());

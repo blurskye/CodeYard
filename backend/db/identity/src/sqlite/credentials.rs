@@ -1,8 +1,8 @@
 use anyhow::Result;
-use codeyard_db_core::queries::ci::CiCredential;
-use codeyard_db_core::queries::credentials::Actor;
-use codeyard_db_core::queries::sqlite::credentials::repository;
-use codeyard_db_core::queries::users::accounts::OwnedAccountCredential;
+use codeyard_database::queries::ci::CiCredential;
+use codeyard_database::queries::credentials::Actor;
+use codeyard_database::queries::sqlite::credentials::repository;
+use codeyard_database::queries::users::accounts::OwnedAccountCredential;
 use codeyard_types::credentials::AccountRestricted;
 use sqlx::Sqlite;
 use sqlx::Transaction;
@@ -53,7 +53,7 @@ pub async fn ci(
             permission,
         } => {
             let token: Option<(i64, bool)> = sqlx::query_as("SELECT t.user_id,u.username=$2 FROM personal_access_tokens t JOIN users u ON u.id=t.user_id WHERE t.id=$1")
-                .bind(id).bind(codeyard_db_core::queries::ci_tokens::BOT).fetch_optional(&mut **tx).await?;
+                .bind(id).bind(codeyard_database::queries::ci_tokens::BOT).fetch_optional(&mut **tx).await?;
             let Some((owner, bot)) = token else {
                 return Ok(false);
             };

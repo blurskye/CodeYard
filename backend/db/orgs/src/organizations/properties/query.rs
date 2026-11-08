@@ -1,7 +1,7 @@
 use anyhow::ensure;
 use anyhow::Result;
-use codeyard_db_core::queries::organizations::properties::invalid;
-use codeyard_db_core::queries::organizations::properties::valid_name;
+use codeyard_database::queries::organizations::properties::invalid;
+use codeyard_database::queries::organizations::properties::valid_name;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Kind {

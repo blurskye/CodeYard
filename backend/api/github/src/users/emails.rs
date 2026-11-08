@@ -14,10 +14,10 @@ use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::app::AppState;
-use codeyard_db_core::queries::users::accounts::AccountCredential;
+use codeyard_database::queries::users::accounts::AccountCredential;
 use codeyard_db_identity::users::profiles::ProfilePatch;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -40,7 +40,7 @@ pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
 }
 async fn documents(
     state: &AppState,
-    user: &codeyard_db_core::models::User,
+    user: &codeyard_database::models::User,
     public: bool,
 ) -> Result<Vec<Value>> {
     let settings =

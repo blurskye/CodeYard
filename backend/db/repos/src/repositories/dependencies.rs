@@ -2,9 +2,9 @@ use anyhow::ensure;
 use anyhow::Result;
 use chrono::DateTime;
 use chrono::Utc;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::Repository;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 use serde::Deserialize;
 use serde::Serialize;
 use sha2::Digest;
@@ -412,8 +412,8 @@ pub(crate) fn receipts(snapshot: &Snapshot) -> Result<String> {
 }
 
 pub(crate) fn project(
-    rows: Vec<codeyard_db_core::queries::dependabot_alerts::Alert>,
-    inventory: Vec<codeyard_model::dependency_graph::Snapshot>,
+    rows: Vec<codeyard_database::queries::dependabot_alerts::Alert>,
+    inventory: Vec<codeyard_types::dependency_graph::Snapshot>,
     raw: &str,
 ) -> Result<Snapshot> {
     use serde_json::Value;
@@ -427,7 +427,7 @@ pub(crate) fn project(
         .or_else(|| inventory.first())
         .map(|snapshot| snapshot.sha.clone())
         .unwrap_or_else(|| "0".repeat(40));
-    snapshot.packages = codeyard_model::dependency_graph::packages(&inventory)
+    snapshot.packages = codeyard_types::dependency_graph::packages(&inventory)
         .into_iter()
         .map(|package| InstalledPackage {
             path: package.manifest,
@@ -495,9 +495,9 @@ pub(crate) fn project(
     }
     Ok(snapshot)
 }
-native_operation!(crate::postgres::repositories::dependencies::page_snapshot,crate::sqlite::repositories::dependencies::page_snapshot,fn page_snapshot(pool:&DbPool,actor:impl Into<codeyard_db_core::queries::credentials::Actor>,repo:i64)->Result<PageSnapshot>);
+native_operation!(crate::postgres::repositories::dependencies::page_snapshot,crate::sqlite::repositories::dependencies::page_snapshot,fn page_snapshot(pool:&DbPool,actor:impl Into<codeyard_database::queries::credentials::Actor>,repo:i64)->Result<PageSnapshot>);
 native_operation!(crate::postgres::repositories::dependencies::state,crate::sqlite::repositories::dependencies::state,fn state(pool:&DbPool,repo:i64)->Result<Option<State>>);
-native_operation!(crate::postgres::repositories::dependencies::configure,crate::sqlite::repositories::dependencies::configure,fn configure(pool:&DbPool,actor:impl Into<codeyard_db_core::queries::credentials::Actor>,repo:i64,feature:Feature,enabled:bool,private_consent:bool)->Result<()>);
+native_operation!(crate::postgres::repositories::dependencies::configure,crate::sqlite::repositories::dependencies::configure,fn configure(pool:&DbPool,actor:impl Into<codeyard_database::queries::credentials::Actor>,repo:i64,feature:Feature,enabled:bool,private_consent:bool)->Result<()>);
 native_operation!(crate::postgres::repositories::dependencies::enqueue,crate::sqlite::repositories::dependencies::enqueue,fn enqueue(pool:&DbPool,repo:i64)->Result<()>);
 native_operation!(crate::postgres::repositories::dependencies::claim,crate::sqlite::repositories::dependencies::claim,fn claim(pool:&DbPool,nonce:&str)->Result<Option<Job>>);
 native_operation!(crate::postgres::repositories::dependencies::check_job,crate::sqlite::repositories::dependencies::check_job,fn check_job(pool:&DbPool,job:&Job,feature:Feature)->Result<()>);

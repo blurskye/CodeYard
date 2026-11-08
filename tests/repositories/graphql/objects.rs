@@ -4,7 +4,7 @@ use super::query;
 use super::request;
 use axum::{http::StatusCode, Router};
 pub(super) async fn exercise(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     router: &Router,
     token: &str,
     bob: &str,
@@ -42,8 +42,8 @@ pub(super) async fn exercise(
             filename: "graphql.txt",
             content_type: "text/plain",
             file_size: 5,
-            reason: codeyard_db_core::models::FileReason::ReleaseAsset,
-            visibility: codeyard_db_core::models::FileVisibility::Owner,
+            reason: codeyard_database::models::FileReason::ReleaseAsset,
+            visibility: codeyard_database::models::FileVisibility::Owner,
             sha256_hex: &"a".repeat(64),
         },
     )
@@ -57,7 +57,7 @@ pub(super) async fn exercise(
     let asset = codeyard_db_repos::releases::add_release_asset(
         pool,
         actor,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(pool, actor).await,
         ),
         repo,

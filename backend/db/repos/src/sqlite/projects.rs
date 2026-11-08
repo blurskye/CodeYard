@@ -8,9 +8,9 @@ use crate::projects::ProjectContents;
 use crate::projects::SelectOption;
 use crate::projects::Settings;
 use anyhow::Result;
-use codeyard_db_core::pool::SqlitePool;
-use codeyard_db_core::queries::users::accounts::AccountCredential;
-use codeyard_model::project_query::Refusal;
+use codeyard_database::pool::SqlitePool;
+use codeyard_database::queries::users::accounts::AccountCredential;
+use codeyard_types::project_query::Refusal;
 use sqlx::Sqlite;
 use sqlx::Transaction;
 pub(crate) mod exports;
@@ -58,7 +58,7 @@ async fn write_project(
     };
     owner_authority(tx, actor, owner).await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::sqlite::users::transitions::credential_live(
+        codeyard_database::queries::sqlite::users::transitions::credential_live(
             tx, actor, credential, true
         )
         .await?,
@@ -103,7 +103,7 @@ pub async fn create(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     owner_authority(&mut tx, actor, owner).await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::sqlite::users::transitions::credential_live(
+        codeyard_database::queries::sqlite::users::transitions::credential_live(
             &mut tx, actor, credential, true
         )
         .await?,

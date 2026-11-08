@@ -153,7 +153,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
     let review = match field {
         "addPullRequestReview" | "submitPullRequestReview" => {
             let body = input["body"].as_str().map(str::to_owned);
-            codeyard_model::issue_input::validate_body(body.as_deref().unwrap_or(""), false)
+            codeyard_types::issue_input::validate_body(body.as_deref().unwrap_or(""), false)
                 .map_err(async_graphql::Error::new)?;
             let commit = input
                 .get("commitOID")
@@ -218,7 +218,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
                 )
                 .await
                 .map(|(review, _)| review)
-                .map_err(|e| pull_error(codeyard_repos_core::repositories::pull_requests::write_error(e)))?
+                .map_err(|e| pull_error(codeyard_git_storage::repositories::pull_requests::write_error(e)))?
             }
         }
         "updatePullRequestReview" => codeyard_repos_pulls::repositories::pull_requests::reviews::edit_review(
@@ -252,7 +252,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
             existing.as_ref().ok_or_else(missing)?.id,
         )
         .await
-        .map_err(|e| pull_error(codeyard_repos_core::repositories::pull_requests::write_error(e)))?
+        .map_err(|e| pull_error(codeyard_git_storage::repositories::pull_requests::write_error(e)))?
         .ok_or_else(missing)?,
         _ => return Err(missing()),
     };

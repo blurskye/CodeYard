@@ -1,10 +1,10 @@
 use crate::checks::run_value;
 use codeyard_app::app::AppState;
+use codeyard_database::models::Repository;
 use codeyard_db_actions::checks;
 use codeyard_db_actions::checks::Run;
-use codeyard_db_core::models::Repository;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde_json::Value;
 use std::collections::HashMap;
 
@@ -39,6 +39,6 @@ pub(super) async fn runs(
         .collect()
 }
 
-use codeyard_repos_core::api_shared::github::checks::documents::Related;
+use codeyard_git_storage::api_shared::github::checks::documents::Related;
 
-use codeyard_repos_core::api_shared::github::checks::documents::keys;
+use codeyard_git_storage::api_shared::github::checks::documents::keys;

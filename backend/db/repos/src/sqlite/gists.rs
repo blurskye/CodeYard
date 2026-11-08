@@ -8,9 +8,9 @@ use crate::gists::ListScope;
 use crate::gists::NewGist;
 use crate::gists::PendingWrite;
 use anyhow::Result;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::pool::SqlitePool;
-use codeyard_db_core::queries::users::accounts::AccountCredential;
+use codeyard_database::models::Repository;
+use codeyard_database::pool::SqlitePool;
+use codeyard_database::queries::users::accounts::AccountCredential;
 use sqlx::Sqlite;
 use sqlx::Transaction;
 
@@ -112,7 +112,7 @@ async fn list_on(connection: &mut sqlx::SqliteConnection, input: &GistList) -> R
     // Date functions round away the microseconds used by monotonic gist revisions.
     let since = input
         .since
-        .map(codeyard_db_core::queries::sqlite::time::encode);
+        .map(codeyard_database::queries::sqlite::time::encode);
     Ok(sqlx::query_as(&format!("SELECT {FIELDS} {FROM} WHERE g.ready AND (?1 IS NULL OR g.updated_at>?1) AND ((?2=0 AND g.is_public) OR (?2=1 AND r.owner_user_id=?3 AND (?4 OR g.is_public)) OR (?2=2 AND EXISTS(SELECT 1 FROM gist_stars s WHERE s.repo_id=g.repo_id AND s.user_id=?3)) OR (?2=3 AND r.forked_from_id=?3)) ORDER BY g.updated_at DESC,g.id DESC LIMIT ?5 OFFSET ?6")).bind(since).bind(mode).bind(id).bind(secret).bind(input.limit.clamp(0,101)).bind(input.offset.max(0)).fetch_all(connection).await?)
 }
 const OWNED: &str = "WHERE g.ready AND r.owner_user_id=?1 AND (?2 OR g.is_public) AND (?3 IS NULL OR g.is_public=?3)";
@@ -172,7 +172,7 @@ async fn authority(
     }
     if interact {
         anyhow::ensure!(
-            !codeyard_db_core::queries::sqlite::users::blocks::repository_interaction_blocked(
+            !codeyard_database::queries::sqlite::users::blocks::repository_interaction_blocked(
                 tx, actor, repo
             )
             .await?,
@@ -211,7 +211,7 @@ pub async fn reserve(
         .ok_or(GistRefusal::Missing)?;
         anyhow::ensure!(
             public == input.is_public
-                && !codeyard_db_core::queries::sqlite::users::blocks::repository_interaction_blocked(
+                && !codeyard_database::queries::sqlite::users::blocks::repository_interaction_blocked(
                     &mut tx, actor, source
                 )
                 .await?,
@@ -302,8 +302,8 @@ pub async fn finish(
         .await?
         .ok_or(GistRefusal::Missing)?;
     let updated = if published {
-        codeyard_db_core::queries::sqlite::time::next_revision(
-            codeyard_db_core::queries::sqlite::time::decode(&previous)?,
+        codeyard_database::queries::sqlite::time::next_revision(
+            codeyard_database::queries::sqlite::time::decode(&previous)?,
         )?
     } else {
         previous
@@ -338,8 +338,8 @@ pub async fn pushed(pool: &SqlitePool, repo: i64, placement: Option<Option<i64>>
             .fetch_optional(&mut *tx)
             .await?
             .ok_or(GistRefusal::Missing)?;
-    let updated = codeyard_db_core::queries::sqlite::time::next_revision(
-        codeyard_db_core::queries::sqlite::time::decode(&previous)?,
+    let updated = codeyard_database::queries::sqlite::time::next_revision(
+        codeyard_database::queries::sqlite::time::decode(&previous)?,
     )?;
     sqlx::query("UPDATE gists SET updated_at=?2 WHERE repo_id=?1")
         .bind(repo)
@@ -363,20 +363,20 @@ pub async fn delete(
         .bind(repo.id)
         .execute(&mut *tx)
         .await?;
-    codeyard_db_core::cells::outbox::sqlite::forget(
+    codeyard_database::cells::outbox::sqlite::forget(
         pool,
         &mut tx,
-        codeyard_model::cells::Object {
-            kind: codeyard_model::cells::ObjectKind::Repository,
+        codeyard_types::cells::Object {
+            kind: codeyard_types::cells::ObjectKind::Repository,
             id: repo.id,
         },
     )
     .await?;
     tx.commit().await?;
-    codeyard_db_core::cells::directory::sqlite::finish_forget(
+    codeyard_database::cells::directory::sqlite::finish_forget(
         pool,
-        codeyard_model::cells::Object {
-            kind: codeyard_model::cells::ObjectKind::Repository,
+        codeyard_types::cells::Object {
+            kind: codeyard_types::cells::ObjectKind::Repository,
             id: repo.id,
         },
     )
@@ -391,21 +391,21 @@ pub async fn discard(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let deleted = sqlx::query_as("DELETE FROM repositories WHERE id=?1 AND is_gist AND NOT EXISTS(SELECT 1 FROM gists g WHERE g.repo_id=repositories.id AND (?2 OR g.ready OR g.pending_sha IS NOT NULL)) RETURNING *").bind(repo).bind(orphan_only).fetch_optional(&mut *tx).await?;
     if deleted.is_some() {
-        codeyard_db_core::cells::outbox::sqlite::forget(
+        codeyard_database::cells::outbox::sqlite::forget(
             pool,
             &mut tx,
-            codeyard_model::cells::Object {
-                kind: codeyard_model::cells::ObjectKind::Repository,
+            codeyard_types::cells::Object {
+                kind: codeyard_types::cells::ObjectKind::Repository,
                 id: repo,
             },
         )
         .await?;
     }
     tx.commit().await?;
-    codeyard_db_core::cells::directory::sqlite::finish_forget(
+    codeyard_database::cells::directory::sqlite::finish_forget(
         pool,
-        codeyard_model::cells::Object {
-            kind: codeyard_model::cells::ObjectKind::Repository,
+        codeyard_types::cells::Object {
+            kind: codeyard_types::cells::ObjectKind::Repository,
             id: repo,
         },
     )
@@ -532,7 +532,7 @@ pub async fn change_comment(
         GistRefusal::Denied
     );
     let comment = if let Some(body) = body {
-        let updated = codeyard_db_core::queries::sqlite::time::next_revision(comment.updated_at)?;
+        let updated = codeyard_database::queries::sqlite::time::next_revision(comment.updated_at)?;
         sqlx::query_as("UPDATE gist_comments SET body=?2,updated_at=?3 WHERE id=?1 RETURNING *")
             .bind(id)
             .bind(body)

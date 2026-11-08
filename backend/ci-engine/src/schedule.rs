@@ -5,10 +5,10 @@ use anyhow::Result;
 use chrono::DateTime;
 use chrono::Timelike;
 use chrono::Utc;
-use codeyard_db_core::ci_admission::AdmissionError;
-use codeyard_repos_core::receive_ci::CiRunRequest;
-use codeyard_repos_core::repositories::store::repo_store;
-use codeyard_repos_core::workflow_schedule::parse;
+use codeyard_database::ci_admission::AdmissionError;
+use codeyard_git_storage::receive_ci::CiRunRequest;
+use codeyard_git_storage::repositories::store::repo_store;
+use codeyard_git_storage::workflow_schedule::parse;
 use codeyard_webhooks::payloads;
 use serde_json::json;
 
@@ -76,7 +76,7 @@ impl CiRuns {
         }
         let (actor, access_cap) = match proof.publication.actor {
             codeyard_git::PublicationActor::User(actor) => {
-                (actor, codeyard_db_core::models::AccessLevel::Owner)
+                (actor, codeyard_database::models::AccessLevel::Owner)
             }
             codeyard_git::PublicationActor::DeployKey(key) => {
                 let (actor, cap) =
@@ -90,7 +90,7 @@ impl CiRuns {
             return Ok(());
         }
         let definitions =
-            codeyard_repos_core::workflows::list_workflows_for_ref(&store, &commit.sha).await?;
+            codeyard_git_storage::workflows::list_workflows_for_ref(&store, &commit.sha).await?;
         let owner = codeyard_db_actions::ci::ci_repository_owner(&self.pool, repo.id)
             .await?
             .ok_or(AdmissionError::Unavailable)?;
@@ -117,7 +117,7 @@ impl CiRuns {
                             event: "schedule".into(),
                             pull_request_id: None,
                             pipeline:
-                                codeyard_repos_core::workflows::infer_pipeline_from_workflow_path(
+                                codeyard_git_storage::workflows::infer_pipeline_from_workflow_path(
                                     &definition.path,
                                 ),
                             workflow_paths: vec![definition.path.clone()],

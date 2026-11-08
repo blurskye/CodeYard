@@ -11,12 +11,12 @@ use axum::routing::put;
 use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_app::app::AppState;
-use codeyard_db_core::models::PersonalAccessToken;
+use codeyard_database::models::PersonalAccessToken;
 use codeyard_db_identity::oauth_apps::Application;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
-use codeyard_model::urls::api_url;
 use codeyard_support::token_hash::token_hash;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
+use codeyard_types::urls::api_url;
 use codeyard_webhooks::payloads;
 use serde_json::json;
 use serde_json::Value;
@@ -203,7 +203,7 @@ async fn owned_token(state: &AppState, client: &str, hash: &str) -> Result<Perso
 /// rotates the token, so the response after the rotation needs no further reads.
 struct Authorization {
     scopes: String,
-    user: codeyard_db_core::models::User,
+    user: codeyard_database::models::User,
     /// A scoped user token's installation, with the token's own permissions and selection.
     installation: Option<Value>,
 }

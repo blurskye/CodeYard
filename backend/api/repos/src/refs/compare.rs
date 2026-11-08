@@ -14,8 +14,8 @@ use codeyard_api_http::context::PageContext;
 use codeyard_api_http::shared::repos::discussion::page;
 use codeyard_app::app::AppState;
 use codeyard_git::error::ErrorKind;
-use codeyard_repos_core::repositories::reads::same_fork_network;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_git_storage::repositories::reads::same_fork_network;
+use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_types::ref_path::compare_url;
 use codeyard_webui::pages::repos::issues as view;
 use codeyard_webui::pages::repos::issues::NewDraft;
@@ -26,7 +26,7 @@ use std::sync::Arc;
 pub(crate) async fn comparison(
     ctx: &PageContext,
     repo: &RepositoryData,
-    head_repo: &codeyard_db_core::models::Repository,
+    head_repo: &codeyard_database::models::Repository,
     refs: &HashMap<String, String>,
     draft: &NewDraft,
 ) -> Result<pulls::Diff, Response> {
@@ -78,7 +78,7 @@ async fn comparison_side(
     repo: &RepositoryData,
     owner: &str,
     reference: &str,
-) -> Result<(codeyard_db_core::models::Repository, String), Response> {
+) -> Result<(codeyard_database::models::Repository, String), Response> {
     let (source_owner, reference) = reference.split_once(':').unwrap_or((owner, reference));
     // Owner names are exact, as in the repository lookup: alice and Alice are two accounts.
     let source = if source_owner == owner {

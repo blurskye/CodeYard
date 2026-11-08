@@ -5,14 +5,14 @@
 use crate::support::database::Database;
 use chrono::{Duration, Utc};
 
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
+use codeyard_database::queries::organizations::OrganizationOutcome;
 use codeyard_db_identity::users::transitions::BanChange;
 use codeyard_db_identity::users::transitions::RoleChange;
 use codeyard_db_orgs::organizations::profiles::NewOrganization;
 use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
 use codeyard_db_orgs::organizations::OrganizationPage;
 
-use codeyard_db_core::models::OrgRole;
+use codeyard_database::models::OrgRole;
 use codeyard_identity::accounts::EmailChangeError;
 
 async fn make_administrator(f: &Database, id: i64) {

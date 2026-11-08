@@ -91,7 +91,7 @@ async fn repository_cli_requires_web_or_ssh_identity_before_inserting() {
     let directory = tempfile::tempdir().unwrap();
     std::fs::write(directory.path().join(".env"), "").unwrap();
     let key = NodeKey::generate();
-    let node = codeyard_db_cluster::cluster::register_own_node(
+    let node = codeyard_db_placement::cluster::register_own_node(
         &database.pool,
         &key.public_hex(),
         "operator",
@@ -148,7 +148,7 @@ async fn repository_cli_requires_web_or_ssh_identity_before_inserting() {
         );
     }
     let stored =
-        codeyard_db_cluster::cluster::get_node_by_public_key(&database.pool, &key.public_hex())
+        codeyard_db_placement::cluster::get_node_by_public_key(&database.pool, &key.public_hex())
             .await
             .unwrap()
             .unwrap();

@@ -1,7 +1,7 @@
 //! Shared application state: database, storage, CI and notification services.
 use codeyard_ci::config::CiConfig;
 use codeyard_ci_engine::runs::CiRuns;
-use codeyard_db_core::DbPool;
+use codeyard_database::DbPool;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_storage::ObjectStore;
 use codeyard_support::secrets::SecretEncryptor;
@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 /// Allows the primary and one replica their full transport admission budgets, plus search time.
 const DEFAULT_SEARCH_TIME_BUDGET: std::time::Duration =
-    codeyard_cluster_core::transport::DIAL_TIMEOUT.saturating_mul(7);
+    codeyard_nodes::transport::DIAL_TIMEOUT.saturating_mul(7);
 
 const DEFAULT_GRAPHQL_QUERY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
@@ -19,13 +19,13 @@ pub struct AppState {
     pub pool: DbPool,
     pub content_cache: Arc<codeyard_cache::Cache>,
     pub repos_path: PathBuf,
-    pub cluster: Option<codeyard_repos_core::context::NodeContext>,
+    pub cluster: Option<codeyard_git_storage::context::NodeContext>,
     pub secret_encryptor: Option<Arc<SecretEncryptor>>,
     pub storage: Arc<ObjectStore>,
     pub notification_broadcaster: Arc<NotificationBroadcaster>,
     pub ci_runs: Arc<CiRuns>,
     pub oidc_keys: Arc<codeyard_ci::oidc::SigningKeys>,
-    pub git_tasks: Arc<codeyard_repos_core::repositories::git_sessions::GitTasks>,
+    pub git_tasks: Arc<codeyard_git_storage::repositories::git_sessions::GitTasks>,
     pub form_reads: Arc<tokio::sync::Semaphore>,
     pub anonymous_form_reads: Arc<tokio::sync::Semaphore>,
     /// Upload forms held in memory until their commit lands. Only a few run at once.
@@ -37,7 +37,7 @@ pub struct AppState {
     /// How long one GraphQL query may run: `GRAPHQL_QUERY_TIMEOUT_SECONDS`, default 30.
     pub graphql_query_timeout: std::time::Duration,
     pub metrics_token_hash: Option<String>,
-    pub roles: codeyard_model::node_roles::NodeRoles,
+    pub roles: codeyard_types::node_roles::NodeRoles,
     pub storage_min_free_bytes: u64,
     pub storage_readiness: Arc<tokio::sync::Semaphore>,
 }
@@ -49,10 +49,10 @@ impl AppState {
         storage: Arc<ObjectStore>,
         secret_encryptor: Option<Arc<SecretEncryptor>>,
         ci_config: CiConfig,
-        cluster: Option<codeyard_repos_core::context::NodeContext>,
+        cluster: Option<codeyard_git_storage::context::NodeContext>,
     ) -> Self {
         if cluster.is_none() {
-            codeyard_repos_core::repositories::releases::immutable::register_local_identity(
+            codeyard_git_storage::repositories::releases::immutable::register_local_identity(
                 storage.state_directory(),
                 &repos_path,
             );
@@ -84,7 +84,7 @@ impl AppState {
                 .ok()
                 .filter(|token| !token.is_empty() && token.len() <= 4096)
                 .map(|token| codeyard_support::token_hash::token_hash(&token)),
-            roles: codeyard_model::node_roles::NodeRoles::default(),
+            roles: codeyard_types::node_roles::NodeRoles::default(),
             storage_min_free_bytes: 1024 * 1024 * 1024,
             storage_readiness: Arc::new(tokio::sync::Semaphore::new(1)),
             pool,
@@ -119,8 +119,8 @@ impl AppState {
     }
 }
 
-impl codeyard_repos_core::request_context::RequestContext for AppState {
-    fn cluster(&self) -> Option<&codeyard_repos_core::context::NodeContext> {
+impl codeyard_git_storage::request_context::RequestContext for AppState {
+    fn cluster(&self) -> Option<&codeyard_git_storage::context::NodeContext> {
         self.cluster.as_ref()
     }
 }
@@ -141,7 +141,7 @@ impl codeyard_repos_pulls::services::RepositoryServices for AppState {
     }
     fn git_tasks(
         &self,
-    ) -> &std::sync::Arc<codeyard_repos_core::repositories::git_sessions::GitTasks> {
+    ) -> &std::sync::Arc<codeyard_git_storage::repositories::git_sessions::GitTasks> {
         &self.git_tasks
     }
     fn repository_downloads(&self) -> &std::sync::Arc<tokio::sync::Semaphore> {

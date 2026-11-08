@@ -6,9 +6,9 @@ use crate::support::native_database as native;
 
 use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
 use codeyard_git::error::ErrorKind;
+use codeyard_git_storage::repositories::lifecycle::provision;
+use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_repos::editor::FileWrite;
-use codeyard_repos_core::repositories::lifecycle::provision;
-use codeyard_repos_core::repositories::store::repo_store;
 use std::path::Path;
 
 async fn start_node(
@@ -16,15 +16,15 @@ async fn start_node(
     root: &Path,
     name: &str,
     roles: &str,
-) -> codeyard_cluster::Cluster {
-    let settings = codeyard_cluster_core::settings::Settings::from_lookup(&|key| match key {
+) -> codeyard_placement::Cluster {
+    let settings = codeyard_nodes::settings::Settings::from_lookup(&|key| match key {
         "IROH_BIND" => Some("127.0.0.1:0".into()),
         "NODE_NAME" => Some(name.into()),
         _ => None,
     })
     .unwrap()
     .unwrap();
-    let node = codeyard_cluster::start(
+    let node = codeyard_placement::start(
         &database.pool,
         &root.join(format!("{name}-state")),
         &root.join(format!("{name}-repos")),
@@ -43,7 +43,7 @@ async fn code_search_reads_a_repository_stored_on_another_node() {
     crate::support::native_database::enable_cluster(&database.pool)
         .await
         .unwrap();
-    codeyard_db_cluster::node_config::upsert_node_configuration(&database.pool, "public", true)
+    codeyard_db_placement::node_config::upsert_node_configuration(&database.pool, "public", true)
         .await
         .unwrap();
     let root = tempfile::tempdir().unwrap();
@@ -99,7 +99,7 @@ async fn code_search_reads_a_repository_stored_on_another_node() {
 #[tokio::test]
 async fn remote_file_lists_and_commit_walks_keep_size_limits_and_deadlines() {
     use codeyard_git::CommitFilter;
-    use codeyard_repos_core::repositories::store::RepoStore;
+    use codeyard_git_storage::repositories::store::RepoStore;
     let database = native::PostgresDatabase::new().await;
     crate::support::native_database::enable_cluster(&database.pool)
         .await
@@ -122,7 +122,7 @@ async fn remote_file_lists_and_commit_walks_keep_size_limits_and_deadlines() {
     )
     .await
     .unwrap();
-    let uuid = codeyard_repos_core::wire::repository_uuid(&repository.disk_path).unwrap();
+    let uuid = codeyard_git_storage::wire::repository_uuid(&repository.disk_path).unwrap();
     let path = storage.context.repos_path.join(format!("{uuid}.git"));
     let bare = git2::Repository::open_bare(&path).unwrap();
     let blob = bare.blob(b"small").unwrap();
@@ -199,7 +199,7 @@ async fn code_search_on_an_unreachable_storage_node_is_an_error_not_an_empty_rep
     crate::support::native_database::enable_cluster(&database.pool)
         .await
         .unwrap();
-    codeyard_db_cluster::node_config::upsert_node_configuration(&database.pool, "public", true)
+    codeyard_db_placement::node_config::upsert_node_configuration(&database.pool, "public", true)
         .await
         .unwrap();
     let root = tempfile::tempdir().unwrap();
@@ -264,7 +264,7 @@ async fn content_search_allows_transport_fallback_and_keeps_completed_repositori
     crate::support::native_database::enable_cluster(&database.pool)
         .await
         .unwrap();
-    codeyard_db_cluster::node_config::upsert_node_configuration(&database.pool, "public", true)
+    codeyard_db_placement::node_config::upsert_node_configuration(&database.pool, "public", true)
         .await
         .unwrap();
     let root = tempfile::tempdir().unwrap();
@@ -328,11 +328,11 @@ async fn content_search_allows_transport_fallback_and_keeps_completed_repositori
     let client = Client::anonymous(&state);
     let raw = &database.raw;
     let node =
-        codeyard_db_cluster::cluster::get_node_by_id(&database.pool, storage.context.node_id)
+        codeyard_db_placement::cluster::get_node_by_id(&database.pool, storage.context.node_id)
             .await
             .unwrap()
             .unwrap();
-    let mut address: codeyard_cluster_core::transport::NodeAddress =
+    let mut address: codeyard_nodes::transport::NodeAddress =
         serde_json::from_str(node.addr_hint.as_deref().unwrap()).unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     address.tcp = vec![listener.local_addr().unwrap()];

@@ -13,15 +13,15 @@ use axum::response::Response;
 use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::app::AppState;
-use codeyard_db_core::models::PersonalAccessToken;
+use codeyard_database::models::PersonalAccessToken;
 use codeyard_db_identity::github_apps::App;
 use codeyard_db_identity::github_apps::Installation;
 use codeyard_db_identity::github_apps::InstallationFilter;
 use codeyard_db_identity::github_apps::RepositoryChange;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
-use codeyard_model::urls::api_url;
 use codeyard_support::token_hash::token_hash;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
+use codeyard_types::urls::api_url;
 use codeyard_webhooks::payloads;
 use serde_json::json;
 use serde_json::Value;
@@ -53,7 +53,7 @@ async fn account(state: &AppState, installation: &Installation) -> Result<Value>
     .map_err(Error::unavailable)?
     .ok_or_else(Error::missing)?;
     Ok(
-        json!({"login":org.name,"id":org.id,"node_id":codeyard_model::node_id::encode("O",org.id),"avatar_url":payloads::organization_avatar(&org),"gravatar_id":"","url":api_url(&format!("/orgs/{}",org.name)),"html_url":format!("{}{}",codeyard_model::http_config::link_origin(),codeyard_types::paths::profile_path(&org.name)),"followers_url":api_url(&format!("/users/{}/followers",org.name)),"following_url":api_url(&format!("/users/{}/following{{/other_user}}",org.name)),"gists_url":api_url(&format!("/users/{}/gists{{/gist_id}}",org.name)),"starred_url":api_url(&format!("/users/{}/starred{{/owner}}{{/repo}}",org.name)),"subscriptions_url":api_url(&format!("/users/{}/subscriptions",org.name)),"organizations_url":api_url(&format!("/users/{}/orgs",org.name)),"repos_url":api_url(&format!("/orgs/{}/repos",org.name)),"events_url":api_url(&format!("/users/{}/events{{/privacy}}",org.name)),"received_events_url":api_url(&format!("/users/{}/received_events",org.name)),"type":"Organization","site_admin":false}),
+        json!({"login":org.name,"id":org.id,"node_id":codeyard_types::node_id::encode("O",org.id),"avatar_url":payloads::organization_avatar(&org),"gravatar_id":"","url":api_url(&format!("/orgs/{}",org.name)),"html_url":format!("{}{}",codeyard_types::http_config::link_origin(),codeyard_types::paths::profile_path(&org.name)),"followers_url":api_url(&format!("/users/{}/followers",org.name)),"following_url":api_url(&format!("/users/{}/following{{/other_user}}",org.name)),"gists_url":api_url(&format!("/users/{}/gists{{/gist_id}}",org.name)),"starred_url":api_url(&format!("/users/{}/starred{{/owner}}{{/repo}}",org.name)),"subscriptions_url":api_url(&format!("/users/{}/subscriptions",org.name)),"organizations_url":api_url(&format!("/users/{}/orgs",org.name)),"repos_url":api_url(&format!("/orgs/{}/repos",org.name)),"events_url":api_url(&format!("/users/{}/events{{/privacy}}",org.name)),"received_events_url":api_url(&format!("/users/{}/received_events",org.name)),"type":"Organization","site_admin":false}),
     )
 }
 pub(crate) async fn app_document(state: &AppState, app: &App) -> Result<Value> {
@@ -74,11 +74,11 @@ pub(crate) async fn app_document(state: &AppState, app: &App) -> Result<Value> {
 /// An app's document from rows already loaded, for responses that cannot read the database.
 pub(crate) fn app_value(
     app: &App,
-    owner: &codeyard_db_core::models::User,
+    owner: &codeyard_database::models::User,
     installations: i64,
 ) -> Result<Value> {
     Ok(
-        json!({"id":app.id,"slug":app.slug,"node_id":codeyard_model::node_id::scoped("APP",owner.id,app.id),"owner":payloads::user(owner),"name":app.name,"description":app.description,"external_url":app.homepage,"html_url":format!("{}/apps/{}",codeyard_model::http_config::link_origin(),app.slug),"created_at":app.created_at,"updated_at":app.created_at,"permissions":serde_json::from_str::<Value>(&app.permissions).map_err(Error::unavailable)?,"events":app.events.split(',').filter(|s|!s.is_empty()).collect::<Vec<_>>(),"installations_count":installations,"client_id":app.client_id}),
+        json!({"id":app.id,"slug":app.slug,"node_id":codeyard_types::node_id::scoped("APP",owner.id,app.id),"owner":payloads::user(owner),"name":app.name,"description":app.description,"external_url":app.homepage,"html_url":format!("{}/apps/{}",codeyard_types::http_config::link_origin(),app.slug),"created_at":app.created_at,"updated_at":app.created_at,"permissions":serde_json::from_str::<Value>(&app.permissions).map_err(Error::unavailable)?,"events":app.events.split(',').filter(|s|!s.is_empty()).collect::<Vec<_>>(),"installations_count":installations,"client_id":app.client_id}),
     )
 }
 pub(crate) async fn document(state: &AppState, installation: &Installation) -> Result<Value> {
@@ -89,7 +89,7 @@ pub(crate) async fn document(state: &AppState, installation: &Installation) -> R
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
     Ok(
-        json!({"id":installation.id,"account":account(state,installation).await?,"repository_selection":if installation.all_repos{"all"}else{"selected"},"access_tokens_url":api_url(&format!("/app/installations/{}/access_tokens",installation.id)),"repositories_url":api_url("/installation/repositories"),"html_url":format!("{}/settings/apps/installations",codeyard_model::http_config::link_origin()),"app_id":app.id,"app_slug":app.slug,"target_id":installation.user_id.or(installation.org_id),"target_type":if installation.org_id.is_some(){"Organization"}else{"User"},"permissions":serde_json::from_str::<Value>(&app.permissions).map_err(Error::unavailable)?,"events":app.events.split(',').filter(|s|!s.is_empty()).collect::<Vec<_>>(),"created_at":installation.created_at,"updated_at":installation.updated_at,"single_file_name":null,"has_multiple_single_files":false,"single_file_paths":[],"suspended_at":installation.suspended_at,"suspended_by":if let Some(id)=installation.suspended_by{codeyard_db_identity::users::accounts::get_user_by_id(&state.pool,id).await.map_err(Error::unavailable)?.map(|user|codeyard_webhooks::payloads::user(&user))}else{None}}),
+        json!({"id":installation.id,"account":account(state,installation).await?,"repository_selection":if installation.all_repos{"all"}else{"selected"},"access_tokens_url":api_url(&format!("/app/installations/{}/access_tokens",installation.id)),"repositories_url":api_url("/installation/repositories"),"html_url":format!("{}/settings/apps/installations",codeyard_types::http_config::link_origin()),"app_id":app.id,"app_slug":app.slug,"target_id":installation.user_id.or(installation.org_id),"target_type":if installation.org_id.is_some(){"Organization"}else{"User"},"permissions":serde_json::from_str::<Value>(&app.permissions).map_err(Error::unavailable)?,"events":app.events.split(',').filter(|s|!s.is_empty()).collect::<Vec<_>>(),"created_at":installation.created_at,"updated_at":installation.updated_at,"single_file_name":null,"has_multiple_single_files":false,"single_file_paths":[],"suspended_at":installation.suspended_at,"suspended_by":if let Some(id)=installation.suspended_by{codeyard_db_identity::users::accounts::get_user_by_id(&state.pool,id).await.map_err(Error::unavailable)?.map(|user|codeyard_webhooks::payloads::user(&user))}else{None}}),
     )
 }
 async fn owned(state: &AppState, app: i64, id: i64) -> Result<Installation> {
@@ -129,7 +129,7 @@ pub(super) async fn installation_requests(
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)?;
-        values.push(json!({"id":request.id,"node_id":codeyard_model::node_id::scoped("AIR",request.org_id,request.id),"account":account(&state,&installation).await?,"requester":payloads::user(&requester),"created_at":request.created_at}));
+        values.push(json!({"id":request.id,"node_id":codeyard_types::node_id::scoped("AIR",request.org_id,request.id),"account":account(&state,&installation).await?,"requester":payloads::user(&requester),"created_at":request.created_at}));
     }
     page.response(&uri, values, has_next)
 }
@@ -329,7 +329,7 @@ async fn issue(
     installation: &Installation,
     actor: Option<i64>,
     body: &Value,
-    parent: Option<&codeyard_db_core::queries::github_apps::Token>,
+    parent: Option<&codeyard_database::queries::github_apps::Token>,
 ) -> Result<Issued> {
     if installation.suspended_at.is_some() {
         return Err(Error::new(StatusCode::FORBIDDEN, "Installation suspended"));
@@ -429,7 +429,7 @@ async fn issue(
 /// The most repositories one token may select, as on GitHub.
 const MAX_SELECTED: usize = 500;
 /// The repositories a token's bounds select; empty means its whole installation.
-fn selection(token: &codeyard_db_core::queries::github_apps::Token) -> Result<Vec<i64>> {
+fn selection(token: &codeyard_database::queries::github_apps::Token) -> Result<Vec<i64>> {
     serde_json::from_str(&token.repositories).map_err(Error::unavailable)
 }
 pub(super) async fn create_token(
@@ -473,7 +473,7 @@ pub(super) async fn installation_token(
     headers: &HeaderMap,
 ) -> Result<(
     codeyard_identity::github_auth::Authentication,
-    codeyard_db_core::queries::github_apps::Token,
+    codeyard_database::queries::github_apps::Token,
 )> {
     let auth = codeyard_identity::github_auth::authenticate(state, headers, true)
         .await?

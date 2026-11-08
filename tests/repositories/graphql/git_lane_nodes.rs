@@ -5,7 +5,7 @@ use super::query;
 use super::request;
 use axum::{http::StatusCode, Router};
 use codeyard_app::app::AppState;
-use codeyard_repos_core::repositories::lifecycle;
+use codeyard_git_storage::repositories::lifecycle;
 pub(super) async fn exercise(
     state: &AppState,
     router: &Router,
@@ -154,7 +154,7 @@ pub(super) async fn exercise(
     let id = teams[0]["node_id"].clone();
     assert_eq!(
         id,
-        codeyard_model::node_id::scoped("T", org, team.id).unwrap()
+        codeyard_types::node_id::scoped("T", org, team.id).unwrap()
     );
     let view=query(router,alice,"query($id:ID!){node(id:$id){id __typename ...on Team{name slug privacy organization{login}}} organization(login:\"graphql-org\"){team(slug:\"graphql-team\"){id}}}",json!({"id":id})).await;
     assert_eq!(view["node"]["__typename"], "Team");

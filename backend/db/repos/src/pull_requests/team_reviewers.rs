@@ -1,8 +1,8 @@
 use anyhow::Result;
-use codeyard_db_core::models::Team;
-use codeyard_db_core::models::User;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::Team;
+use codeyard_database::models::User;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 
 #[derive(Debug, thiserror::Error)]
 #[error("Review teams must be visible teams with write access to this repository")]
@@ -58,7 +58,7 @@ native_operation!(crate::postgres::pull_requests::team_reviewers::members,
     fn members(pool: &DbPool, repo: i64, teams: &[i64], after: i64) -> Result<Vec<User>>);
 native_operation!(crate::postgres::pull_requests::team_reviewers::change,
     crate::sqlite::pull_requests::team_reviewers::change,
-    fn change(pool: &DbPool, actor: i64, pull: i64, slugs: &[String], action: ReviewTeamAction, expected: Option<&codeyard_db_core::models::PullRequest>) -> Result<Vec<Team>>);
+    fn change(pool: &DbPool, actor: i64, pull: i64, slugs: &[String], action: ReviewTeamAction, expected: Option<&codeyard_database::models::PullRequest>) -> Result<Vec<Team>>);
 
 // Locate a request by its stable row identity before applying the existing live pull policy.
 native_operation!(crate::postgres::pull_requests::team_reviewers::request_key,

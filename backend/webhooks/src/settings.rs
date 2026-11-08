@@ -2,14 +2,14 @@
 //! actions. Every action checks the actor before it reads or changes a hook.
 use crate::enqueue;
 use crate::outgoing;
-use codeyard_db_core::models::OrgRole;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::models::User;
-use codeyard_db_core::models::Webhook;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_db_core::queries::webhooks::SealedSecret;
-use codeyard_db_core::queries::webhooks::WebhookFields;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::OrgRole;
+use codeyard_database::models::Repository;
+use codeyard_database::models::User;
+use codeyard_database::models::Webhook;
+use codeyard_database::queries::organizations::OrganizationOutcome;
+use codeyard_database::queries::webhooks::SealedSecret;
+use codeyard_database::queries::webhooks::WebhookFields;
+use codeyard_database::DbPool;
 use codeyard_db_repos::webhooks as hooks;
 use codeyard_db_repos::webhooks::HookOwner;
 use codeyard_support::secrets::SecretEncryptor;
@@ -67,14 +67,14 @@ fn unavailable<E>(_: E) -> HookError {
 /// Maps a refused hook write to what the form or API shows.
 fn write_error(owner: HookOwner, error: anyhow::Error) -> HookError {
     if let Some(invalid) =
-        error.downcast_ref::<codeyard_db_core::queries::webhooks::InvalidEvents>()
+        error.downcast_ref::<codeyard_database::queries::webhooks::InvalidEvents>()
     {
         HookError::Invalid(invalid.0)
     } else if error.is::<hooks::HookLimit>() {
         HookError::Invalid(
             "This owner's webhook limit has been reached. Remove an existing hook first.",
         )
-    } else if error.is::<codeyard_db_core::queries::webhooks::HookExists>() {
+    } else if error.is::<codeyard_database::queries::webhooks::HookExists>() {
         HookError::Invalid(match owner {
             HookOwner::Repository(_) => "Hook already exists on this repository",
             HookOwner::Organization(_) => "Hook already exists on this organization",
@@ -148,7 +148,7 @@ pub fn validated(form: &HookForm) -> Result<WebhookFields, HookError> {
         password: None,
         payload_url: validate_url(&form.payload_url)?,
         content_type: validate_content_type(&form.content_type)?,
-        events: codeyard_model::webhook_events::subscription(&form.events)
+        events: codeyard_types::webhook_events::subscription(&form.events)
             .map_err(HookError::Invalid)?,
         active: form.active,
         ssl_verify: form.ssl_verify,
@@ -183,7 +183,7 @@ pub async fn save(
     encryptor: Option<&SecretEncryptor>,
     owner: HookOwner,
     actor: &User,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     id: Option<i64>,
     form: &HookForm,
 ) -> Result<i64, HookError> {
@@ -199,7 +199,7 @@ pub async fn save_with_revision(
     encryptor: Option<&SecretEncryptor>,
     owner: HookOwner,
     actor: &User,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     id: Option<i64>,
     form: &HookForm,
     expected_updated: Option<chrono::DateTime<chrono::Utc>>,
@@ -239,7 +239,7 @@ pub async fn save_with_revision(
                     "Choose a new secret or remove the saved secret",
                 ));
             }
-            let mut patch = codeyard_db_core::queries::webhooks::WebhookPatch::from(&fields);
+            let mut patch = codeyard_database::queries::webhooks::WebhookPatch::from(&fields);
             patch.expected_updated = expected_updated;
             patch.clear_secret = form.clear_secret;
             patch.clear_password = form.clear_password;
@@ -272,12 +272,12 @@ pub async fn update(
     encryptor: Option<&SecretEncryptor>,
     owner: HookOwner,
     actor: &User,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     id: i64,
     patch: &HookPatch,
 ) -> Result<(), HookError> {
     authorize(pool, actor, owner).await?;
-    let fields = codeyard_db_core::queries::webhooks::WebhookPatch {
+    let fields = codeyard_database::queries::webhooks::WebhookPatch {
         username: patch
             .username
             .as_deref()
@@ -300,7 +300,7 @@ pub async fn update(
             .events
             .as_ref()
             .map(|events| {
-                codeyard_model::webhook_events::subscription(events).map_err(HookError::Invalid)
+                codeyard_types::webhook_events::subscription(events).map_err(HookError::Invalid)
             })
             .transpose()?,
         add_events: patch.add_events.clone(),
@@ -337,7 +337,7 @@ pub async fn delete(
     pool: &DbPool,
     owner: HookOwner,
     actor: &User,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     id: i64,
 ) -> Result<(), HookError> {
     authorize(pool, actor, owner).await?;
@@ -357,7 +357,7 @@ pub async fn ping(
     pool: &DbPool,
     owner: HookOwner,
     actor: &User,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     id: i64,
 ) -> Result<(), HookError> {
     let snapshot = hooks::read_settings(
@@ -376,7 +376,7 @@ pub async fn ping(
     let hook = snapshot.hook.ok_or(HookError::NotFound)?;
     let payload = ping_payload(pool, owner, actor, &hook).await?;
     let json = payload.to_string();
-    let mut outgoing = outgoing(codeyard_model::webhook_events::PING, None, &hook, &json);
+    let mut outgoing = outgoing(codeyard_types::webhook_events::PING, None, &hook, &json);
     outgoing.manual_actor = Some(actor.id);
     if enqueue(pool, hook, outgoing) {
         Ok(())
@@ -390,7 +390,7 @@ pub async fn redeliver(
     pool: &DbPool,
     owner: HookOwner,
     actor: &User,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     hook_id: i64,
     delivery_id: i64,
 ) -> Result<(), HookError> {
@@ -423,7 +423,7 @@ pub async fn test_push(
     pool: &DbPool,
     owner: HookOwner,
     actor: &User,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     id: i64,
 ) -> Result<(), HookError> {
     let snapshot = hooks::read_settings(
@@ -440,9 +440,9 @@ pub async fn test_push(
     .map_err(unavailable)?
     .ok_or(HookError::Denied)?;
     let hook = snapshot.hook.ok_or(HookError::NotFound)?;
-    if !codeyard_model::webhook_events::subscribes(
+    if !codeyard_types::webhook_events::subscribes(
         &hook.events,
-        codeyard_model::webhook_events::PUSH,
+        codeyard_types::webhook_events::PUSH,
     ) {
         return Ok(());
     }
@@ -472,7 +472,7 @@ pub async fn test_push(
     if payload["repository"]["id"].as_i64() != Some(repo) {
         return Err(HookError::Unavailable);
     }
-    let mut send = outgoing(codeyard_model::webhook_events::PUSH, None, &hook, &body);
+    let mut send = outgoing(codeyard_types::webhook_events::PUSH, None, &hook, &body);
     send.automatic = false;
     send.manual_actor = Some(actor.id);
     if enqueue(pool, hook, send) {
@@ -507,7 +507,7 @@ async fn ping_payload(
             crate::set_open_issues(pool, id, &mut payload).await;
             format!(
                 "{}/hooks/{}",
-                codeyard_model::urls::repo_url(&owner_name, &repo.name),
+                codeyard_types::urls::repo_url(&owner_name, &repo.name),
                 hook.id
             )
         }
@@ -518,7 +518,7 @@ async fn ping_payload(
                     .map_err(unavailable)?
                     .ok_or(HookError::NotFound)?;
             payload["organization"] = crate::payloads::organization(&org);
-            codeyard_model::urls::api_url(&format!(
+            codeyard_types::urls::api_url(&format!(
                 "/orgs/{}/hooks/{}",
                 codeyard_types::paths::encode_component(&org.name),
                 hook.id

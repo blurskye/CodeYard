@@ -2,8 +2,8 @@ use crate::secret_scanning::ConfigUpdate;
 use crate::secret_scanning::PatternConfig;
 use anyhow::ensure;
 use anyhow::Result;
-use codeyard_db_core::pool::PgPool;
-use codeyard_db_core::queries::secret_scanning::Refusal;
+use codeyard_database::pool::PgPool;
+use codeyard_database::queries::secret_scanning::Refusal;
 use codeyard_support::secret_detection::patterns::Create;
 use codeyard_support::secret_detection::patterns::Delete;
 use codeyard_support::secret_detection::patterns::Owner;
@@ -27,12 +27,12 @@ async fn authority(
         }
         Owner::Repository(repo) => {
             let allowed = if write {
-                codeyard_db_core::queries::postgres::discussions::lock_repository_mutation_authority(
+                codeyard_database::queries::postgres::discussions::lock_repository_mutation_authority(
                     tx, actor, repo,
                 )
                 .await?
             } else {
-                codeyard_db_core::queries::postgres::discussions::lock_archive_authority(
+                codeyard_database::queries::postgres::discussions::lock_archive_authority(
                     tx, actor, repo,
                 )
                 .await?
@@ -91,7 +91,7 @@ pub async fn list(pool: &PgPool, actor: i64, owner: Owner) -> Result<Vec<Pattern
 pub async fn create(
     pool: &PgPool,
     actor: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     owner: Owner,
     input: &[Create],
 ) -> Result<Vec<Pattern>> {
@@ -99,7 +99,7 @@ pub async fn create(
     let mut admission = pool.begin().await?;
     authority(&mut admission, actor, owner, true).await?;
     ensure!(
-        codeyard_db_core::queries::postgres::users::transitions::credential_live(
+        codeyard_database::queries::postgres::users::transitions::credential_live(
             &mut admission,
             actor,
             credential,
@@ -115,7 +115,7 @@ pub async fn create(
     let mut tx = pool.begin().await?;
     authority(&mut tx, actor, owner, true).await?;
     ensure!(
-        codeyard_db_core::queries::postgres::users::transitions::credential_live(
+        codeyard_database::queries::postgres::users::transitions::credential_live(
             &mut tx, actor, credential, true
         )
         .await?,
@@ -147,7 +147,7 @@ pub async fn create(
 pub async fn update(
     pool: &PgPool,
     actor: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     owner: Owner,
     id: i64,
     input: &Update,
@@ -155,7 +155,7 @@ pub async fn update(
     let mut tx = pool.begin().await?;
     authority(&mut tx, actor, owner, true).await?;
     ensure!(
-        codeyard_db_core::queries::postgres::users::transitions::credential_live(
+        codeyard_database::queries::postgres::users::transitions::credential_live(
             &mut tx, actor, credential, true
         )
         .await?,
@@ -181,14 +181,14 @@ pub async fn update(
 pub async fn publish(
     pool: &PgPool,
     actor: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     owner: Owner,
     id: i64,
 ) -> Result<()> {
     let mut tx = pool.begin().await?;
     authority(&mut tx, actor, owner, true).await?;
     ensure!(
-        codeyard_db_core::queries::postgres::users::transitions::credential_live(
+        codeyard_database::queries::postgres::users::transitions::credential_live(
             &mut tx, actor, credential, true
         )
         .await?,
@@ -219,7 +219,7 @@ pub async fn publish(
 pub async fn delete(
     pool: &PgPool,
     actor: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     owner: Owner,
     input: &[Delete],
     resolve: bool,
@@ -228,7 +228,7 @@ pub async fn delete(
     let mut tx = pool.begin().await?;
     authority(&mut tx, actor, owner, true).await?;
     ensure!(
-        codeyard_db_core::queries::postgres::users::transitions::credential_live(
+        codeyard_database::queries::postgres::users::transitions::credential_live(
             &mut tx, actor, credential, true
         )
         .await?,
@@ -326,7 +326,7 @@ pub async fn effective(pool: &PgPool, repo: i64) -> Result<(Vec<Pattern>, Vec<St
 pub async fn configure(
     pool: &PgPool,
     actor: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     org: i64,
     input: &ConfigUpdate,
 ) -> Result<String> {
@@ -337,7 +337,7 @@ pub async fn configure(
     let mut tx = pool.begin().await?;
     authority(&mut tx, actor, Owner::Organization(org), true).await?;
     ensure!(
-        codeyard_db_core::queries::postgres::users::transitions::credential_live(
+        codeyard_database::queries::postgres::users::transitions::credential_live(
             &mut tx, actor, credential, true
         )
         .await?,

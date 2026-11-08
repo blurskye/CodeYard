@@ -12,8 +12,8 @@ use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_app::app::AppState;
 use codeyard_db_repos::issue_attributes::Definition;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -71,7 +71,7 @@ async fn save(
     actor.require_write()?;
     let org = target(&state, &params["org"]).await?;
     let Json(input) =
-        input.map_err(|error| codeyard_model::github_error::json_error(error).simple())?;
+        input.map_err(|error| codeyard_types::github_error::json_error(error).simple())?;
     let id = params
         .get("issue_type_id")
         .map(|id| id.parse::<i64>().map_err(|_| Error::missing()))

@@ -71,7 +71,7 @@ async fn contract(pg: bool) {
     let bob = f.actor("bob").await;
     let eve = f.actor("eve").await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard_repos_core::repositories::lifecycle::provision(
+    let repo = codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
@@ -82,7 +82,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    codeyard_repos_core::repositories::lifecycle::provision(
+    codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
@@ -97,7 +97,7 @@ async fn contract(pg: bool) {
         f.pool(),
         bob,
         repo.id,
-        codeyard_db_core::models::AccessLevel::Write,
+        codeyard_database::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -145,7 +145,7 @@ async fn contract(pg: bool) {
     let suite_id = suite["id"].as_i64().unwrap();
     assert_eq!(
         suite["node_id"],
-        codeyard_model::node_id::scoped("CSU", repo.id, suite_id).unwrap()
+        codeyard_types::node_id::scoped("CSU", repo.id, suite_id).unwrap()
     );
     assert_eq!(suite["head_branch"], "main");
     assert_eq!(suite["status"], "queued");
@@ -184,7 +184,7 @@ async fn contract(pg: bool) {
     assert_eq!(run["output"]["annotations_count"], 2);
     for (kind, row, ty) in [("CSU", suite_id, "CheckSuite"), ("CRU", id, "CheckRun")] {
         for (root, valid) in [(repo.id, true), (repo.id + 1000, false)] {
-            let node = codeyard_model::node_id::scoped(kind, root, row).unwrap();
+            let node = codeyard_types::node_id::scoped(kind, root, row).unwrap();
             let response = router.clone().oneshot(Request::builder()
                 .method("POST").uri("/api/graphql")
                 .header("content-type", "application/json")

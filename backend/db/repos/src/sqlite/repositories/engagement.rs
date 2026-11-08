@@ -1,13 +1,13 @@
 use crate::repositories::engagement::StarSort;
 use anyhow::Result;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::models::Star;
-use codeyard_db_core::models::User;
-use codeyard_db_core::models::Watch;
-use codeyard_db_core::pool::SqlitePool;
-use codeyard_db_core::queries::sqlite::repositories::access::lock_readable_repository_in_transaction;
-use codeyard_db_core::queries::sqlite::repositories::access::readable_condition;
-use codeyard_db_core::queries::sqlite::search::contains;
+use codeyard_database::models::Repository;
+use codeyard_database::models::Star;
+use codeyard_database::models::User;
+use codeyard_database::models::Watch;
+use codeyard_database::pool::SqlitePool;
+use codeyard_database::queries::sqlite::repositories::access::lock_readable_repository_in_transaction;
+use codeyard_database::queries::sqlite::repositories::access::readable_condition;
+use codeyard_database::queries::sqlite::search::contains;
 use codeyard_db_identity::users::blocks::InteractionBlocked;
 use sqlx::Sqlite;
 use sqlx::Transaction;
@@ -29,7 +29,7 @@ async fn require_readable(
 /// Removing one's own star or watch needs a live credential, not read access or interaction rights.
 async fn begin_removal(
     pool: &SqlitePool,
-    actor: codeyard_db_core::queries::credentials::Actor,
+    actor: codeyard_database::queries::credentials::Actor,
 ) -> Result<(Transaction<'_, Sqlite>, i64)> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     if let Some(credential) = actor.credential() {
@@ -45,7 +45,7 @@ async fn begin_removal(
 
 async fn begin_change(
     pool: &SqlitePool,
-    actor: codeyard_db_core::queries::credentials::Actor,
+    actor: codeyard_database::queries::credentials::Actor,
     repo_id: i64,
 ) -> Result<(Transaction<'_, Sqlite>, i64)> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
@@ -122,7 +122,7 @@ pub async fn list_watched_repositories(
 
 pub async fn watch_repo(
     pool: &SqlitePool,
-    user_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    user_id: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
 ) -> Result<bool> {
     let (mut tx, user_id) = begin_change(pool, user_id.into(), repo_id).await?;
@@ -134,7 +134,7 @@ pub async fn watch_repo(
 
 pub async fn unwatch_repo(
     pool: &SqlitePool,
-    user_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    user_id: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
 ) -> Result<bool> {
     let (mut tx, user_id) = begin_removal(pool, user_id.into()).await?;
@@ -162,7 +162,7 @@ pub async fn is_repo_watched(pool: &SqlitePool, user_id: i64, repo_id: i64) -> R
 
 pub async fn star_repo(
     pool: &SqlitePool,
-    user_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    user_id: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
 ) -> Result<bool> {
     let (mut tx, user_id) = begin_change(pool, user_id.into(), repo_id).await?;
@@ -178,7 +178,7 @@ pub async fn star_repo(
 
 pub async fn unstar_repo(
     pool: &SqlitePool,
-    user_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    user_id: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
 ) -> Result<bool> {
     let (mut tx, user_id) = begin_removal(pool, user_id.into()).await?;
@@ -306,7 +306,7 @@ pub async fn count_starred_repositories(
 /// Saves a watch level. `custom` keeps `events`; the other levels clear them.
 pub async fn set_watch_level(
     pool: &SqlitePool,
-    user_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    user_id: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     level: &str,
     events: &str,

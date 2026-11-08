@@ -1,14 +1,14 @@
 //! The native head owns publication consent; the native base queues refresh work.
 use anyhow::Result;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::{
+use codeyard_database::native_operation;
+use codeyard_database::{
     cells::pulls::{Admission, Binding, Event, Push},
     models::PullRequest,
     queries::credentials::Actor,
     DbPool,
 };
 
-pub use codeyard_db_core::cells::pulls::Refresh;
+pub use codeyard_database::cells::pulls::Refresh;
 
 native_operation!(crate::postgres::pull_requests::cells::subscribe, crate::sqlite::pull_requests::cells::subscribe,
     fn subscribe(pool: &DbPool, binding: &Binding, actor: &Actor, admission: &dyn Admission) -> Result<()>);

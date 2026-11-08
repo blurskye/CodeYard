@@ -20,18 +20,18 @@ use axum::Json;
 use base64::engine::general_purpose::STANDARD;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::app::AppState;
-use codeyard_cluster_core::pairing::JoinTicket;
+use codeyard_database::queries::runners::Group;
+use codeyard_database::queries::runners::Refusal;
+use codeyard_database::queries::runners::Runner;
+use codeyard_database::queries::runners::Scope;
 use codeyard_db_actions::runners as native;
 use codeyard_db_actions::runners::GroupInput;
 use codeyard_db_actions::runners::Labels;
 use codeyard_db_actions::runners::Registration;
 use codeyard_db_actions::runners::Selection;
-use codeyard_db_core::queries::runners::Group;
-use codeyard_db_core::queries::runners::Refusal;
-use codeyard_db_core::queries::runners::Runner;
-use codeyard_db_core::queries::runners::Scope;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_nodes::pairing::JoinTicket;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -258,9 +258,9 @@ fn group_document(name: &str, g: &Group) -> Result<Value> {
     );
     let workflows: Value =
         serde_json::from_str(&g.selected_workflows).map_err(Error::unavailable)?;
-    let mut value = json!({"id":g.id,"name":g.name,"visibility":g.visibility,"default":g.is_default,"runners_url":codeyard_model::urls::api_url(&format!("{base}/runners")),"hosted_runners_url":codeyard_model::urls::api_url(&format!("{base}/hosted-runners")),"inherited":false,"allows_public_repositories":g.allows_public_repositories,"workflow_restrictions_read_only":false,"restricted_to_workflows":g.restricted_to_workflows,"selected_workflows":workflows});
+    let mut value = json!({"id":g.id,"name":g.name,"visibility":g.visibility,"default":g.is_default,"runners_url":codeyard_types::urls::api_url(&format!("{base}/runners")),"hosted_runners_url":codeyard_types::urls::api_url(&format!("{base}/hosted-runners")),"inherited":false,"allows_public_repositories":g.allows_public_repositories,"workflow_restrictions_read_only":false,"restricted_to_workflows":g.restricted_to_workflows,"selected_workflows":workflows});
     if g.visibility == "selected" {
-        value["selected_repositories_url"] = json!(codeyard_model::urls::api_url(&format!(
+        value["selected_repositories_url"] = json!(codeyard_types::urls::api_url(&format!(
             "{base}/repositories"
         )));
     }
@@ -305,7 +305,7 @@ async fn selected_runner(state: &AppState, actor: i64, scope: Scope, p: &Params)
         &state.pool,
         actor,
         scope,
-        &codeyard_db_core::queries::runners::RunnerQuery {
+        &codeyard_database::queries::runners::RunnerQuery {
             id: Some(id(p, "runner_id")?),
             ..Default::default()
         },
@@ -368,7 +368,7 @@ async fn groups(
         actor,
         org_id,
         &native::GroupQuery {
-            page: codeyard_db_core::queries::runners::Window {
+            page: codeyard_database::queries::runners::Window {
                 offset: offset as i64,
                 limit: limit as i64,
             },
@@ -408,7 +408,7 @@ async fn create_group(
     input: std::result::Result<Json<GroupInput>, JsonRejection>,
 ) -> Result<Response> {
     let (actor, scope) = administered(&s, &headers, &p, true).await?;
-    let Json(input) = input.map_err(codeyard_model::github_error::json_error)?;
+    let Json(input) = input.map_err(codeyard_types::github_error::json_error)?;
     let row = native::save_group(&s.pool, actor, org(scope)?, None, &input)
         .await
         .map_err(error)?;
@@ -421,7 +421,7 @@ async fn update_group(
     input: std::result::Result<Json<GroupInput>, JsonRejection>,
 ) -> Result<Json<Value>> {
     let (actor, scope) = administered(&s, &headers, &p, true).await?;
-    let Json(input) = input.map_err(codeyard_model::github_error::json_error)?;
+    let Json(input) = input.map_err(codeyard_types::github_error::json_error)?;
     let row = native::save_group(
         &s.pool,
         actor,
@@ -545,7 +545,7 @@ async fn set_repositories(
         || {
             Ok(Selection::Replace(
                 input
-                    .map_err(codeyard_model::github_error::json_error)?
+                    .map_err(codeyard_types::github_error::json_error)?
                     .0
                     .selected_repository_ids,
             ))
@@ -595,7 +595,7 @@ async fn set_runners(
         || {
             Ok(Selection::Replace(
                 input
-                    .map_err(codeyard_model::github_error::json_error)?
+                    .map_err(codeyard_types::github_error::json_error)?
                     .0
                     .runners,
             ))
@@ -652,8 +652,8 @@ async fn list(
         &s.pool,
         actor,
         scope,
-        &codeyard_db_core::queries::runners::RunnerQuery {
-            page: codeyard_db_core::queries::runners::Window {
+        &codeyard_database::queries::runners::RunnerQuery {
+            page: codeyard_database::queries::runners::Window {
                 offset: offset as i64,
                 limit: limit as i64,
             },
@@ -716,7 +716,7 @@ struct LabelInput {
 /// GitHub documents these label operations with string-array validation errors.
 fn label_input(input: std::result::Result<Json<LabelInput>, JsonRejection>) -> Result<Vec<String>> {
     Ok(input
-        .map_err(|error| codeyard_model::github_error::json_error(error).simple())?
+        .map_err(|error| codeyard_types::github_error::json_error(error).simple())?
         .0
         .labels)
 }
@@ -793,7 +793,7 @@ async fn downloads(
 ) -> Result<Json<Value>> {
     administered(&s, &headers, &p, false).await?;
     Ok(Json(
-        json!([{"os":std::env::consts::OS,"architecture":match std::env::consts::ARCH {"x86_64"=>"x64","aarch64"=>"arm64",arch=>arch},"download_url":format!("{}/api/actions/runners/download",codeyard_model::http_config::link_origin()),"filename":format!("codeyard-runner-{}-{}",std::env::consts::OS,std::env::consts::ARCH)}]),
+        json!([{"os":std::env::consts::OS,"architecture":match std::env::consts::ARCH {"x86_64"=>"x64","aarch64"=>"arm64",arch=>arch},"download_url":format!("{}/api/actions/runners/download",codeyard_types::http_config::link_origin()),"filename":format!("codeyard-runner-{}-{}",std::env::consts::OS,std::env::consts::ARCH)}]),
     ))
 }
 async fn ticket(state: &AppState) -> Result<JoinTicket> {
@@ -875,7 +875,7 @@ async fn jit(
 ) -> Result<Response> {
     let (actor, scope) = administered(&s, &headers, &p, true).await?;
     let Json(input) =
-        input.map_err(|error| codeyard_model::github_error::json_error(error).simple())?;
+        input.map_err(|error| codeyard_types::github_error::json_error(error).simple())?;
     if input.labels.is_empty() {
         return Err(Error::invalid_simple("Invalid runner labels"));
     }

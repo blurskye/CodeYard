@@ -4,11 +4,11 @@ use crate::action_settings::Policy;
 use crate::action_settings::PolicySelector;
 use anyhow::ensure;
 use anyhow::Result;
-use codeyard_db_core::pool::SqlitePool;
-use codeyard_db_core::queries::action_settings::Refusal;
-use codeyard_db_core::queries::action_settings::Scope;
-use codeyard_db_core::queries::action_settings::Setting;
-use codeyard_db_core::queries::credentials::Actor;
+use codeyard_database::pool::SqlitePool;
+use codeyard_database::queries::action_settings::Refusal;
+use codeyard_database::queries::action_settings::Scope;
+use codeyard_database::queries::action_settings::Setting;
+use codeyard_database::queries::credentials::Actor;
 use serde_json::json;
 use serde_json::Value;
 
@@ -85,7 +85,7 @@ pub async fn policies_page(
         authority(&mut tx, &actor, scope, false, "organization_administration").await?;
     let repository = if let Scope::Repository(repo) = scope {
         if has_parents {
-            sqlx::query_as::<_, codeyard_db_core::models::Repository>("SELECT r.* FROM repositories r WHERE r.id=?1 AND r.owner_kind='org' AND EXISTS(SELECT 1 FROM actions_policies p WHERE p.org_id=r.owner_org_id)").bind(repo).fetch_optional(&mut *tx).await?
+            sqlx::query_as::<_, codeyard_database::models::Repository>("SELECT r.* FROM repositories r WHERE r.id=?1 AND r.owner_kind='org' AND EXISTS(SELECT 1 FROM actions_policies p WHERE p.org_id=r.owner_org_id)").bind(repo).fetch_optional(&mut *tx).await?
         } else {
             None
         }
@@ -100,14 +100,14 @@ pub async fn policies_page(
         let definitions =
             codeyard_db_orgs::sqlite::organizations::properties::definitions_on(&mut tx, org)
                 .await?;
-        let values = codeyard_db_core::queries::sqlite::organizations::properties::values_on(
+        let values = codeyard_database::queries::sqlite::organizations::properties::values_on(
             &mut tx,
             repository.id,
             &definitions,
         )
         .await?;
-        let properties = values.into_iter().filter_map(|value| value.value.map(|stored| (value.property_name, match stored { codeyard_db_core::queries::organizations::properties::PropertyValue::String(value) => vec![value], codeyard_db_core::queries::organizations::properties::PropertyValue::Strings(values) => values }))).collect();
-        let context = codeyard_db_core::queries::rulesets::matching::RepositoryContext {
+        let properties = values.into_iter().filter_map(|value| value.value.map(|stored| (value.property_name, match stored { codeyard_database::queries::organizations::properties::PropertyValue::String(value) => vec![value], codeyard_database::queries::organizations::properties::PropertyValue::Strings(values) => values }))).collect();
+        let context = codeyard_database::queries::rulesets::matching::RepositoryContext {
             id: repository.id,
             name: &repository.name,
             default_branch: &repository.default_branch,
@@ -116,7 +116,7 @@ pub async fn policies_page(
             is_fork: repository.is_fork,
             properties: &properties,
         };
-        let mut budget = codeyard_model::workflow_glob::WorkflowMatchBudget::new();
+        let mut budget = codeyard_types::workflow_glob::WorkflowMatchBudget::new();
         let (mut after, mut total, mut ids) = (0_i64, 0_i64, Vec::new());
         loop {
             let selectors: Vec<PolicySelector> = sqlx::query_as(&format!("SELECT p.id,COALESCE(p.{column}=?1,FALSE) AS own,CASE WHEN p.{column}=?1 THEN NULL ELSE json_extract(p.data,'$.conditions') END AS conditions FROM actions_policies p WHERE (p.{column}=?1 OR p.org_id=?2) AND p.id>?3 ORDER BY p.id LIMIT 100")).bind(scope_id).bind(org).bind(after).fetch_all(&mut *tx).await?;
@@ -221,6 +221,6 @@ pub async fn policies(
     Ok(rows)
 }
 
-use codeyard_db_core::queries::sqlite::action_settings::authority;
+use codeyard_database::queries::sqlite::action_settings::authority;
 
-use codeyard_db_core::queries::sqlite::action_settings::snapshot;
+use codeyard_database::queries::sqlite::action_settings::snapshot;

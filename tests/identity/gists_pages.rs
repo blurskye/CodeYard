@@ -272,7 +272,7 @@ async fn pages(pg: bool) {
         last = codeyard_db_repos::gists::create_comment(
             f.pool(),
             bob,
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&b.session),
+            &codeyard_database::queries::users::accounts::AccountCredential::Session(&b.session),
             record.repo_id,
             &format!("Page comment {index}"),
         )

@@ -1,10 +1,10 @@
 use crate::users::accounts::CommitAuthor;
 use anyhow::Result;
-use codeyard_db_core::models::AdminAccountSummary;
-use codeyard_db_core::models::AdminActivityPoint;
-use codeyard_db_core::models::AdminUser;
-use codeyard_db_core::models::User;
-use codeyard_db_core::pool::PgPool;
+use codeyard_database::models::AdminAccountSummary;
+use codeyard_database::models::AdminActivityPoint;
+use codeyard_database::models::AdminUser;
+use codeyard_database::models::User;
+use codeyard_database::pool::PgPool;
 
 pub async fn create_user(pool: &PgPool, username: &str, email: Option<&str>) -> Result<User> {
     let mut tx = pool.begin().await?;
@@ -16,15 +16,15 @@ pub async fn create_user(pool: &PgPool, username: &str, email: Option<&str>) -> 
         VALUES ({cell_home},$1, $2)
         RETURNING *
         "#,
-        cell_home = codeyard_db_core::cells::LOCAL_HOME_SQL
+        cell_home = codeyard_database::cells::LOCAL_HOME_SQL
     ))
     .bind(username)
     .bind(email)
     .fetch_one(&mut *tx)
     .await?;
     anyhow::ensure!(
-        codeyard_db_core::cells::directory::postgres::user(pool, &mut tx, &result).await?,
-        codeyard_db_core::cells::directory::Refusal::Conflict
+        codeyard_database::cells::directory::postgres::user(pool, &mut tx, &result).await?,
+        codeyard_database::cells::directory::Refusal::Conflict
     );
     tx.commit().await?;
     Ok(result)
@@ -56,7 +56,7 @@ pub async fn create_user_with_password_and_flags(
         VALUES ({cell_home},$1, $2, $3, $4, $5)
         RETURNING *
         "#,
-        cell_home = codeyard_db_core::cells::LOCAL_HOME_SQL
+        cell_home = codeyard_database::cells::LOCAL_HOME_SQL
     ))
     .bind(username)
     .bind(email)
@@ -66,8 +66,8 @@ pub async fn create_user_with_password_and_flags(
     .fetch_one(&mut *tx)
     .await?;
     anyhow::ensure!(
-        codeyard_db_core::cells::directory::postgres::user(pool, &mut tx, &result).await?,
-        codeyard_db_core::cells::directory::Refusal::Conflict
+        codeyard_database::cells::directory::postgres::user(pool, &mut tx, &result).await?,
+        codeyard_database::cells::directory::Refusal::Conflict
     );
     tx.commit().await?;
     Ok(result)
@@ -128,7 +128,7 @@ pub async fn update_user_password(
         .await?;
     if must_change_password {
         // A forced change locks the account out of CI like a ban does.
-        codeyard_db_core::queries::postgres::ci::stop_actor_ci_runs(&mut tx, user_id).await?;
+        codeyard_database::queries::postgres::ci::stop_actor_ci_runs(&mut tx, user_id).await?;
         crate::postgres::users::transitions::stop_ownerless_organization_ci(
             &mut tx,
             &organizations,
@@ -256,7 +256,7 @@ pub async fn create_user_from_oauth(
         VALUES ({cell_home},$1, $2, $3, $4)
         RETURNING *
         "#,
-        cell_home = codeyard_db_core::cells::LOCAL_HOME_SQL
+        cell_home = codeyard_database::cells::LOCAL_HOME_SQL
     ))
     .bind(username)
     .bind(email)
@@ -265,8 +265,8 @@ pub async fn create_user_from_oauth(
     .fetch_one(&mut *tx)
     .await?;
     anyhow::ensure!(
-        codeyard_db_core::cells::directory::postgres::user(pool, &mut tx, &result).await?,
-        codeyard_db_core::cells::directory::Refusal::Conflict
+        codeyard_database::cells::directory::postgres::user(pool, &mut tx, &result).await?,
+        codeyard_database::cells::directory::Refusal::Conflict
     );
     tx.commit().await?;
     Ok(result)
@@ -275,7 +275,7 @@ pub async fn create_user_from_oauth(
 pub async fn set_user_avatar(
     pool: &PgPool,
     user_id: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     avatar_file_id: Option<uuid::Uuid>,
 ) -> Result<crate::users::accounts::UserAvatarOutcome> {
     use crate::users::accounts::UserAvatarOutcome;
@@ -310,7 +310,7 @@ pub async fn set_user_avatar(
         .execute(&mut *tx)
         .await?;
     if let Some(old) = previous.filter(|old| Some(*old) != avatar_file_id) {
-        codeyard_db_core::queries::postgres::files::delete_unreferenced_file_in_transaction(
+        codeyard_database::queries::postgres::files::delete_unreferenced_file_in_transaction(
             &mut tx, old,
         )
         .await?;
@@ -329,7 +329,7 @@ pub async fn update_user_profile(
     website: Option<&str>,
 ) -> Result<Option<User>> {
     use crate::users::profiles::ProfilePatch;
-    use codeyard_db_core::queries::users::accounts::AccountCredential;
+    use codeyard_database::queries::users::accounts::AccountCredential;
     use codeyard_types::credentials::AccountRestricted;
     match crate::postgres::users::profiles::save_profile(
         pool,
@@ -380,7 +380,7 @@ pub async fn admin_users_page(
     requested: usize,
 ) -> Result<crate::users::accounts::AdminUserPage> {
     let mut tx = pool.begin().await?;
-    codeyard_db_core::queries::postgres::users::transitions::lock_accounts_shared(
+    codeyard_database::queries::postgres::users::transitions::lock_accounts_shared(
         &mut tx,
         &[administrator.user_id],
     )

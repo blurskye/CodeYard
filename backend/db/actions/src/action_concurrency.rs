@@ -1,9 +1,9 @@
 use anyhow::Result;
 use chrono::DateTime;
 use chrono::Utc;
-use codeyard_db_core::models::CiRun;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::CiRun;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 
 /// Workflow and job requests share one repository/group ordering and one holder set.
 pub(crate) fn blockers_sql(pg: bool) -> String {

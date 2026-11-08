@@ -92,10 +92,13 @@ pub(super) async fn run(
     repo: i64,
     actor: i64,
     branch: &str,
-) -> (codeyard_db_core::models::CiRun, runtime::RuntimeCredentials) {
+) -> (
+    codeyard_database::models::CiRun,
+    runtime::RuntimeCredentials,
+) {
     let sql="INSERT INTO ci_runs(run_id,repo_id,triggered_by_id,mode,pipeline,event,branch,workflow_path,status,worker) VALUES($1,$2,$3,'local','ci','push',$4,'.github/workflows/ci.yml','running','test') RETURNING *";
     let row = match f.pool() {
-        codeyard_db_core::DbPool::Postgres(pool) => sqlx::query_as(sql)
+        codeyard_database::DbPool::Postgres(pool) => sqlx::query_as(sql)
             .bind(Uuid::new_v4())
             .bind(repo)
             .bind(actor)
@@ -103,7 +106,7 @@ pub(super) async fn run(
             .fetch_one(pool)
             .await
             .unwrap(),
-        codeyard_db_core::DbPool::Sqlite(pool) => sqlx::query_as(sql)
+        codeyard_database::DbPool::Sqlite(pool) => sqlx::query_as(sql)
             .bind(Uuid::new_v4())
             .bind(repo)
             .bind(actor)
@@ -122,7 +125,7 @@ pub(super) async fn run(
     (row, credentials)
 }
 
-pub(super) fn artifact_body(run: &codeyard_db_core::models::CiRun, name: &str) -> Value {
+pub(super) fn artifact_body(run: &codeyard_database::models::CiRun, name: &str) -> Value {
     json!({"workflowRunBackendId":run.run_id.to_string(),"workflowJobRunBackendId":run.run_id.to_string(),"name":name})
 }
 pub(super) async fn put(router: &Router, url: &str, body: &[u8], expected: StatusCode) {
@@ -182,7 +185,7 @@ async fn contract(pg: bool) {
     let alice = f.actor("results_alice").await;
     let bob = f.actor("results_bob").await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard_repos_core::repositories::lifecycle::provision(
+    let repo = codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
@@ -197,7 +200,7 @@ async fn contract(pg: bool) {
     let (main, main_token) = run(&f, repo.id, alice, "main").await;
     let (feature, feature_token) = run(&f, repo.id, alice, "feature").await;
     let (_, other_token) = run(&f, repo.id, alice, "other").await;
-    let other_repo = codeyard_repos_core::repositories::lifecycle::provision(
+    let other_repo = codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
@@ -746,7 +749,7 @@ async fn eviction(pg: bool) {
     let mut f = Database::new(pg).await;
     let alice = f.actor("eviction_alice").await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard_repos_core::repositories::lifecycle::provision(
+    let repo = codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
@@ -799,7 +802,7 @@ async fn pending_uploads_share_the_cache_quota(pg: bool) {
     let mut f = Database::new(pg).await;
     let alice = f.actor("pending_quota_alice").await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard_repos_core::repositories::lifecycle::provision(
+    let repo = codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
@@ -946,7 +949,7 @@ async fn shared_s3_across_routers(pg: bool) {
     let actor = f.actor("shared_actions").await;
     let first = tempfile::tempdir().unwrap();
     let second = tempfile::tempdir().unwrap();
-    let repo = codeyard_repos_core::repositories::lifecycle::provision(
+    let repo = codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         first.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(actor),

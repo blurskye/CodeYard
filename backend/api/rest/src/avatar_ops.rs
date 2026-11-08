@@ -8,12 +8,12 @@
 //! an account stops using is removed in the same database transaction as the change.
 use sha2::Digest;
 
-use codeyard_db_core::models::FileReason;
-use codeyard_db_core::models::FileVisibility;
-use codeyard_db_core::models::User;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_db_core::queries::users::accounts::AccountCredential;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::FileReason;
+use codeyard_database::models::FileVisibility;
+use codeyard_database::models::User;
+use codeyard_database::queries::organizations::OrganizationOutcome;
+use codeyard_database::queries::users::accounts::AccountCredential;
+use codeyard_database::DbPool;
 use codeyard_db_identity::users::accounts::UserAvatarOutcome;
 use codeyard_storage::files::uploads::UploadDeclaration;
 use codeyard_storage::files::uploads::UploadError;

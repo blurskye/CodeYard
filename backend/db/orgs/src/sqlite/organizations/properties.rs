@@ -8,23 +8,23 @@ use crate::organizations::properties::MAX_DEFINITIONS;
 use crate::sqlite::organizations::authority::credential;
 use anyhow::ensure;
 use anyhow::Result;
-use codeyard_db_core::models::AccessLevel;
-use codeyard_db_core::models::OrgRole;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::pool::SqlitePool;
-use codeyard_db_core::queries::organizations::properties::invalid;
-use codeyard_db_core::queries::organizations::properties::Definition;
-use codeyard_db_core::queries::organizations::properties::DefinitionInput;
-use codeyard_db_core::queries::organizations::properties::DefinitionRow;
-use codeyard_db_core::queries::organizations::properties::EditableBy;
-use codeyard_db_core::queries::organizations::properties::PropertyValue;
-use codeyard_db_core::queries::organizations::properties::Refusal;
-use codeyard_db_core::queries::organizations::properties::ValueInput;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_db_core::queries::sqlite::organizations::authority::begin;
-use codeyard_db_core::queries::sqlite::organizations::authority::begin_read;
-use codeyard_db_core::queries::sqlite::organizations::authority::read_authority;
-use codeyard_db_core::require_read_org_sqlite;
+use codeyard_database::models::AccessLevel;
+use codeyard_database::models::OrgRole;
+use codeyard_database::models::Repository;
+use codeyard_database::pool::SqlitePool;
+use codeyard_database::queries::organizations::properties::invalid;
+use codeyard_database::queries::organizations::properties::Definition;
+use codeyard_database::queries::organizations::properties::DefinitionInput;
+use codeyard_database::queries::organizations::properties::DefinitionRow;
+use codeyard_database::queries::organizations::properties::EditableBy;
+use codeyard_database::queries::organizations::properties::PropertyValue;
+use codeyard_database::queries::organizations::properties::Refusal;
+use codeyard_database::queries::organizations::properties::ValueInput;
+use codeyard_database::queries::organizations::OrganizationOutcome;
+use codeyard_database::queries::sqlite::organizations::authority::begin;
+use codeyard_database::queries::sqlite::organizations::authority::begin_read;
+use codeyard_database::queries::sqlite::organizations::authority::read_authority;
+use codeyard_database::require_read_org_sqlite;
 use sqlx::SqliteConnection;
 use std::collections::HashSet;
 use OrganizationOutcome::Applied;
@@ -95,7 +95,7 @@ async fn compatible_on(
 }
 pub async fn define(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     org: i64,
     inputs: &[DefinitionInput],
 ) -> Result<OrganizationOutcome<Vec<Definition>>> {
@@ -129,7 +129,7 @@ pub async fn define(
 }
 pub async fn remove(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     org: i64,
     name: &str,
     definition: Option<i64>,
@@ -209,7 +209,7 @@ pub async fn creation_values_on(
 }
 pub async fn set_values(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     org: i64,
     repositories: &[String],
     values: &[ValueInput],
@@ -263,7 +263,7 @@ pub async fn repository(
     let mut tx = begin_read(pool).await?;
     let Some(repository)=sqlx::query_as::<_,Repository>("SELECT * FROM repositories WHERE id=?1 AND owner_kind='org' AND owner_org_id IS NOT NULL AND owner_user_id IS NULL").bind(repo).fetch_optional(&mut *tx).await? else {return Ok(None);};
     let access = if let Some(viewer) = viewer {
-        codeyard_db_core::queries::sqlite::repositories::access::user_repo_access_in_transaction(
+        codeyard_database::queries::sqlite::repositories::access::user_repo_access_in_transaction(
             &mut tx, viewer, repo,
         )
         .await?
@@ -300,7 +300,7 @@ pub async fn repository(
 }
 pub async fn set_repository_values(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo: i64,
     values: &[ValueInput],
 ) -> Result<()> {
@@ -309,7 +309,7 @@ pub async fn set_repository_values(
 /// Native forms bind the definition's immutable identity as well as the repository.
 pub async fn set_repository_value(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo: i64,
     definition: i64,
     value: &ValueInput,
@@ -325,7 +325,7 @@ pub async fn set_repository_value(
 }
 async fn change_repository_values(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo: i64,
     values: &[ValueInput],
     expected: Option<i64>,
@@ -334,7 +334,7 @@ async fn change_repository_values(
     let actor = grant.user_id;
     let mut tx = begin(pool).await?;
     ensure!(
-        codeyard_db_core::queries::sqlite::discussions::lock_archive_authority(
+        codeyard_database::queries::sqlite::discussions::lock_archive_authority(
             &mut tx, actor, repo
         )
         .await?,
@@ -346,7 +346,7 @@ async fn change_repository_values(
         Applied(OrgRole::Owner)
     );
     ensure!(
-        codeyard_db_core::queries::sqlite::credentials::writes(
+        codeyard_database::queries::sqlite::credentials::writes(
             &mut tx,
             &grant,
             Some(repo),
@@ -358,7 +358,7 @@ async fn change_repository_values(
     );
     // Account ownership cannot lend an organization-only capability to a repository token.
     if owner && grant.token_id().is_some() {
-        owner = codeyard_db_core::queries::sqlite::credentials::writes(
+        owner = codeyard_database::queries::sqlite::credentials::writes(
             &mut tx,
             &grant,
             None,
@@ -421,7 +421,7 @@ fn query_predicates(
             builder.push(if criterion.negative { "NOT(" } else { "(" });
             match &criterion.kind {
                 Kind::Text(value) => {
-                    let needle = codeyard_db_core::queries::sqlite::search::contains(value);
+                    let needle = codeyard_database::queries::sqlite::search::contains(value);
                     builder
                         .push("r.name REGEXP ")
                         .push_bind(needle.clone())
@@ -433,7 +433,7 @@ fn query_predicates(
                 Kind::Name(value) => {
                     builder
                         .push("r.name REGEXP ")
-                        .push_bind(codeyard_db_core::queries::sqlite::search::contains(value));
+                        .push_bind(codeyard_database::queries::sqlite::search::contains(value));
                 }
                 Kind::Owner(value) => {
                     builder
@@ -514,7 +514,7 @@ pub async fn list_values(
         .push_bind(org)
         .push(format!(
             " AND (NOT r.is_private OR ({})>=1)",
-            codeyard_db_core::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL
+            codeyard_database::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL
         ));
     query_predicates(&mut builder, query);
     builder
@@ -540,7 +540,7 @@ pub async fn list_values(
     let mut result = Vec::new();
     let mut bytes = 0;
     for repository in repositories {
-        let properties = codeyard_db_core::queries::organizations::properties::effective_values(
+        let properties = codeyard_database::queries::organizations::properties::effective_values(
             &definitions,
             &values.remove(&repository.id).unwrap_or_default(),
         )?;
@@ -559,4 +559,4 @@ pub async fn list_values(
     Ok(Applied(result))
 }
 
-use codeyard_db_core::queries::sqlite::organizations::properties::values_on;
+use codeyard_database::queries::sqlite::organizations::properties::values_on;

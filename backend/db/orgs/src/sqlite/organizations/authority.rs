@@ -1,11 +1,11 @@
 use crate::organizations::profiles::OrganizationMetadata;
 use crate::organizations::MAX_SCOPED_REPOSITORIES;
 use anyhow::Result;
-use codeyard_db_core::models::AccessLevel;
-use codeyard_db_core::models::OrgRole;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::models::Team;
-use codeyard_db_core::queries::organizations::administers;
+use codeyard_database::models::AccessLevel;
+use codeyard_database::models::OrgRole;
+use codeyard_database::models::Repository;
+use codeyard_database::models::Team;
+use codeyard_database::queries::organizations::administers;
 use sqlx::Sqlite;
 use sqlx::SqliteConnection;
 use sqlx::Transaction;
@@ -13,11 +13,11 @@ use sqlx::Transaction;
 /// Revalidate the initiating credential inside the same immediate transaction as the write.
 pub async fn credential(
     connection: &mut SqliteConnection,
-    actor: &codeyard_db_core::queries::credentials::Actor,
+    actor: &codeyard_database::queries::credentials::Actor,
     org: i64,
     permission: &str,
 ) -> Result<bool> {
-    codeyard_db_core::queries::sqlite::credentials::writes(
+    codeyard_database::queries::sqlite::credentials::writes(
         connection,
         actor,
         None,
@@ -43,19 +43,19 @@ pub(super) async fn site_administrator(
 
 macro_rules! require_org {
     ($tx:ident, $actor:ident, $org:ident) => {
-        match codeyard_db_core::queries::sqlite::organizations::authority::authority(
+        match codeyard_database::queries::sqlite::organizations::authority::authority(
             &mut $tx, $actor, $org,
         )
         .await?
         {
-            codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(role) => role,
-            codeyard_db_core::queries::organizations::OrganizationOutcome::Missing => {
-                return Ok(codeyard_db_core::queries::organizations::OrganizationOutcome::Missing)
+            codeyard_database::queries::organizations::OrganizationOutcome::Applied(role) => role,
+            codeyard_database::queries::organizations::OrganizationOutcome::Missing => {
+                return Ok(codeyard_database::queries::organizations::OrganizationOutcome::Missing)
             }
-            codeyard_db_core::queries::organizations::OrganizationOutcome::Suspended => {
-                return Ok(codeyard_db_core::queries::organizations::OrganizationOutcome::Suspended)
+            codeyard_database::queries::organizations::OrganizationOutcome::Suspended => {
+                return Ok(codeyard_database::queries::organizations::OrganizationOutcome::Suspended)
             }
-            _ => return Ok(codeyard_db_core::queries::organizations::OrganizationOutcome::Denied),
+            _ => return Ok(codeyard_database::queries::organizations::OrganizationOutcome::Denied),
         }
     };
 }
@@ -124,7 +124,7 @@ pub(super) async fn cancel_actor(
 ) -> Result<()> {
     let runs: Vec<i64> = sqlx::query_scalar("SELECT id FROM ci_runs WHERE triggered_by_id=?1 AND (status IN ('queued','running') OR completed_at > strftime('%Y-%m-%dT%H:%M:%f000Z','now','-1 hour')) AND repo_id IN (SELECT id FROM repositories WHERE owner_kind='org' AND owner_org_id=?2 AND owner_user_id IS NULL)")
         .bind(target).bind(org).fetch_all(&mut **tx).await?;
-    codeyard_db_core::queries::sqlite::ci::stop_ci_runs(tx, &runs).await
+    codeyard_database::queries::sqlite::ci::stop_ci_runs(tx, &runs).await
 }
 pub(super) async fn cancel_team(
     tx: &mut Transaction<'_, Sqlite>,
@@ -134,7 +134,7 @@ pub(super) async fn cancel_team(
 ) -> Result<()> {
     let runs: Vec<i64> = sqlx::query_scalar("SELECT id FROM ci_runs WHERE repo_id=?1 AND (status IN ('queued','running') OR completed_at > strftime('%Y-%m-%dT%H:%M:%f000Z','now','-1 hour')) AND triggered_by_id IN (SELECT user_id FROM effective_team_memberships WHERE team_id=?2) AND EXISTS(SELECT 1 FROM repositories WHERE id=?1 AND owner_kind='org' AND owner_org_id=?3 AND owner_user_id IS NULL)")
         .bind(repo).bind(team).bind(org).fetch_all(&mut **tx).await?;
-    codeyard_db_core::queries::sqlite::ci::stop_ci_runs(tx, &runs).await
+    codeyard_database::queries::sqlite::ci::stop_ci_runs(tx, &runs).await
 }
 
 pub(crate) async fn organization_repo_access_in_transaction(
@@ -160,4 +160,4 @@ pub(crate) async fn organization_repo_access_in_transaction(
     }))
 }
 
-use codeyard_db_core::queries::sqlite::organizations::authority::remaining_active_owner;
+use codeyard_database::queries::sqlite::organizations::authority::remaining_active_owner;

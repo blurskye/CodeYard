@@ -123,7 +123,7 @@ async fn contract(pg: bool) {
         }
         assert!(body.get("password_hash").is_none());
     }
-    use codeyard_db_core::queries::organizations::OrganizationOutcome;
+    use codeyard_database::queries::organizations::OrganizationOutcome;
     use codeyard_db_orgs::organizations::profiles::NewOrganization;
     use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
     let OrganizationOutcome::Applied(org) =
@@ -1138,7 +1138,7 @@ async fn contract(pg: bool) {
 
     let mut repositories = Vec::new();
     for owner in [alice, bob] {
-        let repo = codeyard_repos_core::repositories::lifecycle::provision(
+        let repo = codeyard_git_storage::repositories::lifecycle::provision(
             (f.pool(), None),
             root.path(),
             codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),
@@ -1160,7 +1160,7 @@ async fn contract(pg: bool) {
         f.pool(),
         bob,
         repositories[0].id,
-        codeyard_db_core::models::AccessLevel::Read,
+        codeyard_database::models::AccessLevel::Read,
     )
     .await
     .unwrap();
@@ -1168,7 +1168,7 @@ async fn contract(pg: bool) {
         f.pool(),
         alice,
         repositories[1].id,
-        codeyard_db_core::models::AccessLevel::Read,
+        codeyard_database::models::AccessLevel::Read,
     )
     .await
     .unwrap();
@@ -1219,7 +1219,7 @@ async fn contract(pg: bool) {
     let denied = codeyard_identity::profiles::save(
         f.pool(),
         alice,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Token(
+        &codeyard_database::queries::users::accounts::AccountCredential::Token(
             read_token.id,
             read_hash,
         ),
@@ -1237,7 +1237,7 @@ async fn contract(pg: bool) {
     let denied = codeyard_identity::profiles::save(
         f.pool(),
         alice,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Token(
+        &codeyard_database::queries::users::accounts::AccountCredential::Token(
             write_token.id,
             read_hash,
         ),
@@ -1254,7 +1254,7 @@ async fn contract(pg: bool) {
     let denied = codeyard_identity::profiles::save(
         f.pool(),
         alice,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Token(
+        &codeyard_database::queries::users::accounts::AccountCredential::Token(
             write_token.id,
             write_hash,
         ),
@@ -1286,13 +1286,13 @@ async fn contract(pg: bool) {
         .await
         .unwrap_err();
         assert_eq!(
-            error.downcast_ref::<codeyard_model::identity::SshKeyWriteRefusal>(),
-            Some(&codeyard_model::identity::SshKeyWriteRefusal::AccountRestricted)
+            error.downcast_ref::<codeyard_types::identity::SshKeyWriteRefusal>(),
+            Some(&codeyard_types::identity::SshKeyWriteRefusal::AccountRestricted)
         );
         let error = codeyard_identity::keys::enroll_signing(
             f.pool(),
             alice,
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Token(token, hash),
+            &codeyard_database::queries::users::accounts::AccountCredential::Token(token, hash),
             "Must not be added",
             public_key,
         )
@@ -1314,8 +1314,8 @@ async fn contract(pg: bool) {
     .await
     .unwrap_err();
     assert_eq!(
-        error.downcast_ref::<codeyard_model::identity::SshKeyWriteRefusal>(),
-        Some(&codeyard_model::identity::SshKeyWriteRefusal::AccountRestricted)
+        error.downcast_ref::<codeyard_types::identity::SshKeyWriteRefusal>(),
+        Some(&codeyard_types::identity::SshKeyWriteRefusal::AccountRestricted)
     );
     assert_eq!(
         codeyard_db_identity::users::ssh_keys::list_user_keys(f.pool(), alice)

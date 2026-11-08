@@ -1,9 +1,9 @@
 use anyhow::Result;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::models::User;
-use codeyard_db_core::models::Watch;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::Repository;
+use codeyard_database::models::User;
+use codeyard_database::models::Watch;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 
 #[derive(sqlx::FromRow)]
 pub struct StarHistoryWeek {
@@ -33,11 +33,11 @@ native_operation!(crate::postgres::repositories::engagement::list_watched_reposi
 
 native_operation!(crate::postgres::repositories::engagement::watch_repo,
     crate::sqlite::repositories::engagement::watch_repo,
-    fn watch_repo(pool: &DbPool, user_id: impl Into<codeyard_db_core::queries::credentials::Actor>, repo_id: i64) -> Result<bool>);
+    fn watch_repo(pool: &DbPool, user_id: impl Into<codeyard_database::queries::credentials::Actor>, repo_id: i64) -> Result<bool>);
 
 native_operation!(crate::postgres::repositories::engagement::unwatch_repo,
     crate::sqlite::repositories::engagement::unwatch_repo,
-    fn unwatch_repo(pool: &DbPool, user_id: impl Into<codeyard_db_core::queries::credentials::Actor>, repo_id: i64) -> Result<bool>);
+    fn unwatch_repo(pool: &DbPool, user_id: impl Into<codeyard_database::queries::credentials::Actor>, repo_id: i64) -> Result<bool>);
 
 native_operation!(crate::postgres::repositories::engagement::is_repo_watched,
     crate::sqlite::repositories::engagement::is_repo_watched,
@@ -45,7 +45,7 @@ native_operation!(crate::postgres::repositories::engagement::is_repo_watched,
 
 native_operation!(crate::postgres::repositories::engagement::set_watch_level,
     crate::sqlite::repositories::engagement::set_watch_level,
-    fn set_watch_level(pool: &DbPool, user_id: impl Into<codeyard_db_core::queries::credentials::Actor>, repo_id: i64, level: &str, events: &str) -> Result<()>);
+    fn set_watch_level(pool: &DbPool, user_id: impl Into<codeyard_database::queries::credentials::Actor>, repo_id: i64, level: &str, events: &str) -> Result<()>);
 
 native_operation!(crate::postgres::repositories::engagement::get_watch_level,
     crate::sqlite::repositories::engagement::get_watch_level,
@@ -57,11 +57,11 @@ native_operation!(crate::postgres::repositories::engagement::list_event_watchers
 
 native_operation!(crate::postgres::repositories::engagement::star_repo,
     crate::sqlite::repositories::engagement::star_repo,
-    fn star_repo(pool: &DbPool, user_id: impl Into<codeyard_db_core::queries::credentials::Actor>, repo_id: i64) -> Result<bool>);
+    fn star_repo(pool: &DbPool, user_id: impl Into<codeyard_database::queries::credentials::Actor>, repo_id: i64) -> Result<bool>);
 
 native_operation!(crate::postgres::repositories::engagement::unstar_repo,
     crate::sqlite::repositories::engagement::unstar_repo,
-    fn unstar_repo(pool: &DbPool, user_id: impl Into<codeyard_db_core::queries::credentials::Actor>, repo_id: i64) -> Result<bool>);
+    fn unstar_repo(pool: &DbPool, user_id: impl Into<codeyard_database::queries::credentials::Actor>, repo_id: i64) -> Result<bool>);
 
 native_operation!(crate::postgres::repositories::engagement::is_repo_starred,
     crate::sqlite::repositories::engagement::is_repo_starred,

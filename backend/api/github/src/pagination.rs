@@ -7,8 +7,8 @@ use axum::response::Response;
 use axum::Json;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -88,7 +88,7 @@ impl Cursor {
                     .finish();
                 links.push(format!(
                     "<{}{}?{query}>; rel=\"{relation}\"",
-                    codeyard_model::http_config::link_origin(),
+                    codeyard_types::http_config::link_origin(),
                     uri.path()
                 ));
             }
@@ -211,7 +211,7 @@ impl CursorPagination {
                 .finish();
             links.push(format!(
                 "<{}{}?{query}>; rel=\"{relation}\"",
-                codeyard_model::http_config::link_origin(),
+                codeyard_types::http_config::link_origin(),
                 uri.path()
             ));
         }

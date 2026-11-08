@@ -1,6 +1,6 @@
 use anyhow::Result;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 
 /// The site's Actions settings. A missing limit means none; a missing timeout or image leaves
 /// the server's own (`CI_RUN_TIMEOUT_SECONDS`, `CI_ACT_RUNNER_IMAGE`).
@@ -121,10 +121,10 @@ impl Default for RepoActionsSettings {
 
 native_operation!(codeyard_db_orgs::postgres::organizations::cache::get_cache_settings,
     codeyard_db_orgs::sqlite::organizations::cache::get_cache_settings,
-    fn get_org_cache_settings(pool: &DbPool, actor: i64, name: &str) -> Result<codeyard_db_core::queries::organizations::OrganizationOutcome<OrgCacheSettings>>);
+    fn get_org_cache_settings(pool: &DbPool, actor: i64, name: &str) -> Result<codeyard_database::queries::organizations::OrganizationOutcome<OrgCacheSettings>>);
 native_operation!(codeyard_db_orgs::postgres::organizations::cache::set_cache_limit,
     codeyard_db_orgs::sqlite::organizations::cache::set_cache_limit,
-    fn set_org_cache_limit(pool: &DbPool, actor: i64, name: &str, kind: CacheLimit, value: i32) -> Result<codeyard_db_core::queries::organizations::OrganizationOutcome<()>>);
+    fn set_org_cache_limit(pool: &DbPool, actor: i64, name: &str, kind: CacheLimit, value: i32) -> Result<codeyard_database::queries::organizations::OrganizationOutcome<()>>);
 
 native_operation!(crate::postgres::actions::set_cache_limit,
     crate::sqlite::actions::set_cache_limit,
@@ -156,7 +156,7 @@ native_operation!(crate::postgres::actions::get_repo_actions_settings,
 native_operation!(crate::postgres::actions::set_repo_enabled,
     crate::sqlite::actions::set_repo_enabled,
     /// Changes only the execution switch, preserving native limits and engine selection.
-    fn set_repo_enabled(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo: i64, enabled: bool) -> Result<()>);
+    fn set_repo_enabled(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, repo: i64, enabled: bool) -> Result<()>);
 
 native_operation!(crate::postgres::actions::save_repo_actions_settings,
     crate::sqlite::actions::save_repo_actions_settings,
@@ -164,11 +164,11 @@ native_operation!(crate::postgres::actions::save_repo_actions_settings,
     /// repository and it is not archived.
     fn save_repo_actions_settings(
     pool: &DbPool,
-    actor_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor_id: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     settings: &RepoActionsSettings,
 ) -> Result<()>);
 
-use codeyard_db_core::queries::actions::CacheLimit;
+use codeyard_database::queries::actions::CacheLimit;
 
-use codeyard_db_core::queries::actions::OrgCacheSettings;
+use codeyard_database::queries::actions::OrgCacheSettings;

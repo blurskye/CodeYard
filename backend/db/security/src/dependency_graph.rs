@@ -1,9 +1,9 @@
 use chrono::DateTime;
 use chrono::Utc;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
-use codeyard_model::dependency_graph::GraphError;
-use codeyard_model::dependency_graph::Snapshot;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
+use codeyard_types::dependency_graph::GraphError;
+use codeyard_types::dependency_graph::Snapshot;
 
 /// A generated SBOM report can be downloaded for a day, and a repository keeps this many.
 pub(crate) const SBOM_REPORT_LIFETIME_SECONDS: i64 = 24 * 60 * 60;
@@ -11,7 +11,7 @@ pub(crate) const SBOM_REPORTS_PER_REPOSITORY: i64 = 100;
 
 /// HTTP readers retain the original credential. Scan generations are trusted worker inputs only.
 pub enum Reader {
-    Viewer(Option<codeyard_db_core::queries::credentials::Actor>),
+    Viewer(Option<codeyard_database::queries::credentials::Actor>),
     Scan(i64),
 }
 
@@ -29,7 +29,7 @@ native_operation!(crate::postgres::dependency_graph::check_read,
 
 native_operation!(crate::postgres::dependency_graph::submit,
     crate::sqlite::dependency_graph::submit,
-    fn submit(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo: i64, snapshot: &Snapshot)
+    fn submit(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, repo: i64, snapshot: &Snapshot)
     -> Result<Submission, GraphError>);
 
 native_operation!(crate::postgres::dependency_graph::snapshots,

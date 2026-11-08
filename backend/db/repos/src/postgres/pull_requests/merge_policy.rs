@@ -2,7 +2,7 @@ use crate::pull_requests::merge_policy::Changed;
 use crate::pull_requests::merge_policy::Snapshot;
 use anyhow::ensure;
 use anyhow::Result;
-use codeyard_db_core::pool::PgPool;
+use codeyard_database::pool::PgPool;
 
 pub async fn revision(pool: &PgPool, repo: i64) -> Result<i64> {
     Ok(sqlx::query_scalar(

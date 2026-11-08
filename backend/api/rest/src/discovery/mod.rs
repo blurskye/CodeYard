@@ -62,7 +62,7 @@ fn page_number(query: &HashMap<String, String>) -> Result<usize, &'static str> {
 }
 
 fn owner_name(
-    repo: &codeyard_db_core::models::Repository,
+    repo: &codeyard_database::models::Repository,
     owners: &BTreeMap<i64, String>,
 ) -> Result<String, DiscoveryReadError> {
     // Numeric user/org IDs are separate namespaces, even in malformed records.
@@ -84,7 +84,7 @@ fn owner_name(
 const CARD_TOPICS: usize = 5;
 
 fn repository_card(
-    repo: codeyard_db_core::models::Repository,
+    repo: codeyard_database::models::Repository,
     owner: String,
     topics: Vec<String>,
     primary_language: Option<LanguageShare>,
@@ -164,7 +164,7 @@ pub(crate) fn index_card(document: &serde_json::Value) -> Option<RepositoryCard>
 pub(crate) async fn repository_cards(
     state: &AppState,
     viewer: Option<i64>,
-    repos: Vec<codeyard_db_core::models::Repository>,
+    repos: Vec<codeyard_database::models::Repository>,
 ) -> Result<Vec<RepositoryCard>, DiscoveryReadError> {
     let ids = repos.iter().map(|repo| repo.id).collect::<Vec<_>>();
     let owners =
@@ -210,7 +210,7 @@ pub(crate) async fn repository_cards(
 /// read.
 pub(crate) async fn dashboard_cards(
     state: &AppState,
-    repos: Vec<codeyard_db_core::models::Repository>,
+    repos: Vec<codeyard_database::models::Repository>,
 ) -> Result<Vec<RepositoryCard>, DiscoveryReadError> {
     let ids = repos.iter().map(|repo| repo.id).collect::<Vec<_>>();
     let owners =
@@ -224,7 +224,7 @@ pub(crate) async fn dashboard_cards(
 }
 
 fn card_list(
-    repos: Vec<codeyard_db_core::models::Repository>,
+    repos: Vec<codeyard_database::models::Repository>,
     owners: &BTreeMap<i64, String>,
     mut topics: BTreeMap<i64, Vec<String>>,
     mut languages: HashMap<i64, LanguageShare>,
@@ -255,9 +255,9 @@ mod tests {
         kind: &str,
         user_id: Option<i64>,
         org_id: Option<i64>,
-    ) -> codeyard_db_core::models::Repository {
+    ) -> codeyard_database::models::Repository {
         let now = chrono::Utc::now();
-        codeyard_db_core::models::Repository {
+        codeyard_database::models::Repository {
             home_cell: 0,
             is_stub: false,
             actions_engine: None,

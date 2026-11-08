@@ -1,9 +1,9 @@
 //! Account moves between two PostgreSQL cells: the freeze, the copy, a failed copy, a
 //! repeated copy and the release.
 use crate::support::native_database::PostgresDatabase;
-use codeyard_db_cluster::moves::{self, Account, State};
-use codeyard_model::cells::ObjectKind;
-use codeyard_types::cells::Prefix;
+use codeyard_db_placement::moves::{self, Account, State};
+use codeyard_types::cell_ids::Prefix;
+use codeyard_types::cells::ObjectKind;
 use sqlx::PgPool;
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -13,10 +13,12 @@ const HOLD: Duration = Duration::from_secs(300);
 
 async fn cell(prefix: u16) -> PostgresDatabase {
     let database = PostgresDatabase::new().await;
-    codeyard_db_core::cells::initialize(&database.pool, Prefix::new(prefix))
+    codeyard_database::cells::initialize(&database.pool, Prefix::new(prefix))
         .await
         .unwrap();
-    codeyard_db_core::cells::load(&database.pool).await.unwrap();
+    codeyard_database::cells::load(&database.pool)
+        .await
+        .unwrap();
     database
 }
 

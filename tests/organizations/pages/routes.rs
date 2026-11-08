@@ -697,7 +697,7 @@ pub async fn teams(f: &Fixture) {
         pool,
         f.member.id,
         private,
-        codeyard_db_core::models::AccessLevel::Read,
+        codeyard_database::models::AccessLevel::Read,
     )
     .await
     .unwrap();

@@ -4,11 +4,11 @@ use crate::releases::ReleaseRefusal;
 use crate::releases::ReleaseSelection;
 use crate::releases::ReleaseSnapshot;
 use anyhow::Result;
-use codeyard_db_core::models::ReleaseAsset;
-use codeyard_db_core::models::ReleaseRow;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::pool::PgPool;
-use codeyard_db_core::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL;
+use codeyard_database::models::ReleaseAsset;
+use codeyard_database::models::ReleaseRow;
+use codeyard_database::models::Repository;
+use codeyard_database::pool::PgPool;
+use codeyard_database::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL;
 
 pub async fn read_release_snapshot(
     pool: &PgPool,

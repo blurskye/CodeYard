@@ -11,7 +11,7 @@ use crate::users::profile::profile_repositories;
 use axum::http::StatusCode;
 use axum::response::Response;
 use codeyard_api_http::context::PageContext;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
+use codeyard_database::queries::organizations::OrganizationOutcome;
 use codeyard_webui::app::Page;
 use codeyard_webui::pages::orgs::OrganizationProfile;
 use codeyard_webui::pages::orgs::Team;
@@ -77,7 +77,7 @@ pub(crate) async fn public_profile_response(ctx: &PageContext, name: &str) -> Re
                         None => None,
                     };
                     (
-                        codeyard_db_core::queries::organizations::administers(role),
+                        codeyard_database::queries::organizations::administers(role),
                         members,
                         teams,
                     )

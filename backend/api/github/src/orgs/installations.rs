@@ -16,7 +16,7 @@ use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::app::AppState;
 use codeyard_db_identity::github_apps::InstallationFilter;
-use codeyard_model::github_error::Result;
+use codeyard_types::github_error::Result;
 use serde_json::json;
 use std::sync::Arc;
 

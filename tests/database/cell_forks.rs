@@ -1,14 +1,14 @@
 //! A foreign source cannot authorize a native fork after its last admission is revoked.
 use crate::support::database::Database;
-use codeyard_db_core::cells::{
+use codeyard_database::cells::{
     authorization::{Home, Proof},
     repositories::{Admission, Owner, Source},
 };
-use codeyard_db_core::queries::credentials::Actor;
+use codeyard_database::queries::credentials::Actor;
 use codeyard_db_repos::repositories::creation::{
     self, CreationAdmission, NewRepository, RepositoryCreationOwner,
 };
-use codeyard_types::cells::Prefix;
+use codeyard_types::cell_ids::Prefix;
 use futures_util::future::BoxFuture;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
@@ -24,13 +24,14 @@ impl Home for SourceHome {
     fn user<'a>(
         &'a self,
         _name: &'a str,
-    ) -> BoxFuture<'a, anyhow::Result<Option<codeyard_db_core::models::User>>> {
+    ) -> BoxFuture<'a, anyhow::Result<Option<codeyard_database::models::User>>> {
         Box::pin(async { Ok(None) })
     }
     fn authorize<'a>(
         &'a self,
         _proof: &'a Proof,
-    ) -> BoxFuture<'a, anyhow::Result<Option<codeyard_db_core::cells::authorization::Answer>>> {
+    ) -> BoxFuture<'a, anyhow::Result<Option<codeyard_database::cells::authorization::Answer>>>
+    {
         Box::pin(async { Ok(None) })
     }
     fn repository_source<'a>(
@@ -97,7 +98,7 @@ async fn contract(pg: bool) {
         .await
         .unwrap()
         .unwrap();
-    codeyard_db_core::cells::authorization::redact_user(&mut owner);
+    codeyard_database::cells::authorization::redact_user(&mut owner);
     owner.id = *Prefix::new(1).ids().start();
     owner.home_cell = 1;
     owner.username = "remote-owner".into();

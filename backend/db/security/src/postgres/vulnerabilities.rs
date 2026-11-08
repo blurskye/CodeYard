@@ -2,9 +2,9 @@ use crate::vulnerabilities::Refusal;
 use crate::vulnerabilities::Settings;
 use anyhow::ensure;
 use anyhow::Result;
-use codeyard_db_core::pool::PgPool;
-use codeyard_model::dependency_graph::Snapshot;
-use codeyard_model::vulnerabilities::PreparedAdvisory;
+use codeyard_database::pool::PgPool;
+use codeyard_types::dependency_graph::Snapshot;
+use codeyard_types::vulnerabilities::PreparedAdvisory;
 
 pub async fn settings(pool: &PgPool) -> Result<Settings> {
     Ok(
@@ -21,14 +21,14 @@ pub async fn save_settings(
 ) -> Result<()> {
     let settings = settings.normalized()?;
     let mut tx = pool.begin().await?;
-    codeyard_db_core::queries::postgres::users::transitions::lock_accounts_shared(
+    codeyard_database::queries::postgres::users::transitions::lock_accounts_shared(
         &mut tx,
         &[actor],
     )
     .await?;
     ensure!(
         codeyard_db_identity::postgres::users::transitions::active_admin(&mut tx, actor).await?
-            && codeyard_db_core::queries::postgres::users::transitions::live_session(
+            && codeyard_database::queries::postgres::users::transitions::live_session(
                 &mut tx, actor, session
             )
             .await?,
@@ -68,7 +68,7 @@ pub async fn upsert(pool: &PgPool, prepared: &PreparedAdvisory) -> Result<bool> 
             .execute(&mut *tx)
             .await?;
         for affected in &advisory.affected {
-            let name = codeyard_model::vulnerabilities::name(
+            let name = codeyard_types::vulnerabilities::name(
                 &affected.package.ecosystem,
                 &affected.package.name,
             );
@@ -92,18 +92,18 @@ pub async fn advisories(pool: &PgPool, ecosystem: &str, name: &str) -> Result<Ve
     Ok(sqlx::query_scalar("SELECT a.data FROM osv_advisories a JOIN osv_packages p ON p.advisory=a.id WHERE p.ecosystem=$1 AND p.name=$2 ORDER BY a.id").bind(ecosystem).bind(name).fetch_all(pool).await?)
 }
 pub async fn enqueue(pool: &PgPool, repo: i64) -> Result<()> {
-    sqlx::query(&format!("INSERT INTO vulnerability_jobs(repo_id,generation,next_scan) SELECT r.id,1,$2 FROM repositories r WHERE r.id=$1 AND NOT r.is_gist AND NOT r.is_archived AND {} ON CONFLICT(repo_id) DO UPDATE SET generation=vulnerability_jobs.generation+1,lease_until=NULL,next_scan=$2", codeyard_db_core::queries::dependency_graph::enabled_sql(true, "r.id"))).bind(repo).bind(chrono::Utc::now()).execute(pool).await?;
+    sqlx::query(&format!("INSERT INTO vulnerability_jobs(repo_id,generation,next_scan) SELECT r.id,1,$2 FROM repositories r WHERE r.id=$1 AND NOT r.is_gist AND NOT r.is_archived AND {} ON CONFLICT(repo_id) DO UPDATE SET generation=vulnerability_jobs.generation+1,lease_until=NULL,next_scan=$2", codeyard_database::queries::dependency_graph::enabled_sql(true, "r.id"))).bind(repo).bind(chrono::Utc::now()).execute(pool).await?;
     Ok(())
 }
 pub async fn queue_changed(pool: &PgPool) -> Result<()> {
     sqlx::query("DELETE FROM vulnerability_jobs WHERE repo_id IN (SELECT id FROM repositories WHERE is_gist)").execute(pool).await?;
-    sqlx::query(&format!("INSERT INTO vulnerability_jobs(repo_id,generation,next_scan) SELECT r.id,1,$1 FROM repositories r WHERE NOT r.is_gist AND NOT r.is_archived AND {} ORDER BY r.id ON CONFLICT(repo_id) DO NOTHING", codeyard_db_core::queries::dependency_graph::enabled_sql(true, "r.id"))).bind(chrono::Utc::now()).execute(pool).await?;
+    sqlx::query(&format!("INSERT INTO vulnerability_jobs(repo_id,generation,next_scan) SELECT r.id,1,$1 FROM repositories r WHERE NOT r.is_gist AND NOT r.is_archived AND {} ORDER BY r.id ON CONFLICT(repo_id) DO NOTHING", codeyard_database::queries::dependency_graph::enabled_sql(true, "r.id"))).bind(chrono::Utc::now()).execute(pool).await?;
     Ok(())
 }
 pub async fn claim(pool: &PgPool) -> Result<Option<(i64, i64)>> {
     let now = chrono::Utc::now();
     let mut tx = pool.begin().await?;
-    let mut row:Option<(i64,i64)>=sqlx::query_as(&format!("SELECT j.repo_id,j.generation FROM vulnerability_jobs j WHERE j.next_scan<=$1 AND (j.lease_until IS NULL OR j.lease_until<$1) AND EXISTS(SELECT 1 FROM repositories r WHERE r.id=j.repo_id AND NOT r.is_gist AND NOT r.is_archived AND {}) ORDER BY j.next_scan,j.repo_id LIMIT 1 FOR UPDATE OF j SKIP LOCKED", codeyard_db_core::queries::dependency_graph::enabled_sql(true, "r.id"))).bind(now).fetch_optional(&mut *tx).await?;
+    let mut row:Option<(i64,i64)>=sqlx::query_as(&format!("SELECT j.repo_id,j.generation FROM vulnerability_jobs j WHERE j.next_scan<=$1 AND (j.lease_until IS NULL OR j.lease_until<$1) AND EXISTS(SELECT 1 FROM repositories r WHERE r.id=j.repo_id AND NOT r.is_gist AND NOT r.is_archived AND {}) ORDER BY j.next_scan,j.repo_id LIMIT 1 FOR UPDATE OF j SKIP LOCKED", codeyard_database::queries::dependency_graph::enabled_sql(true, "r.id"))).bind(now).fetch_optional(&mut *tx).await?;
     if let Some((repo, _)) = row {
         // Moving next_scan with the lease keeps a job that never completes from staying
         // first in line ahead of newer work.
@@ -146,21 +146,21 @@ pub async fn save_snapshot(
     if current != Some(generation) || snapshot.reference != format!("refs/heads/{branch}") {
         return Ok(());
     }
-    if !codeyard_db_core::queries::postgres::dependency_graph::enabled_in(&mut tx, repo).await? {
+    if !codeyard_database::queries::postgres::dependency_graph::enabled_in(&mut tx, repo).await? {
         return Ok(());
     }
     sqlx::query("INSERT INTO dependency_snapshots(repo_id,sha,reference,correlator,detector,scanned,body) VALUES($1,$2,$3,$4,$5,$6,$7)")
         .bind(repo).bind(snapshot.sha.to_ascii_lowercase()).bind(&snapshot.reference).bind(&snapshot.job.correlator)
         .bind(&snapshot.detector.name).bind(snapshot.scanned).bind(serde_json::to_string(snapshot)?).execute(&mut *tx).await?;
     crate::postgres::dependency_graph::drop_replaced_snapshots(&mut tx, repo, snapshot).await?;
-    let _ = codeyard_db_core::queries::postgres::dependency_graph::bounded_snapshot_ids(
+    let _ = codeyard_database::queries::postgres::dependency_graph::bounded_snapshot_ids(
         &mut tx,
         repo,
         Some(&snapshot.reference),
         Some(&snapshot.sha.to_ascii_lowercase()),
     )
     .await?;
-    codeyard_db_core::queries::postgres::dependabot_alerts::refresh(
+    codeyard_database::queries::postgres::dependabot_alerts::refresh(
         &mut tx,
         repo,
         Some(&snapshot.sha),

@@ -8,9 +8,9 @@ use crate::secret_scanning::ScanCompletion;
 use crate::secret_scanning::ScanJob;
 use anyhow::ensure;
 use anyhow::Result;
-use codeyard_db_core::pool::PgPool;
-use codeyard_db_core::queries::secret_scanning::Refusal;
-use codeyard_db_core::queries::secret_scanning::Settings;
+use codeyard_database::pool::PgPool;
+use codeyard_database::queries::secret_scanning::Refusal;
+use codeyard_database::queries::secret_scanning::Settings;
 use codeyard_git::secret_scanning::Location;
 use sqlx::Postgres;
 use sqlx::Transaction;
@@ -27,7 +27,7 @@ pub async fn protection(
 ) -> Result<Option<Bypass>> {
     let mut tx = pool.begin().await?;
     ensure!(
-        codeyard_db_core::queries::postgres::discussions::lock_write_authority(
+        codeyard_database::queries::postgres::discussions::lock_write_authority(
             &mut tx, actor, repo
         )
         .await?,
@@ -81,7 +81,7 @@ pub async fn bypass(
     );
     let mut tx = pool.begin().await?;
     ensure!(
-        codeyard_db_core::queries::postgres::discussions::lock_write_authority(
+        codeyard_database::queries::postgres::discussions::lock_write_authority(
             &mut tx, actor, repo
         )
         .await?,
@@ -109,7 +109,7 @@ pub async fn bypass(
 }
 
 async fn org_authority(tx: &mut Transaction<'_, Postgres>, actor: i64, org: i64) -> Result<()> {
-    codeyard_db_core::queries::postgres::users::transitions::lock_accounts_shared(tx, &[actor])
+    codeyard_database::queries::postgres::users::transitions::lock_accounts_shared(tx, &[actor])
         .await?;
     let exists: Option<i64> =
         sqlx::query_scalar("SELECT id FROM organizations WHERE id=$1 FOR UPDATE")
@@ -119,7 +119,7 @@ async fn org_authority(tx: &mut Transaction<'_, Postgres>, actor: i64, org: i64)
     ensure!(exists.is_some(), Refusal::Missing);
     let allowed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM org_memberships m JOIN users u ON u.id=m.user_id WHERE m.org_id=$1 AND m.user_id=$2 AND m.role IN ('owner','admin') AND NOT u.is_banned AND NOT u.must_change_password AND EXISTS(SELECT 1 FROM org_memberships owners JOIN users active ON active.id=owners.user_id WHERE owners.org_id=m.org_id AND owners.role='owner' AND NOT active.is_banned AND NOT active.must_change_password))").bind(org).bind(actor).fetch_one(&mut **tx).await?;
     let allowed = allowed
-        || codeyard_db_core::queries::postgres::organizations::roles::manages_security(
+        || codeyard_database::queries::postgres::organizations::roles::manages_security(
             tx, actor, org,
         )
         .await?;
@@ -175,7 +175,7 @@ pub async fn alert_bypasses(pool: &PgPool, keys: &[(i64, String)]) -> Result<Vec
 }
 
 async fn authorize(tx: &mut Transaction<'_, Postgres>, actor: i64, repo: i64) -> Result<()> {
-    if !codeyard_db_core::queries::postgres::discussions::lock_archive_authority(tx, actor, repo)
+    if !codeyard_database::queries::postgres::discussions::lock_archive_authority(tx, actor, repo)
         .await?
     {
         // The owning organization's security managers handle alerts without administering
@@ -187,7 +187,7 @@ async fn authorize(tx: &mut Transaction<'_, Postgres>, actor: i64, repo: i64) ->
             .flatten();
         let manager = match org {
             Some(org) => {
-                codeyard_db_core::queries::postgres::organizations::roles::manages_security(
+                codeyard_database::queries::postgres::organizations::roles::manages_security(
                     tx, actor, org,
                 )
                 .await?
@@ -218,7 +218,7 @@ pub async fn save_settings(
     );
     let mut tx = pool.begin().await?;
     ensure!(
-        codeyard_db_core::queries::postgres::discussions::lock_repository_mutation_authority(
+        codeyard_database::queries::postgres::discussions::lock_repository_mutation_authority(
             &mut tx, actor, repo
         )
         .await?,
@@ -340,7 +340,7 @@ pub async fn update_alert(
                 .await?
                 .ok_or(Refusal::Invalid)?;
             ensure!(
-                codeyard_db_core::queries::postgres::repositories::access::user_repo_access_in_transaction(&mut tx, id, repo)
+                codeyard_database::queries::postgres::repositories::access::user_repo_access_in_transaction(&mut tx, id, repo)
                     .await?
                     .can_write(),
                 Refusal::Invalid
@@ -537,4 +537,4 @@ pub async fn heartbeat(
     Ok(held)
 }
 
-use codeyard_db_core::queries::postgres::secret_scanning::save_settings_on_connection;
+use codeyard_database::queries::postgres::secret_scanning::save_settings_on_connection;

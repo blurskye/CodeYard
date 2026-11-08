@@ -21,7 +21,7 @@ async fn postgres_every_label_write_waits_for_actor_row_then_rechecks_revocation
             fixture.pool(),
             actor,
             repo,
-            codeyard_db_core::models::repositories::AccessLevel::Admin,
+            codeyard_database::models::repositories::AccessLevel::Admin,
         )
         .await
         .unwrap();
@@ -94,7 +94,7 @@ async fn sqlite_every_label_write_contends_for_reserved_writer_then_rechecks() {
         fixture.pool(),
         actor,
         repo,
-        codeyard_db_core::models::repositories::AccessLevel::Admin,
+        codeyard_database::models::repositories::AccessLevel::Admin,
     )
     .await
     .unwrap();
@@ -114,9 +114,9 @@ async fn sqlite_every_label_write_contends_for_reserved_writer_then_rechecks() {
         .max_connections(1)
         .connect_with(options)
         .await
-        .map(codeyard_db_core::pool::Pool::from)
+        .map(codeyard_database::pool::Pool::from)
         .unwrap();
-    let second: codeyard_db_core::DbPool = raw.clone().into();
+    let second: codeyard_database::DbPool = raw.clone().into();
     let before = snapshot(&second, &[repo]).await;
     let mut revoker = f.raw.begin_with("BEGIN IMMEDIATE").await.unwrap();
     for mutation in MUTATIONS {

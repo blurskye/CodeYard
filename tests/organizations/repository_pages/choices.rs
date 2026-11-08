@@ -1,8 +1,8 @@
 use super::fixture::{applied, Fixture};
 use axum::http::StatusCode;
 
-use codeyard_db_core::models::OrgRole;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
+use codeyard_database::models::OrgRole;
+use codeyard_database::queries::organizations::OrganizationOutcome;
 use codeyard_db_orgs::organizations::OrganizationPage;
 
 pub async fn contracts(f: &Fixture) {

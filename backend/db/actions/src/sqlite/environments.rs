@@ -4,8 +4,8 @@ use crate::environments::Environment;
 use crate::environments::Refusal;
 use crate::environments::Update;
 use anyhow::Result;
-use codeyard_db_core::pool::SqlitePool;
-use codeyard_db_core::queries::credentials::Actor;
+use codeyard_database::pool::SqlitePool;
+use codeyard_database::queries::credentials::Actor;
 use sqlx::Sqlite;
 use sqlx::Transaction;
 
@@ -17,13 +17,13 @@ async fn write(
     let actor = actor.into();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::sqlite::discussions::lock_admin_authority(
+        codeyard_database::queries::sqlite::discussions::lock_admin_authority(
             &mut tx,
             actor.user_id,
             repo
         )
         .await?
-            && codeyard_db_core::queries::sqlite::credentials::repository(
+            && codeyard_database::queries::sqlite::credentials::repository(
                 &mut tx,
                 &actor,
                 repo,
@@ -77,7 +77,7 @@ pub async fn upsert(
     if let Some(reviewers) = &input.reviewers {
         for reviewer in reviewers {
             let valid: bool = if reviewer.kind == "User" {
-                sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM users u JOIN repositories r ON r.id=?2 WHERE u.id=?1 AND NOT u.is_banned AND NOT u.must_change_password AND (NOT r.is_private OR (r.owner_kind='user' AND (u.is_admin OR r.owner_user_id=u.id)) OR ({})>=1))", codeyard_db_core::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL))
+                sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM users u JOIN repositories r ON r.id=?2 WHERE u.id=?1 AND NOT u.is_banned AND NOT u.must_change_password AND (NOT r.is_private OR (r.owner_kind='user' AND (u.is_admin OR r.owner_user_id=u.id)) OR ({})>=1))", codeyard_database::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL))
                     .bind(reviewer.id).bind(repo).fetch_one(&mut *tx).await?
             } else {
                 sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM teams t JOIN repositories r ON r.owner_org_id=t.org_id AND r.owner_kind='org' WHERE r.id=?2 AND t.id=?1 AND t.privacy IN ('visible','secret') AND (NOT r.is_private OR EXISTS(SELECT 1 FROM team_ancestors inheritance JOIN team_repo_access a ON a.team_id=inheritance.ancestor_id WHERE inheritance.team_id=t.id AND a.repo_id=r.id AND a.permission BETWEEN 1 AND 5)))")
@@ -122,7 +122,7 @@ pub async fn delete(
             .bind(id)
             .fetch_one(&mut *tx)
             .await?;
-        codeyard_db_core::queries::sqlite::ci::finish_in_tx(
+        codeyard_database::queries::sqlite::ci::finish_in_tx(
             &mut tx,
             &run,
             "failed",

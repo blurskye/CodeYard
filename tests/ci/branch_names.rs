@@ -9,7 +9,7 @@ use crate::support::production_ci as production;
 use codeyard_ci::config::CiConfig;
 use codeyard_ci::config::CiPipelineKind;
 use codeyard_ci_engine::runs::CiRuns;
-use codeyard_repos_core::receive_ci::CiRunRequest;
+use codeyard_git_storage::receive_ci::CiRunRequest;
 
 use std::collections::BTreeSet;
 
@@ -19,7 +19,7 @@ async fn long_account_names_can_list_and_dispatch_workflows_on_both_engines() {
     use base64::Engine;
     use codeyard_api_rest::create_router;
     use codeyard_app::app::AppState;
-    use codeyard_repos_core::repositories::lifecycle;
+    use codeyard_git_storage::repositories::lifecycle;
     use codeyard_storage::ObjectStore;
     use serde_json::{json, Value};
     use std::sync::Arc;
@@ -151,7 +151,7 @@ async fn manual_runs_take_the_inputs_their_workflow_declares_on_both_engines() {
     use base64::Engine;
     use codeyard_api_rest::create_router;
     use codeyard_app::app::AppState;
-    use codeyard_repos_core::repositories::lifecycle;
+    use codeyard_git_storage::repositories::lifecycle;
     use codeyard_storage::ObjectStore;
     use serde_json::{json, Value};
     use std::sync::Arc;
@@ -382,7 +382,7 @@ async fn pull_request_base_names_that_look_like_refs_keep_their_branch_kind() {
     use base64::Engine;
     use codeyard_api_rest::create_router;
     use codeyard_app::app::AppState;
-    use codeyard_repos_core::repositories::lifecycle;
+    use codeyard_git_storage::repositories::lifecycle;
     use codeyard_storage::ObjectStore;
     use serde_json::json;
     use std::sync::Arc;
@@ -475,7 +475,7 @@ async fn pull_request_base_names_that_look_like_refs_keep_their_branch_kind() {
 
 #[test]
 fn only_branches_lose_their_ref_prefix() {
-    use codeyard_db_core::ci_messages::branch_name;
+    use codeyard_database::ci_messages::branch_name;
     assert_eq!(branch_name("refs/heads/main"), "main");
     assert_eq!(branch_name("refs/heads/feature/x"), "feature/x");
     assert_eq!(branch_name("main"), "main");
@@ -590,7 +590,7 @@ async fn queued_runs_use_short_branch_names_and_tags_stay_distinct() {
         .unwrap_err();
     assert!(matches!(
         refused,
-        codeyard_db_core::ci_admission::AdmissionError::InvalidRequest(_)
+        codeyard_database::ci_admission::AdmissionError::InvalidRequest(_)
     ));
     // What the database holds is what the run list shows.
     let stored: Vec<String> =

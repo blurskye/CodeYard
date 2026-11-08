@@ -7,8 +7,8 @@ use crate::relationships::Refusal;
 use crate::relationships::RelationCounts;
 use crate::relationships::Window;
 use anyhow::Result;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::pool::PgPool;
+use codeyard_database::models::Repository;
+use codeyard_database::pool::PgPool;
 use sqlx::Postgres;
 use sqlx::Transaction;
 
@@ -17,13 +17,13 @@ pub async fn window(pool: &PgPool, page: &Window<'_>) -> Result<Vec<Link>> {
         page.offset >= 0 && (1..=101).contains(&page.limit),
         Refusal::Invalid
     );
-    let readable = codeyard_db_core::queries::postgres::repositories::access::readable_condition();
+    let readable = codeyard_database::queries::postgres::repositories::access::readable_condition();
     let sql = window_sql(page, &readable, "$5::BIGINT[] IS NULL OR i.repo_id=ANY($5)");
     Ok(sqlx::query_as(&sql)
         .bind(page.viewer)
         .bind(page.root)
         .bind(page.kind.storage())
-        .bind(codeyard_db_core::queries::ci_tokens::BOT)
+        .bind(codeyard_database::queries::ci_tokens::BOT)
         .bind(page.repositories)
         .bind(page.limit)
         .bind(page.offset)
@@ -36,7 +36,7 @@ pub async fn repository_counts(
     root: i64,
     kind: Kind,
 ) -> Result<Vec<(i64, i64)>> {
-    let readable = codeyard_db_core::queries::postgres::repositories::access::readable_condition();
+    let readable = codeyard_database::queries::postgres::repositories::access::readable_condition();
     let sql = format!(
         "SELECT i.repo_id,COUNT(*) {} GROUP BY i.repo_id ORDER BY i.repo_id",
         related_sql(kind, &readable, "TRUE")
@@ -45,7 +45,7 @@ pub async fn repository_counts(
         .bind(viewer)
         .bind(root)
         .bind(kind.storage())
-        .bind(codeyard_db_core::queries::ci_tokens::BOT)
+        .bind(codeyard_database::queries::ci_tokens::BOT)
         .fetch_all(pool)
         .await?)
 }
@@ -83,7 +83,7 @@ pub async fn change(
     mutation: Mutation,
     token: Option<i64>,
 ) -> Result<()> {
-    codeyard_db_core::queries::postgres::retry_on_conflict(|| {
+    codeyard_database::queries::postgres::retry_on_conflict(|| {
         change_once(pool, actor, repo, root, mutation, token)
     })
     .await
@@ -120,10 +120,10 @@ async fn authority(
     triage: bool,
 ) -> Result<bool> {
     if triage {
-        codeyard_db_core::queries::postgres::discussions::lock_triage_authority(tx, actor, repo)
+        codeyard_database::queries::postgres::discussions::lock_triage_authority(tx, actor, repo)
             .await
     } else {
-        codeyard_db_core::queries::postgres::discussions::lock_write_authority(tx, actor, repo)
+        codeyard_database::queries::postgres::discussions::lock_write_authority(tx, actor, repo)
             .await
     }
 }
@@ -145,7 +145,7 @@ pub async fn change_in_transaction<'a>(
     let restricted: bool =
         sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND username=$2)")
             .bind(actor)
-            .bind(codeyard_db_core::queries::ci_tokens::BOT)
+            .bind(codeyard_database::queries::ci_tokens::BOT)
             .fetch_one(&mut *tx)
             .await?;
     // Membership authority precedes every row lock. This guard serializes even disjoint edge
@@ -171,11 +171,11 @@ pub async fn change_in_transaction<'a>(
         }
     }
     let access =
-        codeyard_db_core::queries::postgres::repositories::access::lock_user_repo_access_in_transaction(
+        codeyard_database::queries::postgres::repositories::access::lock_user_repo_access_in_transaction(
             &mut tx,
             actor,
             target_repo,
-            codeyard_db_core::queries::postgres::repositories::access::RepositoryRowLock::Shared,
+            codeyard_database::queries::postgres::repositories::access::RepositoryRowLock::Shared,
             true,
         )
         .await?;

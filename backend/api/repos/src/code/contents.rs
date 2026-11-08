@@ -16,9 +16,9 @@ use codeyard_api_http::shared::repos::chrome::Loaded;
 use codeyard_api_http::shared::repos::forms::field;
 use codeyard_api_http::shared::repos::forms::with_status;
 use codeyard_app::app::AppState;
+use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_repos::editor::FileWrite;
 use codeyard_repos::editor::MAX_EDITOR_BYTES;
-use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_storage::range::ByteRange as BlobRange;
 use codeyard_types::ref_path::branch_url;
 use codeyard_types::ref_path::compare_url;
@@ -117,7 +117,7 @@ async fn write_file(
         &state.pool,
         state.cluster.as_ref(),
         &state.ci_runs,
-        codeyard_db_core::queries::credentials::Actor::from((
+        codeyard_database::queries::credentials::Actor::from((
             actor.id,
             codeyard_api_http::session::extract_session_id(headers).unwrap_or_default(),
         )),
@@ -166,7 +166,7 @@ pub async fn delete_file_content(
         &state.pool,
         state.cluster.as_ref(),
         &state.ci_runs,
-        codeyard_db_core::queries::credentials::Actor::from((
+        codeyard_database::queries::credentials::Actor::from((
             actor.id,
             codeyard_api_http::session::extract_session_id(&headers).unwrap_or_default(),
         )),

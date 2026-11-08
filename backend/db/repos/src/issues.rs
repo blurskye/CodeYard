@@ -1,10 +1,10 @@
 use crate::discussions::ListFilter;
 use crate::discussions::StateCounts;
 use anyhow::Result;
-use codeyard_db_core::models::Issue;
-use codeyard_db_core::models::IssueComment;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::Issue;
+use codeyard_database::models::IssueComment;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 
 pub mod management;
 
@@ -78,7 +78,7 @@ native_operation!(crate::postgres::issues::create_issue_with_metadata,
     fn create_issue_with_metadata(
     pool: &DbPool,
     repo_id: i64,
-    author_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    author_id: impl Into<codeyard_database::queries::credentials::Actor>,
     title: &str,
     body: &str,
     metadata: IssueMetadata<'_>,
@@ -179,7 +179,7 @@ native_operation!(crate::postgres::issues::add_issue_comment,
     issue_id: i64,
     author_id: i64,
     body: &str,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
 ) -> Result<IssueComment>);
 
 native_operation!(read crate::postgres::issues::list_issue_comments_ordered,
@@ -234,7 +234,7 @@ native_operation!(crate::postgres::issues::edit_issue_comment,
     comment_id: i64,
     body: &str,
     expected_body: &str,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
 ) -> Result<Option<IssueComment>>);
 
 // Deletes a comment on the issue: its author or a current repository writer. Returns the deleted
@@ -247,7 +247,7 @@ native_operation!(crate::postgres::issues::delete_issue_comment,
     repo_id: i64,
     issue_id: i64,
     comment_id: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
 ) -> Result<Option<IssueComment>>);
 
 native_operation!(crate::postgres::issues::issue_comment_position,
@@ -306,5 +306,5 @@ pub struct ViewerIssueEntry {
     pub repo_name: String,
     pub comments: i64,
     #[sqlx(skip)]
-    pub labels: Vec<codeyard_db_core::models::Label>,
+    pub labels: Vec<codeyard_database::models::Label>,
 }

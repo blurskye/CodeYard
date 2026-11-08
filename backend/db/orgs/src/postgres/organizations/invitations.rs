@@ -6,20 +6,20 @@ use crate::organizations::invitations::NewInvitation;
 use crate::organizations::OrganizationPage;
 use crate::postgres::organizations::authority::credential;
 use anyhow::Result;
-use codeyard_db_core::models::OrgInvitation;
-use codeyard_db_core::models::OrgMembership;
-use codeyard_db_core::models::OrgRole;
-use codeyard_db_core::models::ReceivedInvitation;
-use codeyard_db_core::models::Team;
-use codeyard_db_core::pool::PgPool;
-use codeyard_db_core::queries::organizations::administers;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_db_core::queries::postgres::organizations::authority::active;
-use codeyard_db_core::queries::postgres::organizations::authority::begin;
-use codeyard_db_core::queries::postgres::organizations::authority::begin_read;
-use codeyard_db_core::queries::postgres::organizations::authority::membership_role;
-use codeyard_db_core::queries::postgres::organizations::authority::remaining_active_owner;
-use codeyard_db_core::require_read_org_postgres;
+use codeyard_database::models::OrgInvitation;
+use codeyard_database::models::OrgMembership;
+use codeyard_database::models::OrgRole;
+use codeyard_database::models::ReceivedInvitation;
+use codeyard_database::models::Team;
+use codeyard_database::pool::PgPool;
+use codeyard_database::queries::organizations::administers;
+use codeyard_database::queries::organizations::OrganizationOutcome;
+use codeyard_database::queries::postgres::organizations::authority::active;
+use codeyard_database::queries::postgres::organizations::authority::begin;
+use codeyard_database::queries::postgres::organizations::authority::begin_read;
+use codeyard_database::queries::postgres::organizations::authority::membership_role;
+use codeyard_database::queries::postgres::organizations::authority::remaining_active_owner;
+use codeyard_database::require_read_org_postgres;
 use sqlx::PgConnection;
 use OrganizationOutcome::Applied;
 use OrganizationOutcome::Conflict;
@@ -49,7 +49,7 @@ pub async fn invite_organization_member(
 }
 pub async fn set_organization_invitation_by_owner(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     org: i64,
     target: i64,
     role: OrgRole,
@@ -66,7 +66,7 @@ pub async fn set_organization_invitation_by_owner(
 }
 pub async fn create_organization_invitation(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     org: i64,
     input: &NewInvitation,
     owner_only: bool,
@@ -75,7 +75,7 @@ pub async fn create_organization_invitation(
 }
 async fn save(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     org: i64,
     input: &NewInvitation,
     owner_only: bool,
@@ -96,7 +96,7 @@ async fn save(
 // The caller holds the membership transition lock and owns commit or rollback.
 pub(super) async fn save_in_transaction(
     mut tx: &mut PgConnection,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     org: i64,
     input: &NewInvitation,
     owner_only: bool,
@@ -107,7 +107,7 @@ pub(super) async fn save_in_transaction(
     let replace = matches!(policy, InvitationOffer::Replace);
     let target = invitation_target(tx, input).await?;
     let accounts: Vec<i64> = [Some(actor), target].into_iter().flatten().collect();
-    codeyard_db_core::queries::postgres::users::transitions::lock_accounts_shared(tx, &accounts)
+    codeyard_database::queries::postgres::users::transitions::lock_accounts_shared(tx, &accounts)
         .await?;
     let actor_role = require_org!(tx, actor, org);
     if !credential(tx, &grant, org, "members").await? {
@@ -283,7 +283,7 @@ async fn queue_invitation_email(
         .bind(org)
         .fetch_one(&mut *tx)
         .await?;
-    let mail = codeyard_model::mail::organization_invitation(&name);
+    let mail = codeyard_types::mail::organization_invitation(&name);
     codeyard_db_identity::postgres::email::queue_email(
         tx,
         &to,
@@ -370,7 +370,7 @@ pub async fn invitation_team_counts(
 
 pub async fn cancel_organization_invitation(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     org: i64,
     target: i64,
 ) -> Result<OrganizationOutcome<()>> {
@@ -378,7 +378,7 @@ pub async fn cancel_organization_invitation(
 }
 pub async fn cancel_invitation_id(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     org: i64,
     id: i64,
     owner_only: bool,
@@ -387,7 +387,7 @@ pub async fn cancel_invitation_id(
 }
 async fn cancel(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     org: i64,
     target: i64,
     by_id: bool,
@@ -396,7 +396,7 @@ async fn cancel(
     let grant = actor.into();
     let actor = grant.user_id;
     let mut tx = begin(pool).await?;
-    codeyard_db_core::queries::postgres::users::transitions::lock_accounts_shared(
+    codeyard_database::queries::postgres::users::transitions::lock_accounts_shared(
         &mut tx,
         &[actor],
     )
@@ -481,14 +481,14 @@ pub async fn list_received_organization_invitations(
 /// organization ends once the account is a member.
 pub async fn accept_organization_invitation(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     org: i64,
     invitation: Option<i64>,
 ) -> Result<OrganizationOutcome<OrgMembership>> {
     let grant = actor.into();
     let actor = grant.user_id;
     let mut tx = begin(pool).await?;
-    codeyard_db_core::queries::postgres::users::transitions::lock_accounts_shared(
+    codeyard_database::queries::postgres::users::transitions::lock_accounts_shared(
         &mut tx,
         &[actor],
     )
@@ -566,17 +566,17 @@ pub async fn accept_organization_invitation(
 /// Declines `invitation`, or every offer from the organization when it is `None`.
 pub async fn decline_organization_invitation(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     org: i64,
     invitation: Option<i64>,
 ) -> Result<OrganizationOutcome<()>> {
     let grant = actor.into();
     let actor = grant.user_id;
     let mut tx = begin(pool).await?;
-    if !codeyard_db_core::queries::postgres::credentials::live(&mut tx, &grant, true).await? {
+    if !codeyard_database::queries::postgres::credentials::live(&mut tx, &grant, true).await? {
         return Ok(Denied);
     }
-    codeyard_db_core::queries::postgres::users::transitions::lock_accounts_shared(
+    codeyard_database::queries::postgres::users::transitions::lock_accounts_shared(
         &mut tx,
         &[actor],
     )

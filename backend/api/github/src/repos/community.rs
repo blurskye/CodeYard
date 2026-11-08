@@ -6,8 +6,8 @@ use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_model::github_error::Result;
-use codeyard_repos_core::api_shared::github::contents::store_error;
+use codeyard_git_storage::api_shared::github::contents::store_error;
+use codeyard_types::github_error::Result;
 use serde_json::Value;
 use std::sync::Arc;
 

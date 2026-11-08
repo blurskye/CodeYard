@@ -24,7 +24,7 @@ async fn contract(pg: bool) {
     let bob_id = f.actor("bob").await;
     let carol_id = f.actor("carol").await;
     let root = tempfile::tempdir().unwrap();
-    let repository = codeyard_repos_core::repositories::lifecycle::provision(
+    let repository = codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
@@ -39,7 +39,7 @@ async fn contract(pg: bool) {
         f.pool(),
         bob_id,
         repository.id,
-        codeyard_db_core::models::repositories::AccessLevel::Write,
+        codeyard_database::models::repositories::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -73,7 +73,7 @@ async fn contract(pg: bool) {
     }
     let protected_tip = tip_of("guarded/stable");
     assert!(git.find_reference("refs/heads/guarded/new").is_err());
-    let refs_before = codeyard_repos_core::repositories::store::repo_store(&repository, None)
+    let refs_before = codeyard_git_storage::repositories::store::repo_store(&repository, None)
         .refs()
         .await
         .unwrap();
@@ -136,7 +136,7 @@ async fn contract(pg: bool) {
             "native delete-branch {alias}: {page}"
         );
     }
-    let refs_after = codeyard_repos_core::repositories::store::repo_store(&repository, None)
+    let refs_after = codeyard_git_storage::repositories::store::repo_store(&repository, None)
         .refs()
         .await
         .unwrap();
@@ -547,7 +547,7 @@ async fn concurrent_refresh_converges(pg: bool) {
         })
         .await;
     let root = tempfile::tempdir().unwrap();
-    let repository = codeyard_repos_core::repositories::lifecycle::provision(
+    let repository = codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(actor),
@@ -567,7 +567,7 @@ async fn concurrent_refresh_converges(pg: bool) {
         None,
     );
     let ci = state.ci_runs.clone();
-    let store = codeyard_repos_core::repositories::store::repo_store(&repository, None);
+    let store = codeyard_git_storage::repositories::store::repo_store(&repository, None);
     let main = store
         .save_file_as(
             f.pool(),
@@ -750,7 +750,7 @@ async fn concurrent_refresh_converges(pg: bool) {
                 Some(&["main", "topic"][..]),
                 &ci,
                 actor,
-                codeyard_db_core::models::AccessLevel::Owner,
+                codeyard_database::models::AccessLevel::Owner,
             )
             .await
         })
@@ -836,7 +836,7 @@ async fn concurrent_refresh_converges(pg: bool) {
 }
 
 /// How many backends wait behind the blocker on PostgreSQL; SQLite cannot tell.
-async fn refreshes_waiting(lock_graph: &Option<(codeyard_db_core::pool::PgPool, i32)>) -> i64 {
+async fn refreshes_waiting(lock_graph: &Option<(codeyard_database::pool::PgPool, i32)>) -> i64 {
     match lock_graph {
         Some((raw, pid)) => database::blocked_count(raw, *pid).await,
         None => 0,
@@ -846,7 +846,7 @@ async fn refreshes_waiting(lock_graph: &Option<(codeyard_db_core::pool::PgPool, 
 /// Waits until one more refresh waits on its CAS. PostgreSQL shows it in the lock graph behind
 /// the blocker; SQLite has no such view, so there the refresh gets `pause_ms` to reach its write.
 async fn until_refresh_waits(
-    lock_graph: &Option<(codeyard_db_core::pool::PgPool, i32)>,
+    lock_graph: &Option<(codeyard_database::pool::PgPool, i32)>,
     before: i64,
     pause_ms: u64,
 ) {
@@ -863,7 +863,7 @@ async fn refresh_touches_only_pull_requests_on_the_moved_branch(pg: bool) {
     f.complete_setup().await;
     let alice_id = f.actor("alice").await;
     let root = tempfile::tempdir().unwrap();
-    let repository = codeyard_repos_core::repositories::lifecycle::provision(
+    let repository = codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
@@ -941,7 +941,7 @@ async fn merge_names_the_base_branch_it_read(pg: bool) {
     f.complete_setup().await;
     let alice_id = f.actor("alice").await;
     let root = tempfile::tempdir().unwrap();
-    let repository = codeyard_repos_core::repositories::lifecycle::provision(
+    let repository = codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
@@ -1035,7 +1035,7 @@ async fn merge_into_the_default_branch_closes_named_issues(pg: bool) {
     f.complete_setup().await;
     let alice_id = f.actor("alice").await;
     let root = tempfile::tempdir().unwrap();
-    let repository = codeyard_repos_core::repositories::lifecycle::provision(
+    let repository = codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),

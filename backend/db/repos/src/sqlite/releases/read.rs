@@ -4,11 +4,11 @@ use crate::releases::ReleaseSnapshot;
 use crate::sqlite::releases::ASSET_COLUMNS;
 use crate::sqlite::releases::ROW_SELECT;
 use anyhow::Result;
-use codeyard_db_core::models::ReleaseAsset;
-use codeyard_db_core::models::ReleaseRow;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::pool::SqlitePool;
-use codeyard_db_core::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
+use codeyard_database::models::ReleaseAsset;
+use codeyard_database::models::ReleaseRow;
+use codeyard_database::models::Repository;
+use codeyard_database::pool::SqlitePool;
+use codeyard_database::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
 
 pub async fn read_release_snapshot(
     pool: &SqlitePool,

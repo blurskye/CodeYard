@@ -18,7 +18,7 @@ use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
 
 use codeyard_db_repos::webhooks::HookOwner;
 
-use codeyard_db_core::models::OrgRole;
+use codeyard_database::models::OrgRole;
 use codeyard_identity::tokens::TokenInput;
 use codeyard_storage::ObjectStore;
 use codeyard_support::crypto::hmac_sha256;
@@ -29,7 +29,7 @@ async fn records(
     f: &Database,
     hook: i64,
     count: usize,
-) -> Vec<codeyard_db_core::models::WebhookDelivery> {
+) -> Vec<codeyard_database::models::WebhookDelivery> {
     tokio::time::timeout(Duration::from_secs(15), async {
         loop {
             let rows = codeyard_db_repos::webhooks::list_deliveries(f.pool(), hook)

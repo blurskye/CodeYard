@@ -6,7 +6,7 @@ use super::Value;
 
 pub(super) async fn fixed_revision(
     router: &Router,
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     hook: i64,
     token: &str,
     head: &str,

@@ -1,11 +1,11 @@
 use anyhow::Result;
-use codeyard_db_core::models::OrgRole;
-use codeyard_db_core::pool::PgPool;
-use codeyard_db_core::queries::credentials::Actor;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_db_core::queries::postgres::organizations::authority::begin;
-use codeyard_db_core::queries::postgres::organizations::authority::begin_read;
-use codeyard_db_core::require_read_org_postgres;
+use codeyard_database::models::OrgRole;
+use codeyard_database::pool::PgPool;
+use codeyard_database::queries::credentials::Actor;
+use codeyard_database::queries::organizations::OrganizationOutcome;
+use codeyard_database::queries::postgres::organizations::authority::begin;
+use codeyard_database::queries::postgres::organizations::authority::begin_read;
+use codeyard_database::require_read_org_postgres;
 use sqlx::PgConnection;
 use OrganizationOutcome::Applied;
 use OrganizationOutcome::Conflict;
@@ -20,7 +20,7 @@ pub async fn delete_organization(
     let owner = actor.into();
     let actor = owner.user_id;
     let mut tx = begin(pool).await?;
-    codeyard_db_core::queries::postgres::users::transitions::lock_accounts_shared(
+    codeyard_database::queries::postgres::users::transitions::lock_accounts_shared(
         &mut tx,
         &[actor],
     )
@@ -28,7 +28,7 @@ pub async fn delete_organization(
     codeyard_db_identity::postgres::credentials::require_account(&mut tx, &owner).await?;
     let role = require_org!(tx, actor, org);
     if role != OrgRole::Owner
-        || !codeyard_db_core::queries::postgres::credentials::organization(
+        || !codeyard_database::queries::postgres::credentials::organization(
             &mut tx,
             &owner,
             org,
@@ -62,25 +62,25 @@ pub async fn delete_organization(
         .execute(&mut *tx)
         .await?;
     if let Some(avatar) = avatar {
-        codeyard_db_core::queries::postgres::files::delete_unreferenced_file_in_transaction(
+        codeyard_database::queries::postgres::files::delete_unreferenced_file_in_transaction(
             &mut tx, avatar,
         )
         .await?;
     }
-    codeyard_db_core::cells::outbox::postgres::forget(
+    codeyard_database::cells::outbox::postgres::forget(
         pool,
         &mut tx,
-        codeyard_model::cells::Object {
-            kind: codeyard_model::cells::ObjectKind::Organization,
+        codeyard_types::cells::Object {
+            kind: codeyard_types::cells::ObjectKind::Organization,
             id: org,
         },
     )
     .await?;
     tx.commit().await?;
-    codeyard_db_core::cells::directory::postgres::finish_forget(
+    codeyard_database::cells::directory::postgres::finish_forget(
         pool,
-        codeyard_model::cells::Object {
-            kind: codeyard_model::cells::ObjectKind::Organization,
+        codeyard_types::cells::Object {
+            kind: codeyard_types::cells::ObjectKind::Organization,
             id: org,
         },
     )
@@ -111,14 +111,14 @@ pub async fn list_organization_deletion_repositories(
     let owner = actor.into();
     let actor = owner.user_id;
     let mut tx = begin(pool).await?;
-    codeyard_db_core::queries::postgres::users::transitions::lock_accounts_shared(
+    codeyard_database::queries::postgres::users::transitions::lock_accounts_shared(
         &mut tx,
         &[actor],
     )
     .await?;
     codeyard_db_identity::postgres::credentials::require_account(&mut tx, &owner).await?;
     if require_org!(tx, actor, org) != OrgRole::Owner
-        || !codeyard_db_core::queries::postgres::credentials::organization(
+        || !codeyard_database::queries::postgres::credentials::organization(
             &mut tx,
             &owner,
             org,
@@ -145,19 +145,19 @@ pub async fn delete_organization_repository(
     actor: impl Into<Actor>,
     org: i64,
     repo: i64,
-) -> Result<OrganizationOutcome<codeyard_db_core::models::Repository>> {
+) -> Result<OrganizationOutcome<codeyard_database::models::Repository>> {
     let owner = actor.into();
     let actor = owner.user_id;
     let mut tx = begin(pool).await?;
     // Retain the initiating account before organization/fork rows.
-    codeyard_db_core::queries::postgres::users::transitions::lock_accounts_shared(
+    codeyard_database::queries::postgres::users::transitions::lock_accounts_shared(
         &mut tx,
         &[actor],
     )
     .await?;
     codeyard_db_identity::postgres::credentials::require_account(&mut tx, &owner).await?;
     if require_org!(tx, actor, org) != OrgRole::Owner
-        || !codeyard_db_core::queries::postgres::credentials::organization(
+        || !codeyard_database::queries::postgres::credentials::organization(
             &mut tx,
             &owner,
             org,
@@ -168,7 +168,7 @@ pub async fn delete_organization_repository(
     {
         return Ok(Denied);
     }
-    codeyard_db_core::queries::postgres::repositories::records::lock_fork_ancestors(
+    codeyard_database::queries::postgres::repositories::records::lock_fork_ancestors(
         &mut tx,
         repo,
         "FOR NO KEY UPDATE",
@@ -184,25 +184,25 @@ pub async fn delete_organization_repository(
         return Ok(Conflict);
     };
     for file in files {
-        codeyard_db_core::queries::postgres::files::delete_unreferenced_file_in_transaction(
+        codeyard_database::queries::postgres::files::delete_unreferenced_file_in_transaction(
             &mut tx, file,
         )
         .await?;
     }
-    codeyard_db_core::cells::outbox::postgres::forget(
+    codeyard_database::cells::outbox::postgres::forget(
         pool,
         &mut tx,
-        codeyard_model::cells::Object {
-            kind: codeyard_model::cells::ObjectKind::Repository,
+        codeyard_types::cells::Object {
+            kind: codeyard_types::cells::ObjectKind::Repository,
             id: repo,
         },
     )
     .await?;
     tx.commit().await?;
-    codeyard_db_core::cells::directory::postgres::finish_forget(
+    codeyard_database::cells::directory::postgres::finish_forget(
         pool,
-        codeyard_model::cells::Object {
-            kind: codeyard_model::cells::ObjectKind::Repository,
+        codeyard_types::cells::Object {
+            kind: codeyard_types::cells::ObjectKind::Repository,
             id: repo,
         },
     )

@@ -28,7 +28,7 @@ use codeyard_webui::pages::repos::issues::Kind;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-fn authority(ctx: &PageContext) -> ResultPage<codeyard_db_core::queries::credentials::Actor> {
+fn authority(ctx: &PageContext) -> ResultPage<codeyard_database::queries::credentials::Actor> {
     Ok(ctx.database_actor(ctx.require_user()?.id))
 }
 

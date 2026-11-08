@@ -14,12 +14,12 @@ use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
-use codeyard_model::urls::repo_url;
-use codeyard_model::workflow_glob::WorkflowMatchBudget;
-use codeyard_repos_core::api_shared::github::contents::store_error;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_git_storage::api_shared::github::contents::store_error;
+use codeyard_git_storage::repositories::store::repo_store;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
+use codeyard_types::urls::repo_url;
+use codeyard_types::workflow_glob::WorkflowMatchBudget;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -126,7 +126,7 @@ async fn read(
 
 pub(super) async fn document(
     state: &AppState,
-    repo: &codeyard_db_core::models::Repository,
+    repo: &codeyard_database::models::Repository,
     owner: &str,
     name: &str,
     branch: &str,
@@ -173,7 +173,7 @@ pub(super) async fn document(
             "contexts": contexts,
             "checks": checks,
         }},
-        "_links": {"self": url, "html": format!("{}/{owner}/{name}/tree/{}", codeyard_model::http_config::link_origin(), codeyard_types::paths::encode_component(branch))},
+        "_links": {"self": url, "html": format!("{}/{owner}/{name}/tree/{}", codeyard_types::http_config::link_origin(), codeyard_types::paths::encode_component(branch))},
     }))
 }
 

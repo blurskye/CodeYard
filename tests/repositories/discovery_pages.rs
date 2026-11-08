@@ -12,7 +12,7 @@ use axum::{http::StatusCode, Router};
 use base64::Engine;
 
 use codeyard_db_repos::repositories::discovery::NewForkedRepository;
-use codeyard_repos_core::repositories::lifecycle;
+use codeyard_git_storage::repositories::lifecycle;
 use codeyard_webui::app::Page;
 use codeyard_webui::pages::account;
 use codeyard_webui::pages::discovery as view;
@@ -56,7 +56,7 @@ async fn repo(
     name: &str,
     description: &str,
     private: bool,
-) -> codeyard_db_core::models::Repository {
+) -> codeyard_database::models::Repository {
     lifecycle::provision(
         (site.database.pool(), None),
         site.root.path(),

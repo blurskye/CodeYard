@@ -9,8 +9,8 @@ use crate::support::organizations::applied;
 use codeyard_db_orgs::organizations::profiles::NewOrganization;
 use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
 
-use codeyard_db_core::models::AccessLevel;
-use codeyard_db_core::models::OrgRole;
+use codeyard_database::models::AccessLevel;
+use codeyard_database::models::OrgRole;
 use codeyard_identity::tokens::TokenInput;
 use serde_json::{json, Value};
 const UPDATE: &str = "orgs/update";
@@ -375,7 +375,7 @@ async fn contract(pg: bool) {
     let project = codeyard_db_repos::projects::create(
         f.pool(),
         owner,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&browser.session),
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(&browser.session),
         codeyard_db_repos::projects::Owner::Organization(orgs[0].id),
         "Roadmap",
         None,
@@ -418,7 +418,7 @@ async fn contract(pg: bool) {
     assert!(codeyard_db_repos::projects::create(
         f.pool(),
         owner,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&browser.session),
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(&browser.session),
         codeyard_db_repos::projects::Owner::Organization(orgs[0].id),
         "Refused",
         None,

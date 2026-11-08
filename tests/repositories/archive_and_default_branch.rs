@@ -7,7 +7,7 @@ use crate::support::fake_webui_bundle as bundle;
 use crate::support::http_client::Client;
 use axum::http::StatusCode;
 
-use codeyard_db_core::models::AccessLevel;
+use codeyard_database::models::AccessLevel;
 use database::Database;
 use serde_json::{json, Value};
 
@@ -19,7 +19,7 @@ async fn contract(pg: bool) {
     let alice_id = f.actor("alice").await;
     let bob_id = f.actor("bob").await;
     let root = tempfile::tempdir().unwrap();
-    let proj = codeyard_repos_core::repositories::lifecycle::provision(
+    let proj = codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),

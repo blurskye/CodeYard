@@ -62,7 +62,7 @@ async fn index(
     let mut rows = codeyard_db_repos::repository_discussions::list_rows(
         &ctx.state.pool,
         ctx.user.as_ref().map_or(-1, |user| user.id),
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session),
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(&session),
         &codeyard_db_repos::repository_discussions::Filter {
             repo: Some(loaded.repository.id),
             order: codeyard_db_repos::repository_discussions::Order::Updated,

@@ -24,8 +24,8 @@ use codeyard_db_security::attestations::Filter;
 use codeyard_db_security::attestations::Owner;
 use codeyard_db_security::attestations::Refusal;
 use codeyard_db_security::attestations::MAX_RESPONSE_BUNDLE_BYTES;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -157,7 +157,7 @@ async fn list(
         .get("subject_digest")
         .or_else(|| params.get("attestation_id"))
         .ok_or_else(Error::missing)?;
-    if !codeyard_db_core::queries::attestations::valid_digest(digest) {
+    if !codeyard_database::queries::attestations::valid_digest(digest) {
         return Err(Error::validation(
             "Attestation",
             "subject_digest",
@@ -213,7 +213,7 @@ async fn bulk_list(
         || input
             .subject_digests
             .iter()
-            .any(|digest| !codeyard_db_core::queries::attestations::valid_digest(digest))
+            .any(|digest| !codeyard_database::queries::attestations::valid_digest(digest))
     {
         return Err(Error::validation(
             "Attestation",
@@ -337,7 +337,7 @@ async fn remove(
                 if !digests.is_empty()
                     && digests.len() <= 1024
                     && digests.iter().all(|digest| {
-                        codeyard_db_core::queries::attestations::valid_digest(digest)
+                        codeyard_database::queries::attestations::valid_digest(digest)
                     }) =>
             {
                 (vec![], digests)
@@ -355,7 +355,7 @@ async fn remove(
         )
     } else {
         let digest = &params["subject_digest"];
-        if !codeyard_db_core::queries::attestations::valid_digest(digest) {
+        if !codeyard_database::queries::attestations::valid_digest(digest) {
             return Err(Error::validation(
                 "Attestation",
                 "subject_digest",

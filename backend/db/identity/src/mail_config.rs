@@ -1,8 +1,8 @@
 //! The mail server settings: read from the database row or from CODEYARD_SMTP_* variables.
 use codeyard_support::secrets::SecretEncryptor;
 
-use codeyard_db_core::models::EmailSettings;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::EmailSettings;
+use codeyard_database::DbPool;
 
 fn unavailable(error: impl std::fmt::Display) -> String {
     tracing::warn!(%error, "could not read email settings");
@@ -79,12 +79,12 @@ pub async fn is_configured(pool: &DbPool) -> bool {
     }
 }
 
-use codeyard_model::mail_config::Security;
+use codeyard_types::mail_config::Security;
 
-use codeyard_model::mail_config::SmtpConfig;
+use codeyard_types::mail_config::SmtpConfig;
 
-use codeyard_model::mail_config::Source;
+use codeyard_types::mail_config::Source;
 
-use codeyard_model::mail_config::environment_configured;
+use codeyard_types::mail_config::environment_configured;
 
-use codeyard_model::mail_config::from_env;
+use codeyard_types::mail_config::from_env;

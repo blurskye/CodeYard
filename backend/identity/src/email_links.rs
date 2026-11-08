@@ -2,10 +2,10 @@
 //! mail carries a random token, shown as a code to paste and, when PUBLIC_URL is set, in a link.
 //! Only its hash is stored. A token works once, until it expires.
 
-use codeyard_model::http_config::public_origin;
+use codeyard_types::http_config::public_origin;
 
-use codeyard_db_core::models::User;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::User;
+use codeyard_database::DbPool;
 use codeyard_db_identity::auth_admission::AdmissionError;
 use codeyard_support::token_hash::token_hash as hash;
 use tracing::warn;
@@ -65,10 +65,10 @@ async fn queue_link(
     let origin = public_origin();
     let mail = match purpose {
         Purpose::Verify => {
-            codeyard_model::mail_messages::verify_email(&origin, &user.username, &token)
+            codeyard_types::mail_messages::verify_email(&origin, &user.username, &token)
         }
         Purpose::Reset => {
-            codeyard_model::mail_messages::password_reset(&origin, &user.username, &token)
+            codeyard_types::mail_messages::password_reset(&origin, &user.username, &token)
         }
     };
     // The token and its mail are saved together. A mail sent less than a minute ago still holds
@@ -138,7 +138,7 @@ pub async fn send_secondary_verifications(
     for email in pending {
         let token = codeyard_support::crypto::random_hex();
         let mail =
-            codeyard_model::mail_messages::verify_email(&public_origin(), &user.username, &token);
+            codeyard_types::mail_messages::verify_email(&public_origin(), &user.username, &token);
         codeyard_db_identity::users::emails::save_verification(
             pool,
             user.id,

@@ -13,8 +13,8 @@ use axum::http::StatusCode;
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
 use codeyard_ci::config::CiConfig;
-use codeyard_repos_core::repositories::pull_requests::OperationError;
-use codeyard_repos_core::store_types::MergeMethod;
+use codeyard_git_storage::repositories::pull_requests::OperationError;
+use codeyard_git_storage::store_types::MergeMethod;
 use codeyard_repos_pulls::repositories::pull_requests::merge::prepare_pull_request_merge;
 use codeyard_repos_pulls::repositories::pull_requests::merge::publish_prepared_merge;
 use codeyard_repos_pulls::repositories::pull_requests::merge::MergeRequest;
@@ -29,7 +29,7 @@ struct Fixture {
     state: Arc<AppState>,
     alice: Client,
     merger: Client,
-    repository: codeyard_db_core::models::Repository,
+    repository: codeyard_database::models::Repository,
     merger_id: i64,
     owner: i64,
 }
@@ -39,7 +39,7 @@ async fn setup(f: &mut Database, root: &Path) -> Fixture {
     f.complete_setup().await;
     let owner = f.actor("alice").await;
     let merger_id = f.actor("merger").await;
-    let repository = codeyard_repos_core::repositories::lifecycle::provision(
+    let repository = codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root,
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),
@@ -54,7 +54,7 @@ async fn setup(f: &mut Database, root: &Path) -> Fixture {
         f.pool(),
         merger_id,
         repository.id,
-        codeyard_db_core::models::AccessLevel::Write,
+        codeyard_database::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -593,7 +593,7 @@ async fn prepared_merge_contract(pg: bool) {
     let prepared = prepare_pull_request_merge(
         f.pool(),
         &app.state.ci_runs,
-        codeyard_db_core::queries::credentials::Actor::from((app.merger_id, session.clone())),
+        codeyard_database::queries::credentials::Actor::from((app.merger_id, session.clone())),
         ("alice".to_owned(), "proj".to_owned(), number),
         request(head.as_str(), main1.as_str()),
     )
@@ -672,10 +672,10 @@ async fn retained_history_and_merge_hook_contract(pg: bool) {
         f.pool(),
         codeyard_db_repos::webhooks::HookOwner::Repository(app.repository.id),
         app.owner,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), app.owner).await,
         ),
-        &codeyard_db_core::queries::webhooks::WebhookFields {
+        &codeyard_database::queries::webhooks::WebhookFields {
             username: None,
             password: None,
             payload_url: "invalid://test".into(),

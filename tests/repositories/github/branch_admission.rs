@@ -6,7 +6,7 @@ use super::Value;
 
 pub(super) async fn run(
     router: &Router,
-    scope: (&codeyard_db_core::DbPool, i64, i64),
+    scope: (&codeyard_database::DbPool, i64, i64),
     base: &str,
     tokens: (&str, &str, &str),
     sha: &str,
@@ -142,7 +142,7 @@ pub(super) async fn run(
         scope.0,
         bob.id,
         scope.1,
-        codeyard_db_core::models::AccessLevel::Write,
+        codeyard_database::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -184,7 +184,7 @@ pub(super) async fn run(
         .unwrap()
         .unwrap();
     assert_eq!(
-        codeyard_repos_core::repositories::store::repo_store(&repo, None)
+        codeyard_git_storage::repositories::store::repo_store(&repo, None)
             .info()
             .await
             .unwrap()

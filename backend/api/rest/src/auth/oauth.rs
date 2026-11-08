@@ -12,7 +12,7 @@ use axum::response::Response;
 use codeyard_api_http::render::public_error;
 use codeyard_app::app::AppState;
 use codeyard_identity::oauth::OAuthError;
-use codeyard_model::oauth_apps::validated_public_origin;
+use codeyard_types::oauth_apps::validated_public_origin;
 use serde::Deserialize;
 use std::sync::Arc;
 

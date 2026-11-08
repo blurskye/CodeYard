@@ -128,7 +128,7 @@ fn version_metadata(
         serde_json::from_str(&version.manifest).map_err(|_| Error::unavailable())?;
     metadata["dist"]["tarball"] = json!(format!(
         "{}/api/packages/{}/npm/@{}/{}/-/{}-{}.tgz",
-        codeyard_model::http_config::link_origin(),
+        codeyard_types::http_config::link_origin(),
         codeyard_types::paths::encode_component(namespace),
         codeyard_types::paths::encode_component(namespace),
         codeyard_types::paths::encode_component(slug),

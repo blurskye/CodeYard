@@ -20,7 +20,7 @@ use std::sync::Arc;
 /// that tab is the open one. The list is read only for the open tab.
 async fn profile_stars(
     ctx: &PageContext,
-    target: &codeyard_db_core::models::User,
+    target: &codeyard_database::models::User,
     page: i64,
 ) -> Result<users::ProfileStars, Response> {
     let unavailable = || {
@@ -245,8 +245,8 @@ pub(crate) async fn profile_response(
 }
 
 pub(crate) async fn profile_repositories(
-    pool: &codeyard_db_core::DbPool,
-    repos: Vec<codeyard_db_core::models::Repository>,
+    pool: &codeyard_database::DbPool,
+    repos: Vec<codeyard_database::models::Repository>,
 ) -> anyhow::Result<Vec<users::Repository>> {
     let ids = repos.iter().map(|repo| repo.id).collect::<Vec<_>>();
     let mut counts =
@@ -261,7 +261,10 @@ pub(crate) async fn profile_repositories(
 }
 
 /// One repository row on a public page. Users and organizations list the same fields.
-fn profile_repository(repo: codeyard_db_core::models::Repository, forks: i32) -> users::Repository {
+fn profile_repository(
+    repo: codeyard_database::models::Repository,
+    forks: i32,
+) -> users::Repository {
     users::Repository {
         name: repo.name,
         description: repo.description.unwrap_or_default(),

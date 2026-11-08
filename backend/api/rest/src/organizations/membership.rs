@@ -5,8 +5,8 @@ use crate::organizations::organization::unit;
 use crate::organizations::organization::Fields;
 use axum::response::Response;
 use codeyard_api_http::context::PageContext;
-use codeyard_db_core::models::OrgRole;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
+use codeyard_database::models::OrgRole;
+use codeyard_database::queries::organizations::OrganizationOutcome;
 use codeyard_notifications::create::organization_invitation;
 use codeyard_webui::pages::orgs as view;
 use std::collections::HashMap;
@@ -39,7 +39,7 @@ pub(super) async fn project(
 
 pub(super) async fn project_invitations(
     ctx: &PageContext,
-    invitations: Vec<codeyard_db_core::models::OrgInvitation>,
+    invitations: Vec<codeyard_database::models::OrgInvitation>,
 ) -> Result<Vec<view::PendingInvitation>, Response> {
     // An email-addressed invitation is accepted by whoever currently owns the address, so
     // the account resolved when it was sent is not its recipient.
@@ -247,7 +247,7 @@ pub(super) async fn apply(
                 .await
                 {
                     Ok(OrganizationOutcome::Applied(role))
-                        if codeyard_db_core::queries::organizations::administers(role) =>
+                        if codeyard_database::queries::organizations::administers(role) =>
                     {
                         Ok(OrganizationOutcome::Missing)
                     }

@@ -16,11 +16,11 @@ use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
-use codeyard_model::urls::repo_url;
-use codeyard_repos_core::api_shared::github::contents::store_error;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_git_storage::api_shared::github::contents::store_error;
+use codeyard_git_storage::repositories::store::repo_store;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
+use codeyard_types::urls::repo_url;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -36,8 +36,8 @@ pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     ]
 }
 
-fn error(error: codeyard_model::dependency_graph::GraphError) -> Error {
-    use codeyard_model::dependency_graph::GraphError;
+fn error(error: codeyard_types::dependency_graph::GraphError) -> Error {
+    use codeyard_types::dependency_graph::GraphError;
     match error {
         GraphError::Denied => Error::new(StatusCode::FORBIDDEN, GraphError::Denied.to_string()),
         GraphError::Invalid => Error::validation("Snapshot", "snapshot", "invalid"),
@@ -54,7 +54,7 @@ async fn readable(
     owner: &str,
     name: &str,
 ) -> Result<(
-    codeyard_db_core::models::Repository,
+    codeyard_database::models::Repository,
     codeyard_db_security::dependency_graph::Reader,
 )> {
     let (repo, authentication) = repository(state, headers, owner, name, false).await?;
@@ -69,7 +69,7 @@ async fn submit(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path((owner, name)): Path<(String, String)>,
-    body: std::result::Result<Json<codeyard_model::dependency_graph::Snapshot>, JsonRejection>,
+    body: std::result::Result<Json<codeyard_types::dependency_graph::Snapshot>, JsonRejection>,
 ) -> Result<Response> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, true).await?;
     let actor = actor.ok_or_else(codeyard_identity::github_auth::required)?;
@@ -159,7 +159,7 @@ async fn compare(
         .await
         .map_err(store_error)?;
     }
-    let changes = codeyard_model::dependency_graph::diff(&base, &head, query.name.as_deref());
+    let changes = codeyard_types::dependency_graph::diff(&base, &head, query.name.as_deref());
     let page = Pagination {
         page: query.page,
         per_page: query.per_page,
@@ -179,7 +179,7 @@ async fn compare(
         Vec::new()
     };
     for change in &mut changes {
-        let package = codeyard_model::repositories::Package {
+        let package = codeyard_types::repositories::Package {
             manifest: change["manifest"].as_str().unwrap_or_default().into(),
             ecosystem: change["ecosystem"].as_str().unwrap_or_default().into(),
             name: change["name"].as_str().unwrap_or_default().into(),
@@ -198,7 +198,7 @@ async fn compare(
                 "advisory_summary":a.summary,
                 "advisory_url":format!("https://osv.dev/vulnerability/{}",codeyard_types::paths::encode_component(&a.id)),
             })).collect::<Vec<_>>();
-        if let Some(ecosystem) = codeyard_model::vulnerabilities::ecosystem(&package.ecosystem) {
+        if let Some(ecosystem) = codeyard_types::vulnerabilities::ecosystem(&package.ecosystem) {
             for advisory in &local {
                 if !advisory["withdrawn_at"].is_null() {
                     continue;
@@ -208,21 +208,21 @@ async fn compare(
                     .into_iter()
                     .flatten()
                     .any(|entry| {
-                        codeyard_model::vulnerabilities::ecosystem(
+                        codeyard_types::vulnerabilities::ecosystem(
                             entry["package"]["ecosystem"].as_str().unwrap_or(""),
                         ) == Some(ecosystem)
-                            && codeyard_model::vulnerabilities::name(
+                            && codeyard_types::vulnerabilities::name(
                                 ecosystem,
                                 entry["package"]["name"].as_str().unwrap_or(""),
-                            ) == codeyard_model::vulnerabilities::name(ecosystem, &package.name)
-                            && codeyard_model::vulnerabilities::in_range(
+                            ) == codeyard_types::vulnerabilities::name(ecosystem, &package.name)
+                            && codeyard_types::vulnerabilities::in_range(
                                 ecosystem,
                                 &package.version,
                                 entry["vulnerable_version_range"].as_str().unwrap_or(""),
                             )
                     });
                 if affected {
-                    vulnerabilities.push(json!({"severity":advisory["severity"],"advisory_ghsa_id":advisory["ghsa_id"],"advisory_summary":advisory["summary"],"advisory_url":codeyard_model::urls::api_url(&format!("/advisories/{}", advisory["ghsa_id"].as_str().unwrap_or("")))}));
+                    vulnerabilities.push(json!({"severity":advisory["severity"],"advisory_ghsa_id":advisory["ghsa_id"],"advisory_summary":advisory["summary"],"advisory_url":codeyard_types::urls::api_url(&format!("/advisories/{}", advisory["ghsa_id"].as_str().unwrap_or("")))}));
                 }
             }
         }
@@ -237,7 +237,7 @@ async fn compare(
 async fn current(
     state: &AppState,
     reader: &codeyard_db_security::dependency_graph::Reader,
-    repo: &codeyard_db_core::models::Repository,
+    repo: &codeyard_database::models::Repository,
     owner: &str,
 ) -> Result<Value> {
     codeyard_db_security::dependency_graph::check_read(&state.pool, reader, repo.id)
@@ -251,7 +251,7 @@ async fn current(
     // One commit for both the saved snapshots and the live inventory, so a branch that moves
     // mid-request cannot mix versions.
     let Some(sha) = refs.get(&reference).cloned() else {
-        let value = codeyard_model::dependency_graph::sbom(&format!("{owner}/{}", repo.name), &[]);
+        let value = codeyard_types::dependency_graph::sbom(&format!("{owner}/{}", repo.name), &[]);
         codeyard_db_security::dependency_graph::check_read(&state.pool, reader, repo.id)
             .await
             .map_err(error)?;
@@ -279,7 +279,7 @@ async fn current(
     .await
     .map_err(store_error)?;
     let value =
-        codeyard_model::dependency_graph::sbom(&format!("{owner}/{}", repo.name), &snapshots);
+        codeyard_types::dependency_graph::sbom(&format!("{owner}/{}", repo.name), &snapshots);
     codeyard_db_security::dependency_graph::check_read(&state.pool, reader, repo.id)
         .await
         .map_err(error)?;

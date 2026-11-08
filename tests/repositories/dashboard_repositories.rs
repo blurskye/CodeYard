@@ -7,7 +7,7 @@ use crate::support::http_client as pulls;
 
 use axum::http::StatusCode;
 
-use codeyard_repos_core::repositories::lifecycle;
+use codeyard_git_storage::repositories::lifecycle;
 use codeyard_webui::app::Page;
 use codeyard_webui::pages::discovery as view;
 use database::Database;
@@ -15,13 +15,13 @@ use pulls::Client;
 use std::path::Path;
 
 async fn provision(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     root: &Path,
     owner: i64,
     name: &str,
     description: Option<&str>,
     private: bool,
-) -> codeyard_db_core::models::Repository {
+) -> codeyard_database::models::Repository {
     lifecycle::provision(
         (pool, None),
         root,
@@ -74,7 +74,7 @@ async fn contract(pg: bool) {
         f.pool(),
         alice_id,
         shared.id,
-        codeyard_db_core::models::AccessLevel::Write,
+        codeyard_database::models::AccessLevel::Write,
     )
     .await
     .unwrap();
@@ -230,7 +230,7 @@ async fn filter_contract(pg: bool) {
         f.pool(),
         alice_id,
         shared.id,
-        codeyard_db_core::models::AccessLevel::Write,
+        codeyard_database::models::AccessLevel::Write,
     )
     .await
     .unwrap();

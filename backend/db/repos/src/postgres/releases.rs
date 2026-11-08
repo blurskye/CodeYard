@@ -3,11 +3,11 @@ use crate::releases::ReleaseChanges;
 use crate::releases::ReleaseFields;
 use crate::releases::ReleaseRefusal;
 use anyhow::Result;
-use codeyard_db_core::models::File;
-use codeyard_db_core::models::Release;
-use codeyard_db_core::models::ReleaseAsset;
-use codeyard_db_core::models::ReleaseRow;
-use codeyard_db_core::pool::PgPool;
+use codeyard_database::models::File;
+use codeyard_database::models::Release;
+use codeyard_database::models::ReleaseAsset;
+use codeyard_database::models::ReleaseRow;
+use codeyard_database::pool::PgPool;
 use sqlx::Postgres;
 use sqlx::Transaction;
 use uuid::Uuid;
@@ -304,7 +304,7 @@ pub async fn delete_release(
 pub async fn add_release_asset(
     pool: &PgPool,
     actor_id: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     repo_id: i64,
     release_id: i64,
     asset: &NewReleaseAsset<'_>,
@@ -312,7 +312,7 @@ pub async fn add_release_asset(
 ) -> Result<ReleaseAsset> {
     let mut tx = begin_write(pool, actor_id, repo_id).await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::postgres::users::transitions::credential_live(
+        codeyard_database::queries::postgres::users::transitions::credential_live(
             &mut tx, actor_id, credential, true
         )
         .await?,
@@ -435,7 +435,7 @@ async fn delete_asset_file(tx: &mut Transaction<'_, Postgres>, id: Uuid) -> Resu
         if used {
             return Ok(None);
         }
-        codeyard_db_core::queries::postgres::files::queue_deletion(tx, file).await?;
+        codeyard_database::queries::postgres::files::queue_deletion(tx, file).await?;
         sqlx::query("DELETE FROM files WHERE id=$1")
             .bind(id)
             .execute(&mut **tx)
@@ -586,8 +586,8 @@ pub async fn download_asset(
     name: Option<&str>,
     asset: Option<i64>,
 ) -> Result<Option<ReleaseAsset>> {
-    let readable = codeyard_db_core::queries::postgres::repositories::access::readable_condition();
-    let access = codeyard_db_core::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL;
+    let readable = codeyard_database::queries::postgres::repositories::access::readable_condition();
+    let access = codeyard_database::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL;
     Ok(sqlx::query_as(&format!("SELECT a.* FROM release_assets a JOIN releases rel ON rel.id=a.release_id JOIN repositories r ON r.id=rel.repo_id LEFT JOIN users u ON u.id=$1 WHERE r.id=$2 AND {readable} AND (NOT rel.is_draft OR ({access})>=3 OR (r.owner_kind='user' AND u.is_admin)) AND ($3::text IS NULL OR rel.tag_name=$3) AND ($4::text IS NULL OR a.name=$4) AND ($5::bigint IS NULL OR a.id=$5)"))
         .bind(viewer).bind(repo).bind(tag).bind(name).bind(asset).fetch_optional(pool).await?)
 }

@@ -7,8 +7,8 @@ use codeyard_ci::config::CiExecutionMode;
 use codeyard_ci::config::CiPipelineKind;
 use codeyard_ci_engine::queue::RunQueue;
 use codeyard_ci_engine::workers::CiWorkers;
+use codeyard_git_storage::receive_ci::CiRunRequest;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
-use codeyard_repos_core::receive_ci::CiRunRequest;
 use codeyard_storage::ObjectStore;
 use codeyard_support::secrets::SecretEncryptor;
 use std::{collections::BTreeSet, sync::Arc, time::Duration};
@@ -125,7 +125,7 @@ async fn contract(pg: bool) {
             f.pool(),
             Some(&encryptor),
             actor,
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+            &codeyard_database::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(f.pool(), actor).await,
             ),
             org.id,
@@ -168,7 +168,7 @@ async fn contract(pg: bool) {
         } else {
             "native-run"
         };
-        let repo = codeyard_repos_core::repositories::lifecycle::provision(
+        let repo = codeyard_git_storage::repositories::lifecycle::provision(
             (f.pool(), None),
             root.path(),
             codeyard_db_repos::repositories::creation::RepositoryCreationOwner {
@@ -192,7 +192,7 @@ async fn contract(pg: bool) {
             "DEPLOY_TOKEN",
             "repository-secret-value",
             Some(actor),
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+            &codeyard_database::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(f.pool(), actor).await,
             ),
         )
@@ -201,7 +201,7 @@ async fn contract(pg: bool) {
         codeyard_db_actions::variables::save(
             f.pool(),
             actor,
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+            &codeyard_database::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(f.pool(), actor).await,
             ),
             repo.id,

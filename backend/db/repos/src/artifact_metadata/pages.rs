@@ -1,7 +1,7 @@
 use crate::artifact_metadata::Record;
 use crate::artifact_metadata::Refusal;
 use anyhow::Result;
-use codeyard_db_core::DbPool;
+use codeyard_database::DbPool;
 
 #[derive(sqlx::FromRow)]
 pub struct PageRecord {
@@ -22,7 +22,7 @@ pub async fn list(
         (0..i64::MAX).contains(&after)
             && matches!(kind, "deployment" | "storage")
             && digest.starts_with("sha256:")
-            && codeyard_db_core::queries::attestations::valid_digest(digest),
+            && codeyard_database::queries::attestations::valid_digest(digest),
         Refusal::Invalid
     );
     match pool {

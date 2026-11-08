@@ -5,9 +5,9 @@ use crate::deployments::Deployment;
 use crate::environments::Reviewer;
 use anyhow::ensure;
 use anyhow::Result;
-use codeyard_db_core::models::CiRun;
-use codeyard_db_core::pool::PgPool;
-use codeyard_db_core::queries::action_settings::Refusal;
+use codeyard_database::models::CiRun;
+use codeyard_database::pool::PgPool;
+use codeyard_database::queries::action_settings::Refusal;
 use sqlx::PgConnection;
 
 async fn can_review(connection: &mut PgConnection, pending: &Pending, actor: i64) -> Result<bool> {
@@ -64,7 +64,7 @@ pub async fn pending(
 
 pub async fn review(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo: i64,
     run: i64,
     input: &Input,
@@ -75,7 +75,7 @@ pub async fn review(
     let mut tx = pool.begin().await?;
     ensure!(
         codeyard_db_repos::postgres::discussions::lock_read_authority(&mut tx, actor, repo).await?
-            && codeyard_db_core::queries::postgres::credentials::repository(
+            && codeyard_database::queries::postgres::credentials::repository(
                 &mut tx,
                 &credential,
                 repo,

@@ -1,7 +1,7 @@
 use anyhow::Result;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_db_core::DbPool;
+use codeyard_database::native_operation;
+use codeyard_database::queries::organizations::OrganizationOutcome;
+use codeyard_database::DbPool;
 use serde_json::Value;
 use std::collections::BTreeMap;
 
@@ -76,13 +76,13 @@ native_operation!(crate::postgres::organizations::external_properties::installat
     fn installations(pool: &DbPool, actor: i64, org: i64) -> Result<OrganizationOutcome<Vec<Installation>>>);
 native_operation!(crate::postgres::organizations::external_properties::register,
     crate::sqlite::organizations::external_properties::register,
-    fn register(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, org: i64, name: &str, installation: Option<i64>) -> Result<OrganizationOutcome<Installation>>);
+    fn register(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, org: i64, name: &str, installation: Option<i64>) -> Result<OrganizationOutcome<Installation>>);
 native_operation!(crate::postgres::organizations::external_properties::definitions,
     crate::sqlite::organizations::external_properties::definitions,
     fn definitions(pool: &DbPool, actor: i64, org: i64) -> Result<OrganizationOutcome<Vec<String>>>);
 native_operation!(crate::postgres::organizations::external_properties::set_values,
     crate::sqlite::organizations::external_properties::set_values,
-    fn set_values(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, org: i64, values: &[RepositoryValue]) -> Result<OrganizationOutcome<()>>);
+    fn set_values(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, org: i64, values: &[RepositoryValue]) -> Result<OrganizationOutcome<()>>);
 native_operation!(crate::postgres::organizations::external_properties::delete_values,
     crate::sqlite::organizations::external_properties::delete_values,
-    fn delete_values(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, org: i64, property: &str) -> Result<OrganizationOutcome<()>>);
+    fn delete_values(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, org: i64, property: &str) -> Result<OrganizationOutcome<()>>);

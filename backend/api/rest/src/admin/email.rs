@@ -17,9 +17,9 @@ use codeyard_api_http::shared::user::responses::field;
 use codeyard_api_http::shared::user::responses::Fields;
 use codeyard_app::app::AppState;
 use codeyard_db_identity::email::NewEmailSettings;
-use codeyard_model::mail_config::Security;
-use codeyard_model::mail_config::SmtpConfig;
-use codeyard_model::mail_config::Source;
+use codeyard_types::mail_config::Security;
+use codeyard_types::mail_config::SmtpConfig;
+use codeyard_types::mail_config::Source;
 use codeyard_webui::app::Page;
 use codeyard_webui::pages::admin::email as view;
 use std::sync::Arc;
@@ -40,7 +40,7 @@ fn parse_fields(fields: &Fields) -> Result<SmtpConfig, String> {
     };
     let config = SmtpConfig {
         host: text("host"),
-        port: codeyard_model::mail_config::parse_port(field(fields, "port"), security)?,
+        port: codeyard_types::mail_config::parse_port(field(fields, "port"), security)?,
         security,
         username: text("username"),
         password: None,
@@ -82,7 +82,7 @@ async fn save(
                 )
             })?;
         if saved.is_none() {
-            if let Ok(Some(env)) = codeyard_model::mail_config::from_env() {
+            if let Ok(Some(env)) = codeyard_types::mail_config::from_env() {
                 password = env.password.unwrap_or_default();
             }
         }
@@ -138,7 +138,7 @@ async fn save(
 
 /// The settings to show. Fields the admin just submitted replace the stored ones.
 async fn current(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     submitted: Option<&Fields>,
 ) -> Result<view::Settings, String> {
     let mut settings = match codeyard_db_identity::mail_config::describe(pool).await? {
@@ -204,7 +204,7 @@ async fn render(
         csrf_token: ctx.csrf_token.clone(),
         settings,
         can_store_password: ctx.state.secret_encryptor.is_some(),
-        public_url: codeyard_model::http_config::public_origin(),
+        public_url: codeyard_types::http_config::public_origin(),
         message: problem.or(message),
         is_error,
     };

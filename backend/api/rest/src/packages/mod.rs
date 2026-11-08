@@ -113,7 +113,7 @@ impl IntoResponse for Error {
         if self.0 == StatusCode::UNAUTHORIZED {
             if let Ok(challenge) = format!(
                 "Bearer realm=\"{}/v2/token\",service=\"codeyard\"",
-                codeyard_model::http_config::link_origin()
+                codeyard_types::http_config::link_origin()
             )
             .parse()
             {
@@ -200,7 +200,7 @@ async fn package(
     }
     if create {
         let auth = writer(auth)?;
-        let repo = if auth.user.username == codeyard_db_core::queries::ci_tokens::BOT {
+        let repo = if auth.user.username == codeyard_database::queries::ci_tokens::BOT {
             Some(
                 codeyard_db_actions::ci_tokens::get(&state.pool, auth.token.id)
                     .await

@@ -12,8 +12,8 @@ use axum::{
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
 use codeyard_ci::config::CiConfig;
+use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_repos::editor::FileWrite;
-use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_storage::ObjectStore;
 use serde_json::{json, Value};
 use std::{collections::BTreeSet, path::Path, sync::Arc};
@@ -106,7 +106,7 @@ async fn contract(pg: bool) {
     let collaborator = f.actor("collaborator").await;
     let root = tempfile::tempdir().unwrap();
     let repos_root = root.path().join("repos");
-    let repo = codeyard_repos_core::repositories::lifecycle::provision(
+    let repo = codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         &repos_root,
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),

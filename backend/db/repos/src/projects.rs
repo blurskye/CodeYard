@@ -1,10 +1,10 @@
 use anyhow::Result;
 use chrono::DateTime;
 use chrono::Utc;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::queries::users::accounts::AccountCredential;
-use codeyard_db_core::DbPool;
-use codeyard_model::project_query::Refusal;
+use codeyard_database::native_operation;
+use codeyard_database::queries::users::accounts::AccountCredential;
+use codeyard_database::DbPool;
+use codeyard_types::project_query::Refusal;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::json;
@@ -140,9 +140,9 @@ impl ListFilter {
         if let Some(repo) = self.repo {
             let repo = sql.bind(repo.to_string());
             let readable = if postgres {
-                codeyard_db_core::queries::postgres::repositories::access::readable_condition()
+                codeyard_database::queries::postgres::repositories::access::readable_condition()
             } else {
-                codeyard_db_core::queries::sqlite::repositories::access::readable_condition()
+                codeyard_database::queries::sqlite::repositories::access::readable_condition()
             };
             let viewer = sql.placeholder(1);
             conditions.push(format!("EXISTS(SELECT 1 FROM project_repositories pr JOIN repositories r ON r.id=pr.repo_id LEFT JOIN users u ON u.id={viewer} WHERE pr.project_id=p.id AND pr.repo_id=CAST({repo} AS BIGINT) AND ({readable}))"));
@@ -151,9 +151,9 @@ impl ListFilter {
             let id = sql.bind(id.to_string());
             let column = if issue { "issue_id" } else { "pull_request_id" };
             let readable = if postgres {
-                codeyard_db_core::queries::postgres::repositories::access::readable_condition()
+                codeyard_database::queries::postgres::repositories::access::readable_condition()
             } else {
-                codeyard_db_core::queries::sqlite::repositories::access::readable_condition()
+                codeyard_database::queries::sqlite::repositories::access::readable_condition()
             };
             let viewer = sql.placeholder(1);
             conditions.push(format!("EXISTS(SELECT 1 FROM project_items i JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id={viewer} WHERE i.project_id=p.id AND i.{column}=CAST({id} AS BIGINT) AND ({readable}))"));
@@ -497,7 +497,7 @@ impl NewView {
             valid_name(&self.name) && matches!(self.layout.as_str(), "table" | "board"),
             Refusal::Invalid
         );
-        codeyard_model::project_query::query_terms(self.filter.as_deref().unwrap_or(""))?;
+        codeyard_types::project_query::query_terms(self.filter.as_deref().unwrap_or(""))?;
         anyhow::ensure!(
             self.group_by.len() <= 1
                 && self.vertical_group_by.len() <= 1

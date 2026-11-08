@@ -6,11 +6,11 @@ use crate::url;
 use crate::RequestContext;
 use crate::Result;
 use async_graphql::Error;
-use codeyard_model::node_id;
+use codeyard_types::node_id;
 use serde_json::json;
 use serde_json::Value;
 
-pub(super) fn object(repo: &codeyard_db_core::models::Repository) -> Value {
+pub(super) fn object(repo: &codeyard_database::models::Repository) -> Value {
     json!({"__typename":"Repository","id":node_id::encode("R",repo.id),"databaseId":repo.id,
         "name":repo.name,"description":repo.description,"isPrivate":repo.is_private,"isFork":repo.is_fork,
         "isArchived":repo.is_archived,
@@ -23,7 +23,7 @@ pub(super) fn object(repo: &codeyard_db_core::models::Repository) -> Value {
 }
 
 pub(super) async fn foreign_object(
-    source: &codeyard_db_core::cells::repositories::Source,
+    source: &codeyard_database::cells::repositories::Source,
     request: &RequestContext,
 ) -> Result<Value> {
     let repo = &source.repository;
@@ -34,7 +34,7 @@ pub(super) async fn foreign_object(
     value["url"] = json!(url(&codeyard_types::paths::repository_path(
         owner, &repo.name
     )));
-    let ssh = codeyard_model::http_config::ssh_clone_base();
+    let ssh = codeyard_types::http_config::ssh_clone_base();
     value["sshUrl"] = json!(if ssh.trim().is_empty() {
         String::new()
     } else {
@@ -42,10 +42,10 @@ pub(super) async fn foreign_object(
     });
     value["forkCount"] = json!(repo.forks_count);
     value["owner"] = match &source.owner {
-        codeyard_db_core::cells::repositories::Owner::User(user) => {
+        codeyard_database::cells::repositories::Owner::User(user) => {
             crate::user::object(user, request.auth.user.id)
         }
-        codeyard_db_core::cells::repositories::Owner::Organization(org) => {
+        codeyard_database::cells::repositories::Owner::Organization(org) => {
             crate::user::organization(org)
         }
     };
@@ -96,7 +96,7 @@ pub(super) async fn shared_read_scope(
 pub(super) async fn by_id(
     id: i64,
     request: &RequestContext,
-) -> Result<codeyard_db_core::models::Repository> {
+) -> Result<codeyard_database::models::Repository> {
     let repo =
         codeyard_db_repos::repositories::records::get_repository_by_id(&request.state.pool, id)
             .await
@@ -106,9 +106,9 @@ pub(super) async fn by_id(
 }
 
 async fn check(
-    repo: codeyard_db_core::models::Repository,
+    repo: codeyard_database::models::Repository,
     request: &RequestContext,
-) -> Result<codeyard_db_core::models::Repository> {
+) -> Result<codeyard_database::models::Repository> {
     request.authorize(repo.id, "metadata", false).await?;
     if !codeyard_identity::repository_access::can_read(
         &request.state.pool,
@@ -124,7 +124,7 @@ async fn check(
 }
 
 pub(super) async fn owner(
-    repo: &codeyard_db_core::models::Repository,
+    repo: &codeyard_database::models::Repository,
     request: &RequestContext,
 ) -> Result<String> {
     codeyard_db_repos::repositories::records::repository_owner_name(&request.state.pool, repo.id)
@@ -137,7 +137,7 @@ pub(super) async fn query(ctx: &Arguments, request: &RequestContext) -> Result<V
     let (owner, name) = (arg(ctx, "owner")?, arg(ctx, "name")?);
     // gh matches GitHub's wording, so a hidden repository reads exactly like a missing one.
     let unresolved = || {
-        codeyard_model::graphql_error::error(
+        codeyard_types::graphql_error::error(
             format!("Could not resolve to a Repository with the name '{owner}/{name}'."),
             "NOT_FOUND",
         )
@@ -157,13 +157,13 @@ pub(super) async fn query(ctx: &Arguments, request: &RequestContext) -> Result<V
     }
 }
 
-pub(super) fn label(label: &codeyard_db_core::models::Label) -> Value {
+pub(super) fn label(label: &codeyard_database::models::Label) -> Value {
     json!({"__typename":"Label","_repo":label.repo_id,"id":node_id::scoped("L",label.repo_id,label.id),"name":label.name,"color":label.color.trim_start_matches('#'),"description":label.description,"createdAt":label.created_at,"updatedAt":label.updated_at.unwrap_or(label.created_at),"isDefault":false})
 }
 
 pub(super) fn label_connection(
     ctx: &Arguments,
-    mut labels: Vec<codeyard_db_core::models::Label>,
+    mut labels: Vec<codeyard_database::models::Label>,
     scope: &str,
 ) -> Result<Value> {
     let order = ctx
@@ -279,7 +279,7 @@ pub(super) async fn resolve(
         }
         "nameWithOwner" | "url" | "sshUrl" => {
             let name = format!("{}/{}", owner(&repo, request).await?, repo.name);
-            let ssh = codeyard_model::http_config::ssh_clone_base();
+            let ssh = codeyard_types::http_config::ssh_clone_base();
             Ok(json!(match field {
                 "nameWithOwner" => name,
                 "url" => url(&format!("/{name}")),
@@ -341,11 +341,11 @@ pub(super) async fn resolve(
                 json!(level.can_admin())
             } else {
                 json!(match level {
-                    codeyard_db_core::models::AccessLevel::Owner
-                    | codeyard_db_core::models::AccessLevel::Admin => "ADMIN",
-                    codeyard_db_core::models::AccessLevel::Maintain => "MAINTAIN",
-                    codeyard_db_core::models::AccessLevel::Write => "WRITE",
-                    codeyard_db_core::models::AccessLevel::Triage => "TRIAGE",
+                    codeyard_database::models::AccessLevel::Owner
+                    | codeyard_database::models::AccessLevel::Admin => "ADMIN",
+                    codeyard_database::models::AccessLevel::Maintain => "MAINTAIN",
+                    codeyard_database::models::AccessLevel::Write => "WRITE",
+                    codeyard_database::models::AccessLevel::Triage => "TRIAGE",
                     _ => "READ",
                 })
             })
@@ -388,7 +388,7 @@ pub(super) async fn resolve(
         }
         "ref" | "refs" | "object" => crate::git_objects::resolve(field, ctx, &repo, request).await,
         "defaultBranchRef" => {
-            let (refs, default) = codeyard_repos_core::repositories::reads::refs_and_default(
+            let (refs, default) = codeyard_git_storage::repositories::reads::refs_and_default(
                 &repo,
                 request.state.cluster.as_ref(),
             )
@@ -436,7 +436,7 @@ pub(super) async fn resolve(
                     .await
                     .map_err(unavailable)?
                     .ok_or_else(|| {
-                        codeyard_model::graphql_error::error(
+                        codeyard_types::graphql_error::error(
                             format!(
                                 "Could not resolve to a PullRequest with the number of {number}."
                             ),

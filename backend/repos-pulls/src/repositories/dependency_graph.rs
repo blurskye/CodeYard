@@ -1,12 +1,12 @@
 //! Dependency inventories pin Git before reading either file and never execute package managers.
 use crate::services::RepositoryServices;
-use codeyard_db_core::models::Repository;
+use codeyard_database::models::Repository;
 use codeyard_db_security::dependency_graph::Reader;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
-use codeyard_model::repositories::Package;
+use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_repos::dependencies::npm::Lockfile;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_types::repositories::Package;
 use std::collections::BTreeMap;
 use std::collections::HashSet;
 
@@ -17,17 +17,17 @@ fn unavailable(_: anyhow::Error) -> RepoError {
     )
 }
 
-fn graph_error(error: codeyard_model::dependency_graph::GraphError) -> RepoError {
+fn graph_error(error: codeyard_types::dependency_graph::GraphError) -> RepoError {
     match error {
-        error @ (codeyard_model::dependency_graph::GraphError::Denied
-        | codeyard_model::dependency_graph::GraphError::Disabled
-        | codeyard_model::dependency_graph::GraphError::Limit) => invalid(error.to_string()),
+        error @ (codeyard_types::dependency_graph::GraphError::Denied
+        | codeyard_types::dependency_graph::GraphError::Disabled
+        | codeyard_types::dependency_graph::GraphError::Limit) => invalid(error.to_string()),
         error => unavailable(error.into()),
     }
 }
 
 async fn file(
-    store: &codeyard_repos_core::repositories::store::RepoStore,
+    store: &codeyard_git_storage::repositories::store::RepoStore,
     sha: &str,
     name: &str,
 ) -> Result<Option<Vec<u8>>, RepoError> {
@@ -75,7 +75,7 @@ fn invalid(message: impl Into<String>) -> RepoError {
 }
 
 async fn npm_packages(
-    store: &codeyard_repos_core::repositories::store::RepoStore,
+    store: &codeyard_git_storage::repositories::store::RepoStore,
     sha: &str,
     directory: &str,
     path: &str,
@@ -116,7 +116,7 @@ const NATIVE_DETECTOR: &str = "Codeyard";
 const NATIVE_CORRELATOR: &str = "lockfiles";
 
 /// Whether a snapshot carries the native scan's identity, which submissions may not use.
-pub fn is_native(snapshot: &codeyard_model::dependency_graph::Snapshot) -> bool {
+pub fn is_native(snapshot: &codeyard_types::dependency_graph::Snapshot) -> bool {
     snapshot.detector.name == NATIVE_DETECTOR && snapshot.job.correlator == NATIVE_CORRELATOR
 }
 
@@ -306,7 +306,7 @@ pub async fn inventory(
                             continue;
                         };
                         let (ecosystem, name, version) =
-                            codeyard_model::dependency_inventory::package_parts(purl).ok_or_else(
+                            codeyard_types::dependency_inventory::package_parts(purl).ok_or_else(
                                 || unavailable(anyhow::anyhow!("Invalid stored package URL")),
                             )?;
                         let package = Package {
@@ -346,13 +346,13 @@ pub fn snapshot(
     sha: String,
     reference: String,
     packages: Vec<Package>,
-) -> codeyard_model::dependency_graph::Snapshot {
-    use codeyard_model::dependency_graph::Dependency;
-    use codeyard_model::dependency_graph::Detector;
-    use codeyard_model::dependency_graph::Job;
-    use codeyard_model::dependency_graph::Manifest;
-    use codeyard_model::dependency_graph::ManifestFile;
-    use codeyard_model::dependency_graph::Snapshot;
+) -> codeyard_types::dependency_graph::Snapshot {
+    use codeyard_types::dependency_graph::Dependency;
+    use codeyard_types::dependency_graph::Detector;
+    use codeyard_types::dependency_graph::Job;
+    use codeyard_types::dependency_graph::Manifest;
+    use codeyard_types::dependency_graph::ManifestFile;
+    use codeyard_types::dependency_graph::Snapshot;
     let mut manifests: BTreeMap<String, Manifest> = BTreeMap::new();
     for package in packages {
         let manifest = manifests
@@ -403,7 +403,7 @@ pub async fn pinned_snapshots(
     reader: &Reader,
     repo: &Repository,
     reference: &str,
-) -> Result<Vec<codeyard_model::dependency_graph::Snapshot>, RepoError> {
+) -> Result<Vec<codeyard_types::dependency_graph::Snapshot>, RepoError> {
     let sha = match repo_store(repo, state.cluster())
         .commit_from_primary(reference)
         .await
@@ -435,7 +435,7 @@ pub async fn append_native_snapshot(
     repo: &Repository,
     reference: &str,
     pinned: Option<&str>,
-    snapshots: &mut Vec<codeyard_model::dependency_graph::Snapshot>,
+    snapshots: &mut Vec<codeyard_types::dependency_graph::Snapshot>,
 ) -> Result<(), RepoError> {
     let scanned = match pinned {
         Some(sha) => native_inventory_at(state, reader, repo, reference, sha).await,

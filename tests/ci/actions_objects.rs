@@ -79,7 +79,7 @@ pub(super) async fn checked(
 
 pub(super) async fn artifact(
     router: &Router,
-    run: &codeyard_db_core::models::CiRun,
+    run: &codeyard_database::models::CiRun,
     token: &str,
     name: &str,
     bytes: &[u8],
@@ -139,7 +139,7 @@ pub(super) async fn pat(f: &Database, router: &Router, actor: i64, scope: &str) 
 /// reports their progress.
 pub(super) async fn job_credentials(
     f: &Database,
-    run: &codeyard_db_core::models::CiRun,
+    run: &codeyard_database::models::CiRun,
     jobs: &[&str],
 ) {
     let jobs: String = jobs
@@ -167,7 +167,7 @@ async fn contract(pg: bool) {
     let mut repos = Vec::new();
     for name in ["project", "separate"] {
         repos.push(
-            codeyard_repos_core::repositories::lifecycle::provision(
+            codeyard_git_storage::repositories::lifecycle::provision(
                 (f.pool(), None),
                 root.path(),
                 codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
@@ -244,7 +244,7 @@ async fn contract(pg: bool) {
     assert_eq!(body["workflow_run"]["id"], main.id);
     assert_eq!(
         body["node_id"],
-        codeyard_model::node_id::scoped("ART", main.repo_id, first).unwrap()
+        codeyard_types::node_id::scoped("ART", main.repo_id, first).unwrap()
     );
     assert_eq!(body["size_in_bytes"], 22);
     assert_eq!(body["expired"], false);

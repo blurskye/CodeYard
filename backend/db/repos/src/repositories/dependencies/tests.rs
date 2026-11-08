@@ -4,8 +4,8 @@ use crate::repositories::dependencies::receipts;
 use crate::repositories::dependencies::AlertState;
 use crate::repositories::dependencies::Update;
 
-fn row(version: &str, state: &str) -> codeyard_db_core::queries::dependabot_alerts::Alert {
-    codeyard_db_core::queries::dependabot_alerts::Alert {
+fn row(version: &str, state: &str) -> codeyard_database::queries::dependabot_alerts::Alert {
+    codeyard_database::queries::dependabot_alerts::Alert {
         repo_id: 1, number: 1, ghsa_id: "GHSA-2345-6789-cfgh".into(),
         manifest: "package-lock.json".into(), ecosystem: "npm".into(), package: "foo".into(),
         version: version.into(), scope: "runtime".into(), state: state.into(),

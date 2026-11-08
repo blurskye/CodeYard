@@ -13,8 +13,8 @@ artifacts=$(mktemp)
 list=$(mktemp)
 status=0
 cargo test --locked -p codeyard -p codeyard-cache -p codeyard-app -p codeyard-api-github \
-    -p codeyard-api-http -p codeyard-db-core -p codeyard-db-identity -p codeyard-db-repos \
-    -p codeyard-identity -p codeyard-cells-router -p codeyard-repos-core -p codeyard-ssh \
+    -p codeyard-api-http -p codeyard-database -p codeyard-db-identity -p codeyard-db-repos \
+    -p codeyard-identity -p codeyard-router -p codeyard-git-storage -p codeyard-ssh \
     --lib --test store --test database --test valkey --test repositories --test cluster \
     --no-run --message-format=json >"$artifacts" || exit 1
 # Unit tests of the receive path run Git hooks through the integrated binary.

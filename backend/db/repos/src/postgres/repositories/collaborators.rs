@@ -5,15 +5,15 @@ use crate::repositories::collaborators::Invitation;
 use crate::repositories::collaborators::InvitationSummary;
 use crate::repositories::collaborators::Refusal;
 use anyhow::Result;
-use codeyard_db_core::models::AccessLevel;
-use codeyard_db_core::models::User;
-use codeyard_db_core::pool::PgPool;
+use codeyard_database::models::AccessLevel;
+use codeyard_database::models::User;
+use codeyard_database::pool::PgPool;
 use sqlx::Postgres;
 use sqlx::Transaction;
 
 async fn admin(tx: &mut Transaction<'_, Postgres>, actor: i64, repo: i64) -> Result<()> {
     anyhow::ensure!(
-        codeyard_db_core::queries::postgres::discussions::lock_repository_mutation_authority(
+        codeyard_database::queries::postgres::discussions::lock_repository_mutation_authority(
             tx, actor, repo
         )
         .await?,
@@ -24,7 +24,7 @@ async fn admin(tx: &mut Transaction<'_, Postgres>, actor: i64, repo: i64) -> Res
 
 pub async fn add(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     username: &str,
     permission: AccessLevel,
@@ -34,7 +34,7 @@ pub async fn add(
     let mut tx = pool.begin().await?;
     admin(&mut tx, actor, repo_id).await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::postgres::credentials::writes(
+        codeyard_database::queries::postgres::credentials::writes(
             &mut tx,
             &authority,
             Some(repo_id),
@@ -47,7 +47,7 @@ pub async fn add(
     anyhow::ensure!((1..=5).contains(&(permission as i16)), Refusal::Denied);
     let user=sqlx::query_as::<_,User>("SELECT * FROM users WHERE username=$1 AND NOT is_banned AND NOT must_change_password FOR SHARE").bind(username).fetch_optional(&mut *tx).await?.ok_or(Refusal::NotFound)?;
     anyhow::ensure!(
-        !codeyard_db_core::queries::postgres::users::blocks::repository_interaction_blocked(
+        !codeyard_database::queries::postgres::users::blocks::repository_interaction_blocked(
             &mut tx, user.id, repo_id
         )
         .await?,
@@ -120,7 +120,7 @@ pub async fn list(
 }
 
 fn administration(user: &str) -> String {
-    let access = codeyard_db_core::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL;
+    let access = codeyard_database::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL;
     format!("EXISTS(SELECT 1 FROM users u WHERE u.id={user} AND NOT u.is_banned AND NOT u.must_change_password
         AND NOT r.is_gist AND NOT r.is_archived
         AND ((r.owner_kind='user' AND u.is_admin) OR ({access})>=5)
@@ -199,7 +199,7 @@ pub async fn update_invitation(
 
 pub async fn respond(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     id: i64,
     accept: bool,
 ) -> Result<()> {
@@ -207,7 +207,7 @@ pub async fn respond(
     let actor = authority.user_id;
     let mut tx = pool.begin().await?;
     let invitation=sqlx::query_as::<_,Invitation>("SELECT * FROM repository_invitations WHERE id=$1 AND invitee_id=$2 AND state='pending' AND created_at>NOW()-INTERVAL '7 days'").bind(id).bind(actor).fetch_optional(&mut *tx).await?.ok_or(Refusal::NotFound)?;
-    codeyard_db_core::queries::postgres::users::transitions::lock_accounts_shared(
+    codeyard_database::queries::postgres::users::transitions::lock_accounts_shared(
         &mut tx,
         &[actor, invitation.inviter_id],
     )

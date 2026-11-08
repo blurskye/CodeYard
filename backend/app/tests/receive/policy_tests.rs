@@ -6,23 +6,23 @@ mod fixture {
     use anyhow::Result;
     use base64::Engine;
     use codeyard_ci_engine::runs::CiRuns;
-    use codeyard_db_core::DbPool;
+    use codeyard_database::DbPool;
+    use codeyard_git_storage::repositories::git_sessions::receive_session;
+    use codeyard_git_storage::repositories::git_sessions::ReceiveCredential;
+    use codeyard_git_storage::repositories::store::repo_store;
+    use codeyard_git_storage::store_types::GitService;
+    use codeyard_git_storage::store_types::GitSession;
+    use codeyard_git_storage::store_types::GitStreams;
     use codeyard_repos::validation::ZERO_SHA;
-    use codeyard_repos_core::repositories::git_sessions::receive_session;
-    use codeyard_repos_core::repositories::git_sessions::ReceiveCredential;
-    use codeyard_repos_core::repositories::store::repo_store;
-    use codeyard_repos_core::store_types::GitService;
-    use codeyard_repos_core::store_types::GitSession;
-    use codeyard_repos_core::store_types::GitStreams;
     use std::path::Path;
     use std::path::PathBuf;
     use std::sync::Arc;
     use tempfile::TempDir;
     use tokio::time::timeout;
 
-    use codeyard_repos_core::repositories::git_sessions::hook_barrier::hold_next_hook;
-    use codeyard_repos_core::repositories::git_sessions::hook_barrier::Barrier;
-    use codeyard_repos_core::repositories::git_sessions::hook_barrier::BARRIERS;
+    use codeyard_git_storage::repositories::git_sessions::hook_barrier::hold_next_hook;
+    use codeyard_git_storage::repositories::git_sessions::hook_barrier::Barrier;
+    use codeyard_git_storage::repositories::git_sessions::hook_barrier::BARRIERS;
     use tokio::sync::oneshot;
 
     /// Waits until the push reaches its hook. If the push ends first, say why
@@ -57,7 +57,7 @@ mod fixture {
         _directory: TempDir,
         path: PathBuf,
         pool: DbPool,
-        native: codeyard_db_core::pool::SqlitePool,
+        native: codeyard_database::pool::SqlitePool,
         ci: Arc<CiRuns>,
         repo_id: i64,
         owner_id: i64,
@@ -86,10 +86,10 @@ mod fixture {
                         .foreign_keys(true),
                 )
                 .await
-                .map(codeyard_db_core::pool::Pool::from)
+                .map(codeyard_database::pool::Pool::from)
                 .unwrap();
             let pool = DbPool::from(native.clone());
-            codeyard_db_core::run_migrations(&pool).await.unwrap();
+            codeyard_database::run_migrations(&pool).await.unwrap();
             let owner = codeyard_db_identity::users::accounts::create_user(&pool, "owner", None)
                 .await
                 .unwrap();
@@ -145,7 +145,7 @@ mod fixture {
                     .await
                     .unwrap()
                     {
-                        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(organization) => {
+                        codeyard_database::queries::organizations::OrganizationOutcome::Applied(organization) => {
                             organization
                         }
                         outcome => panic!("organization setup failed: {outcome:?}"),
@@ -155,12 +155,12 @@ mod fixture {
                         owner.id,
                         organization.id,
                         actor.id,
-                        codeyard_db_core::models::OrgRole::Member,
+                        codeyard_database::models::OrgRole::Member,
                     )
                     .await
                     .unwrap()
                     {
-                        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(
+                        codeyard_database::queries::organizations::OrganizationOutcome::Applied(
                             _,
                         ) => {}
                         outcome => panic!("organization membership setup failed: {outcome:?}"),
@@ -183,7 +183,7 @@ mod fixture {
                     .await
                     .unwrap()
                     {
-                        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(team) => team,
+                        codeyard_database::queries::organizations::OrganizationOutcome::Applied(team) => team,
                         outcome => panic!("team setup failed: {outcome:?}"),
                     };
                     match codeyard_db_orgs::organizations::teams::add_organization_team_member(
@@ -197,7 +197,7 @@ mod fixture {
                     .await
                     .unwrap()
                     {
-                        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(
+                        codeyard_database::queries::organizations::OrganizationOutcome::Applied(
                             _,
                         ) => {}
                         outcome => panic!("team membership setup failed: {outcome:?}"),
@@ -248,7 +248,7 @@ mod fixture {
                         &pool,
                         actor.id,
                         repo.id,
-                        codeyard_db_core::models::AccessLevel::Write,
+                        codeyard_database::models::AccessLevel::Write,
                     )
                     .await
                     .unwrap();
@@ -265,7 +265,7 @@ mod fixture {
                     .await
                     .unwrap()
                     {
-                        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(_) => {}
+                        codeyard_database::queries::organizations::OrganizationOutcome::Applied(_) => {}
                         outcome => panic!("team repository setup failed: {outcome:?}"),
                     }
                 }
@@ -338,7 +338,7 @@ mod fixture {
                 let status = receive_session(
                     pool,
                     ci,
-                    codeyard_repos_core::repositories::git_sessions::ReceiveSession {
+                    codeyard_git_storage::repositories::git_sessions::ReceiveSession {
                         repo_id,
                         path: &path,
                         // Unit tests are not the application, so CI names the built binary.
@@ -605,9 +605,9 @@ mod fixture {
                 assert_eq!(
                     access,
                     if organization {
-                        codeyard_db_core::models::AccessLevel::Write
+                        codeyard_database::models::AccessLevel::Write
                     } else {
-                        codeyard_db_core::models::AccessLevel::Owner
+                        codeyard_database::models::AccessLevel::Owner
                     }
                 );
             }
@@ -887,7 +887,7 @@ mod fixture {
                     .await
                     .unwrap()
                     {
-                        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(
+                        codeyard_database::queries::organizations::OrganizationOutcome::Applied(
                             _,
                         ) => {}
                         outcome => panic!("team authority removal failed: {outcome:?}"),
@@ -1339,7 +1339,7 @@ mod fixture {
                     &fixture.pool,
                     fixture.actor_id,
                     fixture.repo_id,
-                    codeyard_db_core::models::AccessLevel::Admin,
+                    codeyard_database::models::AccessLevel::Admin,
                 )
                 .await
                 .unwrap();
@@ -1374,7 +1374,7 @@ mod fixture {
             &fixture.pool,
             fixture.actor_id,
             fixture.repo_id,
-            codeyard_db_core::models::AccessLevel::Admin,
+            codeyard_database::models::AccessLevel::Admin,
         )
         .await
         .unwrap();
@@ -1416,7 +1416,7 @@ mod fixture {
                     &fixture.pool,
                     fixture.actor_id,
                     fixture.repo_id,
-                    codeyard_db_core::models::AccessLevel::Admin,
+                    codeyard_database::models::AccessLevel::Admin,
                 )
                 .await
                 .unwrap();
@@ -1532,7 +1532,7 @@ mod fixture {
         // Only a repository that a storage node holds has replicas to tell, and a node
         // keeps its repositories at `<uuid>.git`.
         let key = codeyard_support::node_identity::NodeKey::generate();
-        let node = codeyard_db_cluster::cluster::register_own_node(
+        let node = codeyard_db_placement::cluster::register_own_node(
             &fixture.pool,
             &key.public_hex(),
             "policy-node",
@@ -1552,7 +1552,7 @@ mod fixture {
             .await
             .unwrap();
         fixture.path = held;
-        assert!(codeyard_db_cluster::cluster::place_repository(
+        assert!(codeyard_db_placement::cluster::place_repository(
             &fixture.pool,
             fixture.repo_id,
             node.id
@@ -1563,14 +1563,14 @@ mod fixture {
             fixture.pool.clone(),
             Arc::new(codeyard_ci::config::CiConfig::default()),
             Arc::new(tokio::sync::Notify::new()),
-            Some(codeyard_repos_core::context::NodeContext {
+            Some(codeyard_git_storage::context::NodeContext {
                 pool: Some(fixture.pool.clone()),
                 rpc: std::sync::Arc::new(codeyard_repos_rpc::RpcFactory),
-                iroh: codeyard_cluster_core::transport::IrohDialer::with_endpoint(
-                    codeyard_cluster_core::transport::Relay::Off,
+                iroh: codeyard_nodes::transport::IrohDialer::with_endpoint(
+                    codeyard_nodes::transport::Relay::Off,
                     key.clone(),
-                    codeyard_cluster_core::transport::bind_client(
-                        &codeyard_cluster_core::transport::Relay::Off,
+                    codeyard_nodes::transport::bind_client(
+                        &codeyard_nodes::transport::Relay::Off,
                         &key,
                     )
                     .await
@@ -1590,7 +1590,7 @@ mod fixture {
         ));
         let bare = git2::Repository::open_bare(&fixture.path).unwrap();
         let version =
-            codeyard_db_cluster::cluster::get_write_version(&fixture.pool, fixture.repo_id)
+            codeyard_db_placement::cluster::get_write_version(&fixture.pool, fixture.repo_id)
                 .await
                 .unwrap()
                 .unwrap();
@@ -1606,7 +1606,7 @@ mod fixture {
         );
         // Every transport shares this receive path, so a push is counted for replicas here.
         assert_eq!(
-            codeyard_db_cluster::cluster::get_write_version(&fixture.pool, fixture.repo_id)
+            codeyard_db_placement::cluster::get_write_version(&fixture.pool, fixture.repo_id)
                 .await
                 .unwrap(),
             Some(version + 1)
@@ -1746,7 +1746,7 @@ mod fixture {
             .blob(b"name: Nonmatching\non:\n  push:\n    paths: ['docs/**']\njobs:\n  check:\n    runs-on: ubuntu-latest\n    steps: []\n")
             .unwrap();
         let oversized = bare
-            .blob(&vec![b'#'; codeyard_git::MAX_CI_WORKFLOW_BYTES + 1])
+            .blob(&vec![b'#'; codeyard_types::ci::MAX_CI_WORKFLOW_BYTES + 1])
             .unwrap();
         let mut workflows = bare.treebuilder(None).unwrap();
         workflows
@@ -2085,7 +2085,7 @@ mod fixture {
             .unwrap()
             .unwrap()
             .unwrap_err();
-        assert!(error.is::<codeyard_repos_core::repositories::git_sessions::PostReceiveFailed>());
+        assert!(error.is::<codeyard_git_storage::repositories::git_sessions::PostReceiveFailed>());
         assert!(git2::Repository::open_bare(&fixture.path)
             .unwrap()
             .find_reference("refs/heads/spare")

@@ -1,11 +1,11 @@
 use anyhow::Result;
 use chrono::DateTime;
 use chrono::Utc;
-use codeyard_db_core::models::Team;
-use codeyard_db_core::models::User;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::Team;
+use codeyard_database::models::User;
+use codeyard_database::native_operation;
+use codeyard_database::queries::organizations::OrganizationOutcome;
+use codeyard_database::DbPool;
 
 #[derive(Clone, Debug, sqlx::FromRow)]
 pub struct OrganizationRole {
@@ -50,4 +50,4 @@ native_operation!(crate::postgres::organizations::roles::users,crate::sqlite::or
 native_operation!(crate::postgres::organizations::roles::teams,crate::sqlite::organizations::roles::teams,
     fn teams(pool:&DbPool,actor:i64,org:i64,role:i64,after:i64,window:(i64,i64))->Result<OrganizationOutcome<Vec<Team>>>);
 native_operation!(crate::postgres::organizations::roles::change,crate::sqlite::organizations::roles::change,
-    fn change(pool:&DbPool,actor:impl Into<codeyard_db_core::queries::credentials::Actor>,org:i64,target:&RoleTarget,role:Option<i64>,assigned:bool)->Result<OrganizationOutcome<()>>);
+    fn change(pool:&DbPool,actor:impl Into<codeyard_database::queries::credentials::Actor>,org:i64,target:&RoleTarget,role:Option<i64>,assigned:bool)->Result<OrganizationOutcome<()>>);

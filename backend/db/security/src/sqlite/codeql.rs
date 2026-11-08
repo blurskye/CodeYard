@@ -4,8 +4,8 @@ use crate::codeql::NewDatabase;
 use crate::codeql::UPLOAD_QUOTA;
 use anyhow::ensure;
 use anyhow::Result;
-use codeyard_db_core::pool::SqlitePool;
-use codeyard_db_core::queries::credentials::Actor;
+use codeyard_database::pool::SqlitePool;
+use codeyard_database::queries::credentials::Actor;
 
 async fn authorized(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
@@ -14,14 +14,14 @@ async fn authorized(
     write: bool,
 ) -> Result<()> {
     let allowed = if write {
-        codeyard_db_core::queries::sqlite::discussions::lock_write_authority(
+        codeyard_database::queries::sqlite::discussions::lock_write_authority(
             tx,
             actor.user_id,
             repo,
         )
         .await?
     } else {
-        codeyard_db_core::queries::sqlite::repositories::access::lock_readable_repository_in_transaction(
+        codeyard_database::queries::sqlite::repositories::access::lock_readable_repository_in_transaction(
             tx,
             actor.user_id,
             repo,
@@ -30,7 +30,7 @@ async fn authorized(
     };
     ensure!(
         allowed
-            && codeyard_db_core::queries::sqlite::credentials::repository(
+            && codeyard_database::queries::sqlite::credentials::repository(
                 tx,
                 actor,
                 repo,

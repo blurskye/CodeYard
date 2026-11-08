@@ -2,15 +2,15 @@
 use anyhow::ensure;
 use anyhow::Result;
 use codeyard_git::error::ErrorKind;
-use codeyard_model::vulnerabilities::Advisory;
-use codeyard_model::vulnerabilities::PreparedAdvisory;
-use codeyard_model::vulnerabilities::ECOSYSTEMS;
 use codeyard_repos_pulls::services::RepositoryServices;
+use codeyard_types::vulnerabilities::Advisory;
+use codeyard_types::vulnerabilities::PreparedAdvisory;
+use codeyard_types::vulnerabilities::ECOSYSTEMS;
 use std::io::Read;
 use std::sync::Arc;
 use std::time::Duration;
 
-pub async fn ingest(pool: &codeyard_db_core::DbPool, bytes: &[u8]) -> Result<bool> {
+pub async fn ingest(pool: &codeyard_database::DbPool, bytes: &[u8]) -> Result<bool> {
     let bytes = bytes.to_vec();
     let record = tokio::task::spawn_blocking(move || Advisory::parse(&bytes)?.prepare()).await??;
     let changed = codeyard_db_security::vulnerabilities::upsert(pool, &record).await?;
@@ -21,7 +21,7 @@ pub async fn ingest(pool: &codeyard_db_core::DbPool, bytes: &[u8]) -> Result<boo
 }
 pub async fn scan(
     state: &dyn RepositoryServices,
-    repo: &codeyard_db_core::models::Repository,
+    repo: &codeyard_database::models::Repository,
     generation: i64,
 ) -> Result<()> {
     let reader = codeyard_db_security::dependency_graph::Reader::Scan(generation);
@@ -54,7 +54,7 @@ async fn sync(state: &dyn RepositoryServices) -> Result<()> {
 }
 /// Downloads each enabled ecosystem's `all.zip` from the OSV mirror and stores its records.
 pub async fn synchronize(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     settings: &codeyard_db_security::vulnerabilities::Settings,
 ) -> Result<()> {
     let enabled: Vec<String> = serde_json::from_str(&settings.ecosystems)?;
@@ -204,9 +204,9 @@ pub async fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codeyard_model::repositories::Package;
-    use codeyard_model::vulnerabilities::in_range;
-    use codeyard_model::vulnerabilities::OsvPackage;
+    use codeyard_types::repositories::Package;
+    use codeyard_types::vulnerabilities::in_range;
+    use codeyard_types::vulnerabilities::OsvPackage;
     use serde_json::json;
     #[test]
     fn ranges_are_checked_one_entry_at_a_time() {
@@ -254,7 +254,7 @@ mod tests {
             document["ghsa_id"].as_str().unwrap().to_owned(),
             advisory,
         )]);
-        let matches = codeyard_db_core::queries::dependabot_alerts::matches(
+        let matches = codeyard_database::queries::dependabot_alerts::matches(
             std::slice::from_ref(&snapshot),
             std::slice::from_ref(&document),
             &osv,
@@ -263,7 +263,7 @@ mod tests {
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].0.version, "1.0rc1");
         osv.values_mut().next().unwrap().withdrawn = Some(chrono::Utc::now());
-        assert!(codeyard_db_core::queries::dependabot_alerts::matches(
+        assert!(codeyard_database::queries::dependabot_alerts::matches(
             &[snapshot],
             &[document],
             &osv
@@ -289,7 +289,7 @@ mod tests {
             "refs/heads/main".into(),
             vec![package],
         );
-        let matches = codeyard_db_core::queries::dependabot_alerts::matches(
+        let matches = codeyard_database::queries::dependabot_alerts::matches(
             &[snapshot],
             &[document],
             &std::collections::BTreeMap::new(),

@@ -2,7 +2,7 @@ use crate::discussion_search::Results;
 use crate::discussion_search::Search;
 use crate::discussion_search::Sort;
 use anyhow::Result;
-use codeyard_db_core::pool::PgPool;
+use codeyard_database::pool::PgPool;
 
 pub async fn search(
     pool: &PgPool,
@@ -20,7 +20,7 @@ pub async fn search(
     let statement = query
         .statement(
             true,
-            &codeyard_db_core::queries::postgres::repositories::access::readable_condition(),
+            &codeyard_database::queries::postgres::repositories::access::readable_condition(),
         )
         .map_err(anyhow::Error::msg)?;
     let mut tx = crate::postgres::repositories::discovery::search_connection(pool).await?;

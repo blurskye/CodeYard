@@ -1,13 +1,13 @@
 //! Bring a pull head up to date without merging or closing the pull request.
 use codeyard_ci_engine::runs::CiRuns;
-use codeyard_db_core::DbPool;
+use codeyard_database::DbPool;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
-use codeyard_repos_core::push_workflows::RefUpdate;
-use codeyard_repos_core::repositories::pull_requests::database_error;
-use codeyard_repos_core::repositories::pull_requests::OperationError;
-use codeyard_repos_core::repositories::store::repo_store;
-use codeyard_repos_core::store_types::PullBranchUpdate;
+use codeyard_git_storage::push_workflows::RefUpdate;
+use codeyard_git_storage::repositories::pull_requests::database_error;
+use codeyard_git_storage::repositories::pull_requests::OperationError;
+use codeyard_git_storage::repositories::store::repo_store;
+use codeyard_git_storage::store_types::PullBranchUpdate;
 
 fn invalid(message: &str) -> OperationError {
     OperationError::Invalid {
@@ -42,7 +42,7 @@ pub async fn update_branch(
     rebase: bool,
     token: Option<i64>,
 ) -> Result<String, OperationError> {
-    let actor = codeyard_repos_core::repositories::pull_requests::actor(pool, actor_id).await?;
+    let actor = codeyard_git_storage::repositories::pull_requests::actor(pool, actor_id).await?;
     let base = codeyard_db_repos::repositories::records::get_repository(pool, locator.0, locator.1)
         .await
         .map_err(database_error)?
@@ -50,7 +50,7 @@ pub async fn update_branch(
             code: "not_found",
             message: "Repository not found".into(),
         })?;
-    codeyard_repos_core::repositories::pull_requests::require_read(pool, &actor, &base).await?;
+    codeyard_git_storage::repositories::pull_requests::require_read(pool, &actor, &base).await?;
     if base.is_archived {
         return Err(OperationError::Denied {
             code: "write_denied",

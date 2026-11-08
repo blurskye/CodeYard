@@ -17,10 +17,10 @@ use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
 use codeyard_identity::repository_access::AccessError;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
 use codeyard_repos_pulls::repositories::engagement::Engagement;
 use codeyard_repos_pulls::repositories::engagement::EngagementError;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -171,7 +171,7 @@ async fn list_stars(
         &user,
         actor.as_ref(),
         codeyard_identity::github_auth::credential(headers),
-        codeyard_db_core::cells::pointers::List::StarredRepositories,
+        codeyard_database::cells::pointers::List::StarredRepositories,
         vec![
             ("username".into(), user.username.clone()),
             (

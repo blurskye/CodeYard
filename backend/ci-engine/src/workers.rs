@@ -30,7 +30,7 @@ pub struct CiWorkers {
     run_workers: bool,
     configuration_error: Option<String>,
     workers: Arc<Workers>,
-    _log_objects: Option<Arc<dyn codeyard_db_core::ci_logs::LogObjects>>,
+    _log_objects: Option<Arc<dyn codeyard_database::ci_logs::LogObjects>>,
 }
 
 struct Workers {
@@ -125,9 +125,9 @@ impl CiWorkers {
             .filter(|name| !name.trim().is_empty())
         {
             Some(name) => name,
-            None => codeyard_cluster_core::settings::hostname()?,
+            None => codeyard_nodes::settings::hostname()?,
         };
-        let node = codeyard_cluster_core::pairing::normalize_name(&node)?;
+        let node = codeyard_nodes::pairing::normalize_name(&node)?;
         let mut tasks = workers.tasks.lock().unwrap_or_else(|e| e.into_inner());
         if let RunQueue::Database { .. } = &self.queue {
             tasks.spawn(crate::worker::fail_stale_runs(

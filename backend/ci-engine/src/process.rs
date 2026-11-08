@@ -1,11 +1,11 @@
 //! Running CI commands: own process group, deadline, cancellation and
 //! line-by-line output streaming.
 use anyhow::Result;
-use codeyard_actions::process::ProcessGroup;
+use codeyard_runner::process::ProcessGroup;
 #[cfg(test)]
-use codeyard_actions::process::KILL_GRACE;
+use codeyard_runner::process::KILL_GRACE;
 #[cfg(test)]
-use codeyard_actions::process::OMITTED_LINE;
+use codeyard_runner::process::OMITTED_LINE;
 use futures_util::FutureExt;
 use std::future::Future;
 use std::process::ExitStatus;
@@ -77,7 +77,7 @@ pub(super) async fn run_with_grace<F, Fut>(
     mut command: Command,
     timeout: Duration,
     grace: Grace,
-    scope: Option<&codeyard_actions::process::Cgroup>,
+    scope: Option<&codeyard_runner::process::Cgroup>,
     force: watch::Receiver<bool>,
     cancel: watch::Receiver<bool>,
     on_line: F,
@@ -173,7 +173,7 @@ where
         } else {
             group.disarm();
         }
-        tokio::time::timeout(codeyard_actions::process::KILL_GRACE, child.wait()).await??;
+        tokio::time::timeout(codeyard_runner::process::KILL_GRACE, child.wait()).await??;
         Ok(())
     };
     tokio::pin!(stopping);
@@ -214,7 +214,7 @@ where
         return Ok(());
     };
     let mut reader = BufReader::new(reader);
-    while let Some(line) = codeyard_actions::process::read_line(
+    while let Some(line) = codeyard_runner::process::read_line(
         &mut reader,
         MAX_LINE,
         Some((b"::codeyard-progress::", 1024 * 1024)),

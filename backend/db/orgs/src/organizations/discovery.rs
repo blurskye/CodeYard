@@ -1,9 +1,9 @@
 use anyhow::Result;
-use codeyard_db_core::models::Organization;
-use codeyard_db_core::models::User;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::Organization;
+use codeyard_database::models::User;
+use codeyard_database::native_operation;
+use codeyard_database::queries::organizations::OrganizationOutcome;
+use codeyard_database::DbPool;
 use sqlx::FromRow;
 
 #[derive(Debug, Clone, FromRow)]
@@ -23,4 +23,4 @@ native_operation!(crate::postgres::organizations::discovery::list_visible_member
 native_operation!(crate::postgres::organizations::discovery::list_membership_states, crate::sqlite::organizations::discovery::list_membership_states,
     fn list_membership_states(pool: &DbPool, actor: i64, org: Option<i64>, target: i64, state: Option<&str>, window: (i64, i64)) -> Result<Vec<MembershipState>>);
 native_operation!(crate::postgres::organizations::discovery::set_membership_public, crate::sqlite::organizations::discovery::set_membership_public,
-    fn set_membership_public(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, org: i64, public: bool) -> Result<OrganizationOutcome<()>>);
+    fn set_membership_public(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, org: i64, public: bool) -> Result<OrganizationOutcome<()>>);

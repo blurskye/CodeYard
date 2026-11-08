@@ -1,7 +1,7 @@
 //! Session-bound, bounded owner controls for the same organization policies used by REST.
 use axum::response::IntoResponse;
 use codeyard_api_http::cell_routes::CellRoutes;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
+use codeyard_database::queries::organizations::OrganizationOutcome;
 
 use crate::organizations::organization::Fields;
 use axum::extract::Form;

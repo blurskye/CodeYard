@@ -13,7 +13,7 @@ use crate::artifact_metadata::Record;
 use crate::artifact_metadata::Refusal;
 use crate::artifact_metadata::StorageInput;
 use anyhow::Result;
-use codeyard_db_core::pool::PgPool;
+use codeyard_database::pool::PgPool;
 use serde_json::json;
 use serde_json::Value;
 use sqlx::Postgres;
@@ -25,7 +25,7 @@ type Tx<'a> = Transaction<'a, Postgres>;
 async fn begin(pool: &PgPool, org: Option<i64>) -> Result<Tx<'_>> {
     let mut tx = pool.begin().await?;
     if let Some(org) = org {
-        codeyard_db_core::queries::postgres::attestations::lock(&mut tx, "org", org).await?;
+        codeyard_database::queries::postgres::attestations::lock(&mut tx, "org", org).await?;
     }
     Ok(tx)
 }
@@ -34,11 +34,11 @@ async fn credential(tx: &mut Tx<'_>, actor: Actor) -> Result<()> {
     let name: Option<String> = sqlx::query_scalar("SELECT u.username FROM users u JOIN personal_access_tokens t ON t.user_id=u.id WHERE u.id=$1 AND t.id=$2 AND t.scope='write' AND (t.expires_at IS NULL OR t.expires_at>clock_timestamp()) AND NOT u.is_banned AND NOT u.must_change_password FOR SHARE OF t")
         .bind(actor.user).bind(actor.token).fetch_optional(&mut **tx).await?;
     let name = name.ok_or(Refusal::Denied)?;
-    if name == codeyard_db_core::queries::ci_tokens::BOT {
+    if name == codeyard_database::queries::ci_tokens::BOT {
         let job: Option<(i64,String)> = sqlx::query_as("SELECT r.repo_id,t.permissions FROM actions_github_tokens t JOIN ci_runs r ON r.id=t.run_id WHERE t.token_id=$1 AND (t.revoked_at IS NULL OR t.revoked_at>FLOOR(EXTRACT(EPOCH FROM clock_timestamp()))::bigint-60) AND (r.status='running' OR r.completed_at>clock_timestamp()-INTERVAL '1 minute')")
             .bind(actor.token).fetch_optional(&mut **tx).await?;
         let (repo, permissions) = job.ok_or(Refusal::Denied)?;
-        let permissions: codeyard_model::permissions::Permissions =
+        let permissions: codeyard_types::permissions::Permissions =
             serde_json::from_str(&permissions)?;
         anyhow::ensure!(
             actor.repo == Some(repo) && permissions.allows("artifact-metadata", true),
@@ -57,10 +57,10 @@ async fn writable(tx: &mut Tx<'_>, admission: &mut Admission, org: i64, repo: i6
     let actor = admission.actor;
     let result: Result<()> = async {
         anyhow::ensure!(actor.repo.is_none_or(|scope| scope == repo), Refusal::Missing);
-        let readable: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=$1 WHERE r.id=$2 AND r.owner_kind='org' AND r.owner_org_id=$3 AND {})",codeyard_db_core::queries::postgres::repositories::access::readable_condition()))
+        let readable: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=$1 WHERE r.id=$2 AND r.owner_kind='org' AND r.owner_org_id=$3 AND {})",codeyard_database::queries::postgres::repositories::access::readable_condition()))
             .bind(actor.user).bind(repo).bind(org).fetch_one(&mut **tx).await?;
         anyhow::ensure!(readable, Refusal::Missing);
-        anyhow::ensure!(codeyard_db_core::queries::postgres::discussions::lock_write_authority(tx, actor.user, repo).await?, Refusal::Denied);
+        anyhow::ensure!(codeyard_database::queries::postgres::discussions::lock_write_authority(tx, actor.user, repo).await?, Refusal::Denied);
         let belongs: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories WHERE id=$1 AND owner_kind='org' AND owner_org_id=$2)").bind(repo).bind(org).fetch_one(&mut **tx).await?;
         anyhow::ensure!(belongs, Refusal::Missing);
         Ok(())
@@ -90,7 +90,7 @@ async fn targets(
     }
     let actor = admission.actor;
     let result: Result<Vec<(i64, Option<i64>)>> = async {
-        let sql = crate::artifact_metadata::target_candidates_sql(true, codeyard_db_core::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL);
+        let sql = crate::artifact_metadata::target_candidates_sql(true, codeyard_database::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL);
         let mut rows: Vec<(i64,Option<i64>)> = sqlx::query_as(&sql)
             .bind(org).bind(&artifact.digest).bind(actor.user).bind(actor.repo).bind(maximum as i64).fetch_all(&mut **tx).await?;
         if rows.is_empty() {
@@ -381,7 +381,7 @@ pub async fn list(
     kind: &str,
 ) -> Result<Vec<Record>> {
     use futures_util::TryStreamExt;
-    let sql = format!("SELECT d.id,a.repo_id,d.kind,a.digest,a.name,a.version,d.document,d.attestation_id,d.created_at,d.updated_at FROM artifact_metadata_records d JOIN artifact_metadata a ON a.id=d.artifact_id JOIN repositories r ON r.id=a.repo_id JOIN users u ON u.id=$1 WHERE d.org_id=$2 AND r.owner_kind='org' AND r.owner_org_id=$2 AND a.digest=$3 AND d.kind=$4 AND (CAST($5 AS BIGINT) IS NULL OR r.id=$5) AND {} ORDER BY d.id LIMIT 10001",codeyard_db_core::queries::postgres::repositories::access::readable_condition());
+    let sql = format!("SELECT d.id,a.repo_id,d.kind,a.digest,a.name,a.version,d.document,d.attestation_id,d.created_at,d.updated_at FROM artifact_metadata_records d JOIN artifact_metadata a ON a.id=d.artifact_id JOIN repositories r ON r.id=a.repo_id JOIN users u ON u.id=$1 WHERE d.org_id=$2 AND r.owner_kind='org' AND r.owner_org_id=$2 AND a.digest=$3 AND d.kind=$4 AND (CAST($5 AS BIGINT) IS NULL OR r.id=$5) AND {} ORDER BY d.id LIMIT 10001",codeyard_database::queries::postgres::repositories::access::readable_condition());
     let mut stream = sqlx::query_as(&sql)
         .bind(actor.user)
         .bind(org)
@@ -471,7 +471,7 @@ pub async fn process_job(pool: &PgPool, id: Option<i64>) -> Result<bool> {
         tx.commit().await?;
         return Ok(false);
     };
-    codeyard_db_core::queries::postgres::attestations::lock(&mut tx, "org", job.org_id).await?;
+    codeyard_database::queries::postgres::attestations::lock(&mut tx, "org", job.org_id).await?;
     let actor = Actor {
         user: job.actor_id,
         token: job.token_id,

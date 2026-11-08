@@ -7,7 +7,7 @@ use crate::repository_discussions::Refusal;
 use crate::repository_discussions::Write;
 use crate::repository_discussions::DEFAULT_CATEGORIES;
 use anyhow::Result;
-use codeyard_db_core::pool::PgPool;
+use codeyard_database::pool::PgPool;
 
 pub async fn enabled(pool: &PgPool, repo: i64) -> Result<bool> {
     Ok(sqlx::query_scalar("SELECT COALESCE((SELECT enabled FROM repository_discussion_settings WHERE repo_id=$1),false)").bind(repo).fetch_one(pool).await?)
@@ -80,13 +80,13 @@ pub async fn comments(
 pub async fn labels(
     pool: &PgPool,
     discussion: i64,
-) -> Result<Vec<codeyard_db_core::models::Label>> {
+) -> Result<Vec<codeyard_database::models::Label>> {
     Ok(sqlx::query_as("SELECT l.* FROM labels l JOIN discussion_labels a ON a.label_id=l.id WHERE a.discussion_id=$1 ORDER BY l.name,l.id").bind(discussion).fetch_all(pool).await?)
 }
 pub async fn list(
     pool: &PgPool,
     viewer: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     filter: &Filter,
     offset: i64,
     limit: i64,
@@ -95,7 +95,7 @@ pub async fn list(
     let reader = crate::repositories::credentials::Reader::authenticated(viewer, credential);
     let statement = filter.statement(
         true,
-        &codeyard_db_core::queries::postgres::repositories::access::readable_condition(),
+        &codeyard_database::queries::postgres::repositories::access::readable_condition(),
         &reader,
     )?;
     let mut connection = crate::postgres::repositories::discovery::search_connection(pool).await?;
@@ -135,7 +135,7 @@ pub async fn list(
 async fn credential_authority(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     actor: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     repo: i64,
     scope: &str,
 ) -> Result<()> {
@@ -143,7 +143,7 @@ async fn credential_authority(
     use crate::repositories::credentials::Access;
     use crate::repositories::credentials::Reader;
     anyhow::ensure!(
-        codeyard_db_core::queries::postgres::users::transitions::credential_live(
+        codeyard_database::queries::postgres::users::transitions::credential_live(
             tx, actor, credential, true
         )
         .await?,
@@ -159,7 +159,7 @@ async fn credential_authority(
 pub async fn write(
     pool: &PgPool,
     actor: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     repo: i64,
     discussion: Option<i64>,
     change: &Write<'_>,
@@ -167,7 +167,7 @@ pub async fn write(
     let mut tx = pool.begin().await?;
     if let Write::Enabled(value) = change {
         anyhow::ensure!(
-            codeyard_db_core::queries::postgres::discussions::lock_repository_mutation_authority(
+            codeyard_database::queries::postgres::discussions::lock_repository_mutation_authority(
                 &mut tx, actor, repo
             )
             .await?,
@@ -206,7 +206,7 @@ pub async fn write(
             body,
         } => {
             anyhow::ensure!(
-                codeyard_db_core::queries::postgres::discussions::lock_write_authority(
+                codeyard_database::queries::postgres::discussions::lock_write_authority(
                     &mut tx, actor, repo
                 )
                 .await?,
@@ -236,7 +236,7 @@ pub async fn write(
             let current = current.as_ref().ok_or(Refusal::Missing)?;
             anyhow::ensure!(
                 actor == current.author_id
-                    || codeyard_db_core::queries::postgres::discussions::lock_triage_authority(
+                    || codeyard_database::queries::postgres::discussions::lock_triage_authority(
                         &mut tx, actor, repo
                     )
                     .await?,
@@ -274,7 +274,7 @@ pub async fn write(
             let current = current.as_ref().ok_or(Refusal::Missing)?;
             anyhow::ensure!(
                 actor == current.author_id
-                    || codeyard_db_core::queries::postgres::discussions::lock_triage_authority(
+                    || codeyard_database::queries::postgres::discussions::lock_triage_authority(
                         &mut tx, actor, repo
                     )
                     .await?,
@@ -290,7 +290,7 @@ pub async fn write(
             let current = current.as_ref().ok_or(Refusal::Missing)?;
             anyhow::ensure!(
                 !current.locked
-                    && codeyard_db_core::queries::postgres::discussions::lock_write_authority(
+                    && codeyard_database::queries::postgres::discussions::lock_write_authority(
                         &mut tx, actor, repo
                     )
                     .await?,
@@ -347,7 +347,7 @@ pub async fn write(
             } else {
                 anyhow::ensure!(
                     actor == saved.author_id
-                        || codeyard_db_core::queries::postgres::discussions::lock_triage_authority(
+                        || codeyard_database::queries::postgres::discussions::lock_triage_authority(
                             &mut tx, actor, repo
                         )
                         .await?,
@@ -385,7 +385,7 @@ pub async fn write(
         Write::Labels { labels, add } => {
             anyhow::ensure!(current.is_some(), Refusal::Missing);
             anyhow::ensure!(
-                codeyard_db_core::queries::postgres::discussions::lock_triage_authority(
+                codeyard_database::queries::postgres::discussions::lock_triage_authority(
                     &mut tx, actor, repo
                 )
                 .await?,

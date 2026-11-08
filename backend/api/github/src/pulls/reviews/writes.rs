@@ -15,20 +15,20 @@ use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_model::github_error::json_parse_error;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_types::github_error::json_parse_error;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
 
-fn failure(error: codeyard_repos_core::repositories::pull_requests::OperationError) -> Error {
+fn failure(error: codeyard_git_storage::repositories::pull_requests::OperationError) -> Error {
     match error {
-        codeyard_repos_core::repositories::pull_requests::OperationError::Invalid {
+        codeyard_git_storage::repositories::pull_requests::OperationError::Invalid {
             message,
             ..
         }
-        | codeyard_repos_core::repositories::pull_requests::OperationError::Conflict {
+        | codeyard_git_storage::repositories::pull_requests::OperationError::Conflict {
             message,
             ..
         } => Error::invalid_simple(message),
@@ -69,7 +69,7 @@ async fn create(
         serde_json::from_slice(&body).map_err(json_parse_error)?
     };
     let review_state = state_for(input.event.as_deref())?;
-    codeyard_model::issue_input::validate_body(input.body.as_deref().unwrap_or(""), false)
+    codeyard_types::issue_input::validate_body(input.body.as_deref().unwrap_or(""), false)
         .map_err(Error::invalid_simple)?;
     if input.comments.len() > 200 {
         return Err(Error::invalid_simple("A review holds at most 200 comments"));
@@ -86,17 +86,17 @@ async fn create(
         .any(|comment| comment.position.is_some() && comment.line.is_none())
     {
         Some(
-            codeyard_repos_core::repositories::store::repo_store(&repo, state.cluster.as_ref())
+            codeyard_git_storage::repositories::store::repo_store(&repo, state.cluster.as_ref())
                 .diff(pull.diff_base(), &pull.head_sha)
                 .await
-                .map_err(codeyard_repos_core::api_shared::github::contents::store_error)?,
+                .map_err(codeyard_git_storage::api_shared::github::contents::store_error)?,
         )
     } else {
         None
     };
     let mut prepared = Vec::new();
     for mut comment in input.comments {
-        codeyard_model::issue_input::validate_body(&comment.body, true)
+        codeyard_types::issue_input::validate_body(&comment.body, true)
             .map_err(Error::invalid_simple)?;
         comment.commit_id = Some(commit.clone());
         prepared.push(
@@ -211,7 +211,7 @@ async fn remove(
         id,
     )
     .await
-    .map_err(|e| failure(codeyard_repos_core::repositories::pull_requests::write_error(e)))?
+    .map_err(|e| failure(codeyard_git_storage::repositories::pull_requests::write_error(e)))?
     .ok_or_else(Error::missing)?;
     Ok(Json(
         document(&state, &owner, &repo, &pull, &deleted).await?,
@@ -332,7 +332,7 @@ async fn change_reviewers(
             "Review team not found or lacks write access",
         ));
     }
-    codeyard_repos_core::repositories::pull_requests::team_reviewers::change(
+    codeyard_git_storage::repositories::pull_requests::team_reviewers::change(
         &state.pool,
         &state.notification_broadcaster,
         &actor,

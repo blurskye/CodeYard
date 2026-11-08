@@ -1,21 +1,21 @@
 use anyhow::Result;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 
-native_operation!(codeyard_db_core::queries::postgres::oidc_settings::get,
-    codeyard_db_core::queries::sqlite::oidc_settings::get,
+native_operation!(codeyard_database::queries::postgres::oidc_settings::get,
+    codeyard_database::queries::sqlite::oidc_settings::get,
     fn settings(pool: &DbPool, actor: i64, scope: Scope) -> Result<Settings>);
-native_operation!(codeyard_db_core::queries::postgres::oidc_settings::save,
-    codeyard_db_core::queries::sqlite::oidc_settings::save,
-    fn save_settings(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, scope: Scope, settings: &Settings) -> Result<()>);
-native_operation!(codeyard_db_core::queries::postgres::oidc_settings::inclusions,
-    codeyard_db_core::queries::sqlite::oidc_settings::inclusions,
+native_operation!(codeyard_database::queries::postgres::oidc_settings::save,
+    codeyard_database::queries::sqlite::oidc_settings::save,
+    fn save_settings(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, scope: Scope, settings: &Settings) -> Result<()>);
+native_operation!(codeyard_database::queries::postgres::oidc_settings::inclusions,
+    codeyard_database::queries::sqlite::oidc_settings::inclusions,
     fn inclusions(pool: &DbPool, actor: i64, org: i64) -> Result<Vec<Inclusion>>);
-native_operation!(codeyard_db_core::queries::postgres::oidc_settings::change_inclusion,
-    codeyard_db_core::queries::sqlite::oidc_settings::change_inclusion,
-    fn change_inclusion(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, org: i64, name: &str, remove: bool) -> Result<()>);
-native_operation!(codeyard_db_core::queries::postgres::oidc_settings::token_settings,
-    codeyard_db_core::queries::sqlite::oidc_settings::token_settings,
+native_operation!(codeyard_database::queries::postgres::oidc_settings::change_inclusion,
+    codeyard_database::queries::sqlite::oidc_settings::change_inclusion,
+    fn change_inclusion(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, org: i64, name: &str, remove: bool) -> Result<()>);
+native_operation!(codeyard_database::queries::postgres::oidc_settings::token_settings,
+    codeyard_database::queries::sqlite::oidc_settings::token_settings,
     fn token_settings(pool: &DbPool, repo: i64) -> Result<TokenSettings>);
 
 #[derive(sqlx::FromRow)]
@@ -41,10 +41,10 @@ native_operation!(crate::postgres::oidc::job,
     crate::sqlite::oidc::job,
     fn job(pool: &DbPool, hash: &str) -> Result<Option<Job>>);
 
-use codeyard_db_core::queries::oidc::Scope;
+use codeyard_database::queries::oidc::Scope;
 
-use codeyard_db_core::queries::oidc::Inclusion;
+use codeyard_database::queries::oidc::Inclusion;
 
-use codeyard_db_core::queries::oidc::TokenSettings;
+use codeyard_database::queries::oidc::TokenSettings;
 
-use codeyard_db_core::queries::oidc::Settings;
+use codeyard_database::queries::oidc::Settings;

@@ -4,9 +4,9 @@ use crate::mutations::pull_error;
 use crate::mutations::text;
 use crate::RequestContext;
 use crate::Result;
-use codeyard_model::node_id;
 use codeyard_repos_pulls::issues::comments::CommentTarget;
 use codeyard_repos_pulls::issues::comments::CreateCommentRequest;
+use codeyard_types::node_id;
 use serde_json::json;
 use serde_json::Value;
 

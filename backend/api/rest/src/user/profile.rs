@@ -41,8 +41,8 @@ pub(crate) fn profile_failure(error: ProfileError) -> (StatusCode, Json<ApiError
 }
 
 pub(crate) async fn load_profile(
-    pool: &codeyard_db_core::DbPool,
-    user: &codeyard_db_core::models::User,
+    pool: &codeyard_database::DbPool,
+    user: &codeyard_database::models::User,
 ) -> anyhow::Result<Profile> {
     let settings =
         codeyard_db_identity::users::profiles::get_profile_settings(pool, user.id).await?;
@@ -52,7 +52,7 @@ pub(crate) async fn load_profile(
 }
 
 pub(crate) fn profile_model(
-    user: &codeyard_db_core::models::User,
+    user: &codeyard_database::models::User,
     settings: &codeyard_db_identity::users::profiles::ProfileSettings,
     accounts: Vec<codeyard_db_identity::users::social_accounts::SocialAccount>,
 ) -> Profile {
@@ -120,7 +120,7 @@ pub(crate) async fn load_settings(
     }
     // Private listings are read in the same transaction that rechecks this session.
     let session = codeyard_api_http::session::extract_session_id(&ctx.headers);
-    let credential = codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+    let credential = codeyard_database::queries::users::accounts::AccountCredential::Session(
         session.as_deref().unwrap_or_default(),
     );
     let keys = if tab == "keys" {
@@ -498,7 +498,7 @@ pub(crate) async fn social_accounts_post(
     match codeyard_db_identity::users::social_accounts::change_social_accounts(
         &ctx.state.pool,
         user.id,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session),
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(&session),
         &[account],
         field(&form, "remove") != "yes",
     )
@@ -559,7 +559,7 @@ pub(crate) async fn profile_post(
     let result = codeyard_identity::profiles::save(
         &ctx.state.pool,
         actor,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session),
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(&session),
         &codeyard_db_identity::users::profiles::ProfilePatch {
             display_name: Some(field(&form, "display_name")),
             bio: Some(field(&form, "bio")),

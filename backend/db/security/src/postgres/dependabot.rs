@@ -1,10 +1,10 @@
 use crate::dependabot::OrganizationSecret;
 use crate::dependabot::OrganizationSecretInput;
 use crate::dependabot::RepositorySelection;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::pool::PgPool;
-use codeyard_db_core::queries::credentials::Actor;
-use codeyard_db_core::queries::secrets::SecretsError;
+use codeyard_database::models::Repository;
+use codeyard_database::pool::PgPool;
+use codeyard_database::queries::credentials::Actor;
+use codeyard_database::queries::secrets::SecretsError;
 use codeyard_support::secrets::SecretEncryptor;
 use sqlx::Postgres;
 use sqlx::Transaction;
@@ -202,7 +202,7 @@ pub async fn update_repository_access(
     add: &[i64],
     remove: &[i64],
 ) -> Result<(), SecretsError> {
-    codeyard_db_core::queries::dependabot::validate_repository_access(add, remove)?;
+    codeyard_database::queries::dependabot::validate_repository_access(add, remove)?;
     let mut tx = authorized(pool, actor, org, true).await?;
     let mut ids: Vec<_> = add.iter().chain(remove).copied().collect();
     ids.sort_unstable();
@@ -237,6 +237,6 @@ pub async fn set_repository_access_default(
     Ok(())
 }
 
-use codeyard_db_core::queries::postgres::dependabot::check_repositories;
+use codeyard_database::queries::postgres::dependabot::check_repositories;
 
-use codeyard_db_core::queries::postgres::dependabot::authorized;
+use codeyard_database::queries::postgres::dependabot::authorized;

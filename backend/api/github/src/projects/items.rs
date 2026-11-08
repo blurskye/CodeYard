@@ -157,7 +157,7 @@ async fn add_item(
     input: std::result::Result<Json<AddItem>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Response> {
     let (project, name, auth) = context(&state, &headers, &params, true, false).await?;
-    let Json(input) = input.map_err(codeyard_model::github_error::json_error)?;
+    let Json(input) = input.map_err(codeyard_types::github_error::json_error)?;
     if !matches!(input.kind.as_str(), "Issue" | "PullRequest") {
         return Err(Error::validation("ProjectV2Item", "type", "invalid"));
     }
@@ -267,7 +267,7 @@ async fn draft(
 ) -> Result<Response> {
     let (project, name, auth) =
         context(&state, &headers, &params, true, !params.contains_key("org")).await?;
-    let Json(input) = input.map_err(codeyard_model::github_error::json_error)?;
+    let Json(input) = input.map_err(codeyard_types::github_error::json_error)?;
     let auth = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     let actor = auth.user.id;
     let item = projects::add_item(
@@ -490,7 +490,7 @@ async fn update_item(
     input: std::result::Result<Json<Update>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<Value>> {
     let (project, name, auth) = context(&state, &headers, &params, true, false).await?;
-    let Json(input) = input.map_err(codeyard_model::github_error::json_error)?;
+    let Json(input) = input.map_err(codeyard_types::github_error::json_error)?;
     let actor = auth
         .as_ref()
         .ok_or_else(codeyard_identity::github_auth::required)?
@@ -545,7 +545,7 @@ async fn create_view(
 ) -> Result<Response> {
     let (project, name, auth) =
         context(&state, &headers, &params, true, !params.contains_key("org")).await?;
-    let Json(input) = input.map_err(codeyard_model::github_error::json_error)?;
+    let Json(input) = input.map_err(codeyard_types::github_error::json_error)?;
     let auth = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     let actor = &auth.user;
     let view = projects::create_view(
@@ -559,7 +559,7 @@ async fn create_view(
     .map_err(project_error)?;
     let html = format!(
         "{}/{}/{}/projects/{}/views/{}",
-        codeyard_model::http_config::link_origin(),
+        codeyard_types::http_config::link_origin(),
         if project.owner_kind == "org" {
             "orgs"
         } else {

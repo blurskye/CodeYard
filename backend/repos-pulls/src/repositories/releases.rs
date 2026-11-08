@@ -4,24 +4,24 @@
 //! publishes its tag.
 use anyhow::Error;
 use codeyard_ci_engine::runs::CiRuns;
-use codeyard_db_core::models::Release;
-use codeyard_db_core::models::ReleaseAsset;
-use codeyard_db_core::models::ReleaseRow;
-use codeyard_db_core::models::Repository;
+use codeyard_database::models::Release;
+use codeyard_database::models::ReleaseAsset;
+use codeyard_database::models::ReleaseRow;
+use codeyard_database::models::Repository;
+use codeyard_db_repos::release_integrity::MAX_ASSET_BYTES;
 use codeyard_db_repos::releases::ReleaseChanges;
 use codeyard_db_repos::releases::ReleaseFields;
 use codeyard_db_repos::releases::ReleaseRefusal;
 use codeyard_git::error::RepoError;
+use codeyard_git_storage::context::NodeContext;
+use codeyard_git_storage::ref_errors::RefError;
+use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_identity::repository_access as access;
 use codeyard_identity::repository_access::AccessError;
-use codeyard_model::release_integrity::MAX_ASSET_BYTES;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_notifications::watchers::notify_watchers;
 use codeyard_notifications::watchers::WatchEvent;
 use codeyard_notifications::watchers::WatchedItem;
-use codeyard_repos_core::context::NodeContext;
-use codeyard_repos_core::ref_errors::RefError;
-use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_storage::files::uploads::UploadDeclaration;
 use codeyard_storage::ObjectStore;
 use codeyard_webhooks::payloads::Scope;
@@ -38,10 +38,10 @@ mod tests {
 
     #[tokio::test]
     async fn authority_storage_failure_is_not_a_permission_refusal() {
-        let raw = codeyard_db_core::pool::SqlitePool::connect("sqlite::memory:")
+        let raw = codeyard_database::pool::SqlitePool::connect("sqlite::memory:")
             .await
             .unwrap();
-        let pool = codeyard_db_core::DbPool::Sqlite(raw);
+        let pool = codeyard_database::DbPool::Sqlite(raw);
         pool.close().await;
         assert!(matches!(
             can_write(&pool, Some(1), 1).await,
@@ -94,11 +94,11 @@ pub struct ReleaseSummary {
 }
 
 async fn writable(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     actor: i64,
     owner: &str,
     name: &str,
-) -> Result<(Repository, codeyard_db_core::models::User), ReleaseError> {
+) -> Result<(Repository, codeyard_database::models::User), ReleaseError> {
     let repository = codeyard_db_repos::repositories::records::get_repository(pool, owner, name)
         .await
         .map_err(|_| ReleaseError::Unavailable)?
@@ -107,7 +107,7 @@ async fn writable(
 }
 
 async fn can_write(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     viewer: Option<i64>,
     repo_id: i64,
 ) -> Result<bool, ReleaseError> {
@@ -178,7 +178,7 @@ fn mutation_error(error: RepoError) -> ReleaseError {
 
 /// The release list, newest first. Drafts are listed only for writers.
 pub async fn list(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     viewer: Option<i64>,
     repo_id: i64,
     page: i64,
@@ -212,7 +212,7 @@ pub async fn list(
 
 /// One release by its tag. A draft is hidden from everyone but writers.
 pub async fn detail_by_tag(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     viewer: Option<i64>,
     repo_id: i64,
     tag: &str,
@@ -228,7 +228,7 @@ pub async fn detail_by_tag(
 
 /// One release by its number, for the JSON API. A draft is hidden from everyone but writers.
 pub async fn detail_by_id(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     viewer: Option<i64>,
     repo_id: i64,
     release_id: i64,
@@ -243,7 +243,7 @@ pub async fn detail_by_id(
 }
 
 async fn visible_detail(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     viewer: Option<i64>,
     repo_id: i64,
     selection: codeyard_db_repos::releases::ReleaseSelection<'_>,
@@ -264,7 +264,7 @@ async fn visible_detail(
 
 /// One release for a writer's edit page.
 pub async fn edit_detail(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     actor: i64,
     owner: &str,
     name: &str,
@@ -288,7 +288,7 @@ pub async fn edit_detail(
 
 /// The tags and branches a writer can pick from on the new-release form.
 pub async fn form_choices(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     cluster: Option<&NodeContext>,
     actor: i64,
     owner: &str,
@@ -315,7 +315,7 @@ pub async fn form_choices(
 
 /// The release count and the latest release the viewer may see, for the repository home.
 pub async fn summary(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     viewer: Option<i64>,
     repository: &Repository,
 ) -> Result<ReleaseSummary, ReleaseError> {
@@ -336,7 +336,7 @@ pub async fn summary(
     reason = "Explicit actor and resources keep operations HTTP-free."
 )]
 pub async fn create(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
     broadcaster: &NotificationBroadcaster,
@@ -398,7 +398,7 @@ pub async fn create(
             draft_target = Some(commit.sha);
         }
     }
-    let attestation = codeyard_repos_core::repositories::releases::immutable::candidate(
+    let attestation = codeyard_git_storage::repositories::releases::immutable::candidate(
         pool,
         cluster,
         &repository,
@@ -412,7 +412,7 @@ pub async fn create(
             pool,
             repository.id,
             actor,
-            codeyard_repos_core::repositories::releases::immutable::Mutation::Create {
+            codeyard_git_storage::repositories::releases::immutable::Mutation::Create {
                 tag: input.tag.clone(),
                 fields: input.fields.clone(),
                 draft_target,
@@ -449,7 +449,7 @@ fn target_revision(refs: &HashMap<String, String>, target: &str) -> String {
 /// Tells the repository's release webhooks what `actor` did to `release`. `changes` holds the
 /// previous values of an edit.
 async fn emit_release(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     repository: &Repository,
     release: &Release,
     actor: i64,
@@ -459,10 +459,10 @@ async fn emit_release(
 ) {
     let (release, repository_for_hook) = (release.clone(), repository.clone());
     let author_id = release.author_id;
-    codeyard_repos_core::webhooks::emit(
+    codeyard_git_storage::webhooks::emit(
         pool,
         repository,
-        codeyard_model::webhook_events::RELEASE,
+        codeyard_types::webhook_events::RELEASE,
         vec![author_id, actor],
         move |owner, people| {
             let (author, sender) = (people.get(author_id), people.get(actor));
@@ -495,7 +495,7 @@ async fn emit_release(
     reason = "Explicit actor and resources keep operations HTTP-free."
 )]
 pub async fn update(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
     broadcaster: &NotificationBroadcaster,
@@ -582,7 +582,7 @@ pub async fn update(
             fields.target = None;
         }
     }
-    let attestation = codeyard_repos_core::repositories::releases::immutable::candidate(
+    let attestation = codeyard_git_storage::repositories::releases::immutable::candidate(
         pool,
         cluster,
         &repository,
@@ -596,7 +596,7 @@ pub async fn update(
             pool,
             repository.id,
             actor,
-            codeyard_repos_core::repositories::releases::immutable::Mutation::Update {
+            codeyard_git_storage::repositories::releases::immutable::Mutation::Update {
                 id: release_id,
                 changes: fields.clone(),
             },
@@ -626,7 +626,7 @@ pub async fn update(
 
 /// Deletes a release and its assets. The uploaded files go too, unless something else uses them.
 pub async fn delete(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     _store: &ObjectStore,
     actor: i64,
     owner: &str,
@@ -639,7 +639,7 @@ pub async fn delete(
         .map_err(unavailable)?
         .ok_or(ReleaseError::NotFound)?;
     // The deletion event still lists the assets, which are gone once the release is.
-    let assets = codeyard_repos_core::webhooks::documents::release_assets(
+    let assets = codeyard_git_storage::webhooks::documents::release_assets(
         pool,
         &repository,
         owner,
@@ -672,10 +672,10 @@ pub async fn delete(
     reason = "Explicit actor and resources keep operations HTTP-free."
 )]
 pub async fn add_asset(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     store: &ObjectStore,
     actor: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     owner: &str,
     name: &str,
     release_id: i64,
@@ -715,10 +715,10 @@ pub struct AssetUpload<'a> {
     reason = "Explicit actor and resources keep operations HTTP-free."
 )]
 pub async fn upload_asset(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     store: &ObjectStore,
     actor: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     owner: &str,
     name: &str,
     release_id: i64,
@@ -770,8 +770,8 @@ pub async fn upload_asset(
             filename,
             content_type,
             file_size: size,
-            reason: codeyard_db_core::models::FileReason::ReleaseAsset,
-            visibility: codeyard_db_core::models::FileVisibility::Owner,
+            reason: codeyard_database::models::FileReason::ReleaseAsset,
+            visibility: codeyard_database::models::FileVisibility::Owner,
             sha256_hex: &checksum,
         },
         bytes,
@@ -822,7 +822,7 @@ fn validate_asset_fields(filename: &str, label: Option<&str>) -> Result<(), Rele
 }
 
 pub async fn update_asset(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     actor: i64,
     owner: &str,
     name: &str,
@@ -841,7 +841,7 @@ pub async fn update_asset(
 
 /// Detaches an asset from its release and removes its file.
 pub async fn delete_asset(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     _store: &ObjectStore,
     actor: i64,
     owner: &str,
@@ -865,7 +865,7 @@ pub async fn delete_asset(
 /// Opens an asset for a reader of the repository. Drafts stay hidden from everyone but writers.
 /// Only requests that send the body (`count`) add to the download count.
 pub async fn download(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     store: &ObjectStore,
     viewer: Option<i64>,
     repo_id: i64,
@@ -889,7 +889,7 @@ pub async fn download(
 
 /// Opens the asset with this id, which a later rename cannot point at another file.
 pub async fn download_by_id(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     store: &ObjectStore,
     viewer: Option<i64>,
     repo_id: i64,
@@ -911,7 +911,7 @@ pub async fn download_by_id(
 }
 
 async fn open_asset(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     store: &ObjectStore,
     asset: ReleaseAsset,
     count: bool,
@@ -935,7 +935,7 @@ async fn open_asset(
 }
 
 /// Removes an uploaded file that no release uses any more, as its uploader.
-async fn discard_file(pool: &codeyard_db_core::DbPool, store: &ObjectStore, file: Uuid) {
+async fn discard_file(pool: &codeyard_database::DbPool, store: &ObjectStore, file: Uuid) {
     let uploader = match codeyard_db_repos::files::get_file_by_id(pool, file).await {
         Ok(Some(found)) => found.user_id,
         _ => None,
@@ -953,9 +953,9 @@ async fn discard_file(pool: &codeyard_db_core::DbPool, store: &ObjectStore, file
 }
 
 async fn notify_published(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     broadcaster: &NotificationBroadcaster,
-    actor: &codeyard_db_core::models::User,
+    actor: &codeyard_database::models::User,
     repository: &Repository,
     owner: &str,
     name: &str,
@@ -985,6 +985,6 @@ async fn notify_published(
     .await;
 }
 
-use codeyard_repos_core::repositories::releases::{
+use codeyard_git_storage::repositories::releases::{
     unavailable, validate_fields, validate_tag, ReleaseError,
 };

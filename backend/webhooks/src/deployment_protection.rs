@@ -2,9 +2,9 @@
 use crate::enqueue;
 use crate::outgoing;
 use crate::payloads;
-use codeyard_db_core::models::CiRun;
-use codeyard_db_core::DbPool;
-use codeyard_model::urls::repo_url;
+use codeyard_database::models::CiRun;
+use codeyard_database::DbPool;
+use codeyard_types::urls::repo_url;
 use serde_json::json;
 use serde_json::Value;
 
@@ -69,12 +69,12 @@ pub async fn requested(pool: &DbPool, run: &CiRun) -> anyhow::Result<()> {
     {
         if !gates.iter().any(|gate| {
             gate.app_id == subscription.hook.app_id.unwrap_or(0) && gate.state == "pending"
-        }) || !codeyard_model::webhook_events::subscribes(
+        }) || !codeyard_types::webhook_events::subscribes(
             &subscription.hook.events,
-            codeyard_model::webhook_events::DEPLOYMENT_PROTECTION_RULE,
+            codeyard_types::webhook_events::DEPLOYMENT_PROTECTION_RULE,
         ) || !codeyard_identity::github_apps::event_permission(
             &serde_json::from_str(&subscription.permissions)?,
-            codeyard_model::webhook_events::DEPLOYMENT_PROTECTION_RULE,
+            codeyard_types::webhook_events::DEPLOYMENT_PROTECTION_RULE,
         ) {
             continue;
         }
@@ -88,7 +88,7 @@ pub async fn requested(pool: &DbPool, run: &CiRun) -> anyhow::Result<()> {
             "installation":{"id":subscription.installation_id}
         });
         let outgoing = outgoing(
-            codeyard_model::webhook_events::DEPLOYMENT_PROTECTION_RULE,
+            codeyard_types::webhook_events::DEPLOYMENT_PROTECTION_RULE,
             Some("requested"),
             &subscription.hook,
             &payload.to_string(),

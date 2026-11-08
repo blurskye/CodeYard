@@ -3,17 +3,17 @@ use crate::repositories::pull_requests::comments::in_pending_review;
 #[tokio::test]
 async fn discarded_review_cannot_authorize_comment_publication() {
     let root = tempfile::tempdir().unwrap();
-    let pool = codeyard_db_core::init_db(&format!(
+    let pool = codeyard_database::init_db(&format!(
         "sqlite://{}",
         root.path().join("app.db").display()
     ))
     .await
     .unwrap();
-    codeyard_db_core::run_migrations(&pool).await.unwrap();
+    codeyard_database::run_migrations(&pool).await.unwrap();
     let user = codeyard_db_identity::users::accounts::create_user(&pool, "alice", None)
         .await
         .unwrap();
-    let repo = codeyard_repos_core::repositories::lifecycle::provision(
+    let repo = codeyard_git_storage::repositories::lifecycle::provision(
         (&pool, None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(user.id),
@@ -101,7 +101,7 @@ async fn discarded_review_cannot_authorize_comment_publication() {
         &pool,
         pull.id,
         user.id,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &codeyard_db_identity::users::sessions::create_session(
                 &pool,
                 &uuid::Uuid::new_v4().simple().to_string().repeat(2),

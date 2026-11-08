@@ -1,7 +1,7 @@
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 pub async fn item(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     repo_id: i64,
     number: &str,
 ) -> Result<codeyard_db_repos::assignees::AssignedItem> {

@@ -4,8 +4,8 @@ use crate::codeql::NewDatabase;
 use crate::codeql::UPLOAD_QUOTA;
 use anyhow::ensure;
 use anyhow::Result;
-use codeyard_db_core::pool::PgPool;
-use codeyard_db_core::queries::credentials::Actor;
+use codeyard_database::pool::PgPool;
+use codeyard_database::queries::credentials::Actor;
 
 async fn authorized(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
@@ -14,24 +14,24 @@ async fn authorized(
     write: bool,
 ) -> Result<()> {
     let allowed = if write {
-        codeyard_db_core::queries::postgres::discussions::lock_write_authority(
+        codeyard_database::queries::postgres::discussions::lock_write_authority(
             tx,
             actor.user_id,
             repo,
         )
         .await?
     } else {
-        codeyard_db_core::queries::postgres::repositories::access::lock_readable_repository_in_transaction(
+        codeyard_database::queries::postgres::repositories::access::lock_readable_repository_in_transaction(
             tx,
             actor.user_id,
             repo,
-            codeyard_db_core::queries::postgres::repositories::access::RepositoryRowLock::Shared,
+            codeyard_database::queries::postgres::repositories::access::RepositoryRowLock::Shared,
         )
         .await?
     };
     ensure!(
         allowed
-            && codeyard_db_core::queries::postgres::credentials::repository(
+            && codeyard_database::queries::postgres::credentials::repository(
                 tx,
                 actor,
                 repo,

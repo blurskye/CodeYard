@@ -13,7 +13,7 @@ pub(crate) const GIST_ROUTE: &str = "/api/v3/gists/:gist_id";
 pub(crate) async fn interaction_actor(
     state: &AppState,
     headers: &HeaderMap,
-) -> Option<codeyard_db_core::models::User> {
+) -> Option<codeyard_database::models::User> {
     let credential = codeyard_identity::github_auth::credential(headers)?;
     let token = codeyard_db_identity::users::tokens::find_token(
         &state.pool,

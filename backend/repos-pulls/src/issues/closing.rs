@@ -124,13 +124,13 @@ pub fn referenced_numbers(body: &str, owner: &str, repo: &str, base: &str) -> Ve
 }
 
 pub async fn references(
-    pool: &codeyard_db_core::DbPool,
-    viewer: Option<&codeyard_db_core::models::User>,
-    issue: &codeyard_db_core::models::Issue,
+    pool: &codeyard_database::DbPool,
+    viewer: Option<&codeyard_database::models::User>,
+    issue: &codeyard_database::models::Issue,
     owner: &str,
     name: &str,
     base: &str,
-) -> anyhow::Result<Vec<codeyard_db_core::models::PullRequest>> {
+) -> anyhow::Result<Vec<codeyard_database::models::PullRequest>> {
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         let mut result = Vec::new();
         let scope = format!("{owner}/{name}");

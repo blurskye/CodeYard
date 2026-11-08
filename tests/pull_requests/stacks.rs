@@ -15,7 +15,7 @@ use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
 use codeyard_db_repos::pull_requests::records::StackJoin;
 use codeyard_db_repos::pull_requests::records::StackRefusal;
-use codeyard_repos_core::repositories::pull_requests::OperationError;
+use codeyard_git_storage::repositories::pull_requests::OperationError;
 use codeyard_repos_pulls::repositories::pull_requests::merge;
 use codeyard_storage::ObjectStore;
 use database::{wait_until_blocked, Database};
@@ -37,7 +37,7 @@ async fn application_with_runs(f: &mut Database, root: &Path) -> Runs {
     f.complete_setup().await;
     let alice_id = f.actor("alice").await;
     let bob_id = f.actor("bob").await;
-    codeyard_repos_core::repositories::lifecycle::provision(
+    codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root,
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
@@ -1133,7 +1133,7 @@ async fn postgres_join_waits_for_the_merge_that_marks_its_parent() {
     let two = alice.open_pull("Two", "feature-2", "feature-1").await;
     let (one_id, two_id) = (one["id"].as_i64().unwrap(), two["id"].as_i64().unwrap());
 
-    let codeyard_db_core::DbPool::Postgres(raw) = f.pool().clone() else {
+    let codeyard_database::DbPool::Postgres(raw) = f.pool().clone() else {
         panic!("this test needs the PostgreSQL fixture");
     };
     // The merge's marking of the parent, in a transaction that stays open for now.
@@ -1242,7 +1242,7 @@ async fn postgres_join_refuses_a_replacement_parent_merged_meanwhile() {
         child["id"].as_i64().unwrap(),
     );
 
-    let codeyard_db_core::DbPool::Postgres(raw) = f.pool().clone() else {
+    let codeyard_database::DbPool::Postgres(raw) = f.pool().clone() else {
         panic!("this test needs the PostgreSQL fixture");
     };
     // Both parents are marked merged, each by a transaction that stays open for now.
@@ -1298,7 +1298,7 @@ async fn postgres_join_refuses_a_replacement_parent_merged_meanwhile() {
 }
 
 /// The repository `proj` of alice.
-async fn proj(f: &Database) -> codeyard_db_core::models::Repository {
+async fn proj(f: &Database) -> codeyard_database::models::Repository {
     codeyard_db_repos::repositories::records::get_repository(f.pool(), "alice", "proj")
         .await
         .unwrap()
@@ -1469,7 +1469,7 @@ async fn stack_policy_contract(pg: bool) {
         f.pool(),
         runs.bob,
         proj(&f).await.id,
-        codeyard_db_core::models::AccessLevel::Write,
+        codeyard_database::models::AccessLevel::Write,
     )
     .await
     .unwrap();

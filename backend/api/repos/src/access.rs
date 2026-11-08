@@ -1,12 +1,12 @@
 use axum::http::HeaderMap;
 use codeyard_api_http::shared::repos::chrome::ApiResult;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::models::User;
+use codeyard_database::models::Repository;
+use codeyard_database::models::User;
 use codeyard_identity::repository_access::AccessError;
 
 /// The repository at `owner/repo`: 404 when there is none, 503 when the lookup fails.
 pub(crate) async fn find_repository(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     owner: &str,
     repo: &str,
 ) -> ApiResult<Repository> {
@@ -18,7 +18,7 @@ pub(crate) async fn find_repository(
 
 /// The repository at `owner/repo`, once the caller is known to be allowed to read it.
 pub(crate) async fn readable_repository(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     owner: &str,
     repo: &str,
     headers: &HeaderMap,
@@ -30,7 +30,7 @@ pub(crate) async fn readable_repository(
 
 /// Checks that `user` administers the repository.
 pub(crate) async fn check_repo_admin_access(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     repository: &Repository,
     user: &User,
 ) -> ApiResult<()> {
@@ -50,7 +50,7 @@ pub(crate) async fn check_repo_admin_access(
 
 /// Checks that `user` may write to the repository.
 pub(crate) async fn check_repo_write_access(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     repository: &Repository,
     user: &User,
 ) -> ApiResult<()> {

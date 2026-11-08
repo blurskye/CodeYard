@@ -22,7 +22,7 @@ use codeyard_app::app::AppState;
 use codeyard_ci_engine::code_owners::load_rules;
 use codeyard_git::DiffFileInfo;
 use codeyard_git::DiffInfo;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_webui::pages::repos::issues as view;
 use codeyard_webui::pages::repos::issues::Kind;
 use codeyard_webui::pages::repos::pulls;
@@ -104,7 +104,7 @@ async fn viewed_marks(
     ctx: &PageContext,
     repo: &RepositoryData,
     pull_id: i64,
-    pull: &codeyard_db_core::models::PullRequest,
+    pull: &codeyard_database::models::PullRequest,
     user_id: i64,
     files: &[DiffFileInfo],
 ) -> ResultPage<pulls::Viewed> {

@@ -5,11 +5,11 @@ use crate::missing;
 use crate::unavailable;
 use crate::RequestContext;
 use crate::Result;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_git_storage::repositories::store::repo_store;
 use serde_json::Value;
 
 pub(super) async fn drafts_visible(
-    repo: &codeyard_db_core::models::Repository,
+    repo: &codeyard_database::models::Repository,
     request: &RequestContext,
 ) -> Result<bool> {
     if request.private_viewer(repo.id, "contents").await?.is_none() {
@@ -29,7 +29,7 @@ pub(super) async fn resolve(
     field: &str,
     ctx: &Arguments,
     request: &RequestContext,
-    repo: &codeyard_db_core::models::Repository,
+    repo: &codeyard_database::models::Repository,
 ) -> Result<Value> {
     request.authorize(repo.id, "contents", false).await?;
     let pool = &request.state.pool;

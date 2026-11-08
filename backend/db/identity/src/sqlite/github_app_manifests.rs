@@ -1,10 +1,10 @@
 use crate::github_app_manifests::Draft;
 use crate::github_apps::App;
 use anyhow::Result;
-use codeyard_db_core::pool::SqlitePool;
-use codeyard_db_core::queries::webhooks::SealedSecret;
-use codeyard_db_core::queries::webhooks::WebhookFields;
-use codeyard_db_core::queries::webhooks::WebhookPatch;
+use codeyard_database::pool::SqlitePool;
+use codeyard_database::queries::webhooks::SealedSecret;
+use codeyard_database::queries::webhooks::WebhookFields;
+use codeyard_database::queries::webhooks::WebhookPatch;
 
 pub async fn save(pool: &SqlitePool, hash: &str, manifest: &str, state: &str) -> Result<()> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;

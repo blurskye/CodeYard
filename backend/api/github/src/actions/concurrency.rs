@@ -14,9 +14,9 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
-use codeyard_model::urls::repo_url;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
+use codeyard_types::urls::repo_url;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -92,7 +92,7 @@ fn page(
                 .finish();
             links.push(format!(
                 "<{}{}?{}>; rel=\"{}\"",
-                codeyard_model::http_config::link_origin(),
+                codeyard_types::http_config::link_origin(),
                 uri.path(),
                 query,
                 relation
@@ -121,7 +121,7 @@ fn member(
 ) -> Value {
     let run = &member.run;
     let id = run.workflow_run_id.unwrap_or(run.id);
-    let mut value = json!({"run_id":id,"run_name":run.pipeline,"run_url":format!("{}/actions/runs/{id}",repo_url(owner,repo)),"run_html_url":format!("{}/{}/{}/actions?job={}",codeyard_model::http_config::link_origin(),codeyard_types::paths::encode_component(owner),codeyard_types::paths::encode_component(repo),run.run_id),"status":if member.holding{"in_progress"}else{"pending"}});
+    let mut value = json!({"run_id":id,"run_name":run.pipeline,"run_url":format!("{}/actions/runs/{id}",repo_url(owner,repo)),"run_html_url":format!("{}/{}/{}/actions?job={}",codeyard_types::http_config::link_origin(),codeyard_types::paths::encode_component(owner),codeyard_types::paths::encode_component(repo),run.run_id),"status":if member.holding{"in_progress"}else{"pending"}});
     if let Some(job) = member.job_id {
         value["job_id"] = json!(job);
         value["job_name"] = json!(member.job_name);

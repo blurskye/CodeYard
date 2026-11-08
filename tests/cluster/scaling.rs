@@ -30,7 +30,7 @@ async fn site_policy_forms_leader_pause_dry_run_and_storage_rules_agree_on_both_
         db.execute("UPDATE users SET is_admin=true WHERE id=$1", &[user])
             .await;
         let admin = Client::login(&router, db.pool(), user).await;
-        let policies = codeyard_db_cluster::scaling::policies(db.pool())
+        let policies = codeyard_db_placement::scaling::policies(db.pool())
             .await
             .unwrap();
         assert_eq!(policies.len(), 4);
@@ -54,12 +54,12 @@ async fn site_policy_forms_leader_pause_dry_run_and_storage_rules_agree_on_both_
         );
         let source = super::drain::node(&db, "scaling-source", 9000).await;
         let other = super::drain::node(&db, "scaling-other", 9000).await;
-        let action = codeyard_db_cluster::scaling::evaluate(db.pool(), source)
+        let action = codeyard_db_placement::scaling::evaluate(db.pool(), source)
             .await
             .unwrap();
         // Two nodes already satisfy the minimum; free space is plentiful.
         assert!(action.is_none());
-        assert!(codeyard_db_cluster::scaling::evaluate(db.pool(), other)
+        assert!(codeyard_db_placement::scaling::evaluate(db.pool(), other)
             .await
             .unwrap()
             .is_none());
@@ -68,11 +68,11 @@ async fn site_policy_forms_leader_pause_dry_run_and_storage_rules_agree_on_both_
         policy.minimum = 3;
         policy.maximum = 4;
         policy.paused = false;
-        codeyard_db_cluster::scaling::save(db.pool(), &actor, &policy)
+        codeyard_db_placement::scaling::save(db.pool(), &actor, &policy)
             .await
             .unwrap();
         reset_minute(&db).await;
-        let action = codeyard_db_cluster::scaling::evaluate(db.pool(), source)
+        let action = codeyard_db_placement::scaling::evaluate(db.pool(), source)
             .await
             .unwrap()
             .unwrap();
@@ -80,22 +80,22 @@ async fn site_policy_forms_leader_pause_dry_run_and_storage_rules_agree_on_both_
         assert_eq!(action.count, 1);
         assert!(action.drain_node.is_none());
         assert_eq!(db.scalar("SELECT COUNT(*) FROM join_tokens", &[]).await, 0);
-        assert!(codeyard_db_cluster::scaling::evaluate(db.pool(), source)
+        assert!(codeyard_db_placement::scaling::evaluate(db.pool(), source)
             .await
             .unwrap()
             .is_none());
         policy.paused = true;
-        codeyard_db_cluster::scaling::save(db.pool(), &actor, &policy)
+        codeyard_db_placement::scaling::save(db.pool(), &actor, &policy)
             .await
             .unwrap();
         reset_minute(&db).await;
-        assert!(codeyard_db_cluster::scaling::evaluate(db.pool(), source)
+        assert!(codeyard_db_placement::scaling::evaluate(db.pool(), source)
             .await
             .unwrap()
             .is_none());
         policy.paused = false;
         policy.minimum = 0;
-        codeyard_db_cluster::scaling::save(db.pool(), &actor, &policy)
+        codeyard_db_placement::scaling::save(db.pool(), &actor, &policy)
             .await
             .unwrap();
         reset_minute(&db).await;
@@ -105,13 +105,13 @@ async fn site_policy_forms_leader_pause_dry_run_and_storage_rules_agree_on_both_
             &[],
         )
         .await;
-        assert!(codeyard_db_cluster::scaling::evaluate(db.pool(), source)
+        assert!(codeyard_db_placement::scaling::evaluate(db.pool(), source)
             .await
             .unwrap()
             .is_none());
         db.execute("UPDATE nodes SET disk_free=1000", &[]).await;
         reset_minute(&db).await;
-        assert!(codeyard_db_cluster::scaling::evaluate(db.pool(), source)
+        assert!(codeyard_db_placement::scaling::evaluate(db.pool(), source)
             .await
             .unwrap()
             .is_none());
@@ -121,12 +121,12 @@ async fn site_policy_forms_leader_pause_dry_run_and_storage_rules_agree_on_both_
         )
         .await;
         reset_minute(&db).await;
-        assert!(codeyard_db_cluster::scaling::evaluate(db.pool(), source)
+        assert!(codeyard_db_placement::scaling::evaluate(db.pool(), source)
             .await
             .unwrap()
             .is_some());
         let key = NodeKey::generate();
-        let runner = codeyard_db_cluster::cluster::register_own_node(
+        let runner = codeyard_db_placement::cluster::register_own_node(
             db.pool(),
             &key.public_hex(),
             "idle-runner",
@@ -135,7 +135,7 @@ async fn site_policy_forms_leader_pause_dry_run_and_storage_rules_agree_on_both_
         )
         .await
         .unwrap();
-        codeyard_db_cluster::cluster::record_node_heartbeat(
+        codeyard_db_placement::cluster::record_node_heartbeat(
             db.pool(),
             &key.public_hex(),
             "test",
@@ -150,16 +150,16 @@ async fn site_policy_forms_leader_pause_dry_run_and_storage_rules_agree_on_both_
         )
         .await;
         policy.paused = true;
-        codeyard_db_cluster::scaling::save(db.pool(), &actor, &policy)
+        codeyard_db_placement::scaling::save(db.pool(), &actor, &policy)
             .await
             .unwrap();
         let mut runner_policy = ScalingPolicy::defaults("runner");
         runner_policy.paused = false;
-        codeyard_db_cluster::scaling::save(db.pool(), &actor, &runner_policy)
+        codeyard_db_placement::scaling::save(db.pool(), &actor, &runner_policy)
             .await
             .unwrap();
         reset_minute(&db).await;
-        let action = codeyard_db_cluster::scaling::evaluate(db.pool(), source)
+        let action = codeyard_db_placement::scaling::evaluate(db.pool(), source)
             .await
             .unwrap()
             .unwrap();

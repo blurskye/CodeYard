@@ -1,8 +1,8 @@
 //! Shared organization lifecycle effects for native settings and REST.
 use crate::app::AppState;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_db_core::queries::organizations::OrganizationOutcome::Applied;
-use codeyard_db_core::DbPool;
+use codeyard_database::queries::organizations::OrganizationOutcome;
+use codeyard_database::queries::organizations::OrganizationOutcome::Applied;
+use codeyard_database::DbPool;
 use tokio::sync::Semaphore;
 
 static CONVERSION_SLOTS: Semaphore = Semaphore::const_new(16);
@@ -10,7 +10,7 @@ static CONVERSION_SLOTS: Semaphore = Semaphore::const_new(16);
 /// Acknowledgement follows the authoritative transaction, including for asynchronous REST requests.
 pub async fn convert_to_outside(
     pool: &DbPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     org: i64,
     target: i64,
 ) -> anyhow::Result<OrganizationOutcome<()>> {
@@ -27,7 +27,7 @@ pub async fn convert_to_outside(
 /// repositories and organization available for a retry; concurrent creation refuses the final delete.
 pub async fn delete(
     state: &AppState,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     org: i64,
 ) -> anyhow::Result<OrganizationOutcome<()>> {
     let actor = actor.into();
@@ -55,7 +55,7 @@ pub async fn delete(
                 Applied(deleted) => deleted,
                 other => return Ok(other.map(|_| ())),
             };
-        codeyard_repos_core::repositories::lifecycle::remove_deleted_repository(
+        codeyard_git_storage::repositories::lifecycle::remove_deleted_repository(
             state.cluster.as_ref(),
             &deleted,
         )

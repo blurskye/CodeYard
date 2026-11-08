@@ -1,14 +1,14 @@
 use crate::pull_requests::auto_merge::AutoMerge;
 use crate::pull_requests::auto_merge::AutoMergeRequest;
 use anyhow::Result;
-use codeyard_db_core::pool::PgPool;
+use codeyard_database::pool::PgPool;
 
 pub async fn enable(
     pool: &PgPool,
     request: &AutoMergeRequest,
     expected_head: Option<&str>,
 ) -> Result<()> {
-    use codeyard_db_core::queries::discussions::DiscussionWriteRefusal as Refusal;
+    use codeyard_database::queries::discussions::DiscussionWriteRefusal as Refusal;
     let mut tx = pool.begin().await?;
     let repo: i64 = sqlx::query_scalar("SELECT repo_id FROM pull_requests WHERE id=$1")
         .bind(request.pull_request_id)

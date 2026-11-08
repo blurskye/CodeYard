@@ -12,11 +12,11 @@ use crate::support::production_ci as production;
 
 use codeyard_db_repos::discussions::DiscussionEdit;
 
-use codeyard_db_core::models::AccessLevel;
-use codeyard_db_core::models::Issue;
-use codeyard_db_core::models::OrgRole;
-use codeyard_db_core::models::PullRequest;
-use codeyard_db_core::models::Repository;
+use codeyard_database::models::AccessLevel;
+use codeyard_database::models::Issue;
+use codeyard_database::models::OrgRole;
+use codeyard_database::models::PullRequest;
+use codeyard_database::models::Repository;
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -107,7 +107,7 @@ fn refusal<T: std::fmt::Debug>(result: anyhow::Result<T>) {
     assert_eq!(result.unwrap_err().to_string(), DENIED);
 }
 async fn new_pr(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     repo: i64,
     actor: i64,
 ) -> anyhow::Result<PullRequest> {
@@ -175,7 +175,7 @@ async fn contributions(d: &Database, repo: i64, actor: i64, issue: i64, pr: i64,
         issue,
         actor,
         "Contribution",
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session),
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(&session),
     )
     .await;
     let pc = codeyard_db_repos::pull_requests::reviews::add_pull_request_comment(
@@ -209,7 +209,7 @@ async fn review_refused(d: &Database, pr: i64, actor: i64) {
                 d.pool(),
                 pr,
                 actor,
-                &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+                &codeyard_database::queries::users::accounts::AccountCredential::Session(
                     &crate::support::live_session(d.pool(), actor).await,
                 ),
                 state,
@@ -264,7 +264,7 @@ async fn review_denied(
 /// Edits the title and body of `issue` and `pr`, and checks that both edits are `allowed` or both
 /// refused.
 async fn edits(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     actor: i64,
     issue: &Issue,
     pr: &PullRequest,
@@ -302,7 +302,12 @@ async fn edits(
     .unwrap();
     assert_eq!(pr_edit.is_some(), allowed);
 }
-async fn edit_denied(pool: &codeyard_db_core::DbPool, actor: i64, issue: &Issue, pr: &PullRequest) {
+async fn edit_denied(
+    pool: &codeyard_database::DbPool,
+    actor: i64,
+    issue: &Issue,
+    pr: &PullRequest,
+) {
     edits(pool, actor, issue, pr, false).await;
 }
 
@@ -392,7 +397,7 @@ async fn contract(pg: bool) {
         d.pool(),
         pr.id,
         writer,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(d.pool(), writer).await,
         ),
         "approved",
@@ -405,7 +410,7 @@ async fn contract(pg: bool) {
         d.pool(),
         public_pr.id,
         writer,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(d.pool(), writer).await,
         ),
         "approved",
@@ -442,7 +447,7 @@ async fn contract(pg: bool) {
         d.pool(),
         personal_pr.id,
         writer,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(d.pool(), writer).await,
         ),
         "approved",
@@ -500,7 +505,7 @@ async fn contract(pg: bool) {
             i64::MAX,
             reader,
             "Missing",
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+            &codeyard_database::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(d.pool(), reader).await,
             ),
         )
@@ -552,7 +557,7 @@ async fn contract(pg: bool) {
             d.pool(),
             pr.id,
             owner,
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+            &codeyard_database::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(d.pool(), owner).await
             ),
             "approved",
@@ -595,7 +600,7 @@ async fn contract(pg: bool) {
         d.pool(),
         pr.id,
         writer,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(d.pool(), writer).await,
         ),
         "commented",
@@ -665,7 +670,7 @@ async fn contract(pg: bool) {
         issue.id,
         reader,
         "Invalidate revision",
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(d.pool(), reader).await,
         ),
     )
@@ -675,7 +680,7 @@ async fn contract(pg: bool) {
         d.pool(),
         pr.id,
         writer,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(d.pool(), writer).await,
         ),
         "commented",
@@ -755,7 +760,7 @@ async fn contract(pg: bool) {
             d.pool(),
             pr.id,
             writer,
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+            &codeyard_database::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(d.pool(), writer).await
             ),
             "approved",
@@ -1075,7 +1080,7 @@ async fn contract(pg: bool) {
     d.finish().await;
 }
 
-async fn file_comment(pool: &codeyard_db_core::DbPool, pr: i64, author: i64) -> i64 {
+async fn file_comment(pool: &codeyard_database::DbPool, pr: i64, author: i64) -> i64 {
     codeyard_db_repos::pull_requests::reviews::add_pull_request_comment(
         pool,
         codeyard_db_repos::pull_requests::reviews::NewPullRequestComment {
@@ -1097,18 +1102,18 @@ async fn file_comment(pool: &codeyard_db_core::DbPool, pr: i64, author: i64) -> 
     .id
 }
 async fn resolve(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     pr: i64,
     comment: i64,
     resolved: bool,
     actor: i64,
-) -> anyhow::Result<Option<codeyard_db_core::models::PullRequestComment>> {
+) -> anyhow::Result<Option<codeyard_database::models::PullRequestComment>> {
     codeyard_db_repos::pull_requests::reviews::set_pull_request_comment_resolved(
         pool, pr, comment, resolved, actor,
     )
     .await
 }
-async fn still_open(pool: &codeyard_db_core::DbPool, comment: i64) -> bool {
+async fn still_open(pool: &codeyard_database::DbPool, comment: i64) -> bool {
     codeyard_db_repos::pull_requests::reviews::get_pull_request_comment_by_id(pool, comment)
         .await
         .unwrap()
@@ -1296,7 +1301,7 @@ async fn postgres_contributions_recheck_after_grant_revocation_before_parent_loc
         &f.pool,
         pr.id,
         actor,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(&f.pool, actor).await,
         ),
         "approved",
@@ -1343,7 +1348,7 @@ async fn postgres_contributions_recheck_after_grant_revocation_before_parent_loc
                     issue_id,
                     actor,
                     "Denied",
-                    &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+                    &codeyard_database::queries::users::accounts::AccountCredential::Session(
                         &crate::support::live_session(&pool, actor).await,
                     ),
                 )
@@ -1359,7 +1364,7 @@ async fn postgres_contributions_recheck_after_grant_revocation_before_parent_loc
                     &pool,
                     pr_id,
                     actor,
-                    &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+                    &codeyard_database::queries::users::accounts::AccountCredential::Session(
                         &crate::support::live_session(&pool, actor).await,
                     ),
                     "approved",
@@ -1424,7 +1429,7 @@ async fn postgres_contributions_recheck_after_grant_revocation_before_parent_loc
         issue.id,
         actor,
         "Accepted snapshot",
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(&f.pool, actor).await,
         ),
     )
@@ -1440,7 +1445,7 @@ async fn postgres_contributions_recheck_after_grant_revocation_before_parent_loc
             issue.id,
             actor,
             "Replay",
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+            &codeyard_database::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(&f.pool, actor).await,
             ),
         )
@@ -1504,7 +1509,7 @@ async fn postgres_contribution_keeps_its_grant_until_the_effect_commits() {
             issue_id,
             actor,
             "Accepted before revocation",
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+            &codeyard_database::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(&pool, actor).await,
             ),
         )
@@ -1531,7 +1536,7 @@ async fn postgres_contribution_keeps_its_grant_until_the_effect_commits() {
             issue.id,
             actor,
             "Denied after",
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+            &codeyard_database::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(&f.pool, actor).await,
             ),
         )
@@ -1631,7 +1636,7 @@ async fn postgres_team_contributions_wait_for_each_revoked_authority_row() {
                 issue_id,
                 actor,
                 "Denied",
-                &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+                &codeyard_database::queries::users::accounts::AccountCredential::Session(
                     &crate::support::live_session(&pool, actor).await,
                 ),
             )
@@ -1702,7 +1707,7 @@ async fn sqlite_contributions_use_reserved_writer_snapshot() {
         issue.id,
         actor,
         "Accepted snapshot",
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(&f.pool, actor).await,
         ),
     )
@@ -1726,7 +1731,7 @@ async fn sqlite_contributions_use_reserved_writer_snapshot() {
             issue.id,
             actor,
             "Revoked snapshot",
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+            &codeyard_database::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(&second, actor).await,
             ),
         )

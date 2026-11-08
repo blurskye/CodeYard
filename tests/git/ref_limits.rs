@@ -22,16 +22,16 @@ struct Hosted {
 }
 
 impl Hosted {
-    async fn start(pool: &codeyard_db_core::DbPool, url: &str, name: &str) -> Self {
+    async fn start(pool: &codeyard_database::DbPool, url: &str, name: &str) -> Self {
         bundle::install();
-        codeyard_db_cluster::node_config::upsert_node_configuration(pool, "public", true)
+        codeyard_db_placement::node_config::upsert_node_configuration(pool, "public", true)
             .await
             .unwrap();
         let root = tempfile::tempdir().unwrap();
         let owner = codeyard_db_identity::users::accounts::create_user(pool, "http_owner", None)
             .await
             .unwrap();
-        let repository = codeyard_repos_core::repositories::lifecycle::provision(
+        let repository = codeyard_git_storage::repositories::lifecycle::provision(
             (pool, None),
             &root.path().join("repos"),
             codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner.id),
@@ -88,7 +88,7 @@ fn tip(disk_path: &str, branch: &str) -> String {
 /// Pushes that would create a branch or tag past the limit are refused, and the pusher is told
 /// why. Updating or deleting an existing branch still works, and deleting one makes room for
 /// exactly one more.
-async fn ref_limit_over_http(pool: &codeyard_db_core::DbPool, url: &str) {
+async fn ref_limit_over_http(pool: &codeyard_database::DbPool, url: &str) {
     let hosted = Hosted::start(pool, url, "capped").await;
     let root = hosted.root.path();
     let repo_url = hosted.repo_url("capped");
@@ -139,7 +139,7 @@ async fn ref_limit_over_http(pool: &codeyard_db_core::DbPool, url: &str) {
 }
 
 /// A branch whose name is not ASCII pushes over HTTP, and the branch is listed afterwards.
-async fn unicode_branch_over_http(pool: &codeyard_db_core::DbPool, url: &str) {
+async fn unicode_branch_over_http(pool: &codeyard_database::DbPool, url: &str) {
     let hosted = Hosted::start(pool, url, "unicode").await;
     let root = hosted.root.path();
     let repo_url = hosted.repo_url("unicode");

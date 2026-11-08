@@ -1,7 +1,7 @@
 use crate::users::two_factor::FactorAuthority;
 use crate::users::two_factor::StoredTwoFactor;
 use anyhow::Result;
-use codeyard_db_core::pool::SqlitePool;
+use codeyard_database::pool::SqlitePool;
 
 async fn authorized(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
@@ -17,7 +17,7 @@ async fn authorized(
         }
         FactorAuthority::Administrator { user_id, session } => Ok(
             crate::sqlite::users::transitions::active_admin(tx, user_id).await?
-                && codeyard_db_core::queries::sqlite::users::transitions::live_session(
+                && codeyard_database::queries::sqlite::users::transitions::live_session(
                     tx, user_id, session,
                 )
                 .await?,

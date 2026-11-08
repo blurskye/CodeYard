@@ -1,19 +1,19 @@
 //! Cluster backups reuse replica streams. Restore keeps nodes and voters fenced until installed.
 use super::{private_file, reject_symlink, sync_dir, Places, REPOSITORIES_DIR, UPLOADS_DIR};
 use anyhow::{ensure, Context, Result};
-use codeyard_db_core::{models::RefValue, DbPool};
-use codeyard_repos_core::{context::NodeContext, repositories::store::RepoStore};
+use codeyard_database::{models::RefValue, DbPool};
+use codeyard_git_storage::{context::NodeContext, repositories::store::RepoStore};
 use codeyard_storage::nodes::{Declaration, NodeStore};
 use std::{io::Write, path::Path, sync::Arc, time::Duration};
 use tokio::io::AsyncWriteExt;
 
 pub(super) async fn save_objects(
     context: &NodeContext,
-    objects: Vec<codeyard_db_cluster::objects::Object>,
+    objects: Vec<codeyard_db_placement::objects::Object>,
     root: &Path,
     lock: Arc<std::fs::File>,
 ) -> Result<()> {
-    let store = codeyard_repos_core::objects::Store::new(context.clone());
+    let store = codeyard_git_storage::objects::Store::new(context.clone());
     for object in objects {
         let expected = Declaration {
             key: object.object_key,
@@ -148,9 +148,9 @@ pub(super) async fn restore_postgres(
     let mut stderr = Vec::new();
     let status = {
         let mut bounded =
-            codeyard_repos_core::git_transport::LimitedWriter::new(&mut output, limit);
+            codeyard_git_storage::git_transport::LimitedWriter::new(&mut output, limit);
         let mut errors =
-            codeyard_repos_core::git_transport::LimitedWriter::new(&mut stderr, 64 * 1024);
+            codeyard_git_storage::git_transport::LimitedWriter::new(&mut stderr, 64 * 1024);
         let mut command = tokio::process::Command::new("pg_restore");
         command
             .args([
@@ -205,11 +205,11 @@ pub(super) async fn restore_postgres(
 }
 
 pub(super) async fn restore_refs(pool: &DbPool, root: &Path, force: bool) -> Result<()> {
-    for repository in codeyard_db_cluster::backups::list_repositories(pool).await? {
+    for repository in codeyard_db_placement::backups::list_repositories(pool).await? {
         if repository.storage_node_id.is_none() {
             continue;
         }
-        let uuid = codeyard_repos_core::wire::repository_uuid(&repository.disk_path)?;
+        let uuid = codeyard_git_storage::wire::repository_uuid(&repository.disk_path)?;
         let path = root.join(format!("{uuid}.git"));
         let store = RepoStore::from_disk_path(path.to_str().context("restore path is not text")?);
         let (refs, head) = store.replica_listing().await?;
@@ -232,7 +232,7 @@ pub(super) async fn restore_refs(pool: &DbPool, root: &Path, force: bool) -> Res
             values.iter().any(|value| value.name == "HEAD"),
             "restored repository has no symbolic HEAD"
         );
-        codeyard_db_cluster::backups::restore_refs(pool, repository.id, &values, force).await?;
+        codeyard_db_placement::backups::restore_refs(pool, repository.id, &values, force).await?;
     }
     Ok(())
 }
@@ -240,12 +240,12 @@ pub(super) async fn restore_refs(pool: &DbPool, root: &Path, force: bool) -> Res
 /// Installs this storage identity's assigned copies into an empty or interrupted restore.
 pub async fn restore_node(pool: &DbPool, places: &Places<'_>, dir: &Path) -> Result<()> {
     ensure!(
-        codeyard_db_cluster::cluster::cluster_enabled(pool).await?,
+        codeyard_db_placement::cluster::cluster_enabled(pool).await?,
         "node restore requires a restored cluster database"
     );
-    let maintenance = codeyard_db_cluster::cluster::maintenance_lock(pool).await?;
+    let maintenance = codeyard_db_placement::cluster::maintenance_lock(pool).await?;
     ensure!(
-        codeyard_db_cluster::backups::restore_pending(pool).await?,
+        codeyard_db_placement::backups::restore_pending(pool).await?,
         "node restore requires a pending cluster restore"
     );
     codeyard_support::fs::private_dir(places.repos_path)?;
@@ -254,7 +254,7 @@ pub async fn restore_node(pool: &DbPool, places: &Places<'_>, dir: &Path) -> Res
     let _identity = codeyard_support::locks::exclusive_file(&places.state_dir.join("serve.lock"))?;
     let key = codeyard_support::node_identity::load_existing(places.state_dir)?
         .context("supply this enrolled storage node's original NODE_KEY or NODE_KEY_FILE")?;
-    let node = codeyard_db_cluster::cluster::get_node_by_public_key(pool, &key.public_hex())
+    let node = codeyard_db_placement::cluster::get_node_by_public_key(pool, &key.public_hex())
         .await?
         .context("node key is not in the restored database")?;
     ensure!(
@@ -263,15 +263,15 @@ pub async fn restore_node(pool: &DbPool, places: &Places<'_>, dir: &Path) -> Res
             && node.roles.iter().any(|role| role == "storage"),
         "node restore requires a stopped, enrolled storage identity"
     );
-    let repositories = codeyard_db_cluster::backups::list_repositories(pool).await?;
+    let repositories = codeyard_db_placement::backups::list_repositories(pool).await?;
     let mut installed = Vec::new();
     for repository in repositories {
         let Some(primary) = repository.storage_node_id else {
             continue;
         };
-        let view = codeyard_db_cluster::cluster::writes::write_settings(pool).await?;
+        let view = codeyard_db_placement::cluster::writes::write_settings(pool).await?;
         let quorum = if view.write_quorum.is_some() {
-            Some(codeyard_db_cluster::cluster::writes::recovery_view(pool, repository.id).await?)
+            Some(codeyard_db_placement::cluster::writes::recovery_view(pool, repository.id).await?)
         } else {
             None
         };
@@ -279,9 +279,13 @@ pub async fn restore_node(pool: &DbPool, places: &Places<'_>, dir: &Path) -> Res
             || quorum
                 .as_ref()
                 .is_some_and(|view| view.voters.iter().any(|voter| voter.node_id == node.id))
-            || codeyard_db_cluster::cluster::replica_applied_version(pool, repository.id, node.id)
-                .await?
-                .is_some();
+            || codeyard_db_placement::cluster::replica_applied_version(
+                pool,
+                repository.id,
+                node.id,
+            )
+            .await?
+            .is_some();
         if !assigned {
             continue;
         }
@@ -291,7 +295,7 @@ pub async fn restore_node(pool: &DbPool, places: &Places<'_>, dir: &Path) -> Res
                 "stop and fence every repository before node restore"
             );
         }
-        let uuid = codeyard_repos_core::wire::repository_uuid(&repository.disk_path)?;
+        let uuid = codeyard_git_storage::wire::repository_uuid(&repository.disk_path)?;
         let source = dir.join(REPOSITORIES_DIR).join(format!("{uuid}.git"));
         reject_symlink(&source)?;
         ensure!(
@@ -299,9 +303,9 @@ pub async fn restore_node(pool: &DbPool, places: &Places<'_>, dir: &Path) -> Res
             "backup repository {uuid} is missing"
         );
         let target = if primary == node.id {
-            codeyard_repos_core::repositories::store::primary_path(places.repos_path, uuid)
+            codeyard_git_storage::repositories::store::primary_path(places.repos_path, uuid)
         } else {
-            codeyard_repos_core::cluster::replicas::copy_path(places.repos_path, uuid)
+            codeyard_git_storage::cluster::replicas::copy_path(places.repos_path, uuid)
         };
         reject_symlink(&target)?;
         codeyard_git::mirror::mirror(&source, &target).await?;
@@ -313,12 +317,12 @@ pub async fn restore_node(pool: &DbPool, places: &Places<'_>, dir: &Path) -> Res
                 RepoStore::recover_term(pool, repository.id, node.id, places.repos_path).await?;
             }
         }
-        let version = codeyard_db_cluster::cluster::get_write_version(pool, repository.id)
+        let version = codeyard_db_placement::cluster::get_write_version(pool, repository.id)
             .await?
             .context("restored repository disappeared")?;
         installed.push((repository.id, primary, version));
     }
-    let objects = codeyard_db_cluster::backups::node_objects(pool, node.id).await?;
+    let objects = codeyard_db_placement::backups::node_objects(pool, node.id).await?;
     let local =
         codeyard_storage::local::LocalStore::open(&places.repos_path.join(UPLOADS_DIR)).await?;
     let io = Arc::new(tokio::sync::Semaphore::new(1));
@@ -344,9 +348,9 @@ pub async fn restore_node(pool: &DbPool, places: &Places<'_>, dir: &Path) -> Res
             )
             .await?;
     }
-    codeyard_db_cluster::backups::restore_node_ready(pool, node.id, &key.public_hex()).await?;
+    codeyard_db_placement::backups::restore_node_ready(pool, node.id, &key.public_hex()).await?;
     for object in &objects {
-        codeyard_db_cluster::objects::ready(
+        codeyard_db_placement::objects::ready(
             pool,
             &object.object_key,
             node.id,
@@ -357,7 +361,7 @@ pub async fn restore_node(pool: &DbPool, places: &Places<'_>, dir: &Path) -> Res
     }
     for (repository, primary, version) in installed {
         if primary != node.id {
-            codeyard_db_cluster::cluster::set_applied_version(
+            codeyard_db_placement::cluster::set_applied_version(
                 pool, repository, node.id, primary, version,
             )
             .await?;

@@ -20,12 +20,12 @@ use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::app::AppState;
-use codeyard_db_core::models::Organization;
-use codeyard_db_core::models::Team;
-use codeyard_db_core::models::User;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
-use codeyard_model::urls::api_url;
+use codeyard_database::models::Organization;
+use codeyard_database::models::Team;
+use codeyard_database::models::User;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
+use codeyard_types::urls::api_url;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Map;
@@ -44,11 +44,11 @@ fn batch(after: i64) -> Result<codeyard_db_orgs::organizations::OrganizationPage
 }
 
 fn outcome<T>(
-    value: codeyard_db_core::queries::organizations::OrganizationOutcome<T>,
+    value: codeyard_database::queries::organizations::OrganizationOutcome<T>,
 ) -> Result<T> {
     match value {
-        codeyard_db_core::queries::organizations::OrganizationOutcome::Denied => Err(denied()),
-        codeyard_db_core::queries::organizations::OrganizationOutcome::Conflict => {
+        codeyard_database::queries::organizations::OrganizationOutcome::Denied => Err(denied()),
+        codeyard_database::queries::organizations::OrganizationOutcome::Conflict => {
             Err(Error::validation("Team", "name", "already_exists"))
         }
         other => crate::orgs::outcome(other),
@@ -61,7 +61,7 @@ fn denied() -> Error {
 
 fn writer(
     auth: &codeyard_identity::github_auth::Authentication,
-) -> codeyard_db_core::queries::credentials::Actor {
+) -> codeyard_database::queries::credentials::Actor {
     auth.database_actor()
 }
 
@@ -236,12 +236,12 @@ async fn document(
 async fn input(request: Request) -> Result<Map<String, Value>> {
     let bytes = to_bytes(request.into_body(), 1024 * 1024)
         .await
-        .map_err(codeyard_model::github_error::json_bytes_error)?;
+        .map_err(codeyard_types::github_error::json_bytes_error)?;
     if bytes.is_empty() {
         return Ok(Map::new());
     }
     serde_json::from_slice::<Value>(&bytes)
-        .map_err(codeyard_model::github_error::json_parse_error)?
+        .map_err(codeyard_types::github_error::json_parse_error)?
         .as_object()
         .cloned()
         .ok_or_else(|| Error::invalid("Expected an object"))
@@ -407,9 +407,9 @@ async fn create(
     .await
     .map_err(Error::unavailable)?
     {
-        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(role)
-            if codeyard_db_core::queries::organizations::administers(role) => {}
-        codeyard_db_core::queries::organizations::OrganizationOutcome::Missing => {
+        codeyard_database::queries::organizations::OrganizationOutcome::Applied(role)
+            if codeyard_database::queries::organizations::administers(role) => {}
+        codeyard_database::queries::organizations::OrganizationOutcome::Missing => {
             return Err(Error::missing())
         }
         _ => return Err(denied()),
@@ -549,7 +549,7 @@ async fn list(
             .await
             .map_err(Error::unavailable)?
             {
-                codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(rows) => {
+                codeyard_database::queries::organizations::OrganizationOutcome::Applied(rows) => {
                     rows
                 }
                 _ => return Err(Error::missing()),
@@ -779,8 +779,8 @@ async fn team_member(
         .await
         .map_err(Error::unavailable)?
         {
-            codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(())
-            | codeyard_db_core::queries::organizations::OrganizationOutcome::Missing => {}
+            codeyard_database::queries::organizations::OrganizationOutcome::Applied(())
+            | codeyard_database::queries::organizations::OrganizationOutcome::Missing => {}
             value => outcome(value)?,
         }
         return Ok(StatusCode::NO_CONTENT.into_response());
@@ -798,7 +798,7 @@ async fn team_member(
             string(&input, "role")?.unwrap_or("member"),
         )
         .map_err(|_| Error::validation("Team", "role", "invalid"))?;
-        let codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(target_role) =
+        let codeyard_database::queries::organizations::OrganizationOutcome::Applied(target_role) =
             target_role
         else {
             if legacy_member {
@@ -832,7 +832,7 @@ async fn team_member(
             .into_response());
         };
         // Organization owners maintain every team they are on.
-        if matches!(target_role, codeyard_db_core::models::OrgRole::Owner) {
+        if matches!(target_role, codeyard_database::models::OrgRole::Owner) {
             role = codeyard_db_orgs::organizations::teams::TeamRole::Maintainer;
         }
         let row = outcome(
@@ -1096,8 +1096,8 @@ async fn repository(
         .await
         .map_err(Error::unavailable)?
         {
-            codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(())
-            | codeyard_db_core::queries::organizations::OrganizationOutcome::Missing => {}
+            codeyard_database::queries::organizations::OrganizationOutcome::Applied(())
+            | codeyard_database::queries::organizations::OrganizationOutcome::Missing => {}
             value => outcome(value)?,
         }
         return Ok(StatusCode::NO_CONTENT.into_response());

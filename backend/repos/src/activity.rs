@@ -3,7 +3,7 @@ use anyhow::Context;
 
 use crate::ref_changes::RefMove;
 use anyhow::Result;
-use codeyard_db_core::DbPool;
+use codeyard_database::DbPool;
 use codeyard_db_repos::repositories::activity::Kind;
 use codeyard_db_repos::repositories::activity::RefActivity;
 use codeyard_git as git;

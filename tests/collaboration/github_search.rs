@@ -20,7 +20,7 @@ async fn search(pg: bool) {
     let mut repos = Vec::new();
     for (name, private) in [("proj", false), ("hidden", true)] {
         repos.push(
-            codeyard_repos_core::repositories::lifecycle::provision(
+            codeyard_git_storage::repositories::lifecycle::provision(
                 (f.pool(), None),
                 root.path(),
                 codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
@@ -82,7 +82,7 @@ async fn search(pg: bool) {
         second.id,
         bob,
         "Discussion café search",
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), bob).await,
         ),
     )
@@ -92,7 +92,7 @@ async fn search(pg: bool) {
         f.pool(),
         pull.id,
         alice,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), alice).await,
         ),
         "commented",

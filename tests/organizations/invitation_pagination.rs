@@ -45,7 +45,7 @@ async fn pages(pg: bool) {
                 owner,
                 org,
                 recipient,
-                codeyard_db_core::models::OrgRole::Member,
+                codeyard_database::models::OrgRole::Member,
             )
             .await
             .unwrap(),
@@ -61,7 +61,7 @@ async fn pages(pg: bool) {
                 owner,
                 first_org,
                 user,
-                codeyard_db_core::models::OrgRole::Member,
+                codeyard_database::models::OrgRole::Member,
             )
             .await
             .unwrap(),
@@ -211,8 +211,8 @@ async fn deletion_removes_release_uploads(pg: bool) {
             filename: "tool.bin",
             content_type: "application/octet-stream",
             file_size: 1,
-            reason: codeyard_db_core::models::FileReason::ReleaseAsset,
-            visibility: codeyard_db_core::models::FileVisibility::Owner,
+            reason: codeyard_database::models::FileReason::ReleaseAsset,
+            visibility: codeyard_database::models::FileVisibility::Owner,
             sha256_hex: &"a".repeat(64),
         },
     )
@@ -224,7 +224,7 @@ async fn deletion_removes_release_uploads(pg: bool) {
     codeyard_db_repos::releases::add_release_asset(
         f.pool(),
         owner,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), owner).await,
         ),
         repository.id,
@@ -246,7 +246,7 @@ async fn deletion_removes_release_uploads(pg: bool) {
             .unwrap()
             .is_active
     );
-    if let codeyard_db_core::DbPool::Postgres(raw) = f.pool() {
+    if let codeyard_database::DbPool::Postgres(raw) = f.pool() {
         let mut reader = raw.begin().await.unwrap();
         let holder: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
             .fetch_one(&mut *reader)
@@ -274,7 +274,7 @@ async fn deletion_removes_release_uploads(pg: bool) {
                 &pool,
                 (
                     owner,
-                    &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+                    &codeyard_database::queries::users::accounts::AccountCredential::Session(
                         &deletion_session.id,
                     ),
                 ),
@@ -307,7 +307,7 @@ async fn deletion_removes_release_uploads(pg: bool) {
                 f.pool(),
                 (
                     owner,
-                    &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+                    &codeyard_database::queries::users::accounts::AccountCredential::Session(
                         &deletion_session.id,
                     ),
                 ),

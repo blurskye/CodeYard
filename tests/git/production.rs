@@ -3,10 +3,10 @@
 use crate::support::native_database as native;
 
 use codeyard_db_repos::repositories;
-use codeyard_repos_core::repositories::lifecycle;
-use codeyard_repos_core::repositories::store::RepoStore;
-use codeyard_repos_core::store_types::MergeMethod;
-use codeyard_repos_core::store_types::MergeRequest;
+use codeyard_git_storage::repositories::lifecycle;
+use codeyard_git_storage::repositories::store::RepoStore;
+use codeyard_git_storage::store_types::MergeMethod;
+use codeyard_git_storage::store_types::MergeRequest;
 use git2::{Oid, Repository, Signature};
 use std::{path::Path, sync::Arc};
 use uuid::Uuid;
@@ -358,7 +358,7 @@ async fn up_to_date_merge_makes_a_merge_commit_and_conflicts_are_honest() {
 async fn database() -> native::PostgresDatabase {
     native::PostgresDatabase::new().await
 }
-async fn user(pool: &codeyard_db_core::DbPool, label: &str) -> codeyard_db_core::models::User {
+async fn user(pool: &codeyard_database::DbPool, label: &str) -> codeyard_database::models::User {
     codeyard_db_identity::users::accounts::create_user(
         pool,
         &format!("{label}_{}", Uuid::new_v4().simple()),
@@ -389,7 +389,7 @@ async fn private_forks_and_descendants_cannot_be_published_through_settings() {
         pool,
         reader.id,
         source.id,
-        codeyard_db_core::models::AccessLevel::Read,
+        codeyard_database::models::AccessLevel::Read,
     )
     .await
     .unwrap();
@@ -415,7 +415,7 @@ async fn private_forks_and_descendants_cannot_be_published_through_settings() {
         codeyard_db_repos::repositories::access::get_user_repo_access(pool, other.id, fork.id)
             .await
             .unwrap(),
-        codeyard_db_core::models::AccessLevel::None
+        codeyard_database::models::AccessLevel::None
     );
     assert!(codeyard_db_repos::repositories::records::update_repository(
         pool,
@@ -507,7 +507,7 @@ async fn private_forks_and_descendants_cannot_be_published_through_settings() {
         codeyard_db_repos::repositories::access::get_user_repo_access(pool, other.id, child.id)
             .await
             .unwrap(),
-        codeyard_db_core::models::AccessLevel::None
+        codeyard_database::models::AccessLevel::None
     );
     let public = codeyard_db_repos::repositories::records::create_repository(
         pool,

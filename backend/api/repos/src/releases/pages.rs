@@ -17,13 +17,13 @@ use codeyard_api_http::shared::repos::forms::authorize_post;
 use codeyard_api_http::shared::repos::forms::field;
 use codeyard_api_http::shared::repos::forms::with_status;
 use codeyard_app::app::AppState;
-use codeyard_db_core::models::ReleaseAsset;
-use codeyard_db_core::models::ReleaseRow;
+use codeyard_database::models::ReleaseAsset;
+use codeyard_database::models::ReleaseRow;
 use codeyard_db_repos::releases::ReleaseFields;
 use codeyard_git::error::ErrorKind;
+use codeyard_git_storage::ref_errors::RefError;
+use codeyard_git_storage::repositories::releases::ReleaseError;
 use codeyard_identity::repository_access::AccessError;
-use codeyard_repos_core::ref_errors::RefError;
-use codeyard_repos_core::repositories::releases::ReleaseError;
 use codeyard_repos_pulls::repositories::releases::ReleaseInput;
 use codeyard_storage::files::downloads::DownloadError;
 use codeyard_storage::files::uploads::UploadError;
@@ -803,7 +803,7 @@ pub(crate) async fn upload_asset(
         &ctx.state.pool,
         &ctx.state.storage,
         actor,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session),
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(&session),
         &owner,
         &name,
         id,

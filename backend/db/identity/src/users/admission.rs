@@ -1,6 +1,6 @@
 use anyhow::Result;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 
 /// Failed attempts one client address may make in a window.
 pub(crate) const CLIENT_LIMIT: i32 = 30;

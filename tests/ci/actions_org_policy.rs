@@ -17,11 +17,11 @@ use axum::{
 use codeyard_db_orgs::organizations::profiles::NewOrganization;
 use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
 
+use codeyard_database::queries::actions::CacheLimit;
+use codeyard_database::queries::organizations::OrganizationOutcome;
 use codeyard_db_actions::action_objects as objects;
 use codeyard_db_actions::action_objects::NewObject;
 use codeyard_db_actions::actions::RepoActionsSettings;
-use codeyard_db_core::queries::actions::CacheLimit;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
 use codeyard_db_repos::repositories::creation::RepositoryTarget;
 use serde_json::{json, Value};
@@ -100,7 +100,7 @@ async fn contract(pg: bool) {
     let mut repos = Vec::new();
     for (org, actor) in [(&organizations[0], alice), (&organizations[1], bob)] {
         repos.push(
-            codeyard_repos_core::repositories::lifecycle::provision(
+            codeyard_git_storage::repositories::lifecycle::provision(
                 (f.pool(), None),
                 root.path(),
                 RepositoryCreationOwner {
@@ -116,7 +116,7 @@ async fn contract(pg: bool) {
             .unwrap(),
         );
     }
-    let personal = codeyard_repos_core::repositories::lifecycle::provision(
+    let personal = codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         RepositoryCreationOwner::personal(alice),

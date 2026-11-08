@@ -1,8 +1,8 @@
 use anyhow::Result;
 use chrono::DateTime;
 use chrono::Utc;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -105,13 +105,13 @@ impl BranchAlert {
 
 pub struct OrganizationAlert {
     pub alert: Alert,
-    pub repository: codeyard_db_core::models::Repository,
+    pub repository: codeyard_database::models::Repository,
     pub instance: Instance,
-    pub dismissed_by: Option<codeyard_db_core::models::User>,
+    pub dismissed_by: Option<codeyard_database::models::User>,
 }
 
 pub struct NewUpload<'a> {
-    pub actor: codeyard_db_core::queries::credentials::Actor,
+    pub actor: codeyard_database::queries::credentials::Actor,
     pub repo: i64,
     pub ref_name: &'a str,
     pub commit_sha: &'a str,
@@ -375,6 +375,6 @@ native_operation!(crate::postgres::code_scanning::instance, crate::sqlite::code_
 native_operation!(crate::postgres::code_scanning::instances, crate::sqlite::code_scanning::instances,
     fn instances(pool: &DbPool, alert: i64, reference: Option<&str>, offset: i64, limit: i64) -> Result<Vec<Instance>>);
 native_operation!(crate::postgres::code_scanning::dismiss, crate::sqlite::code_scanning::dismiss,
-    fn dismiss(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo: i64, number: i64, input: &Dismissal<'_>) -> Result<Alert>);
+    fn dismiss(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, repo: i64, number: i64, input: &Dismissal<'_>) -> Result<Alert>);
 native_operation!(crate::postgres::code_scanning::delete_analysis, crate::sqlite::code_scanning::delete_analysis,
-    fn delete_analysis(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo: i64, id: i64, confirm: bool) -> Result<Option<i64>>);
+    fn delete_analysis(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, repo: i64, id: i64, confirm: bool) -> Result<Option<i64>>);

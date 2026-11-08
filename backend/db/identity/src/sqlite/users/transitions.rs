@@ -5,11 +5,11 @@ use crate::users::transitions::EmailChange;
 use crate::users::transitions::RoleChange;
 use crate::users::transitions::SetupClaim;
 use anyhow::Result;
-use codeyard_db_core::models::NodeConfiguration;
-use codeyard_db_core::models::User;
-use codeyard_db_core::pool::SqlitePool;
-use codeyard_db_core::queries::sqlite::users::transitions::credential_live;
-use codeyard_db_core::queries::sqlite::users::transitions::live_session;
+use codeyard_database::models::NodeConfiguration;
+use codeyard_database::models::User;
+use codeyard_database::pool::SqlitePool;
+use codeyard_database::queries::sqlite::users::transitions::credential_live;
+use codeyard_database::queries::sqlite::users::transitions::live_session;
 use sqlx::Sqlite;
 use sqlx::Transaction;
 
@@ -85,7 +85,7 @@ pub(crate) async fn active_session_read(
 pub async fn require_account(
     tx: &mut Transaction<'_, sqlx::Sqlite>,
     actor: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
 ) -> Result<()> {
     require_account_with_mode(tx, actor, credential, true).await
 }
@@ -94,7 +94,7 @@ pub async fn require_account(
 pub(crate) async fn require_account_exclusive(
     tx: &mut Transaction<'_, sqlx::Sqlite>,
     actor: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
 ) -> Result<()> {
     require_account(tx, actor, credential).await?;
     anyhow::ensure!(
@@ -107,7 +107,7 @@ pub(crate) async fn require_account_exclusive(
 pub async fn require_read_account(
     tx: &mut Transaction<'_, sqlx::Sqlite>,
     actor: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
 ) -> Result<()> {
     require_account_with_mode(tx, actor, credential, false).await
 }
@@ -115,7 +115,7 @@ pub async fn require_read_account(
 async fn require_account_with_mode(
     tx: &mut Transaction<'_, sqlx::Sqlite>,
     actor: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     write: bool,
 ) -> Result<()> {
     use codeyard_types::credentials::AccountRestricted;
@@ -156,13 +156,13 @@ pub async fn active_admin_session(
 /// Live site administration through an original session or personal-token credential.
 pub async fn active_administrator(
     tx: &mut Transaction<'_, Sqlite>,
-    actor: &codeyard_db_core::queries::credentials::Actor,
+    actor: &codeyard_database::queries::credentials::Actor,
 ) -> Result<bool> {
     let Some(credential) = actor.credential() else {
         return Ok(false);
     };
     Ok(active_admin(tx, actor.user_id).await?
-        && codeyard_db_core::queries::sqlite::users::transitions::credential_live(
+        && codeyard_database::queries::sqlite::users::transitions::credential_live(
             tx,
             actor.user_id,
             &credential,
@@ -207,7 +207,7 @@ pub(crate) async fn stop_ownerless_organization_ci(
     .bind(organizations)
     .fetch_all(&mut **tx)
     .await?;
-    codeyard_db_core::queries::sqlite::ci::stop_organization_ci_runs(tx, &ownerless).await
+    codeyard_database::queries::sqlite::ci::stop_organization_ci_runs(tx, &ownerless).await
 }
 
 pub async fn complete_setup(
@@ -235,7 +235,7 @@ pub async fn complete_setup(
         if organization_name_exists(&mut tx, username).await? {
             return Ok(SetupClaim::ExistingAccounts);
         }
-        sqlx::query_as::<_, User>(&format!("INSERT INTO users (home_cell,username,email,password_hash,is_admin) VALUES ({cell_home},?1,?2,?3,TRUE) RETURNING *", cell_home = codeyard_db_core::cells::LOCAL_HOME_SQL))
+        sqlx::query_as::<_, User>(&format!("INSERT INTO users (home_cell,username,email,password_hash,is_admin) VALUES ({cell_home},?1,?2,?3,TRUE) RETURNING *", cell_home = codeyard_database::cells::LOCAL_HOME_SQL))
             .bind(username).bind(email).bind(hash).fetch_one(&mut *tx).await?
     } else if let Some((id, expected_hash)) = recovery.filter(|_| count == 1) {
         // Complete setup for a sole active admin that was provisioned separately: the
@@ -252,8 +252,8 @@ pub async fn complete_setup(
     sqlx::query("INSERT INTO node_configuration (id,node_mode,setup_completed) VALUES (1,?1,TRUE) ON CONFLICT (id) DO UPDATE SET node_mode=?1,setup_completed=TRUE,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now')")
         .bind(mode).execute(&mut *tx).await?;
     anyhow::ensure!(
-        codeyard_db_core::cells::directory::sqlite::user(pool, &mut tx, &user).await?,
-        codeyard_db_core::cells::directory::Refusal::Conflict
+        codeyard_database::cells::directory::sqlite::user(pool, &mut tx, &user).await?,
+        codeyard_database::cells::directory::Refusal::Conflict
     );
     tx.commit().await?;
     Ok(SetupClaim::Completed(Box::new(user)))
@@ -279,13 +279,13 @@ pub async fn create_cli_user(
     }
     let user = sqlx::query_as::<_, User>(&format!(
         "INSERT INTO users (home_cell,username,email) VALUES ({cell_home},?1,?2) RETURNING *",
-        cell_home = codeyard_db_core::cells::LOCAL_HOME_SQL
+        cell_home = codeyard_database::cells::LOCAL_HOME_SQL
     ))
     .bind(username)
     .bind(email)
     .fetch_one(&mut *tx)
     .await?;
-    if !codeyard_db_core::cells::directory::sqlite::user(pool, &mut tx, &user).await? {
+    if !codeyard_database::cells::directory::sqlite::user(pool, &mut tx, &user).await? {
         return Ok(AccountAdmission::Conflict);
     }
     tx.commit().await?;
@@ -318,7 +318,7 @@ pub async fn bootstrap_admin(
         return Ok(SetupClaim::ExistingAccounts);
     }
     let user = sqlx::query_as::<_, User>(
-        &format!("INSERT INTO users (home_cell,username,password_hash,is_admin) VALUES ({cell_home},?1,?2,TRUE) RETURNING *", cell_home = codeyard_db_core::cells::LOCAL_HOME_SQL),
+        &format!("INSERT INTO users (home_cell,username,password_hash,is_admin) VALUES ({cell_home},?1,?2,TRUE) RETURNING *", cell_home = codeyard_database::cells::LOCAL_HOME_SQL),
     )
     .bind(username)
     .bind(hash)
@@ -327,8 +327,8 @@ pub async fn bootstrap_admin(
     sqlx::query("INSERT INTO node_configuration (id,node_mode,setup_completed) VALUES (1,?1,TRUE) ON CONFLICT (id) DO UPDATE SET node_mode=?1,setup_completed=TRUE,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now')")
         .bind(mode).execute(&mut *tx).await?;
     anyhow::ensure!(
-        codeyard_db_core::cells::directory::sqlite::user(pool, &mut tx, &user).await?,
-        codeyard_db_core::cells::directory::Refusal::Conflict
+        codeyard_database::cells::directory::sqlite::user(pool, &mut tx, &user).await?,
+        codeyard_database::cells::directory::Refusal::Conflict
     );
     tx.commit().await?;
     Ok(SetupClaim::Completed(Box::new(user)))
@@ -384,7 +384,7 @@ pub async fn change_ban(
             .await?;
         // Stop the account's own work everywhere. If it was the last usable owner,
         // stop every actor's work in that organization's repositories as well.
-        codeyard_db_core::queries::sqlite::ci::stop_actor_ci_runs(&mut tx, target).await?;
+        codeyard_database::queries::sqlite::ci::stop_actor_ci_runs(&mut tx, target).await?;
         stop_ownerless_organization_ci(&mut tx, &organizations).await?;
     }
     sqlx::query("INSERT INTO audit_log(actor_id,action,target_type,target_id,metadata) VALUES(?1,'user.ban','user',?2,?3)")
@@ -446,7 +446,7 @@ pub async fn change_email(
     let Some(user) = user else {
         return Ok(EmailChange::Missing);
     };
-    if !codeyard_db_core::cells::directory::sqlite::user(pool, &mut tx, &user).await? {
+    if !codeyard_database::cells::directory::sqlite::user(pool, &mut tx, &user).await? {
         return Ok(EmailChange::Taken);
     }
     if !current_password(&mut tx, user_id, expected, session, false).await? {
@@ -454,14 +454,14 @@ pub async fn change_email(
     }
     let cleanup = previous
         .as_deref()
-        .map(|email| codeyard_model::cells::Key::new(codeyard_model::cells::KeyKind::Email, email))
+        .map(|email| codeyard_types::cells::Key::new(codeyard_types::cells::KeyKind::Email, email))
         .transpose()?;
-    let object = codeyard_model::cells::Object {
-        kind: codeyard_model::cells::ObjectKind::User,
+    let object = codeyard_types::cells::Object {
+        kind: codeyard_types::cells::ObjectKind::User,
         id: user_id,
     };
     if let Some(key) = &cleanup {
-        codeyard_db_core::cells::outbox::sqlite::release(
+        codeyard_database::cells::outbox::sqlite::release(
             pool,
             &mut tx,
             object,
@@ -471,7 +471,7 @@ pub async fn change_email(
     }
     tx.commit().await?;
     if let Some(key) = &cleanup {
-        codeyard_db_core::cells::directory::sqlite::finish_release(
+        codeyard_database::cells::directory::sqlite::finish_release(
             pool,
             object,
             std::slice::from_ref(key),
@@ -508,7 +508,7 @@ pub async fn change_admin_role(
         return Ok(RoleChange::Missing);
     };
     if !admin {
-        codeyard_db_core::queries::sqlite::ci::stop_actor_ci_runs(&mut tx, target).await?;
+        codeyard_database::queries::sqlite::ci::stop_actor_ci_runs(&mut tx, target).await?;
     }
     sqlx::query("INSERT INTO audit_log(actor_id,action,target_type,target_id,metadata) VALUES(?1,'user.admin_role','user',?2,?3)")
         .bind(actor.user_id).bind(target).bind(serde_json::json!({"is_admin":admin,"outcome":"applied"}).to_string()).execute(&mut *tx).await?;
@@ -556,20 +556,20 @@ pub async fn register_password(
     }
     if config.node_mode == "private" && administrator.is_none() {
         if pool.directory().is_some() {
-            let mut keys = vec![codeyard_model::cells::Key::new(
-                codeyard_model::cells::KeyKind::Name,
+            let mut keys = vec![codeyard_types::cells::Key::new(
+                codeyard_types::cells::KeyKind::Name,
                 username,
             )?];
             if let Some(email) = email {
-                keys.push(codeyard_model::cells::Key::new(
-                    codeyard_model::cells::KeyKind::Email,
+                keys.push(codeyard_types::cells::Key::new(
+                    codeyard_types::cells::KeyKind::Email,
                     email,
                 )?);
             }
-            if !codeyard_db_core::cells::directory::sqlite::available(
+            if !codeyard_database::cells::directory::sqlite::available(
                 pool,
                 &mut tx,
-                codeyard_model::cells::ObjectKind::User,
+                codeyard_types::cells::ObjectKind::User,
                 &keys,
             )
             .await?
@@ -590,9 +590,9 @@ pub async fn register_password(
         tx.commit().await?;
         return Ok(AccountAdmission::Requested);
     }
-    let user = sqlx::query_as::<_, User>(&format!("INSERT INTO users (home_cell,username,email,password_hash,is_admin,must_change_password) VALUES ({cell_home},?1,?2,?3,?5,?4) RETURNING *", cell_home = codeyard_db_core::cells::LOCAL_HOME_SQL))
+    let user = sqlx::query_as::<_, User>(&format!("INSERT INTO users (home_cell,username,email,password_hash,is_admin,must_change_password) VALUES ({cell_home},?1,?2,?3,?5,?4) RETURNING *", cell_home = codeyard_database::cells::LOCAL_HOME_SQL))
         .bind(username).bind(email).bind(hash).bind(administrator.is_some()).bind(administrator.is_some_and(|(_, _, admin)| admin)).fetch_one(&mut *tx).await?;
-    if !codeyard_db_core::cells::directory::sqlite::user(pool, &mut tx, &user).await? {
+    if !codeyard_database::cells::directory::sqlite::user(pool, &mut tx, &user).await? {
         return Ok(AccountAdmission::Conflict);
     }
     if let Some((actor, session, _)) = administrator {
@@ -649,10 +649,10 @@ pub async fn admit_oauth_account(
         if organization_name_exists(&mut tx, &name).await? {
             continue;
         }
-        let user = sqlx::query_as::<_, User>(&format!("INSERT INTO users (home_cell,username,display_name) VALUES ({cell_home},?1,?2) ON CONFLICT DO NOTHING RETURNING *", cell_home = codeyard_db_core::cells::LOCAL_HOME_SQL))
+        let user = sqlx::query_as::<_, User>(&format!("INSERT INTO users (home_cell,username,display_name) VALUES ({cell_home},?1,?2) ON CONFLICT DO NOTHING RETURNING *", cell_home = codeyard_database::cells::LOCAL_HOME_SQL))
             .bind(&name).bind(display_name).fetch_optional(&mut *tx).await?;
         if let Some(user) = user {
-            if !codeyard_db_core::cells::directory::sqlite::user(pool, &mut tx, &user).await? {
+            if !codeyard_database::cells::directory::sqlite::user(pool, &mut tx, &user).await? {
                 sqlx::query("DELETE FROM users WHERE id=$1")
                     .bind(user.id)
                     .execute(&mut *tx)
@@ -708,7 +708,7 @@ pub async fn enroll_oauth_identity(
         return Ok(false);
     }
     let organization =
-        if let Some(name) = codeyard_model::oauth_apps::organization_from_oidc_provider(provider) {
+        if let Some(name) = codeyard_types::oauth_apps::organization_from_oidc_provider(provider) {
             let id: Option<i64> = sqlx::query_scalar("SELECT id FROM organizations WHERE name=$1")
                 .bind(name)
                 .fetch_optional(&mut *tx)
@@ -717,11 +717,11 @@ pub async fn enroll_oauth_identity(
                 return Ok(false);
             };
             if !matches!(
-                codeyard_db_core::queries::sqlite::organizations::authority::authority(
+                codeyard_database::queries::sqlite::organizations::authority::authority(
                     &mut tx, user, id
                 )
                 .await?,
-                codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(_)
+                codeyard_database::queries::organizations::OrganizationOutcome::Applied(_)
             ) {
                 return Ok(false);
             }

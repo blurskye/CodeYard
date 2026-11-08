@@ -1,5 +1,5 @@
 use super::*;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
+use codeyard_database::queries::organizations::OrganizationOutcome;
 use codeyard_db_orgs::organizations::membership;
 use codeyard_db_orgs::organizations::profiles;
 
@@ -185,7 +185,7 @@ async fn history(pg: bool) {
             alice,
             org,
             bob,
-            codeyard_db_core::models::OrgRole::Admin
+            codeyard_database::models::OrgRole::Admin
         )
         .await
         .unwrap(),

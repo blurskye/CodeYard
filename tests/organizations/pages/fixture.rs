@@ -172,7 +172,7 @@ impl Fixture {
                 owner.id,
                 org,
                 member.id,
-                codeyard_db_core::models::OrgRole::Member,
+                codeyard_database::models::OrgRole::Member,
             )
             .await
             .unwrap(),
@@ -232,7 +232,7 @@ impl Fixture {
     pub fn path(&self) -> String {
         format!("{INDEX}/{}", self.org)
     }
-    pub async fn actor(pool: &codeyard_db_core::DbPool, username: &str) -> Actor {
+    pub async fn actor(pool: &codeyard_database::DbPool, username: &str) -> Actor {
         let id = codeyard_db_identity::users::accounts::create_user(pool, username, None)
             .await
             .unwrap()

@@ -2,7 +2,7 @@
 //! delivery reads the live rows, so a late or repeated delivery never sends an old state.
 use crate::app::AppState;
 use anyhow::{Context, Result};
-use codeyard_db_core::{
+use codeyard_database::{
     cells::search::{
         self, Batch, File, Index, Item, Package, Version, MAXIMUM_CHUNK_BYTES, MAXIMUM_CODE_BYTES,
         MAXIMUM_DOCUMENT_BYTES, MAXIMUM_FILES, MAXIMUM_FILE_BYTES, MAXIMUM_PACKAGES,
@@ -105,7 +105,7 @@ fn fit(mut document: Value) -> Value {
 
 async fn repository(
     state: &AppState,
-    native: &codeyard_db_core::pool::PgPool,
+    native: &codeyard_database::pool::PgPool,
     index: &dyn Index,
     id: i64,
     version: Version,
@@ -151,7 +151,8 @@ async fn repository(
     document["forks"] = json!(forks);
     document["forks_count"] = json!(forks);
     let access = search::access(native, id).await?;
-    let store = codeyard_repos_core::repositories::store::repo_store(&repo, state.cluster.as_ref());
+    let store =
+        codeyard_git_storage::repositories::store::repo_store(&repo, state.cluster.as_ref());
     let (refs, default) = store.refs_and_default().await?;
     let head = refs.get(&format!("refs/heads/{default}")).cloned();
     let packages = match (&head, public) {
@@ -244,7 +245,7 @@ async fn repository(
 /// files cannot be scanned simply depends on nothing.
 async fn packages(
     state: &AppState,
-    store: &codeyard_repos_core::repositories::store::RepoStore,
+    store: &codeyard_git_storage::repositories::store::RepoStore,
     repo: &Repository,
     default: &str,
     head: &str,

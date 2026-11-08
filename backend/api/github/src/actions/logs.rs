@@ -14,9 +14,9 @@ use axum::routing::MethodRouter;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
 use codeyard_db_actions::action_logs::Target;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
-use codeyard_model::urls::api_url;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
+use codeyard_types::urls::api_url;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -30,7 +30,7 @@ struct Parameters {
 
 async fn live_logs(
     state: &AppState,
-    run: codeyard_db_core::models::CiRun,
+    run: codeyard_database::models::CiRun,
     after: i64,
     limit: Option<i64>,
 ) -> Result<Response> {
@@ -93,7 +93,7 @@ async fn live_logs(
             status: run.status,
             started_at: run.started_at.map(|time| time.timestamp()),
             completed_at: run.completed_at.map(|time| time.timestamp()),
-            error_message: codeyard_db_core::ci_messages::visible_run_error(
+            error_message: codeyard_database::ci_messages::visible_run_error(
                 run.error_message.as_deref(),
             ),
         },
@@ -163,7 +163,7 @@ async fn download(
         }
         (
             repo,
-            codeyard_db_core::queries::credentials::Actor::from((
+            codeyard_database::queries::credentials::Actor::from((
                 user.id,
                 codeyard_api_http::session::extract_session_id(&headers).unwrap_or_default(),
             )),

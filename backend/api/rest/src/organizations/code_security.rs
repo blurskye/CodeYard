@@ -28,19 +28,19 @@ pub(super) fn router() -> Router<Arc<AppState>> {
 }
 fn failure(ctx: &PageContext, error: anyhow::Error) -> Response {
     let (status, message) =
-        match error.downcast_ref::<codeyard_db_core::queries::code_security::Refusal>() {
-            Some(codeyard_db_core::queries::code_security::Refusal::Missing) => {
+        match error.downcast_ref::<codeyard_database::queries::code_security::Refusal>() {
+            Some(codeyard_database::queries::code_security::Refusal::Missing) => {
                 (StatusCode::NOT_FOUND, "Security configuration not found.")
             }
-            Some(codeyard_db_core::queries::code_security::Refusal::Denied) => (
+            Some(codeyard_database::queries::code_security::Refusal::Denied) => (
                 StatusCode::FORBIDDEN,
                 "Organization security access is required.",
             ),
-            Some(codeyard_db_core::queries::code_security::Refusal::Duplicate) => (
+            Some(codeyard_database::queries::code_security::Refusal::Duplicate) => (
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "A configuration with this name already exists.",
             ),
-            Some(codeyard_db_core::queries::code_security::Refusal::Invalid) => (
+            Some(codeyard_database::queries::code_security::Refusal::Invalid) => (
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "Check the configuration name, scope and repository IDs.",
             ),

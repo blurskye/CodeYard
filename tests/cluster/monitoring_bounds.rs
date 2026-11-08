@@ -14,14 +14,16 @@ async fn metrics_refuse_to_truncate_storage_nodes() {
              SELECT printf('%064x',i), 'node-' || i, '[\"storage\"]' FROM ids"
         };
         database.execute(insert, &[]).await;
-        assert!(codeyard_db_cluster::metrics::storage_nodes(database.pool())
-            .await
-            .is_err());
+        assert!(
+            codeyard_db_placement::metrics::storage_nodes(database.pool())
+                .await
+                .is_err()
+        );
         database
             .execute("DELETE FROM nodes WHERE name='node-1001'", &[])
             .await;
         assert_eq!(
-            codeyard_db_cluster::metrics::storage_nodes(database.pool())
+            codeyard_db_placement::metrics::storage_nodes(database.pool())
                 .await
                 .unwrap()
                 .len(),

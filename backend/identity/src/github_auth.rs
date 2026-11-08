@@ -3,11 +3,11 @@ use crate::database_context::DatabaseContext;
 use axum::http::header;
 use axum::http::HeaderMap;
 use axum::http::StatusCode;
-use codeyard_db_core::models::PersonalAccessToken;
-use codeyard_db_core::models::User;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_database::models::PersonalAccessToken;
+use codeyard_database::models::User;
 use codeyard_support::token_hash::token_hash;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 #[derive(Clone)]
 pub struct Authentication {
     pub token: PersonalAccessToken,
@@ -41,14 +41,14 @@ pub enum ScopeError {
 }
 
 impl Authentication {
-    pub fn credential(&self) -> codeyard_db_core::queries::users::accounts::AccountCredential<'_> {
+    pub fn credential(&self) -> codeyard_database::queries::users::accounts::AccountCredential<'_> {
         if self.user.is_stub {
-            codeyard_db_core::queries::users::accounts::AccountCredential::ForeignToken(
+            codeyard_database::queries::users::accounts::AccountCredential::ForeignToken(
                 self.token.id,
                 &self.token.token_hash,
             )
         } else {
-            codeyard_db_core::queries::users::accounts::AccountCredential::Token(
+            codeyard_database::queries::users::accounts::AccountCredential::Token(
                 self.token.id,
                 &self.token.token_hash,
             )
@@ -57,12 +57,12 @@ impl Authentication {
 
     pub fn owned_credential(
         &self,
-    ) -> codeyard_db_core::queries::users::accounts::OwnedAccountCredential {
+    ) -> codeyard_database::queries::users::accounts::OwnedAccountCredential {
         (&self.credential()).into()
     }
 
     /// The authenticated token, so database admission re-checks it is still live.
-    pub fn database_actor(&self) -> codeyard_db_core::queries::credentials::Actor {
+    pub fn database_actor(&self) -> codeyard_database::queries::credentials::Actor {
         (self.user.id, &self.credential()).into()
     }
 
@@ -70,15 +70,15 @@ impl Authentication {
         &self,
         headers: &HeaderMap,
         permission: &'static str,
-    ) -> Result<codeyard_db_core::queries::ci::CiCredential> {
+    ) -> Result<codeyard_database::queries::ci::CiCredential> {
         if self.user.is_stub {
-            return Ok(codeyard_db_core::queries::ci::CiCredential::ForeignToken {
+            return Ok(codeyard_database::queries::ci::CiCredential::ForeignToken {
                 id: self.token.id,
                 hash: token_hash(credential(headers).ok_or_else(required)?),
                 permission,
             });
         }
-        Ok(codeyard_db_core::queries::ci::CiCredential::Token {
+        Ok(codeyard_database::queries::ci::CiCredential::Token {
             id: self.token.id,
             hash: token_hash(credential(headers).ok_or_else(required)?),
             permission,
@@ -86,20 +86,20 @@ impl Authentication {
     }
 
     pub fn is_job(&self) -> bool {
-        self.user.username == codeyard_db_core::queries::ci_tokens::BOT
+        self.user.username == codeyard_database::queries::ci_tokens::BOT
     }
 
     pub async fn repository_scope(
         &self,
-        pool: &codeyard_db_core::DbPool,
+        pool: &codeyard_database::DbPool,
         repo_id: i64,
         scope: &str,
         write: bool,
     ) -> std::result::Result<(), ScopeError> {
         if self.user.is_stub {
-            let credential = codeyard_db_core::cells::authorization::lookup(
+            let credential = codeyard_database::cells::authorization::lookup(
                 pool,
-                &codeyard_db_core::cells::authorization::Query {
+                &codeyard_database::cells::authorization::Query {
                     kind: "token",
                     id: Some(self.token.id),
                     hash: Some(&self.token.token_hash),
@@ -116,7 +116,7 @@ impl Authentication {
                     .ok_or(ScopeError::Missing)?;
             if matches!(
                 credential.answer.authority,
-                codeyard_db_core::cells::authorization::Authority::Classic
+                codeyard_database::cells::authorization::Authority::Classic
             ) && repo.owner_org_id.is_some()
             {
                 let policy = codeyard_db_identity::fine_grained_tokens::policy(
@@ -152,7 +152,7 @@ impl Authentication {
                 .await
                 .map_err(|_| ScopeError::Unavailable)?
                 .ok_or(ScopeError::Missing)?;
-            if !codeyard_model::github_apps::allows(&granted, &scope.replace('-', "_"), write) {
+            if !codeyard_types::github_apps::allows(&granted, &scope.replace('-', "_"), write) {
                 return Err(ScopeError::Denied);
             }
             return Ok(());
@@ -178,7 +178,7 @@ impl Authentication {
         if token.repo_id != repo_id {
             return Err(ScopeError::Missing);
         }
-        let permissions: codeyard_model::permissions::Permissions =
+        let permissions: codeyard_types::permissions::Permissions =
             serde_json::from_str(&token.permissions).map_err(|_| ScopeError::Unavailable)?;
         if !permissions.allows(scope, write) {
             return Err(ScopeError::Denied);
@@ -191,7 +191,7 @@ impl Authentication {
     /// credentials have bounds that only this cell's grant tables can check.
     pub async fn acts_as_account(
         &self,
-        pool: &codeyard_db_core::DbPool,
+        pool: &codeyard_database::DbPool,
     ) -> std::result::Result<bool, ScopeError> {
         if self.user.is_stub || self.is_job() {
             return Ok(false);
@@ -204,7 +204,7 @@ impl Authentication {
 
     /// Dispatches may use a live job token, but host execution retains its original actor's authority.
     pub async fn workflow_actor(&self, state: &dyn DatabaseContext, repo: i64) -> Result<i64> {
-        if self.user.username != codeyard_db_core::queries::ci_tokens::BOT {
+        if self.user.username != codeyard_database::queries::ci_tokens::BOT {
             return Ok(self.user.id);
         }
         let token = codeyard_db_actions::ci_tokens::get(state.pool(), self.token.id)
@@ -223,7 +223,7 @@ impl Authentication {
 
     /// Checks that the token still works, for a request whose body took long to arrive after
     /// it authenticated: a token revoked meanwhile must not publish that body.
-    pub async fn require_live(&self, pool: &codeyard_db_core::DbPool) -> Result<()> {
+    pub async fn require_live(&self, pool: &codeyard_database::DbPool) -> Result<()> {
         crate::repository_access::credential_user(pool, &self.database_actor(), true)
             .await
             .map(|_| ())
@@ -366,7 +366,7 @@ async fn authenticate_uncached(
     state: &dyn DatabaseContext,
     headers: &HeaderMap,
 ) -> Result<Option<Authentication>> {
-    let config = codeyard_db_cluster::node_config::get_node_configuration(state.pool())
+    let config = codeyard_db_placement::node_config::get_node_configuration(state.pool())
         .await
         .map_err(Error::unavailable)?
         .filter(|config| config.setup_completed)

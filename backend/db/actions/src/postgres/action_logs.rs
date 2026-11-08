@@ -5,20 +5,20 @@ use crate::action_logs::ObservedStep;
 use crate::action_logs::Target;
 use anyhow::ensure;
 use anyhow::Result;
-use codeyard_db_core::pool::PgPool;
+use codeyard_database::pool::PgPool;
 use sqlx::types::Json;
 use sqlx::PgConnection;
 
 pub async fn issue(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo: i64,
     resource: &str,
     target: Target,
     hash: &str,
 ) -> Result<bool> {
     let actor = actor.into();
-    codeyard_db_core::queries::postgres::retry_on_conflict(|| {
+    codeyard_database::queries::postgres::retry_on_conflict(|| {
         issue_once(pool, &actor, repo, resource, target, hash)
     })
     .await
@@ -26,14 +26,14 @@ pub async fn issue(
 
 async fn issue_once(
     pool: &PgPool,
-    actor: &codeyard_db_core::queries::credentials::Actor,
+    actor: &codeyard_database::queries::credentials::Actor,
     repo: i64,
     resource: &str,
     target: Target,
     hash: &str,
 ) -> Result<bool> {
-    use codeyard_db_core::queries::postgres::repositories::access::lock_user_repo_access_in_transaction;
-    use codeyard_db_core::queries::postgres::repositories::access::RepositoryRowLock;
+    use codeyard_database::queries::postgres::repositories::access::lock_user_repo_access_in_transaction;
+    use codeyard_database::queries::postgres::repositories::access::RepositoryRowLock;
     ensure!(
         resource.len() <= 4096
             && hash.len() == 64
@@ -57,7 +57,7 @@ async fn issue_once(
     if !authority.is_some_and(|a| a.access.can_read() || (!a.organization && a.is_admin)) {
         return Ok(false);
     }
-    if !codeyard_db_core::queries::postgres::credentials::repository(
+    if !codeyard_database::queries::postgres::credentials::repository(
         &mut tx, actor, repo, "actions", false,
     )
     .await?

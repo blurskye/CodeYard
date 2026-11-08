@@ -1,12 +1,12 @@
 //! Native mutations publish through real pinned directory TLS and retain local transaction authority.
 use super::cells_frontend::{native, Server};
 use crate::support::native_database::{NativeDatabase, PostgresDatabase};
-use codeyard_cells_router::directory::{Client, Listener};
-use codeyard_db_core::{cells::directory as publication, DbPool};
+use codeyard_database::{cells::directory as publication, DbPool};
 use codeyard_db_directory::Directory;
-use codeyard_model::cells::{Cell, Key, KeyKind, Location, Object, ObjectKind, State};
+use codeyard_router::directory::{Client, Listener};
 use codeyard_support::node_identity::NodeKey;
-use codeyard_types::cells::Prefix;
+use codeyard_types::cell_ids::Prefix;
+use codeyard_types::cells::{Cell, Key, KeyKind, Location, Object, ObjectKind, State};
 use futures_util::future::BoxFuture;
 use serde_json::{json, Value};
 use std::sync::{
@@ -228,7 +228,7 @@ async fn queued_key_release(
     bob: &Server,
     bob_token: &str,
     public_key: &str,
-    raw: &codeyard_db_core::pool::PgPool,
+    raw: &codeyard_database::pool::PgPool,
 ) -> i64 {
     let key = api(
         client,
@@ -258,7 +258,7 @@ async fn queued_key_release(
     .unwrap()
 }
 /// The event's claim count and whether it is delivered or leased.
-async fn outbox_state(raw: &codeyard_db_core::pool::PgPool, event: i64) -> (i64, bool, bool) {
+async fn outbox_state(raw: &codeyard_database::pool::PgPool, event: i64) -> (i64, bool, bool) {
     sqlx::query_as("SELECT attempts,delivered_at IS NOT NULL,delivered_at IS NULL AND next_attempt_at>clock_timestamp() FROM cell_outbox WHERE id=$1")
         .bind(event)
         .fetch_one(raw)
@@ -267,7 +267,7 @@ async fn outbox_state(raw: &codeyard_db_core::pool::PgPool, event: i64) -> (i64,
 }
 async fn drain_outbox(pool: &DbPool) {
     for _ in 0..64 {
-        if !codeyard_db_core::cells::outbox::deliver_one(pool)
+        if !codeyard_database::cells::outbox::deliver_one(pool)
             .await
             .unwrap()
         {
@@ -287,7 +287,7 @@ async fn native_claims_refuse_cross_cell_signup_email_and_ssh_duplicates_and_ret
     directory.migrate().await.unwrap();
     let mut zero = PostgresDatabase::new().await;
     let mut one = PostgresDatabase::new().await;
-    codeyard_db_core::cells::initialize(&one.pool, Prefix::new(1))
+    codeyard_database::cells::initialize(&one.pool, Prefix::new(1))
         .await
         .unwrap();
     let (mut alice, alice_id, alice_token) = native(&zero, "alice").await;
@@ -331,7 +331,7 @@ async fn native_claims_refuse_cross_cell_signup_email_and_ssh_duplicates_and_ret
     let (stop_capacity, _) = tokio::sync::watch::channel(false);
     let mut capacity_workers = Vec::new();
     for (database, key) in [(&zero, &zero_key), (&one, &one_key)] {
-        capacity_workers.push(tokio::spawn(codeyard_cells_router::capacity::run(
+        capacity_workers.push(tokio::spawn(codeyard_router::capacity::run(
             database.pool.clone(),
             connect(key.clone()),
             Default::default(),
@@ -446,7 +446,7 @@ async fn native_claims_refuse_cross_cell_signup_email_and_ssh_duplicates_and_ret
         )
         .await
         .unwrap(),
-        codeyard_db_core::queries::organizations::OrganizationOutcome::Conflict
+        codeyard_database::queries::organizations::OrganizationOutcome::Conflict
     ));
     let organization =
         codeyard_db_orgs::organizations::profiles::NewOrganization::new("company", profile)
@@ -459,7 +459,7 @@ async fn native_claims_refuse_cross_cell_signup_email_and_ssh_duplicates_and_ret
     .await
     .unwrap()
     {
-        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(org) => org,
+        codeyard_database::queries::organizations::OrganizationOutcome::Applied(org) => org,
         other => panic!("{other:?}"),
     };
     let response = signup(&client, &bob, &one.pool, "company", "company@example.test").await;
@@ -470,7 +470,7 @@ async fn native_claims_refuse_cross_cell_signup_email_and_ssh_duplicates_and_ret
         )
         .await
         .unwrap(),
-        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(())
+        codeyard_database::queries::organizations::OrganizationOutcome::Applied(())
     ));
     let response = signup(&client, &bob, &one.pool, "company", "company@example.test").await;
     assert_eq!(
@@ -648,7 +648,7 @@ async fn native_claims_refuse_cross_cell_signup_email_and_ssh_duplicates_and_ret
             .await
             .unwrap();
     assert!(pending > 0);
-    assert!(codeyard_db_core::cells::outbox::deliver_one(&one.pool)
+    assert!(codeyard_database::cells::outbox::deliver_one(&one.pool)
         .await
         .unwrap());
     listener = Listener::bind(
@@ -659,10 +659,10 @@ async fn native_claims_refuse_cross_cell_signup_email_and_ssh_duplicates_and_ret
     )
     .await
     .unwrap();
-    let resumed = codeyard_db_core::init_db(&one.connection_url())
+    let resumed = codeyard_database::init_db(&one.connection_url())
         .await
         .unwrap();
-    codeyard_db_core::run_migrations(&resumed).await.unwrap();
+    codeyard_database::run_migrations(&resumed).await.unwrap();
     resumed
         .set_directory(Arc::new(
             Client::new(
@@ -679,7 +679,7 @@ async fn native_claims_refuse_cross_cell_signup_email_and_ssh_duplicates_and_ret
         .await
         .unwrap();
     for _ in 0..64 {
-        if !codeyard_db_core::cells::outbox::deliver_one(&resumed)
+        if !codeyard_database::cells::outbox::deliver_one(&resumed)
             .await
             .unwrap()
         {
@@ -702,7 +702,7 @@ async fn native_claims_refuse_cross_cell_signup_email_and_ssh_duplicates_and_ret
             .unwrap(),
         0
     );
-    assert!(!codeyard_db_core::cells::outbox::deliver_one(&resumed)
+    assert!(!codeyard_database::cells::outbox::deliver_one(&resumed)
         .await
         .unwrap());
 
@@ -718,7 +718,7 @@ async fn native_claims_refuse_cross_cell_signup_email_and_ssh_duplicates_and_ret
     let event = queued_key_release(&client, &bob, &bob_token, public_key, &one.raw).await;
     let in_flight = tokio::spawn({
         let pool = resumed.clone();
-        async move { codeyard_db_core::cells::outbox::deliver_one(&pool).await }
+        async move { codeyard_database::cells::outbox::deliver_one(&pool).await }
     });
     stalled.entered.notified().await;
     let mut lock = one.raw.begin().await.unwrap();
@@ -758,7 +758,7 @@ async fn native_claims_refuse_cross_cell_signup_email_and_ssh_duplicates_and_ret
     let event = queued_key_release(&client, &bob, &bob_token, public_key, &one.raw).await;
     let in_flight = tokio::spawn({
         let pool = resumed.clone();
-        async move { codeyard_db_core::cells::outbox::deliver_one(&pool).await }
+        async move { codeyard_database::cells::outbox::deliver_one(&pool).await }
     });
     stalled.entered.notified().await;
     in_flight.abort();
@@ -943,7 +943,7 @@ async fn capacity_reports_restore_fresh_placement_and_revoked_cells_cannot_refre
     .unwrap();
     assert!(
         client
-            .request(&codeyard_cells_router::directory::Request::Reserve {
+            .request(&codeyard_router::directory::Request::Reserve {
                 object: Object {
                     kind: ObjectKind::User,
                     id: 1
@@ -959,16 +959,16 @@ async fn capacity_reports_restore_fresh_placement_and_revoked_cells_cannot_refre
         unreachable!()
     };
     assert!(
-        codeyard_db_core::cells::capacity::sample(pool, 1)
+        codeyard_database::cells::capacity::sample(pool, 1)
             .await
             .is_err(),
         "catalog reads are bounded"
     );
     let (stop, stopped) = tokio::sync::watch::channel(false);
-    let worker = tokio::spawn(codeyard_cells_router::capacity::run(
+    let worker = tokio::spawn(codeyard_router::capacity::run(
         native.pool.clone(),
         client.clone(),
-        codeyard_cells_router::capacity::Config {
+        codeyard_router::capacity::Config {
             sample_seconds: 1,
             ..Default::default()
         },
@@ -999,7 +999,7 @@ async fn capacity_reports_restore_fresh_placement_and_revoked_cells_cannot_refre
         .await
         .unwrap();
     assert!(client
-        .request(&codeyard_cells_router::directory::Request::ReportLoad {
+        .request(&codeyard_router::directory::Request::ReportLoad {
             database_bytes: 0,
             write_rate: 0
         })

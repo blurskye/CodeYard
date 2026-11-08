@@ -30,7 +30,7 @@ pub async fn create_pull_request_review(
             state.cluster.as_ref(),
             &state.notification_broadcaster,
             current_actor.id,
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+            &codeyard_database::queries::users::accounts::AccountCredential::Session(
                 &codeyard_api_http::session::extract_session_id(&headers).unwrap_or_default(),
             ),
             (owner, repo, number),
@@ -95,7 +95,7 @@ pub struct PullRequestReviewResponse {
 
 impl PullRequestReviewResponse {
     fn new(
-        review: codeyard_db_core::models::PullRequestReview,
+        review: codeyard_database::models::PullRequestReview,
         author: Option<UserResponse>,
     ) -> Self {
         Self {

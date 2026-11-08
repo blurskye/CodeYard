@@ -6,19 +6,19 @@ use crate::organizations::invitations::NewInvitation;
 use crate::organizations::OrganizationPage;
 use crate::sqlite::organizations::authority::credential;
 use anyhow::Result;
-use codeyard_db_core::models::OrgInvitation;
-use codeyard_db_core::models::OrgMembership;
-use codeyard_db_core::models::OrgRole;
-use codeyard_db_core::models::ReceivedInvitation;
-use codeyard_db_core::models::Team;
-use codeyard_db_core::pool::SqlitePool;
-use codeyard_db_core::queries::organizations::administers;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_db_core::queries::sqlite::organizations::authority::active;
-use codeyard_db_core::queries::sqlite::organizations::authority::begin_read;
-use codeyard_db_core::queries::sqlite::organizations::authority::membership_role;
-use codeyard_db_core::queries::sqlite::organizations::authority::remaining_active_owner;
-use codeyard_db_core::require_read_org_sqlite;
+use codeyard_database::models::OrgInvitation;
+use codeyard_database::models::OrgMembership;
+use codeyard_database::models::OrgRole;
+use codeyard_database::models::ReceivedInvitation;
+use codeyard_database::models::Team;
+use codeyard_database::pool::SqlitePool;
+use codeyard_database::queries::organizations::administers;
+use codeyard_database::queries::organizations::OrganizationOutcome;
+use codeyard_database::queries::sqlite::organizations::authority::active;
+use codeyard_database::queries::sqlite::organizations::authority::begin_read;
+use codeyard_database::queries::sqlite::organizations::authority::membership_role;
+use codeyard_database::queries::sqlite::organizations::authority::remaining_active_owner;
+use codeyard_database::require_read_org_sqlite;
 use sqlx::SqliteConnection;
 use OrganizationOutcome::Applied;
 use OrganizationOutcome::Conflict;
@@ -49,7 +49,7 @@ pub async fn invite_organization_member(
 }
 pub async fn set_organization_invitation_by_owner(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     org: i64,
     target: i64,
     role: OrgRole,
@@ -66,7 +66,7 @@ pub async fn set_organization_invitation_by_owner(
 }
 pub async fn create_organization_invitation(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     org: i64,
     input: &NewInvitation,
     owner_only: bool,
@@ -75,7 +75,7 @@ pub async fn create_organization_invitation(
 }
 async fn save(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     org: i64,
     input: &NewInvitation,
     owner_only: bool,
@@ -96,7 +96,7 @@ async fn save(
 // The caller holds the write transaction and owns commit or rollback.
 pub(super) async fn save_in_transaction(
     mut tx: &mut SqliteConnection,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     org: i64,
     input: &NewInvitation,
     owner_only: bool,
@@ -271,7 +271,7 @@ async fn queue_invitation_email(
         .bind(org)
         .fetch_one(&mut *tx)
         .await?;
-    let mail = codeyard_model::mail::organization_invitation(&name);
+    let mail = codeyard_types::mail::organization_invitation(&name);
     codeyard_db_identity::sqlite::email::queue_email(
         tx,
         &to,
@@ -370,7 +370,7 @@ pub async fn invitation_team_counts(
 
 pub async fn cancel_organization_invitation(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     org: i64,
     target: i64,
 ) -> Result<OrganizationOutcome<()>> {
@@ -378,7 +378,7 @@ pub async fn cancel_organization_invitation(
 }
 pub async fn cancel_invitation_id(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     org: i64,
     id: i64,
     owner_only: bool,
@@ -387,7 +387,7 @@ pub async fn cancel_invitation_id(
 }
 async fn cancel(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     org: i64,
     target: i64,
     by_id: bool,
@@ -476,7 +476,7 @@ pub async fn list_received_organization_invitations(
 /// organization ends once the account is a member.
 pub async fn accept_organization_invitation(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     org: i64,
     invitation: Option<i64>,
 ) -> Result<OrganizationOutcome<OrgMembership>> {
@@ -539,14 +539,14 @@ pub async fn accept_organization_invitation(
 /// Declines `invitation`, or every offer from the organization when it is `None`.
 pub async fn decline_organization_invitation(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     org: i64,
     invitation: Option<i64>,
 ) -> Result<OrganizationOutcome<()>> {
     let grant = actor.into();
     let actor = grant.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    if !codeyard_db_core::queries::sqlite::credentials::live(&mut tx, &grant, true).await? {
+    if !codeyard_database::queries::sqlite::credentials::live(&mut tx, &grant, true).await? {
         return Ok(Denied);
     }
     let sql = format!("DELETE FROM email_outbox WHERE organization_invitation_id IN (SELECT i.id FROM organization_invitations i WHERE {RECIPIENT} AND i.org_id=?2 AND (?3 IS NULL OR i.id=?3))");

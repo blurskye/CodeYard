@@ -22,17 +22,17 @@ use codeyard_api_http::session::extract_session_id;
 use codeyard_api_http::shared::user::responses::field;
 use codeyard_api_http::shared::user::responses::Fields;
 use codeyard_app::app::AppState;
-use codeyard_db_core::models::User;
-use codeyard_db_core::queries::fine_grained_tokens::Token;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
+use codeyard_database::models::User;
+use codeyard_database::queries::fine_grained_tokens::Token;
+use codeyard_database::queries::organizations::OrganizationOutcome;
 use codeyard_db_orgs::organizations::OrganizationPage;
 use codeyard_identity::fine_grained::Access;
 use codeyard_identity::fine_grained::Owner;
 use codeyard_identity::fine_grained::Request;
 use codeyard_identity::fine_grained::TokenError;
-use codeyard_model::fine_grained::catalog;
-use codeyard_model::fine_grained::Group;
-use codeyard_model::fine_grained::PERMISSIONS;
+use codeyard_types::fine_grained::catalog;
+use codeyard_types::fine_grained::Group;
+use codeyard_types::fine_grained::PERMISSIONS;
 use codeyard_webui::app::Page;
 use codeyard_webui::pages::account;
 use codeyard_webui::pages::settings::fine_grained::Choice;
@@ -283,7 +283,7 @@ async fn choices(ctx: &PageContext, user: &User, draft: &Draft) -> anyhow::Resul
     }
     let session = extract_session_id(&ctx.headers).unwrap_or_default();
     let credential =
-        codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session);
+        codeyard_database::queries::users::accounts::AccountCredential::Session(&session);
     let selected: Vec<_> = draft
         .repositories
         .iter()
@@ -588,7 +588,7 @@ async fn detail(ctx: &PageContext, user: &User, id: i64) -> Result<Detail, Token
             pool,
             token.token_id,
             user.id,
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+            &codeyard_database::queries::users::accounts::AccountCredential::Session(
                 ctx.session_id.as_deref().unwrap_or(""),
             ),
         )

@@ -2,20 +2,20 @@ use crate::rate_limit::RateLimiter;
 use anyhow::Result;
 use bytes::Bytes;
 use codeyard_ci_engine::runs::CiRuns;
-use codeyard_db_core::models::AccessLevel;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::models::User;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::AccessLevel;
+use codeyard_database::models::Repository;
+use codeyard_database::models::User;
+use codeyard_database::DbPool;
 use codeyard_db_identity::users::ssh_keys::get_user_by_key_fingerprint;
 use codeyard_db_repos::repositories::records::get_git_repository;
 use codeyard_git::repository::process as git_process;
-use codeyard_repos_core::repositories::git_sessions::GitTasks;
-use codeyard_repos_core::repositories::git_sessions::ReceiveCredential;
-use codeyard_repos_core::repositories::store::repo_store;
-use codeyard_repos_core::repositories::store::RepoStore;
-use codeyard_repos_core::store_types::GitService;
-use codeyard_repos_core::store_types::GitSession;
-use codeyard_repos_core::store_types::GitStreams;
+use codeyard_git_storage::repositories::git_sessions::GitTasks;
+use codeyard_git_storage::repositories::git_sessions::ReceiveCredential;
+use codeyard_git_storage::repositories::store::repo_store;
+use codeyard_git_storage::repositories::store::RepoStore;
+use codeyard_git_storage::store_types::GitService;
+use codeyard_git_storage::store_types::GitSession;
+use codeyard_git_storage::store_types::GitStreams;
 use russh::keys::PublicKey;
 use russh::server::Auth;
 use russh::server::ChannelOpenHandle;
@@ -231,7 +231,7 @@ impl GitSshHandler {
             .await?
             .map(|key| KeyIdentity::Deploy(key.id))),
             (None, None) => {
-                use codeyard_db_core::cells::authorization::{self, Proof};
+                use codeyard_database::cells::authorization::{self, Proof};
                 let proof = Proof::Ssh { fingerprint };
                 Ok(authorization::admit(&self.pool, &proof)
                     .await?
@@ -256,7 +256,7 @@ impl GitSshHandler {
         repo: &Repository,
         write: bool,
     ) -> Result<Option<ReceiveCredential>> {
-        use codeyard_repos_core::repositories::git_sessions::CredentialRefusal;
+        use codeyard_git_storage::repositories::git_sessions::CredentialRefusal;
         let credential = if let Some(key) = self.deploy_key {
             ReceiveCredential::DeployKey(key)
         } else if self.user.as_ref().is_some_and(|user| user.is_stub) {
@@ -640,7 +640,7 @@ impl russh::server::Handler for GitSshHandler {
         if let Some(context) = &self.ci_service.cluster {
             let node = tokio::time::timeout(
                 std::time::Duration::from_secs(2),
-                codeyard_db_cluster::cluster::get_node_by_id(&self.pool, context.node_id),
+                codeyard_db_placement::cluster::get_node_by_id(&self.pool, context.node_id),
             )
             .await;
             if !matches!(node, Ok(Ok(Some(node))) if node.status == "active" && node.state == "active")
@@ -756,7 +756,7 @@ impl russh::server::Handler for GitSshHandler {
         let receive = git_cmd.write.then(|| {
             (
                 self.pool.clone(),
-                self.ci_service.clone() as Arc<dyn codeyard_repos_core::receive_ci::ReceiveCi>,
+                self.ci_service.clone() as Arc<dyn codeyard_git_storage::receive_ci::ReceiveCi>,
             )
         });
         if !self.git_tasks.spawn(async move {
@@ -816,7 +816,7 @@ impl russh::server::Handler for GitSshHandler {
                         {
                             "Git sessions busy\n"
                         } else if error
-                            .is::<codeyard_repos_core::repositories::git_sessions::PostReceiveFailed>(
+                            .is::<codeyard_git_storage::repositories::git_sessions::PostReceiveFailed>(
                         ) {
                             "ERR Git writes were accepted; post-push bookkeeping or CI dispatch failed.\n"
                         } else if error
@@ -954,10 +954,10 @@ mod tests {
             .max_connections(1)
             .connect("sqlite::memory:")
             .await
-            .map(codeyard_db_core::pool::Pool::from)
+            .map(codeyard_database::pool::Pool::from)
             .unwrap();
         let pool = DbPool::from(native.clone());
-        codeyard_db_core::run_migrations(&pool).await.unwrap();
+        codeyard_database::run_migrations(&pool).await.unwrap();
         let owner = codeyard_db_identity::users::accounts::create_user(&pool, "alice", None)
             .await
             .unwrap();
@@ -1035,10 +1035,10 @@ mod tests {
             .max_connections(1)
             .connect("sqlite::memory:")
             .await
-            .map(codeyard_db_core::pool::Pool::from)
+            .map(codeyard_database::pool::Pool::from)
             .unwrap();
         let pool = DbPool::from(native);
-        codeyard_db_core::run_migrations(&pool).await.unwrap();
+        codeyard_database::run_migrations(&pool).await.unwrap();
         let owner = codeyard_db_identity::users::accounts::create_user(&pool, "alice", None)
             .await
             .unwrap();
@@ -1106,7 +1106,7 @@ mod tests {
         // Closed lazy fixture: no database connection or queries can occur.
         let pool = sqlx::postgres::PgPoolOptions::new()
             .connect_lazy("postgres://fixture:fixture@127.0.0.1:1/unused")
-            .map(codeyard_db_core::pool::Pool::from)
+            .map(codeyard_database::pool::Pool::from)
             .unwrap();
         pool.close().await;
         let pool = DbPool::from(pool);

@@ -64,7 +64,7 @@ async fn contract(pg: bool) {
     .await
     .unwrap()
     {
-        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(metadata) => {
+        codeyard_database::queries::organizations::OrganizationOutcome::Applied(metadata) => {
             metadata
         }
         _ => panic!("the owner creates the organization"),

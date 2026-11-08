@@ -8,11 +8,11 @@ use crate::pull_requests::reviews::PullRequestReviewEntry;
 use crate::pull_requests::reviews::MAX_REVIEW_COMMENTS;
 use crate::sqlite::discussions::AUTHORITY_DENIED;
 use anyhow::Result;
-use codeyard_db_core::models::PullRequest;
-use codeyard_db_core::models::PullRequestComment;
-use codeyard_db_core::models::PullRequestReview;
-use codeyard_db_core::models::User;
-use codeyard_db_core::pool::SqlitePool;
+use codeyard_database::models::PullRequest;
+use codeyard_database::models::PullRequestComment;
+use codeyard_database::models::PullRequestReview;
+use codeyard_database::models::User;
+use codeyard_database::pool::SqlitePool;
 use std::collections::HashMap;
 
 pub async fn add_pull_request_comment(
@@ -65,7 +65,7 @@ pub async fn insert_comment(
                 .await?;
         anyhow::ensure!(
             current.0 == head && current.1 == base,
-            codeyard_db_core::queries::discussions::DiscussionWriteRefusal::RevisionChanged
+            codeyard_database::queries::discussions::DiscussionWriteRefusal::RevisionChanged
         );
     }
     let review_id = match input.in_reply_to_comment_id {
@@ -93,7 +93,7 @@ pub async fn insert_comment(
                 .await?;
             anyhow::ensure!(
                 state == "open",
-                codeyard_db_core::queries::discussions::DiscussionWriteRefusal::InvalidReview
+                codeyard_database::queries::discussions::DiscussionWriteRefusal::InvalidReview
             );
             Some(ensure_pending_review(&mut tx, input.pr_id, input.author_id).await?)
         }
@@ -102,7 +102,7 @@ pub async fn insert_comment(
     if let Some(expected) = expected_review {
         anyhow::ensure!(
             review_id == Some(expected),
-            codeyard_db_core::queries::discussions::DiscussionWriteRefusal::InvalidReview
+            codeyard_database::queries::discussions::DiscussionWriteRefusal::InvalidReview
         );
     }
     if let Some(review_id) = review_id {
@@ -112,7 +112,7 @@ pub async fn insert_comment(
             .await?;
         anyhow::ensure!(
             held < MAX_REVIEW_COMMENTS,
-            codeyard_db_core::queries::discussions::DiscussionWriteRefusal::ReviewFull
+            codeyard_database::queries::discussions::DiscussionWriteRefusal::ReviewFull
         );
     }
     let comment = insert_comment_on(&mut tx, &input, review_id).await?;
@@ -689,7 +689,7 @@ pub async fn add_pull_request_review(
     pool: &SqlitePool,
     pr_id: i64,
     author_id: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     state: &str,
     body: Option<&str>,
     commit_sha: Option<&str>,
@@ -708,7 +708,7 @@ pub async fn save_pull_request_review(
     pool: &SqlitePool,
     pr_id: i64,
     author_id: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     state: &str,
     body: Option<&str>,
     commit_sha: Option<&str>,
@@ -752,14 +752,14 @@ pub async fn save_review_batch(
     let (author, current_state, current_head) =
         crate::sqlite::discussions::read_pull_request_review_state(&mut tx, pr_id).await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::sqlite::users::transitions::credential_live(
+        codeyard_database::queries::sqlite::users::transitions::credential_live(
             &mut tx,
             author_id,
             input.credential,
             true
         )
         .await?,
-        codeyard_db_core::queries::discussions::DiscussionWriteRefusal::Denied
+        codeyard_database::queries::discussions::DiscussionWriteRefusal::Denied
     );
     // `Some(None)`: the form saw no pending draft, so a draft that appeared since is not submitted unseen.
     if expected_pending == Some(None) {
@@ -767,7 +767,7 @@ pub async fn save_review_batch(
             .bind(pr_id).bind(author_id).fetch_one(&mut *tx).await?;
         anyhow::ensure!(
             !draft,
-            codeyard_db_core::queries::discussions::DiscussionWriteRefusal::InvalidReview
+            codeyard_database::queries::discussions::DiscussionWriteRefusal::InvalidReview
         );
     }
     let pinned: bool = if let Some(Some(id)) = expected_pending {
@@ -783,14 +783,14 @@ pub async fn save_review_batch(
                 || (expected_pending.flatten().is_none()
                     && commit_sha.as_deref() == Some(current_head.as_str())))
             && (state == "commented" || author != author_id),
-        codeyard_db_core::queries::discussions::DiscussionWriteRefusal::InvalidReview
+        codeyard_database::queries::discussions::DiscussionWriteRefusal::InvalidReview
     );
     // An Actions run may approve only where its repository or organization allows approvals.
     if state == "approved" {
         let bot: bool =
             sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id=?1 AND username=?2)")
                 .bind(author_id)
-                .bind(codeyard_db_core::queries::ci_tokens::BOT)
+                .bind(codeyard_database::queries::ci_tokens::BOT)
                 .fetch_one(&mut *tx)
                 .await?;
         if bot {
@@ -799,10 +799,11 @@ pub async fn save_review_batch(
                 .fetch_one(&mut *tx)
                 .await?;
             let (own, org) =
-                codeyard_db_core::queries::sqlite::action_settings::snapshot(&mut tx, repo).await?;
+                codeyard_database::queries::sqlite::action_settings::snapshot(&mut tx, repo)
+                    .await?;
             anyhow::ensure!(
-                codeyard_db_core::queries::action_settings::can_approve_reviews(&own, &org),
-                codeyard_db_core::queries::discussions::DiscussionWriteRefusal::Denied
+                codeyard_database::queries::action_settings::can_approve_reviews(&own, &org),
+                codeyard_database::queries::discussions::DiscussionWriteRefusal::Denied
             );
         }
     }
@@ -821,18 +822,18 @@ pub async fn save_review_batch(
                 "pull-requests"
             )
             .await?,
-            codeyard_db_core::queries::discussions::DiscussionWriteRefusal::Denied
+            codeyard_database::queries::discussions::DiscussionWriteRefusal::Denied
         );
     }
     if input.create_pending {
         anyhow::ensure!(
             input.comments.len() <= MAX_REVIEW_COMMENTS as usize,
-            codeyard_db_core::queries::discussions::DiscussionWriteRefusal::ReviewFull
+            codeyard_database::queries::discussions::DiscussionWriteRefusal::ReviewFull
         );
         let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pr_reviews WHERE pull_request_id=?1 AND author_id=?2 AND state='pending')").bind(pr_id).bind(author_id).fetch_one(&mut *tx).await?;
         anyhow::ensure!(
             !exists,
-            codeyard_db_core::queries::discussions::DiscussionWriteRefusal::InvalidReview
+            codeyard_database::queries::discussions::DiscussionWriteRefusal::InvalidReview
         );
         let draft: PullRequestReview = sqlx::query_as("INSERT INTO pr_reviews(pull_request_id,author_id,state,body,commit_sha) VALUES(?1,?2,'pending',?3,?4) RETURNING *").bind(pr_id).bind(author_id).bind(body).bind(commit_sha.as_deref()).fetch_one(&mut *tx).await?;
         for comment in input.comments {
@@ -842,7 +843,7 @@ pub async fn save_review_batch(
                     && comment.in_reply_to_comment_id.is_none()
                     && comment.path.is_some()
                     && comment.expected_revisions == Some((current_head.as_str(), base.as_str())),
-                codeyard_db_core::queries::discussions::DiscussionWriteRefusal::RevisionChanged
+                codeyard_database::queries::discussions::DiscussionWriteRefusal::RevisionChanged
             );
             insert_comment_on(&mut tx, comment, Some(draft.id)).await?;
         }
@@ -854,7 +855,7 @@ pub async fn save_review_batch(
     } else {
         anyhow::ensure!(
             input.comments.is_empty(),
-            codeyard_db_core::queries::discussions::DiscussionWriteRefusal::InvalidReview
+            codeyard_database::queries::discussions::DiscussionWriteRefusal::InvalidReview
         );
     }
     let pending_body: Option<Option<String>> = sqlx::query_scalar(
@@ -877,7 +878,7 @@ pub async fn save_review_batch(
         .await?;
         anyhow::ensure!(
             inline > 0,
-            codeyard_db_core::queries::discussions::DiscussionWriteRefusal::EmptyReview
+            codeyard_database::queries::discussions::DiscussionWriteRefusal::EmptyReview
         );
     }
     // The author's pending review, if any, is submitted with its comments by this review. It keeps
@@ -949,7 +950,7 @@ pub async fn create_pending_review(
     let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pr_reviews WHERE pull_request_id=?1 AND author_id=?2 AND state='pending')").bind(pr_id).bind(author_id).fetch_one(&mut *tx).await?;
     anyhow::ensure!(
         state == "open" && head.eq_ignore_ascii_case(commit_sha) && !exists,
-        codeyard_db_core::queries::discussions::DiscussionWriteRefusal::InvalidReview
+        codeyard_database::queries::discussions::DiscussionWriteRefusal::InvalidReview
     );
     let review = sqlx::query_as("INSERT INTO pr_reviews (pull_request_id,author_id,state,body,commit_sha) VALUES (?1,?2,'pending',?3,?4) RETURNING *")
         .bind(pr_id).bind(author_id).bind(body).bind(&head).fetch_one(&mut *tx).await?;
@@ -1005,7 +1006,7 @@ pub async fn list_visible_review_comments(
         CASE WHEN NOT ?6 THEN CASE WHEN ?5 THEN c.updated_at ELSE c.created_at END END DESC,
         CASE WHEN ?6 THEN c.id END ASC, CASE WHEN NOT ?6 THEN c.id END DESC LIMIT ?8 OFFSET ?9")
         .bind(filter.repo_id).bind(filter.pull_id).bind(filter.review_id).bind(filter.viewer).bind(filter.updated).bind(filter.ascending)
-        .bind(filter.since.map(codeyard_db_core::queries::sqlite::time::encode)).bind(filter.limit).bind(filter.offset).fetch_all(pool).await?)
+        .bind(filter.since.map(codeyard_database::queries::sqlite::time::encode)).bind(filter.limit).bind(filter.offset).fetch_all(pool).await?)
 }
 
 pub async fn filter_reviews(
@@ -1184,8 +1185,8 @@ async fn touch_revision(tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>, pr_id: i64
         .bind(pr_id)
         .fetch_one(&mut **tx)
         .await?;
-    let next = codeyard_db_core::queries::sqlite::time::next_revision(
-        codeyard_db_core::queries::sqlite::time::decode(&stored)?,
+    let next = codeyard_database::queries::sqlite::time::next_revision(
+        codeyard_database::queries::sqlite::time::decode(&stored)?,
     )?;
     sqlx::query("UPDATE pull_requests SET updated_at=?2 WHERE id=?1 AND updated_at=?3")
         .bind(pr_id)
@@ -1208,7 +1209,7 @@ pub async fn request_pull_request_reviewer(
             .await?;
     anyhow::ensure!(
         state == "open",
-        codeyard_db_core::queries::discussions::DiscussionWriteRefusal::InvalidReview
+        codeyard_database::queries::discussions::DiscussionWriteRefusal::InvalidReview
     );
     let repo_id: i64 = sqlx::query_scalar("SELECT repo_id FROM pull_requests WHERE id=?1")
         .bind(pr_id)
@@ -1217,7 +1218,7 @@ pub async fn request_pull_request_reviewer(
     // A request must not disclose a private discussion to an ineligible target.
     anyhow::ensure!(
         user_id != author
-            && codeyard_db_core::queries::sqlite::discussions::lock_write_authority(
+            && codeyard_database::queries::sqlite::discussions::lock_write_authority(
                 &mut tx, user_id, repo_id
             )
             .await?,
@@ -1259,10 +1260,10 @@ pub async fn request_code_owner_reviews(
         return Ok(Vec::new());
     };
     anyhow::ensure!(
-        owners.len() <= codeyard_model::repositories::MAX_REVIEWERS,
+        owners.len() <= codeyard_types::repositories::MAX_REVIEWERS,
         "Too many code owners"
     );
-    let access = codeyard_db_core::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
+    let access = codeyard_database::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
     let added: Vec<i64> = sqlx::query_scalar(&format!(
         "INSERT INTO pr_reviewers (pull_request_id, user_id, as_code_owner)
          SELECT ?1, u.id, 1 FROM repositories r CROSS JOIN users u
@@ -1400,7 +1401,7 @@ pub async fn edit_pull_request_comment(
     if !crate::sqlite::discussions::lock_contribution_authority(&mut tx, actor_id, repo_id).await? {
         return Ok(None);
     }
-    let writer = codeyard_db_core::queries::sqlite::discussions::lock_write_authority(
+    let writer = codeyard_database::queries::sqlite::discussions::lock_write_authority(
         &mut tx, actor_id, repo_id,
     )
     .await?;
@@ -1437,7 +1438,7 @@ pub async fn delete_pull_request_comment(
     if !crate::sqlite::discussions::lock_contribution_authority(&mut tx, actor_id, repo_id).await? {
         return Ok(false);
     }
-    let writer = codeyard_db_core::queries::sqlite::discussions::lock_write_authority(
+    let writer = codeyard_database::queries::sqlite::discussions::lock_write_authority(
         &mut tx, actor_id, repo_id,
     )
     .await?;

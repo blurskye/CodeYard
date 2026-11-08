@@ -1,7 +1,7 @@
 use crate::repositories::records::RepositorySettingsRefusal;
 use anyhow::Result;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 use std::collections::BTreeMap;
 
 /// Most topics one repository carries.

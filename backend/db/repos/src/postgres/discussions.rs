@@ -1,6 +1,6 @@
 use anyhow::Result;
-use codeyard_db_core::pool::PgPool;
-use codeyard_db_core::queries::postgres::repositories::access::RepositoryRowLock as RepositoryLock;
+use codeyard_database::pool::PgPool;
+use codeyard_database::queries::postgres::repositories::access::RepositoryRowLock as RepositoryLock;
 use sqlx::Postgres;
 use sqlx::Transaction;
 
@@ -22,8 +22,8 @@ pub async fn last_discussion_numbers(pool: &PgPool, repo_ids: &[i64]) -> Result<
     .await?)
 }
 
-pub(crate) const AUTHORITY_DENIED: codeyard_db_core::queries::discussions::DiscussionWriteRefusal =
-    codeyard_db_core::queries::discussions::DiscussionWriteRefusal::Denied;
+pub(crate) const AUTHORITY_DENIED: codeyard_database::queries::discussions::DiscussionWriteRefusal =
+    codeyard_database::queries::discussions::DiscussionWriteRefusal::Denied;
 
 /// An effect by a configured repository reader, without issue interaction restrictions.
 pub async fn lock_read_authority(
@@ -89,7 +89,7 @@ async fn lock_contribution_authority_with(
         return Ok(false);
     };
     if !(authority.access.can_read() || authority.personal_override)
-        || codeyard_db_core::queries::postgres::users::blocks::repository_interaction_blocked(
+        || codeyard_database::queries::postgres::users::blocks::repository_interaction_blocked(
             tx, actor_id, repo_id,
         )
         .await?
@@ -151,8 +151,8 @@ pub(crate) async fn require_exclusive_contribution_authority(
 }
 
 pub async fn set_lock(
-    pool: &codeyard_db_core::pool::PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    pool: &codeyard_database::pool::PgPool,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     item: crate::assignees::AssignedItem,
     locked: bool,
@@ -174,7 +174,7 @@ pub async fn set_lock(
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
         lock_triage_authority(&mut tx, actor_id, repo_id).await?
-            && codeyard_db_core::queries::postgres::credentials::repository(
+            && codeyard_database::queries::postgres::credentials::repository(
                 &mut tx, &actor, repo_id, permission, true
             )
             .await?,
@@ -223,7 +223,7 @@ pub(crate) async fn lock_issue_contribution(
     anyhow::ensure!(locked.is_some(), AUTHORITY_DENIED);
     anyhow::ensure!(
         locked == Some(false) || lock_write_authority(tx, actor_id, repo).await?,
-        codeyard_db_core::queries::discussions::DiscussionWriteRefusal::Locked
+        codeyard_database::queries::discussions::DiscussionWriteRefusal::Locked
     );
     Ok(())
 }
@@ -249,7 +249,7 @@ pub(crate) async fn lock_pull_request_contribution(
     anyhow::ensure!(locked.is_some(), AUTHORITY_DENIED);
     anyhow::ensure!(
         locked == Some(false) || lock_write_authority(tx, actor_id, repo).await?,
-        codeyard_db_core::queries::discussions::DiscussionWriteRefusal::Locked
+        codeyard_database::queries::discussions::DiscussionWriteRefusal::Locked
     );
     Ok(())
 }
@@ -339,7 +339,7 @@ pub(crate) async fn lock_review_dismissal_authority(
 }
 
 pub async fn list_repo_authors(
-    pool: &codeyard_db_core::pool::PgPool,
+    pool: &codeyard_database::pool::PgPool,
     repo_id: i64,
     selected: Option<i64>,
 ) -> Result<Vec<String>> {
@@ -352,8 +352,8 @@ pub async fn list_repo_authors(
     )
 }
 
-use codeyard_db_core::queries::postgres::discussions::lock_triage_authority;
+use codeyard_database::queries::postgres::discussions::lock_triage_authority;
 
-use codeyard_db_core::queries::postgres::discussions::lock_discussion_authority;
+use codeyard_database::queries::postgres::discussions::lock_discussion_authority;
 
-use codeyard_db_core::queries::postgres::discussions::lock_write_authority;
+use codeyard_database::queries::postgres::discussions::lock_write_authority;

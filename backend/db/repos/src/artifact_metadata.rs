@@ -1,6 +1,6 @@
 use anyhow::Result;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::json;
@@ -53,7 +53,7 @@ impl Artifact {
         text(&self.name, 1, 256)?;
         anyhow::ensure!(
             self.digest.starts_with("sha256:")
-                && codeyard_db_core::queries::attestations::valid_digest(&self.digest),
+                && codeyard_database::queries::attestations::valid_digest(&self.digest),
             Refusal::Invalid
         );
         if let Some(version) = &self.version {

@@ -36,7 +36,7 @@ pub async fn trigger_ci(
             user.id,
             request,
             codeyard_api_http::session::extract_session_id(&headers)
-                .map(codeyard_db_core::queries::ci::CiCredential::Session),
+                .map(codeyard_database::queries::ci::CiCredential::Session),
         )
         .await
         .map_err(codeyard_api_http::shared::ci::admission_error)?;
@@ -89,18 +89,18 @@ mod tests {
                     .with_regexp(),
             )
             .await
-            .map(codeyard_db_core::pool::Pool::from)
+            .map(codeyard_database::pool::Pool::from)
             .unwrap();
-        let pool = codeyard_db_core::DbPool::from(native.clone());
-        codeyard_db_core::run_migrations(&pool).await.unwrap();
-        codeyard_db_cluster::node_config::upsert_node_configuration(&pool, "public", true)
+        let pool = codeyard_database::DbPool::from(native.clone());
+        codeyard_database::run_migrations(&pool).await.unwrap();
+        codeyard_db_placement::node_config::upsert_node_configuration(&pool, "public", true)
             .await
             .unwrap();
         let owner = codeyard_db_identity::users::accounts::create_user(&pool, "alice", None)
             .await
             .unwrap();
         let root = tempfile::tempdir().unwrap();
-        let original = codeyard_repos_core::repositories::lifecycle::provision(
+        let original = codeyard_git_storage::repositories::lifecycle::provision(
             (&pool, None),
             root.path(),
             codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner.id),
@@ -111,7 +111,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let private = codeyard_repos_core::repositories::lifecycle::provision(
+        let private = codeyard_git_storage::repositories::lifecycle::provision(
             (&pool, None),
             root.path(),
             codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner.id),

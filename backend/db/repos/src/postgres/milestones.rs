@@ -2,9 +2,9 @@ use crate::milestones::MilestoneDocumentFacts;
 use crate::milestones::MilestoneInput;
 use crate::milestones::MilestoneWriteRefusal;
 use anyhow::Result;
-use codeyard_db_core::models::Milestone;
-use codeyard_db_core::models::MilestoneSummary;
-use codeyard_db_core::pool::PgPool;
+use codeyard_database::models::Milestone;
+use codeyard_database::models::MilestoneSummary;
+use codeyard_database::pool::PgPool;
 use sqlx::Postgres;
 use sqlx::Transaction;
 
@@ -37,7 +37,7 @@ const SUMMARY_SELECT: &str = "SELECT m.id, m.repo_id, m.number, m.title, m.descr
 /// writer at a time.
 async fn begin_write(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
 ) -> Result<Transaction<'_, Postgres>> {
     let credential = actor.into();
@@ -52,7 +52,7 @@ async fn begin_write(
     );
     // The request's own session or token must still be live and may still write issues here.
     anyhow::ensure!(
-        codeyard_db_core::queries::postgres::credentials::repository(
+        codeyard_database::queries::postgres::credentials::repository(
             &mut tx,
             &credential,
             repo_id,
@@ -87,7 +87,7 @@ async fn ensure_unique_title(
 
 pub async fn create_milestone(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     title: &str,
     description: Option<&str>,
@@ -110,7 +110,7 @@ pub async fn create_milestone(
 
 pub async fn update_milestone(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     number: i32,
     title: &str,
@@ -136,7 +136,7 @@ pub async fn update_milestone(
 
 pub async fn save_milestone(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     number: Option<i32>,
     input: MilestoneInput<'_>,
@@ -149,7 +149,7 @@ pub async fn save_milestone(
 /// did not show.
 pub async fn save_milestone_checked(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     number: Option<i32>,
     input: MilestoneInput<'_>,
@@ -161,7 +161,7 @@ pub async fn save_milestone_checked(
 /// Form dates are whole days (`calendar`): an unchanged day keeps the stored time of day.
 async fn save_milestone_in(
     pool: &PgPool,
-    credential: codeyard_db_core::queries::credentials::Actor,
+    credential: codeyard_database::queries::credentials::Actor,
     repo_id: i64,
     number: Option<i32>,
     input: MilestoneInput<'_>,
@@ -202,7 +202,7 @@ async fn save_milestone_in(
     let due_on = input
         .due_on
         .unwrap_or_else(|| existing.as_ref().and_then(|m| m.due_on));
-    codeyard_model::issue_input::validate_milestone(title, description.unwrap_or(""))
+    codeyard_types::issue_input::validate_milestone(title, description.unwrap_or(""))
         .map_err(anyhow::Error::msg)?;
     ensure_unique_title(&mut tx, repo_id, title, number).await?;
     let creating = number.is_none();
@@ -246,7 +246,7 @@ async fn save_milestone_in(
 
 pub async fn set_milestone_state(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     number: i32,
     state: &str,
@@ -273,7 +273,7 @@ pub async fn set_milestone_state(
 
 pub async fn delete_milestone(
     pool: &PgPool,
-    actor_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor_id: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     number: i32,
     expected_id: i64,
@@ -319,7 +319,7 @@ pub async fn read_milestones(
     offset: i64,
 ) -> Result<Vec<MilestoneSummary>> {
     let order = crate::milestones::milestone_order(sort);
-    let readable = codeyard_db_core::queries::postgres::repositories::access::readable_condition();
+    let readable = codeyard_database::queries::postgres::repositories::access::readable_condition();
     Ok(sqlx::query_as(&format!("SELECT * FROM ({SUMMARY_SELECT} WHERE m.repo_id=$1 AND ($3::INTEGER IS NULL OR m.number=$3) AND ($4::TEXT IS NULL OR m.state=$4) AND EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=$2 WHERE r.id=m.repo_id AND {readable})) summaries ORDER BY {order} LIMIT $5 OFFSET $6"))
         .bind(repo).bind(viewer).bind(number).bind(state).bind(limit).bind(offset).fetch_all(pool).await?)
 }
@@ -480,7 +480,7 @@ pub async fn milestone_choices_by_ids(
 
 pub async fn set_issue_milestone(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     issue_id: i64,
     milestone_number: Option<i32>,
@@ -490,7 +490,7 @@ pub async fn set_issue_milestone(
 
 pub async fn set_pull_request_milestone(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     pull_request_id: i64,
     milestone_number: Option<i32>,
@@ -510,7 +510,7 @@ pub async fn set_pull_request_milestone(
 /// callers in this module.
 async fn set_item_milestone(
     pool: &PgPool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     table: &'static str,
     item_id: i64,

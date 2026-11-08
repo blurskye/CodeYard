@@ -1,7 +1,7 @@
 //! Cell RPC composition: identity owns proofs; repository stores own Git exports.
 use crate::app::AppState;
 use anyhow::{ensure, Context, Result};
-use codeyard_db_core::{
+use codeyard_database::{
     cells::{
         authorization::{Answer, Home, Proof},
         pulls::{Binding, Grant, HeadRequest},
@@ -26,7 +26,7 @@ impl Native {
     async fn consented_head(
         &self,
         request: &HeadRequest,
-    ) -> Result<Option<codeyard_db_core::models::Repository>> {
+    ) -> Result<Option<codeyard_database::models::Repository>> {
         let pool = &self.state.pool;
         let binding = &request.binding;
         if codeyard_db_repos::pull_requests::cells::publisher(pool, binding).await?
@@ -36,7 +36,7 @@ impl Native {
         }
         let Some(repository) = codeyard_db_repos::repositories::creation::read_repository_source(
             pool,
-            &codeyard_db_core::queries::credentials::Actor::from(request.publisher_id),
+            &codeyard_database::queries::credentials::Actor::from(request.publisher_id),
             binding.head_repo_id,
         )
         .await?
@@ -59,8 +59,8 @@ impl Native {
     async fn maintainer(
         &self,
         proof: &Proof,
-        base: &codeyard_db_core::models::Repository,
-        pull: &codeyard_db_core::models::PullRequest,
+        base: &codeyard_database::models::Repository,
+        pull: &codeyard_database::models::PullRequest,
     ) -> Result<Option<i64>> {
         if !pull.maintainer_edits_enabled() {
             return Ok(None);
@@ -71,7 +71,7 @@ impl Native {
             let Some(answer) = Home::authorize(&self.identity(), proof).await? else {
                 return Ok(None);
             };
-            codeyard_db_core::queries::credentials::Actor::from(answer.user.id)
+            codeyard_database::queries::credentials::Actor::from(answer.user.id)
         } else {
             let Some(actor) = self.identity().fork_actor(proof).await? else {
                 return Ok(None);
@@ -80,7 +80,7 @@ impl Native {
         };
         // Any failure, including an outage, refuses the edit.
         Ok(
-            codeyard_repos_core::repositories::access::check_publication_actor(
+            codeyard_git_storage::repositories::access::check_publication_actor(
                 &self.state.pool,
                 &actor,
                 base,
@@ -96,10 +96,10 @@ impl Native {
 pub struct Refreshes {
     pub state: AppState,
 }
-impl codeyard_db_core::cells::outbox::Consumer for Refreshes {
+impl codeyard_database::cells::outbox::Consumer for Refreshes {
     fn refresh_pull_head<'a>(
         &'a self,
-        refresh: &'a mut codeyard_db_core::cells::pulls::Refresh,
+        refresh: &'a mut codeyard_database::cells::pulls::Refresh,
     ) -> BoxFuture<'a, Result<bool>> {
         Box::pin(async move {
             let Some(pull) =
@@ -122,16 +122,16 @@ impl codeyard_db_core::cells::outbox::Consumer for Refreshes {
     }
     fn index_search<'a>(
         &'a self,
-        index: &'a dyn codeyard_db_core::cells::search::Index,
+        index: &'a dyn codeyard_database::cells::search::Index,
         repository: i64,
-        item: codeyard_db_core::cells::search::Item,
-        version: codeyard_db_core::cells::search::Version,
+        item: codeyard_database::cells::search::Item,
+        version: codeyard_database::cells::search::Version,
     ) -> BoxFuture<'a, Result<()>> {
         Box::pin(search::send(&self.state, index, repository, item, version))
     }
 }
 impl Home for Native {
-    fn cell(&self) -> Option<codeyard_types::cells::Prefix> {
+    fn cell(&self) -> Option<codeyard_types::cell_ids::Prefix> {
         Some(self.state.pool.cell_id())
     }
     fn authorize<'a>(&'a self, proof: &'a Proof) -> BoxFuture<'a, Result<Option<Answer>>> {
@@ -145,21 +145,21 @@ impl Home for Native {
     }
     fn receive_pointer<'a>(
         &'a self,
-        event: &'a codeyard_db_core::cells::pointers::Event,
-        admission: &'a dyn codeyard_db_core::cells::pointers::Admission,
+        event: &'a codeyard_database::cells::pointers::Event,
+        admission: &'a dyn codeyard_database::cells::pointers::Admission,
     ) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move { self.identity().receive_pointer(event, admission).await })
     }
     fn notice_public(&self, repository: i64) -> BoxFuture<'_, Result<bool>> {
-        Box::pin(codeyard_db_core::cells::notices::public(
+        Box::pin(codeyard_database::cells::notices::public(
             &self.state.pool,
             repository,
         ))
     }
     fn receive_notice<'a>(
         &'a self,
-        event: &'a codeyard_db_core::cells::notices::Event,
-        admission: &'a dyn codeyard_db_core::cells::notices::Admission,
+        event: &'a codeyard_database::cells::notices::Event,
+        admission: &'a dyn codeyard_database::cells::notices::Admission,
     ) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             codeyard_notifications::mentions::receive(
@@ -173,8 +173,8 @@ impl Home for Native {
     }
     fn receive_push<'a>(
         &'a self,
-        event: &'a codeyard_db_core::cells::pulls::Event,
-        admission: &'a dyn codeyard_db_core::cells::pulls::Admission,
+        event: &'a codeyard_database::cells::pulls::Event,
+        admission: &'a dyn codeyard_database::cells::pulls::Admission,
     ) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             codeyard_db_repos::pull_requests::cells::receive_push(
@@ -189,7 +189,7 @@ impl Home for Native {
         &'a self,
         binding: &'a Binding,
         proof: &'a Proof,
-        admission: &'a dyn codeyard_db_core::cells::pulls::Admission,
+        admission: &'a dyn codeyard_database::cells::pulls::Admission,
     ) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             let actor = self
@@ -266,7 +266,7 @@ impl Home for Native {
     ) -> BoxFuture<'a, Result<Option<Snapshot>>> {
         Box::pin(async move {
             request.validate()?;
-            let maximum = codeyard_repos_core::repositories::store::fork_pack_bytes()?;
+            let maximum = codeyard_git_storage::repositories::store::fork_pack_bytes()?;
             let _slot = self
                 .state
                 .repository_downloads
@@ -280,7 +280,7 @@ impl Home for Native {
                     let Some(repository) = self.consented_head(request).await? else {
                         return Ok(None);
                     };
-                    let store = codeyard_repos_core::repositories::store::repo_store(
+                    let store = codeyard_git_storage::repositories::store::repo_store(
                         &repository,
                         self.state.cluster.as_ref(),
                     );
@@ -292,7 +292,7 @@ impl Home for Native {
                     {
                         return Ok(None);
                     }
-                    let mut bounded = codeyard_repos_core::git_transport::LimitedWriter::new(
+                    let mut bounded = codeyard_git_storage::git_transport::LimitedWriter::new(
                         output,
                         maximum.min(request.maximum_bytes),
                     );
@@ -302,7 +302,7 @@ impl Home for Native {
                             request.publisher_id,
                             repository.id,
                             &binding.head_branch,
-                            codeyard_repos_core::store_types::GitStreams {
+                            codeyard_git_storage::store_types::GitStreams {
                                 input: &mut tokio::io::empty(),
                                 output: &mut bounded,
                                 errors: &mut tokio::io::sink(),
@@ -324,7 +324,7 @@ impl Home for Native {
         &'a self,
         id: i64,
         proof: &'a Proof,
-    ) -> BoxFuture<'a, Result<Option<codeyard_db_core::cells::repositories::Source>>> {
+    ) -> BoxFuture<'a, Result<Option<codeyard_database::cells::repositories::Source>>> {
         Box::pin(async move {
             let Some(source) = self.identity().repository_id(id, proof).await? else {
                 return Ok(None);
@@ -340,7 +340,7 @@ impl Home for Native {
         owner: &'a str,
         base: i64,
         proof: &'a Proof,
-    ) -> BoxFuture<'a, Result<Option<codeyard_db_core::cells::repositories::Source>>> {
+    ) -> BoxFuture<'a, Result<Option<codeyard_database::cells::repositories::Source>>> {
         Box::pin(async move {
             let Some(source) = self.identity().repository_fork(owner, base, proof).await? else {
                 return Ok(None);
@@ -356,7 +356,7 @@ impl Home for Native {
         owner: &'a str,
         name: &'a str,
         proof: &'a Proof,
-    ) -> BoxFuture<'a, Result<Option<codeyard_db_core::cells::repositories::Source>>> {
+    ) -> BoxFuture<'a, Result<Option<codeyard_database::cells::repositories::Source>>> {
         Box::pin(async move {
             let identity = self.identity();
             let Some(source) = identity.repository_source(owner, name, proof).await? else {
@@ -369,7 +369,7 @@ impl Home for Native {
             .await?
             .context("Fork source disappeared")?;
             let reference = format!("refs/heads/{}", repository.default_branch);
-            let oid = codeyard_repos_core::repositories::store::repo_store(
+            let oid = codeyard_git_storage::repositories::store::repo_store(
                 &repository,
                 self.state.cluster.as_ref(),
             )
@@ -396,7 +396,7 @@ impl Home for Native {
     ) -> BoxFuture<'a, Result<Snapshot>> {
         Box::pin(async move {
             request.validate()?;
-            let maximum = codeyard_repos_core::repositories::store::fork_pack_bytes()?;
+            let maximum = codeyard_git_storage::repositories::store::fork_pack_bytes()?;
             let _slot = self
                 .state
                 .repository_downloads
@@ -427,11 +427,11 @@ impl Home for Native {
                         )
                         .await?
                         .context("Fork source was revoked")?;
-                    let store = codeyard_repos_core::repositories::store::repo_store(
+                    let store = codeyard_git_storage::repositories::store::repo_store(
                         &repository,
                         self.state.cluster.as_ref(),
                     );
-                    let mut bounded = codeyard_repos_core::git_transport::LimitedWriter::new(
+                    let mut bounded = codeyard_git_storage::git_transport::LimitedWriter::new(
                         output,
                         maximum.min(request.maximum_bytes),
                     );
@@ -442,7 +442,7 @@ impl Home for Native {
                             repository.id,
                             request.default_branch_only,
                             request.branch.as_deref(),
-                            codeyard_repos_core::store_types::GitStreams {
+                            codeyard_git_storage::store_types::GitStreams {
                                 input: &mut tokio::io::empty(),
                                 output: &mut bounded,
                                 errors: &mut tokio::io::sink(),
@@ -475,16 +475,16 @@ pub async fn forward_fork(
     headers: &axum::http::HeaderMap,
     path: &str,
     body: Vec<u8>,
-) -> codeyard_model::github_error::Result<Option<axum::response::Response>> {
+) -> codeyard_types::github_error::Result<Option<axum::response::Response>> {
     use axum::http::{header, StatusCode};
-    use codeyard_model::{
+    use codeyard_types::{
         cells::{Key, KeyKind},
         github_error::Error,
     };
     let target_kind = if target.is_some() {
-        codeyard_model::cells::ObjectKind::Organization
+        codeyard_types::cells::ObjectKind::Organization
     } else {
-        codeyard_model::cells::ObjectKind::User
+        codeyard_types::cells::ObjectKind::User
     };
     let target = target.unwrap_or(&user.username);
     Key::new(KeyKind::Name, target).map_err(|_| Error::invalid("Invalid fork destination"))?;
@@ -517,7 +517,7 @@ pub async fn forward_fork(
         .ok_or_else(Error::missing)?;
     let mut forwarded = Vec::new();
     for (name, value) in headers.iter() {
-        if codeyard_db_core::cells::repositories::request_header(name.as_str())
+        if codeyard_database::cells::repositories::request_header(name.as_str())
             && name.as_str() != "via"
         {
             forwarded.push((
@@ -530,7 +530,7 @@ pub async fn forward_fork(
         }
     }
     forwarded.push(("via".to_owned(), "1.1 codeyard-fork".to_owned()));
-    let request = codeyard_db_core::cells::repositories::ForwardFork {
+    let request = codeyard_database::cells::repositories::ForwardFork {
         target_kind,
         path: path.to_owned(),
         headers: forwarded,
@@ -562,29 +562,30 @@ pub async fn forward_fork(
 }
 
 pub struct ForkSource {
-    pub repository: codeyard_db_core::models::Repository,
-    pub admission: Option<codeyard_db_core::cells::repositories::Admission>,
+    pub repository: codeyard_database::models::Repository,
+    pub admission: Option<codeyard_database::cells::repositories::Admission>,
 }
 pub async fn fork_source(
     state: &AppState,
-    actor: &codeyard_db_core::queries::credentials::Actor,
+    actor: &codeyard_database::queries::credentials::Actor,
     credential: &str,
     owner: &str,
     name: &str,
-) -> codeyard_model::github_error::Result<ForkSource> {
-    use codeyard_model::github_error::Error;
-    codeyard_model::cells::Key::new(codeyard_model::cells::KeyKind::Name, owner)
+) -> codeyard_types::github_error::Result<ForkSource> {
+    use codeyard_types::github_error::Error;
+    codeyard_types::cells::Key::new(codeyard_types::cells::KeyKind::Name, owner)
         .map_err(|_| Error::invalid("Invalid fork source"))?;
     if !codeyard_types::repository_names::valid(name) {
         return Err(Error::invalid("Invalid fork source"));
     }
-    let proof =
-        codeyard_db_core::cells::repositories::retained_proof(actor, credential).map_err(|_| {
+    let proof = codeyard_database::cells::repositories::retained_proof(actor, credential).map_err(
+        |_| {
             Error::new(
                 axum::http::StatusCode::FORBIDDEN,
                 "Fork requires its original credential",
             )
-        })?;
+        },
+    )?;
     let local = codeyard_db_repos::repositories::records::get_repository(&state.pool, owner, name)
         .await
         .map_err(Error::unavailable)?
@@ -619,12 +620,12 @@ pub async fn fork_source(
 
 async fn retained_source(
     state: &AppState,
-    actor: &codeyard_db_core::queries::credentials::Actor,
+    actor: &codeyard_database::queries::credentials::Actor,
     credential: &str,
-    source: codeyard_db_core::cells::repositories::Source,
-) -> codeyard_model::github_error::Result<ForkSource> {
-    use codeyard_model::github_error::Error;
-    let admission = codeyard_db_core::cells::repositories::Admission::new(
+    source: codeyard_database::cells::repositories::Source,
+) -> codeyard_types::github_error::Result<ForkSource> {
+    use codeyard_types::github_error::Error;
+    let admission = codeyard_database::cells::repositories::Admission::new(
         source,
         actor.clone(),
         credential.to_owned(),
@@ -649,14 +650,14 @@ async fn retained_source(
 /// Resolve a renamed foreign fork while keeping the base as the mutation's owner.
 pub async fn pull_head_source(
     state: &AppState,
-    actor: &codeyard_db_core::queries::credentials::Actor,
+    actor: &codeyard_database::queries::credentials::Actor,
     credential: &str,
-    base: &codeyard_db_core::models::Repository,
+    base: &codeyard_database::models::Repository,
     owner: &str,
     name: Option<&str>,
-) -> codeyard_model::github_error::Result<ForkSource> {
-    use codeyard_model::github_error::Error;
-    codeyard_model::cells::Key::new(codeyard_model::cells::KeyKind::Name, owner)
+) -> codeyard_types::github_error::Result<ForkSource> {
+    use codeyard_types::github_error::Error;
+    codeyard_types::cells::Key::new(codeyard_types::cells::KeyKind::Name, owner)
         .map_err(|_| Error::invalid("Invalid head owner"))?;
     if let Some(name) = name {
         return fork_source(state, actor, credential, owner, name).await;
@@ -678,7 +679,7 @@ pub async fn pull_head_source(
     {
         return fork_source(state, actor, credential, owner, &repo.name).await;
     }
-    let proof = codeyard_db_core::cells::repositories::retained_proof(actor, credential)
+    let proof = codeyard_database::cells::repositories::retained_proof(actor, credential)
         .map_err(Error::unavailable)?;
     let source = state
         .pool
@@ -693,12 +694,12 @@ pub async fn pull_head_source(
 
 pub async fn pull_head_id(
     state: &AppState,
-    actor: &codeyard_db_core::queries::credentials::Actor,
+    actor: &codeyard_database::queries::credentials::Actor,
     credential: &str,
     id: i64,
-) -> codeyard_model::github_error::Result<ForkSource> {
-    use codeyard_model::github_error::Error;
-    codeyard_types::cells::Prefix::for_id(id).map_err(|_| Error::missing())?;
+) -> codeyard_types::github_error::Result<ForkSource> {
+    use codeyard_types::github_error::Error;
+    codeyard_types::cell_ids::Prefix::for_id(id).map_err(|_| Error::missing())?;
     if let Some(repo) =
         codeyard_db_repos::repositories::records::get_repository_by_id(&state.pool, id)
             .await
@@ -712,7 +713,7 @@ pub async fn pull_head_id(
                 .ok_or_else(Error::missing)?;
         return fork_source(state, actor, credential, &owner, &repo.name).await;
     }
-    let proof = codeyard_db_core::cells::repositories::retained_proof(actor, credential)
+    let proof = codeyard_database::cells::repositories::retained_proof(actor, credential)
         .map_err(Error::unavailable)?;
     let source = state
         .pool
@@ -728,9 +729,9 @@ pub async fn pull_head_id(
 /// A stub's metadata comes from its live resource home, under the original reader.
 pub async fn foreign_repository(
     state: &AppState,
-    actor: &codeyard_db_core::queries::credentials::Actor,
-    repository: &codeyard_db_core::models::Repository,
-) -> Result<Option<codeyard_db_core::cells::repositories::Source>> {
+    actor: &codeyard_database::queries::credentials::Actor,
+    repository: &codeyard_database::models::Repository,
+) -> Result<Option<codeyard_database::cells::repositories::Source>> {
     ensure!(
         repository.is_stub && repository.home_cell != i32::from(state.pool.cell_id().get()),
         "Foreign repository has a native home"
@@ -739,7 +740,7 @@ pub async fn foreign_repository(
         codeyard_db_repos::repositories::records::repository_owner_name(&state.pool, repository.id)
             .await?
             .context("Foreign repository owner is unavailable")?;
-    let proof = codeyard_db_core::cells::repositories::actor_proof(actor)?;
+    let proof = codeyard_database::cells::repositories::actor_proof(actor)?;
     let provider = state
         .pool
         .foreign_authorization()

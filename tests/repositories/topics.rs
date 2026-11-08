@@ -34,7 +34,7 @@ async fn topics_save_validate_and_filter(pg: bool) {
     let bob_id = database.actor("bob").await;
     let carol_id = database.actor("carol").await;
     let root = tempfile::tempdir().unwrap();
-    codeyard_repos_core::repositories::lifecycle::provision(
+    codeyard_git_storage::repositories::lifecycle::provision(
         (database.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
@@ -107,7 +107,7 @@ async fn topics_save_validate_and_filter(pg: bool) {
         database.pool(),
         bob_id,
         id,
-        codeyard_db_core::models::AccessLevel::Write,
+        codeyard_database::models::AccessLevel::Write,
     )
     .await
     .unwrap();

@@ -24,8 +24,8 @@ use codeyard_db_actions::environment_values::EnvironmentValue;
 use codeyard_db_actions::environment_values::Save;
 use codeyard_db_actions::environment_values::ValueError;
 use codeyard_db_orgs::organization_values::Kind;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -99,7 +99,7 @@ async fn target(
     params: &HashMap<String, String>,
     write: bool,
 ) -> Result<(
-    codeyard_db_core::models::Repository,
+    codeyard_database::models::Repository,
     codeyard_identity::github_auth::Authentication,
 )> {
     let (owner, name) = if let Some(id) = params.get("repository_id") {

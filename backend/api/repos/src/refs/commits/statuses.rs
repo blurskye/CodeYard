@@ -17,7 +17,7 @@ use codeyard_api_http::shared::repos::chrome::ApiResult;
 use codeyard_api_http::shared::repos::responses::repository_unavailable;
 use codeyard_api_http::shared::user::responses::PublicUserResponse as UserResponse;
 use codeyard_app::app::AppState;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_git_storage::repositories::store::repo_store;
 use serde::Deserialize;
 use serde::Serialize;
 use std::sync::Arc;
@@ -78,8 +78,8 @@ pub(crate) async fn list_commit_statuses(
 }
 
 pub(super) async fn status_responses(
-    pool: &codeyard_db_core::DbPool,
-    statuses: Vec<codeyard_db_core::models::CommitStatus>,
+    pool: &codeyard_database::DbPool,
+    statuses: Vec<codeyard_database::models::CommitStatus>,
 ) -> ApiResult<Vec<CommitStatusResponse>> {
     let mut ids: Vec<_> = statuses
         .iter()
@@ -195,7 +195,7 @@ pub async fn create_commit_status(
     )
     .await
     .map_err(codeyard_api_http::error::protection_write_error)?;
-    codeyard_repos_core::webhooks::statuses::emit_status(
+    codeyard_git_storage::webhooks::statuses::emit_status(
         &state.pool,
         &store,
         &repository,

@@ -16,9 +16,9 @@ use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
-use codeyard_model::repositories::DeployKeyError;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
+use codeyard_types::repositories::DeployKeyError;
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
@@ -38,7 +38,7 @@ async fn document(
     state: &AppState,
     owner: &str,
     name: &str,
-    key: &codeyard_db_core::models::DeployKey,
+    key: &codeyard_database::models::DeployKey,
 ) -> Result<Value> {
     let added_by = match key.created_by_id {
         Some(id) => codeyard_db_identity::users::accounts::get_user_by_id(&state.pool, id)

@@ -1,8 +1,8 @@
 //! Git source imports retain no source credentials and publish only into empty repositories.
 use crate::services::RepositoryServices;
-use codeyard_db_core::models::Repository;
+use codeyard_database::models::Repository;
 use codeyard_db_repos::source_imports::SourceImport;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_git_storage::repositories::store::repo_store;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -42,11 +42,11 @@ pub async fn start(
     )
     .await
     .map_err(|error| {
-        match error.downcast_ref::<codeyard_db_core::queries::source_imports::ImportRefusal>() {
-            Some(codeyard_db_core::queries::source_imports::ImportRefusal::Denied) => {
+        match error.downcast_ref::<codeyard_database::queries::source_imports::ImportRefusal>() {
+            Some(codeyard_database::queries::source_imports::ImportRefusal::Denied) => {
                 ImportError::Denied
             }
-            Some(codeyard_db_core::queries::source_imports::ImportRefusal::Running) => {
+            Some(codeyard_database::queries::source_imports::ImportRefusal::Running) => {
                 ImportError::Running
             }
             None => ImportError::Unavailable,
@@ -67,7 +67,7 @@ pub async fn start(
     Ok(import)
 }
 
-async fn cancelled(pool: &codeyard_db_core::DbPool, import: &SourceImport) -> anyhow::Result<()> {
+async fn cancelled(pool: &codeyard_database::DbPool, import: &SourceImport) -> anyhow::Result<()> {
     loop {
         tokio::time::sleep(Duration::from_secs(1)).await;
         if !codeyard_db_repos::source_imports::get(pool, import.repo_id)

@@ -13,9 +13,9 @@ use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
 use codeyard_ci::config::CiConfig;
 use codeyard_ci::runtime;
+use codeyard_git_storage::repositories::lifecycle;
 use codeyard_identity::tokens;
 use codeyard_identity::tokens::TokenInput;
-use codeyard_repos_core::repositories::lifecycle;
 use codeyard_storage::ObjectStore;
 use serde_json::{json, Value};
 use std::{path::Path, sync::Arc, time::Duration};
@@ -159,15 +159,15 @@ async fn files_survive_a_web_node(pg: bool) {
     let asset_id = asset["id"].as_i64().unwrap();
 
     let sql = "INSERT INTO ci_runs(run_id,repo_id,triggered_by_id,mode,pipeline,event,branch,workflow_path,status,worker) VALUES($1,$2,$3,'local','ci','push','main','.github/workflows/ci.yml','running','test') RETURNING *";
-    let run: codeyard_db_core::models::CiRun = match database.pool() {
-        codeyard_db_core::DbPool::Postgres(pool) => sqlx::query_as(sql)
+    let run: codeyard_database::models::CiRun = match database.pool() {
+        codeyard_database::DbPool::Postgres(pool) => sqlx::query_as(sql)
             .bind(Uuid::new_v4())
             .bind(repo.id)
             .bind(actor)
             .fetch_one(pool)
             .await
             .unwrap(),
-        codeyard_db_core::DbPool::Sqlite(pool) => sqlx::query_as(sql)
+        codeyard_database::DbPool::Sqlite(pool) => sqlx::query_as(sql)
             .bind(Uuid::new_v4())
             .bind(repo.id)
             .bind(actor)
@@ -255,7 +255,7 @@ async fn cluster_startup_uses_storage_nodes_without_s3() {
     crate::support::native_database::enable_cluster(&database.pool)
         .await
         .unwrap();
-    codeyard_db_cluster::node_config::upsert_node_configuration(&database.pool, "public", true)
+    codeyard_db_placement::node_config::upsert_node_configuration(&database.pool, "public", true)
         .await
         .unwrap();
     let owner =

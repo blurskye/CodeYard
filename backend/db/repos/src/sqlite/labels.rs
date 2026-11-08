@@ -4,19 +4,19 @@ use crate::labels::LabelTarget;
 use crate::labels::LabelWriteRefusal;
 use crate::labels::PAGE_DESCRIPTION_CHARS;
 use anyhow::Result;
-use codeyard_db_core::models::Label;
-use codeyard_db_core::pool::SqlitePool;
+use codeyard_database::models::Label;
+use codeyard_database::pool::SqlitePool;
 use sqlx::Sqlite;
 use sqlx::Transaction;
 
 async fn begin_label_write<'a>(
     pool: &'a SqlitePool,
-    actor: &codeyard_db_core::queries::credentials::Actor,
+    actor: &codeyard_database::queries::credentials::Actor,
     repo_id: i64,
 ) -> Result<Transaction<'a, Sqlite>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::sqlite::discussions::lock_write_authority(
+        codeyard_database::queries::sqlite::discussions::lock_write_authority(
             &mut tx,
             actor.user_id,
             repo_id
@@ -53,12 +53,12 @@ async fn ensure_name_free(
 /// Labels on an issue or pull request need triage authority; the label catalog needs write.
 async fn begin_item_label_write<'a>(
     pool: &'a SqlitePool,
-    actor: &codeyard_db_core::queries::credentials::Actor,
+    actor: &codeyard_database::queries::credentials::Actor,
     repo_id: i64,
 ) -> Result<Transaction<'a, Sqlite>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::sqlite::discussions::lock_triage_authority(
+        codeyard_database::queries::sqlite::discussions::lock_triage_authority(
             &mut tx,
             actor.user_id,
             repo_id
@@ -77,14 +77,14 @@ async fn begin_item_label_write<'a>(
 /// requests here, checked in the transaction that writes.
 async fn writes_labels(
     tx: &mut Transaction<'_, Sqlite>,
-    actor: &codeyard_db_core::queries::credentials::Actor,
+    actor: &codeyard_database::queries::credentials::Actor,
     repo_id: i64,
 ) -> Result<bool> {
-    Ok(codeyard_db_core::queries::sqlite::credentials::repository(
+    Ok(codeyard_database::queries::sqlite::credentials::repository(
         tx, actor, repo_id, "issues", true,
     )
     .await?
-        || codeyard_db_core::queries::sqlite::credentials::repository(
+        || codeyard_database::queries::sqlite::credentials::repository(
             tx,
             actor,
             repo_id,
@@ -125,7 +125,7 @@ pub(crate) async fn lock_item_labels(
 
 pub async fn create_label(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     name: &str,
     color: &str,
@@ -186,7 +186,7 @@ pub async fn get_label_by_id(pool: &SqlitePool, id: i64) -> Result<Option<Label>
 
 pub async fn count_repo_labels(pool: &SqlitePool, repo_id: i64, query: &str) -> Result<i64> {
     Ok(sqlx::query_scalar("SELECT COUNT(*) FROM labels l WHERE l.repo_id=?1 AND (l.name REGEXP ?2 OR COALESCE(l.description,'') REGEXP ?2)")
-        .bind(repo_id).bind(codeyard_db_core::queries::sqlite::search::contains(query.trim())).fetch_one(pool).await?)
+        .bind(repo_id).bind(codeyard_database::queries::sqlite::search::contains(query.trim())).fetch_one(pool).await?)
 }
 
 pub async fn list_repo_labels_page(
@@ -209,7 +209,7 @@ pub async fn list_repo_labels_page(
         _ => "LOWER(l.name), l.id",
     };
     Ok(sqlx::query_as(&format!(r"SELECT l.id,l.repo_id,l.name,l.color,substr(l.description,1,{PAGE_DESCRIPTION_CHARS}) AS description,l.created_at,l.updated_at FROM labels l WHERE l.repo_id=?1 AND (l.name REGEXP ?2 OR COALESCE(l.description,'') REGEXP ?2) ORDER BY {order} LIMIT ?3 OFFSET ?4"))
-        .bind(repo_id).bind(codeyard_db_core::queries::sqlite::search::contains(query.trim())).bind(limit).bind(offset).fetch_all(pool).await?)
+        .bind(repo_id).bind(codeyard_database::queries::sqlite::search::contains(query.trim())).bind(limit).bind(offset).fetch_all(pool).await?)
 }
 
 /// Each label of the repository with the number of issues and pull requests it is on, as
@@ -223,7 +223,7 @@ pub async fn list_milestone_labels(
     limit: i64,
     offset: i64,
 ) -> Result<Vec<Label>> {
-    Ok(sqlx::query_as(&format!("SELECT l.* FROM labels l WHERE l.repo_id=?1 AND EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=?5 WHERE r.id=l.repo_id AND {}) AND (EXISTS (SELECT 1 FROM issue_labels il JOIN issues i ON i.id=il.issue_id WHERE il.label_id=l.id AND i.milestone_id=?2) OR EXISTS (SELECT 1 FROM pr_labels pl JOIN pull_requests p ON p.id=pl.pull_request_id WHERE pl.label_id=l.id AND p.milestone_id=?2)) ORDER BY lower(l.name),l.id LIMIT ?3 OFFSET ?4", codeyard_db_core::queries::sqlite::repositories::access::readable_condition()))
+    Ok(sqlx::query_as(&format!("SELECT l.* FROM labels l WHERE l.repo_id=?1 AND EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=?5 WHERE r.id=l.repo_id AND {}) AND (EXISTS (SELECT 1 FROM issue_labels il JOIN issues i ON i.id=il.issue_id WHERE il.label_id=l.id AND i.milestone_id=?2) OR EXISTS (SELECT 1 FROM pr_labels pl JOIN pull_requests p ON p.id=pl.pull_request_id WHERE pl.label_id=l.id AND p.milestone_id=?2)) ORDER BY lower(l.name),l.id LIMIT ?3 OFFSET ?4", codeyard_database::queries::sqlite::repositories::access::readable_condition()))
         .bind(repo_id).bind(milestone_id).bind(limit).bind(offset).bind(viewer).fetch_all(pool).await?)
 }
 
@@ -253,7 +253,7 @@ pub async fn list_label_usage(
 
 pub async fn update_label(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     label_id: i64,
     name: Option<&str>,
@@ -273,7 +273,7 @@ pub async fn update_label(
 
 pub async fn update_label_checked(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     label_id: i64,
     (name, color, description): (Option<&str>, Option<&str>, Option<Option<&str>>),
@@ -335,7 +335,7 @@ pub async fn update_label_checked(
 
 pub async fn delete_label(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     label_id: i64,
 ) -> Result<bool> {
@@ -370,7 +370,7 @@ pub async fn delete_label(
 
 pub async fn add_issue_label(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     issue_id: i64,
     label_id: i64,
@@ -381,7 +381,7 @@ pub async fn add_issue_label(
 
 pub async fn add_issue_labels(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     issue_id: i64,
     label_ids: &[i64],
@@ -400,7 +400,7 @@ pub async fn add_issue_labels(
 
 pub async fn add_pull_request_labels(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     pull_request_id: i64,
     label_ids: &[i64],
@@ -419,7 +419,7 @@ pub async fn add_pull_request_labels(
 
 pub async fn remove_issue_label(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     issue_id: i64,
     label_id: i64,
@@ -429,7 +429,7 @@ pub async fn remove_issue_label(
 
 pub async fn remove_pull_request_label(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     pull_request_id: i64,
     label_id: i64,
@@ -447,7 +447,7 @@ pub async fn remove_pull_request_label(
 
 async fn remove_item_label(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     target: LabelTarget,
     item_id: i64,
@@ -498,8 +498,8 @@ pub(crate) async fn touch_subject(
         .bind(id)
         .fetch_one(&mut **tx)
         .await?;
-    let next = codeyard_db_core::queries::sqlite::time::next_revision(
-        codeyard_db_core::queries::sqlite::time::decode(&stored)?,
+    let next = codeyard_database::queries::sqlite::time::next_revision(
+        codeyard_database::queries::sqlite::time::decode(&stored)?,
     )?;
     sqlx::query(&format!("UPDATE {table} SET updated_at=?2 WHERE id=?1"))
         .bind(id)
@@ -545,7 +545,7 @@ async fn get_item_labels(
 
 pub async fn set_issue_labels(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     issue_id: i64,
     label_ids: &[i64],
@@ -565,7 +565,7 @@ pub async fn set_issue_labels(
 
 pub async fn set_pull_request_labels(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     pull_request_id: i64,
     label_ids: &[i64],
@@ -585,7 +585,7 @@ pub async fn set_pull_request_labels(
 
 async fn write_item_labels(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo_id: i64,
     target: LabelTarget,
     item_id: i64,

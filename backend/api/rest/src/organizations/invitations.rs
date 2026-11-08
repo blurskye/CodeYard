@@ -13,10 +13,10 @@ use axum::http::Uri;
 use axum::response::Response;
 use codeyard_api_http::context::PageContext;
 use codeyard_app::app::AppState;
-use codeyard_db_core::queries::organizations::OrganizationOutcome::Applied;
-use codeyard_db_core::queries::organizations::OrganizationOutcome::Denied;
-use codeyard_db_core::queries::organizations::OrganizationOutcome::Missing;
-use codeyard_db_core::queries::organizations::OrganizationOutcome::Suspended;
+use codeyard_database::queries::organizations::OrganizationOutcome::Applied;
+use codeyard_database::queries::organizations::OrganizationOutcome::Denied;
+use codeyard_database::queries::organizations::OrganizationOutcome::Missing;
+use codeyard_database::queries::organizations::OrganizationOutcome::Suspended;
 use std::sync::Arc;
 
 pub(super) async fn accept(

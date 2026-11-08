@@ -1,0 +1,1124 @@
+//! Cluster membership on PostgreSQL. Roles are a `TEXT[]` column.
+use crate::cluster::Authority;
+use crate::cluster::DeclaredMember;
+use crate::cluster::FamilyOutcome;
+use crate::cluster::JoinRequest;
+use crate::cluster::NewJoinToken;
+use crate::cluster::PrimaryReplicaRow;
+use crate::cluster::PromoteOutcome;
+use anyhow::anyhow;
+use anyhow::bail;
+use anyhow::ensure;
+use anyhow::Result;
+use codeyard_database::models::ClusterNode;
+use codeyard_database::models::HeldReplica;
+use codeyard_database::models::JoinInvite;
+use codeyard_database::models::JoinOutcome;
+use codeyard_database::models::NodeReplicaCounts;
+use codeyard_database::models::NodeStatusChange;
+use codeyard_database::pool::PgPool;
+use codeyard_database::queries::postgres::users::transitions::live_session;
+use codeyard_db_identity::postgres::users::transitions::active_admin;
+use sqlx::PgConnection;
+pub(crate) mod writes;
+
+/// Turns the name-uniqueness failure into a message an operator can act on.
+fn name_conflict(error: sqlx::Error, name: &str) -> anyhow::Error {
+    match &error {
+        sqlx::Error::Database(database) if database.is_unique_violation() => {
+            anyhow!("another node already uses the name '{name}'")
+        }
+        _ => error.into(),
+    }
+}
+
+pub async fn create_join_token(pool: &PgPool, token: NewJoinToken<'_>) -> Result<()> {
+    anyhow::ensure!(
+        token
+            .max_uses
+            .is_none_or(|count| (1..=1000).contains(&count)),
+        "invalid node count"
+    );
+    let mut tx = pool.begin().await?;
+    if let Some(actor) = token.authority {
+        anyhow::ensure!(
+            codeyard_db_identity::postgres::users::transitions::active_administrator(
+                &mut tx, actor
+            )
+            .await?,
+            crate::drain::Refusal::Denied
+        );
+    }
+    sqlx::query("SELECT pg_advisory_xact_lock(37005)")
+        .execute(&mut *tx)
+        .await?;
+    if let Some(leader) = token.leader {
+        anyhow::ensure!(token.roles.len() == 1, "scaling requires one role");
+        crate::postgres::scaling::permit_invite(
+            &mut tx,
+            leader,
+            &token.roles[0],
+            token
+                .max_uses
+                .ok_or_else(|| anyhow!("scaling requires a bounded node count"))?,
+        )
+        .await?;
+    }
+    if let Some(actor) = token.authority {
+        anyhow::ensure!(
+            codeyard_db_identity::postgres::users::transitions::active_administrator(
+                &mut tx, actor
+            )
+            .await?,
+            crate::drain::Refusal::Denied
+        );
+    }
+    let id: i64 = sqlx::query_scalar("INSERT INTO join_tokens (token_hash,roles,reusable,requires_approval,expires_at,max_uses,created_by_id) VALUES($1,$2,$3,$4,clock_timestamp()+$5::bigint*INTERVAL '1 second',$6,$7) RETURNING id")
+        .bind(token.token_hash).bind(token.roles.to_vec()).bind(token.reusable)
+        .bind(token.requires_approval).bind(token.lifetime_seconds).bind(token.max_uses).bind(token.authority.map(|actor| actor.user_id)).fetch_one(&mut *tx).await?;
+    sqlx::query("INSERT INTO audit_log(actor_id,action,target_type,target_id,metadata) VALUES($1,'node.invite','join_token',$2,$3)")
+        .bind(token.authority.map(|actor| actor.user_id)).bind(id).bind(serde_json::json!({"roles":token.roles,"count":token.max_uses})).execute(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+pub async fn list_join_tokens(pool: &PgPool) -> Result<Vec<JoinInvite>> {
+    Ok(sqlx::query_as::<_, JoinInvite>(
+        "SELECT id, roles, reusable, requires_approval, expires_at, uses, created_at
+         FROM join_tokens WHERE expires_at > NOW() AND (reusable OR uses = 0) AND (max_uses IS NULL OR uses<max_uses) ORDER BY id",
+    )
+    .fetch_all(pool)
+    .await?)
+}
+
+pub async fn delete_join_token(pool: &PgPool, id: i64) -> Result<bool> {
+    Ok(sqlx::query("DELETE FROM join_tokens WHERE id = $1")
+        .bind(id)
+        .execute(pool)
+        .await?
+        .rows_affected()
+        == 1)
+}
+
+pub async fn list_unplaced_repositories(pool: &PgPool) -> Result<Vec<(i64, String)>> {
+    Ok(sqlx::query_as(
+        "SELECT id, disk_path FROM repositories WHERE storage_node_id IS NULL ORDER BY id",
+    )
+    .fetch_all(pool)
+    .await?)
+}
+
+pub async fn place_repository(pool: &PgPool, repo_id: i64, node_id: i64) -> Result<bool> {
+    Ok(sqlx::query(
+        "UPDATE repositories SET storage_node_id = $2 WHERE id = $1 AND storage_node_id IS NULL",
+    )
+    .bind(repo_id)
+    .bind(node_id)
+    .execute(pool)
+    .await?
+    .rows_affected()
+        == 1)
+}
+
+/// Adopts a whole current fork family, serialized with fork insertion on its source rows.
+pub async fn place_fork_family(
+    pool: &PgPool,
+    repo_id: i64,
+    node_id: i64,
+    local: &[i64],
+) -> Result<Vec<i64>> {
+    let mut tx = pool.begin().await?;
+    let members: Vec<(i64, Option<i64>, i64)> =
+        sqlx::query_as(&format!("{FORK_FAMILY} FOR NO KEY UPDATE OF r"))
+            .bind(repo_id)
+            .fetch_all(&mut *tx)
+            .await?;
+    if members.is_empty()
+        || members
+            .iter()
+            .any(|(id, node, _)| node.is_some() || !local.contains(id))
+    {
+        return Ok(Vec::new());
+    }
+    let current: Vec<(i64, Option<i64>, i64)> = sqlx::query_as(FORK_FAMILY)
+        .bind(repo_id)
+        .fetch_all(&mut *tx)
+        .await?;
+    if current != members {
+        return Ok(Vec::new());
+    }
+    let ids: Vec<_> = members.into_iter().map(|row| row.0).collect();
+    sqlx::query("UPDATE repositories SET storage_node_id=$2 WHERE id=ANY($1)")
+        .bind(&ids)
+        .bind(node_id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(ids)
+}
+
+pub async fn join_with_token(pool: &PgPool, request: JoinRequest<'_>) -> Result<JoinOutcome> {
+    // Every early return below drops the transaction, which rolls it back.
+    let mut tx = pool.begin().await?;
+    // A key that is registered already gets its standing back and keeps the token unused.
+    let known = sqlx::query_as::<_, ClusterNode>(
+        "SELECT *, NOW() AS observed_at FROM nodes WHERE public_key = $1",
+    )
+    .bind(request.public_key)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if let Some(node) = known {
+        return Ok(JoinOutcome::AlreadyMember(node));
+    }
+    let creator: Option<i64> = sqlx::query_scalar::<_, Option<i64>>(
+        "SELECT created_by_id FROM join_tokens WHERE token_hash=$1",
+    )
+    .bind(request.token_hash)
+    .fetch_optional(&mut *tx)
+    .await?
+    .flatten();
+    if let Some(creator) = creator {
+        if !active_admin(&mut tx, creator).await? {
+            return Ok(JoinOutcome::InvalidToken);
+        }
+    }
+    // One statement checks expiry and use count and takes the use, so two joins
+    // cannot both succeed with a one-time token.
+    let token = sqlx::query_as::<_, (Vec<String>, bool)>(
+        "UPDATE join_tokens SET uses = uses + 1
+         WHERE token_hash = $1 AND expires_at > clock_timestamp() AND (reusable OR uses = 0) AND (max_uses IS NULL OR uses<max_uses)
+         RETURNING roles, requires_approval",
+    )
+    .bind(request.token_hash)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some((allowed, requires_approval)) = token else {
+        return Ok(JoinOutcome::InvalidToken);
+    };
+    let roles = match request.roles {
+        None => allowed,
+        Some(wanted) if wanted.iter().all(|role| allowed.contains(role)) => wanted.to_vec(),
+        Some(_) => return Ok(JoinOutcome::RolesNotAllowed { allowed }),
+    };
+    let status = if requires_approval {
+        "pending"
+    } else {
+        "active"
+    };
+    let ordinary_runner: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM action_runner_tokens WHERE token_hash=$1 AND runner_id IS NULL)")
+        .bind(request.token_hash).fetch_one(&mut *tx).await?;
+    let internal_name = codeyard_db_actions::runners::runner_node_name(request.public_key);
+    let node_name = if ordinary_runner {
+        internal_name.as_str()
+    } else {
+        request.name
+    };
+    // A joined node is not live until it has published itself, so no last_seen here.
+    let inserted = sqlx::query_as::<_, ClusterNode>(
+        "INSERT INTO nodes (public_key, name, roles, status, version)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT DO NOTHING
+         RETURNING *, NOW() AS observed_at",
+    )
+    .bind(request.public_key)
+    .bind(node_name)
+    .bind(roles)
+    .bind(status)
+    .bind(request.version)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if let Some(node) = inserted {
+        codeyard_db_actions::postgres::runners::bind_registration(
+            &mut tx,
+            request.token_hash,
+            &node,
+            request.name,
+        )
+        .await?;
+        tx.commit().await?;
+        return Ok(JoinOutcome::Joined(node));
+    }
+    // Either the name is taken, or the same key joined concurrently.
+    let raced = sqlx::query_as::<_, ClusterNode>(
+        "SELECT *, NOW() AS observed_at FROM nodes WHERE public_key = $1",
+    )
+    .bind(request.public_key)
+    .fetch_optional(&mut *tx)
+    .await?;
+    Ok(match raced {
+        Some(node) => JoinOutcome::AlreadyMember(node),
+        None => JoinOutcome::NameTaken,
+    })
+}
+
+pub async fn register_own_node(
+    pool: &PgPool,
+    public_key: &str,
+    name: &str,
+    roles: &[String],
+    version: &str,
+) -> Result<ClusterNode> {
+    sqlx::query_as::<_, ClusterNode>(
+        "INSERT INTO nodes (public_key, name, roles, status, version)
+         VALUES ($1, $2, $3, 'active', $4)
+         ON CONFLICT (public_key) DO UPDATE SET version = EXCLUDED.version
+         RETURNING *, NOW() AS observed_at",
+    )
+    .bind(public_key)
+    .bind(name)
+    .bind(roles.to_vec())
+    .bind(version)
+    .fetch_one(pool)
+    .await
+    .map_err(|error| name_conflict(error, name))
+}
+
+pub async fn upsert_declared_nodes(
+    pool: &PgPool,
+    nodes: &[DeclaredMember],
+) -> Result<Vec<ClusterNode>> {
+    // Every early return drops the transaction, which rolls back the entries before it.
+    let mut tx = pool.begin().await?;
+    // Names are unique and checked at once, so a swap of two names would fail on the first
+    // update. Every renamed node first moves to a name of its own, and the entries below then
+    // take their final names.
+    for node in nodes {
+        sqlx::query(
+            "UPDATE nodes SET name = 'swap.' || substr(public_key, 1, 40)
+             WHERE public_key = $1 AND name <> $2",
+        )
+        .bind(node.public_key.as_str())
+        .bind(node.name.as_str())
+        .execute(&mut *tx)
+        .await?;
+    }
+    let mut rows = Vec::with_capacity(nodes.len());
+    for node in nodes {
+        let row = sqlx::query_as::<_, ClusterNode>(
+            "INSERT INTO nodes (public_key, name, roles, status)
+             VALUES ($1, $2, $3, 'active')
+             ON CONFLICT (public_key) DO UPDATE SET
+                 name = EXCLUDED.name,
+                 roles = EXCLUDED.roles,
+                 status = CASE WHEN nodes.status = 'revoked' THEN 'revoked' ELSE 'active' END
+             RETURNING *, NOW() AS observed_at",
+        )
+        .bind(node.public_key.as_str())
+        .bind(node.name.as_str())
+        .bind(node.roles.clone())
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|error| name_conflict(error, &node.name))?;
+        rows.push(row);
+    }
+    tx.commit().await?;
+    Ok(rows)
+}
+
+pub async fn get_node_by_public_key(
+    pool: &PgPool,
+    public_key: &str,
+) -> Result<Option<ClusterNode>> {
+    Ok(sqlx::query_as::<_, ClusterNode>(
+        "SELECT *, NOW() AS observed_at FROM nodes WHERE public_key = $1",
+    )
+    .bind(public_key)
+    .fetch_optional(pool)
+    .await?)
+}
+
+pub async fn get_node_by_name(pool: &PgPool, name: &str) -> Result<Option<ClusterNode>> {
+    Ok(sqlx::query_as::<_, ClusterNode>(
+        "SELECT *, NOW() AS observed_at FROM nodes WHERE name = $1",
+    )
+    .bind(name)
+    .fetch_optional(pool)
+    .await?)
+}
+
+pub async fn admin_node_page(
+    pool: &PgPool,
+    administrator: &codeyard_db_identity::users::transitions::AdministratorActor,
+    after: &str,
+) -> Result<Vec<ClusterNode>> {
+    let mut tx = pool.begin().await?;
+    codeyard_database::queries::postgres::users::transitions::lock_accounts_shared(
+        &mut tx,
+        &[administrator.user_id],
+    )
+    .await?;
+    anyhow::ensure!(
+        codeyard_db_identity::postgres::users::transitions::active_admin_session(
+            &mut tx,
+            administrator
+        )
+        .await?,
+        codeyard_types::credentials::AccountRestricted
+    );
+    let rows = sqlx::query_as("SELECT *,clock_timestamp() AS observed_at FROM nodes WHERE name>$1 ORDER BY name LIMIT 101")
+        .bind(after).fetch_all(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(rows)
+}
+
+pub async fn list_nodes(pool: &PgPool) -> Result<Vec<ClusterNode>> {
+    Ok(
+        sqlx::query_as::<_, ClusterNode>("SELECT *, NOW() AS observed_at FROM nodes ORDER BY name")
+            .fetch_all(pool)
+            .await?,
+    )
+}
+
+pub async fn is_active_node(pool: &PgPool, public_key: &str) -> Result<bool> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM nodes WHERE public_key = $1 AND status = 'active')",
+    )
+    .bind(public_key)
+    .fetch_one(pool)
+    .await?)
+}
+
+pub async fn set_node_status(
+    pool: &PgPool,
+    authority: Authority<'_>,
+    name: &str,
+    status: &str,
+) -> Result<NodeStatusChange> {
+    let mut tx = pool.begin().await?;
+    if let Authority::Administrator { user_id, session } = authority {
+        if !active_admin(&mut tx, user_id).await?
+            || !live_session(&mut tx, user_id, session).await?
+        {
+            return Ok(NodeStatusChange::Denied);
+        }
+    }
+    let before: Option<String> =
+        sqlx::query_scalar("SELECT status FROM nodes WHERE name = $1 FOR UPDATE")
+            .bind(name)
+            .fetch_optional(&mut *tx)
+            .await?;
+    let Some(before) = before else {
+        return Ok(NodeStatusChange::Missing);
+    };
+    if let Authority::Administrator { user_id, session } = authority {
+        if !live_session(&mut tx, user_id, session).await? {
+            return Ok(NodeStatusChange::Denied);
+        }
+    }
+    let node = sqlx::query_as::<_, ClusterNode>(
+        "UPDATE nodes SET status = $2 WHERE name = $1 RETURNING *, NOW() AS observed_at",
+    )
+    .bind(name)
+    .bind(status)
+    .fetch_one(&mut *tx)
+    .await?;
+    if let Authority::Administrator { user_id: actor, .. } = authority {
+        sqlx::query("INSERT INTO audit_log(actor_id,action,target_type,target_id,metadata) VALUES($1,'node.status','node',$2,$3)")
+            .bind(actor).bind(node.id).bind(serde_json::json!({"before":before,"status":status})).execute(&mut *tx).await?;
+    }
+    tx.commit().await?;
+    Ok(NodeStatusChange::Changed {
+        before,
+        node: Box::new(node),
+    })
+}
+
+pub async fn serving_lock(pool: &PgPool, identity: &str) -> Result<sqlx::PgConnection> {
+    let mut connection = codeyard_database::connection::session_connection(pool).await?;
+    let allowed: bool = sqlx::query_scalar(
+        "SELECT pg_try_advisory_lock_shared(723947122,hashtext(COALESCE(current_schema(),'')))",
+    )
+    .fetch_one(&mut connection)
+    .await?;
+    ensure!(allowed, "cluster restore or offline repair is in progress");
+    // Advisory locks are per database, and the installation's tables live in its schema, so
+    // two installations in different schemas of one database do not exclude each other.
+    let locked: bool = sqlx::query_scalar(
+        "SELECT pg_try_advisory_lock(723947121,hashtext(COALESCE(current_schema(),'')||'/'||$1))",
+    )
+    .bind(identity)
+    .fetch_one(&mut connection)
+    .await?;
+    ensure!(
+        locked,
+        "another server is using this installation or node identity"
+    );
+    Ok(connection)
+}
+
+/// Unlocks the lease taken by `serving_lock` and closes its connection. The unlock is bounded,
+/// and a lease it could not end still ends when the closed connection is noticed.
+pub async fn release_serving_lock(mut connection: PgConnection) {
+    use sqlx::Connection;
+    let unlock = sqlx::query("SELECT pg_advisory_unlock_all()").execute(&mut connection);
+    if tokio::time::timeout(std::time::Duration::from_secs(3), unlock)
+        .await
+        .is_ok()
+    {
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(3), connection.close()).await;
+    }
+}
+
+pub async fn has_storage_assignments(pool: &PgPool, node: i64) -> Result<bool> {
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories WHERE storage_node_id=$1) OR EXISTS(SELECT 1 FROM repository_replicas WHERE node_id=$1)")
+        .bind(node).fetch_one(pool).await?)
+}
+
+pub async fn record_node_heartbeat(
+    pool: &PgPool,
+    public_key: &str,
+    version: &str,
+    addr_hint: &str,
+    disk_free: Option<i64>,
+) -> Result<bool> {
+    let result = sqlx::query(
+        "UPDATE nodes SET last_seen = NOW(), version = $2, addr_hint = $3, disk_free = $4 WHERE public_key = $1",
+    )
+    .bind(public_key)
+    .bind(version)
+    .bind(addr_hint)
+    .bind(disk_free)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() > 0)
+}
+
+pub async fn touch_node(pool: &PgPool, public_key: &str) -> Result<()> {
+    sqlx::query("UPDATE nodes SET last_seen = NOW() WHERE public_key = $1 AND status = 'active' AND roles=ARRAY['runner']::text[]")
+        .bind(public_key)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn clear_node_heartbeat(pool: &PgPool, public_key: &str) -> Result<()> {
+    sqlx::query("UPDATE nodes SET last_seen = NULL WHERE public_key = $1")
+        .bind(public_key)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn get_node_by_id(pool: &PgPool, id: i64) -> Result<Option<ClusterNode>> {
+    Ok(
+        sqlx::query_as("SELECT *, NOW() AS observed_at FROM nodes WHERE id = $1")
+            .bind(id)
+            .fetch_optional(pool)
+            .await?,
+    )
+}
+
+pub async fn storage_needed(pool: &PgPool, uuid: &str, node: i64) -> Result<bool> {
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories r WHERE right(r.disk_path,40)=$1||'.git' AND (r.storage_node_id IS NULL OR r.storage_node_id=$2 OR EXISTS(SELECT 1 FROM repository_replicas rr WHERE rr.repository_id=r.id AND rr.node_id=$2)))").bind(uuid).bind(node).fetch_one(pool).await?)
+}
+
+pub async fn list_primary_paths(pool: &PgPool, node: i64) -> Result<Vec<(i64, String)>> {
+    Ok(
+        sqlx::query_as(
+            "SELECT id,disk_path FROM repositories WHERE storage_node_id=$1 ORDER BY id",
+        )
+        .bind(node)
+        .fetch_all(pool)
+        .await?,
+    )
+}
+
+pub async fn read_candidates(pool: &PgPool, uuid: &str, previous: i64) -> Result<Vec<(i64, bool)>> {
+    Ok(sqlx::query_as("WITH repository AS (SELECT id,storage_node_id,write_version FROM repositories WHERE right(disk_path,40)=$1||'.git'), candidates AS (SELECT storage_node_id AS node_id,true AS moved,write_version AS applied_version FROM repository UNION ALL SELECT rr.node_id,false,rr.applied_version FROM repository r JOIN repository_replicas rr ON rr.repository_id=r.id WHERE rr.node_id IS DISTINCT FROM r.storage_node_id AND rr.applied_version>=0 AND rr.applied_version=r.write_version UNION SELECT v.node_id,false,v.applied_version FROM repository r JOIN repository_voters v ON v.repository_id=r.id JOIN repository_write_control wc ON wc.repository_id=r.id WHERE v.node_id IS DISTINCT FROM r.storage_node_id AND wc.serving=1 AND v.term=wc.term AND v.applied_version=wc.committed_version) SELECT c.node_id,c.moved FROM candidates c JOIN nodes n ON n.id=c.node_id WHERE c.node_id<>$2 AND n.status='active' AND 'storage'=ANY(n.roles) AND n.disk_free IS NOT NULL AND n.last_seen BETWEEN NOW()-INTERVAL '60 seconds' AND NOW() ORDER BY c.moved DESC,c.applied_version DESC,c.node_id LIMIT 1000")
+        .bind(uuid).bind(previous).fetch_all(pool).await?)
+}
+
+pub async fn replica_is_current(pool: &PgPool, repository: i64, node: i64) -> Result<bool> {
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repository_replicas rr JOIN repositories r ON r.id=rr.repository_id WHERE rr.repository_id=$1 AND rr.node_id=$2 AND rr.node_id IS DISTINCT FROM r.storage_node_id AND rr.applied_version>=0 AND rr.applied_version=r.write_version)")
+        .bind(repository).bind(node).fetch_one(pool).await?)
+}
+
+pub async fn replica_applied_version(
+    pool: &PgPool,
+    repository: i64,
+    node: i64,
+) -> Result<Option<i64>> {
+    Ok(sqlx::query_scalar(
+        "SELECT applied_version FROM repository_replicas WHERE repository_id=$1 AND node_id=$2",
+    )
+    .bind(repository)
+    .bind(node)
+    .fetch_optional(pool)
+    .await?)
+}
+
+pub async fn get_repository_by_uuid(
+    pool: &PgPool,
+    uuid: &str,
+) -> Result<Option<codeyard_database::models::Repository>> {
+    Ok(
+        sqlx::query_as("SELECT * FROM repositories WHERE right(disk_path, 40) = $1 || '.git'")
+            .bind(uuid)
+            .fetch_optional(pool)
+            .await?,
+    )
+}
+
+pub async fn get_replicas(pool: &PgPool) -> Result<String> {
+    Ok(
+        sqlx::query_scalar("SELECT replicas FROM node_configuration WHERE id = 1")
+            .fetch_optional(pool)
+            .await?
+            .unwrap_or_else(|| "1".to_owned()),
+    )
+}
+
+pub async fn set_replicas(pool: &PgPool, value: &str) -> Result<bool> {
+    Ok(
+        sqlx::query("UPDATE node_configuration SET replicas = $1, updated_at = NOW() WHERE id = 1")
+            .bind(value)
+            .execute(pool)
+            .await?
+            .rows_affected()
+            == 1,
+    )
+}
+
+pub async fn cluster_enabled(pool: &PgPool) -> Result<bool> {
+    Ok(
+        sqlx::query_scalar("SELECT cluster_enabled FROM node_configuration WHERE id = 1")
+            .fetch_optional(pool)
+            .await?
+            .unwrap_or(false),
+    )
+}
+
+pub async fn enable_cluster(pool: &PgPool, majority: bool) -> Result<bool> {
+    let mut tx = pool.begin().await?;
+    let old: Option<(bool, Option<String>)> = sqlx::query_as(
+        "SELECT cluster_enabled,write_quorum FROM node_configuration WHERE id=1 FOR UPDATE",
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
+    if old.as_ref().is_some_and(|(enabled, _)| *enabled) {
+        return Ok(false);
+    }
+    let selected = old.and_then(|(_, setting)| setting).unwrap_or_else(|| {
+        if majority {
+            "majority".into()
+        } else {
+            "1".into()
+        }
+    });
+    if selected != "1" {
+        let legacy: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories r WHERE NOT EXISTS(SELECT 1 FROM repository_write_control c WHERE c.repository_id=r.id))")
+            .fetch_one(&mut *tx).await?;
+        ensure!(
+            !legacy,
+            "existing repositories require explicit legacy mode: cluster enable --write-quorum 1"
+        );
+    }
+    let changed = sqlx::query("INSERT INTO node_configuration(id,cluster_enabled,write_quorum) VALUES(1,TRUE,$1) ON CONFLICT(id) DO UPDATE SET cluster_enabled=TRUE,write_quorum=excluded.write_quorum,updated_at=NOW() WHERE NOT node_configuration.cluster_enabled")
+        .bind(selected).execute(&mut *tx).await?.rows_affected()==1;
+    tx.commit().await?;
+    Ok(changed)
+}
+
+pub async fn is_admitted_node(pool: &PgPool, public_key: &str) -> Result<bool> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM nodes WHERE public_key = $1 AND status = 'active'
+            AND (roles = ARRAY['runner']
+                 OR COALESCE((SELECT cluster_enabled FROM node_configuration WHERE id = 1), FALSE)))",
+    )
+    .bind(public_key)
+    .fetch_one(pool)
+    .await?)
+}
+
+pub async fn bump_write_version(
+    pool: &PgPool,
+    repo_id: i64,
+    node_id: Option<Option<i64>>,
+) -> Result<bool> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("SET LOCAL lock_timeout = '5s'")
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("SET LOCAL statement_timeout = '30s'")
+        .execute(&mut *tx)
+        .await?;
+    // The row lock orders this against `promote_repository`, which locks the same row.
+    let held_by: Option<Option<i64>> =
+        sqlx::query_scalar("SELECT storage_node_id FROM repositories WHERE id = $1 FOR UPDATE")
+            .bind(repo_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    let Some(held_by) = held_by else {
+        bail!("repository {repo_id} not found");
+    };
+    if node_id.is_some_and(|expected| held_by != expected) {
+        return Ok(false);
+    }
+    // Contributor evidence also changes for standalone repositories, which have no replication version.
+    sqlx::query("UPDATE repositories SET contribution_version=contribution_version+1 WHERE id=$1")
+        .bind(repo_id)
+        .execute(&mut *tx)
+        .await?;
+    // A repository that no storage node holds has no replicas, so its changes are not counted.
+    if held_by.is_some() {
+        sqlx::query("UPDATE repositories SET write_version = write_version + 1 WHERE id = $1")
+            .bind(repo_id)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    Ok(true)
+}
+
+pub async fn get_write_version(pool: &PgPool, repo_id: i64) -> Result<Option<i64>> {
+    Ok(
+        sqlx::query_scalar("SELECT write_version FROM repositories WHERE id = $1")
+            .bind(repo_id)
+            .fetch_optional(pool)
+            .await?,
+    )
+}
+
+pub async fn list_primary_repositories(
+    pool: &PgPool,
+    node_id: i64,
+) -> Result<Vec<PrimaryReplicaRow>> {
+    Ok(sqlx::query_as(
+        "SELECT r.id, r.disk_path, rr.node_id, rr.applied_version, r.size_bytes, rr.synced_at IS NOT NULL
+         FROM repositories r
+         LEFT JOIN repository_replicas rr ON rr.repository_id = r.id
+         WHERE r.storage_node_id = $1
+         ORDER BY r.id, rr.node_id",
+    )
+    .bind(node_id)
+    .fetch_all(pool)
+    .await?)
+}
+
+pub async fn pending_replica_bytes(pool: &PgPool) -> Result<Vec<(i64, i64)>> {
+    let mut conn = pool.acquire().await?;
+    crate::postgres::objects::pending(&mut conn).await
+}
+
+pub async fn assign_replica_family(
+    pool: &PgPool,
+    repository: i64,
+    primary: i64,
+    setting: codeyard_database::models::ReplicaSetting,
+) -> Result<Vec<i64>> {
+    let mut tx = pool.begin().await?;
+    // One reservation owner across primaries, held through every family-row change.
+    sqlx::query("SELECT pg_advisory_xact_lock(37004)")
+        .execute(&mut *tx)
+        .await?;
+    let members: Vec<(i64, Option<i64>, i64)> =
+        sqlx::query_as(&format!("{FORK_FAMILY} FOR UPDATE OF r"))
+            .bind(repository)
+            .fetch_all(&mut *tx)
+            .await?;
+    let ids: Vec<i64> = members.iter().map(|row| row.0).collect();
+    if members.is_empty() || members.iter().any(|row| row.1 != Some(primary)) {
+        return Ok(ids);
+    }
+    let current: Vec<(i64, Option<i64>, i64)> = sqlx::query_as(FORK_FAMILY)
+        .bind(repository)
+        .fetch_all(&mut *tx)
+        .await?;
+    if current.iter().map(|row| row.0).ne(ids.iter().copied()) {
+        return Ok(ids);
+    }
+    let draining: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM node_drain_repositories w JOIN repositories r ON r.id=w.repository_id WHERE r.storage_node_id=$1) OR EXISTS(SELECT 1 FROM repository_moves m JOIN repositories r ON r.id=m.repository_id WHERE r.storage_node_id=$1)")
+        .bind(primary).fetch_one(&mut *tx).await?;
+    if draining {
+        return Ok(ids);
+    }
+    let mut storage: Vec<ClusterNode> = sqlx::query_as(
+        "SELECT *, clock_timestamp() AS observed_at FROM nodes ORDER BY id FOR UPDATE",
+    )
+    .fetch_all(&mut *tx)
+    .await?;
+    storage.retain(|node| {
+        node.status == "active"
+            && node.state == "active"
+            && node.roles.iter().any(|role| role == "storage")
+    });
+    let reservations = crate::postgres::objects::pending(&mut tx).await?;
+    let rows: Vec<PrimaryReplicaRow> = sqlx::query_as("SELECT r.id,r.disk_path,rr.node_id,rr.applied_version,r.size_bytes,rr.synced_at IS NOT NULL FROM repositories r LEFT JOIN repository_replicas rr ON rr.repository_id=r.id WHERE r.id=ANY($1) ORDER BY r.id,rr.node_id")
+        .bind(&ids).fetch_all(&mut *tx).await?;
+    for (repository, change) in
+        crate::cluster::replicas::family_plan(setting, primary, &mut storage, &rows, &reservations)?
+    {
+        for node in change.add {
+            sqlx::query("INSERT INTO repository_replicas(repository_id,node_id) VALUES($1,$2) ON CONFLICT DO NOTHING")
+                .bind(repository).bind(node).execute(&mut *tx).await?;
+        }
+        for node in change.remove {
+            sqlx::query("DELETE FROM repository_replicas WHERE repository_id=$1 AND node_id=$2")
+                .bind(repository)
+                .bind(node)
+                .execute(&mut *tx)
+                .await?;
+        }
+    }
+    tx.commit().await?;
+    Ok(ids)
+}
+
+pub async fn list_held_replicas(pool: &PgPool, node_id: i64) -> Result<Vec<HeldReplica>> {
+    Ok(sqlx::query_as(
+        "SELECT rr.repository_id, r.disk_path, r.storage_node_id AS primary_node_id,
+                rr.applied_version, r.write_version, FALSE AS fenced
+         FROM repository_replicas rr
+         JOIN repositories r ON r.id = rr.repository_id
+         WHERE rr.node_id = $1
+         ORDER BY rr.repository_id",
+    )
+    .bind(node_id)
+    .fetch_all(pool)
+    .await?)
+}
+
+pub async fn list_replicas(pool: &PgPool, repo_id: i64) -> Result<Vec<(i64, i64)>> {
+    Ok(sqlx::query_as(
+        "SELECT node_id, applied_version FROM repository_replicas
+         WHERE repository_id = $1 ORDER BY node_id",
+    )
+    .bind(repo_id)
+    .fetch_all(pool)
+    .await?)
+}
+
+/// The fork family of the repository bound as `$1`. It walks forks in both directions: each
+/// member adds its forks and its source. `UNION` stops the walk at repositories it has found.
+pub(crate) const FORK_FAMILY: &str = "WITH RECURSIVE family(id) AS (
+         SELECT CAST($1 AS BIGINT)
+         UNION
+         SELECT r.id FROM family f
+         JOIN repositories p ON p.id = f.id
+         JOIN repositories r ON r.forked_from_id = f.id OR r.id = p.forked_from_id
+     )
+     SELECT r.id, r.storage_node_id, r.write_version
+     FROM repositories r JOIN family f ON f.id = r.id
+     ORDER BY r.id";
+
+pub async fn list_fork_family(pool: &PgPool, repo_id: i64) -> Result<Vec<(i64, Option<i64>, i64)>> {
+    Ok(sqlx::query_as(FORK_FAMILY)
+        .bind(repo_id)
+        .fetch_all(pool)
+        .await?)
+}
+
+pub async fn insert_replica(
+    pool: &PgPool,
+    repo_id: i64,
+    node_id: i64,
+    primary_id: i64,
+) -> Result<bool> {
+    Ok(sqlx::query(
+        "INSERT INTO repository_replicas (repository_id, node_id)
+         SELECT r.id, CAST($2 AS BIGINT) FROM repositories r
+         WHERE r.id = $1
+           AND r.storage_node_id = CAST($3 AS BIGINT)
+           AND CAST($2 AS BIGINT) <> CAST($3 AS BIGINT)
+         ON CONFLICT DO NOTHING",
+    )
+    .bind(repo_id)
+    .bind(node_id)
+    .bind(primary_id)
+    .execute(pool)
+    .await?
+    .rows_affected()
+        == 1)
+}
+
+pub async fn delete_replica(
+    pool: &PgPool,
+    repo_id: i64,
+    node_id: i64,
+    primary_id: i64,
+) -> Result<bool> {
+    let mut tx = pool.begin().await?;
+    // Retirement and promotion must not both act on the same copy. Recheck the primary
+    // after waiting, since the plan may belong to the former primary.
+    let primary = sqlx::query_scalar::<_, Option<i64>>(
+        "SELECT storage_node_id FROM repositories WHERE id = $1 FOR UPDATE",
+    )
+    .bind(repo_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .flatten();
+    if primary != Some(primary_id) {
+        return Ok(false);
+    }
+    let deleted =
+        sqlx::query("DELETE FROM repository_replicas WHERE repository_id = $1 AND node_id = $2")
+            .bind(repo_id)
+            .bind(node_id)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected()
+            == 1;
+    tx.commit().await?;
+    Ok(deleted)
+}
+
+pub async fn set_applied_version(
+    pool: &PgPool,
+    repo_id: i64,
+    node_id: i64,
+    primary_id: i64,
+    version: i64,
+) -> Result<bool> {
+    let mut tx = pool.begin().await?;
+    // Waits for a promotion in progress, then reads the primary it left. Without the lock
+    // the check would use a snapshot from before the promotion.
+    let primary = sqlx::query_scalar::<_, Option<i64>>(
+        "SELECT storage_node_id FROM repositories WHERE id = $1 FOR KEY SHARE",
+    )
+    .bind(repo_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .flatten();
+    if primary != Some(primary_id) {
+        return Ok(false);
+    }
+    let updated = sqlx::query(
+        "UPDATE repository_replicas SET applied_version = $3, synced_at = CASE WHEN $3 >= 0 THEN NOW() ELSE synced_at END
+         WHERE repository_id = $1 AND node_id = $2",
+    )
+    .bind(repo_id)
+    .bind(node_id)
+    .bind(version)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected()
+        == 1;
+    tx.commit().await?;
+    Ok(updated)
+}
+
+pub async fn replica_counts(pool: &PgPool) -> Result<Vec<NodeReplicaCounts>> {
+    Ok(sqlx::query_as(
+        "SELECT n.id AS node_id,
+            (SELECT COUNT(*) FROM repositories r WHERE r.storage_node_id = n.id) AS primaries,
+            (SELECT COUNT(*) FROM repository_replicas rr WHERE rr.node_id = n.id) AS replicas,
+            (SELECT COUNT(*) FROM repository_replicas rr
+                JOIN repositories r ON r.id = rr.repository_id
+                WHERE rr.node_id = n.id AND rr.applied_version = r.write_version) AS current
+         FROM nodes n ORDER BY n.name",
+    )
+    .fetch_all(pool)
+    .await?)
+}
+
+/// The node as the database sees it now, with its heartbeat read against the database clock,
+/// which is the clock that records it. The row stays locked against revocation and role
+/// changes until the transaction ends.
+async fn node_at_db_time(conn: &mut PgConnection, node: i64) -> Result<Option<ClusterNode>> {
+    Ok(sqlx::query_as::<_, ClusterNode>(
+        "SELECT *, clock_timestamp() AS observed_at FROM nodes WHERE id = $1 FOR SHARE",
+    )
+    .bind(node)
+    .fetch_optional(&mut *conn)
+    .await?)
+}
+
+pub async fn promote_repository(
+    pool: &PgPool,
+    repo_id: i64,
+    from: i64,
+    to: i64,
+    require_current: bool,
+) -> Result<PromoteOutcome> {
+    // Every early return drops the transaction, which rolls it back.
+    let mut tx = pool.begin().await?;
+    // The row lock holds back version bumps and other promotions until this commits.
+    let Some((primary, write_version)) = sqlx::query_as::<_, (Option<i64>, i64)>(
+        "SELECT storage_node_id, write_version FROM repositories WHERE id = $1 FOR UPDATE",
+    )
+    .bind(repo_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    else {
+        return Ok(PromoteOutcome::Moved);
+    };
+    if primary != Some(from) {
+        return Ok(PromoteOutcome::Moved);
+    }
+    let Some(applied_version) = sqlx::query_scalar::<_, i64>(
+        "SELECT applied_version FROM repository_replicas WHERE repository_id = $1 AND node_id = $2",
+    )
+    .bind(repo_id)
+    .bind(to)
+    .fetch_optional(&mut *tx)
+    .await?
+    else {
+        return Ok(PromoteOutcome::NoReplica);
+    };
+    if applied_version < 0 || (require_current && applied_version != write_version) {
+        return Ok(PromoteOutcome::Stale {
+            applied_version,
+            write_version,
+        });
+    }
+    let moving_elsewhere: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repository_moves WHERE repository_id=$1 AND target_node_id<>$2)")
+        .bind(repo_id).bind(to).fetch_one(&mut *tx).await?;
+    if moving_elsewhere {
+        return Ok(PromoteOutcome::Moved);
+    }
+    // A repository moved to a node that is down would have no primary to serve it.
+    let target = node_at_db_time(&mut tx, to).await?;
+    if !target.is_some_and(|node| node.state == "active" && node.is_serving_storage()) {
+        return Ok(PromoteOutcome::TargetOffline);
+    }
+    move_primary(&mut tx, repo_id, from, to, applied_version).await?;
+    tx.commit().await?;
+    Ok(PromoteOutcome::Promoted {
+        applied_version,
+        write_version,
+    })
+}
+
+/// Moves the whole fork family of `repo_id` from `from` to `to` in one transaction, or not at
+/// all. The family is read and its rows locked here, so a member that another node has already
+/// moved is refused. Two nodes taking over one family cannot split it: the second waits for the
+/// first, then finds the family moved.
+pub async fn promote_fork_family(
+    pool: &PgPool,
+    repo_id: i64,
+    from: i64,
+    to: i64,
+) -> Result<FamilyOutcome> {
+    promote_family(pool, repo_id, from, to, true).await
+}
+
+pub async fn promote_manual_family(
+    pool: &PgPool,
+    repo_id: i64,
+    from: i64,
+    to: i64,
+) -> Result<FamilyOutcome> {
+    promote_family(pool, repo_id, from, to, false).await
+}
+
+async fn promote_family(
+    pool: &PgPool,
+    repo_id: i64,
+    from: i64,
+    to: i64,
+    automatic: bool,
+) -> Result<FamilyOutcome> {
+    let mut tx = pool.begin().await?;
+    // The rows are locked in id order, so two transactions over one family never wait on each
+    // other in turn.
+    let family: Vec<(i64, Option<i64>, i64)> =
+        sqlx::query_as(&format!("{FORK_FAMILY} FOR UPDATE OF r"))
+            .bind(repo_id)
+            .fetch_all(&mut *tx)
+            .await?;
+    let Some(members) = crate::cluster::members_to_move(&family, repo_id, from, automatic) else {
+        return Ok(FamilyOutcome::Refused);
+    };
+    // A fork may have committed while the locking statement waited for its source. Read
+    // membership again with a fresh snapshot before moving any of the locked rows.
+    let current: Vec<(i64, Option<i64>, i64)> = sqlx::query_as(FORK_FAMILY)
+        .bind(repo_id)
+        .fetch_all(&mut *tx)
+        .await?;
+    if current.iter().map(|r| r.0).ne(family.iter().map(|r| r.0)) {
+        return Ok(FamilyOutcome::Refused);
+    }
+    let primary = node_at_db_time(&mut tx, from).await?;
+    if automatic && primary.is_none_or(|node| node.status != "active" || node.is_online()) {
+        return Ok(FamilyOutcome::Refused);
+    }
+    for (member, _, _) in &members {
+        let moving_elsewhere: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repository_moves WHERE repository_id=$1 AND target_node_id<>$2)")
+            .bind(member).bind(to).fetch_one(&mut *tx).await?;
+        if moving_elsewhere {
+            return Ok(FamilyOutcome::Refused);
+        }
+    }
+    // The taker must be reporting in too, or the family would move onto a node that is down.
+    let target = node_at_db_time(&mut tx, to).await?;
+    if !target.is_some_and(|node| node.state == "active" && node.is_serving_storage()) {
+        return Ok(FamilyOutcome::Refused);
+    }
+    for &(member, _, write_version) in &members {
+        let applied = sqlx::query_scalar::<_, i64>(
+            "SELECT applied_version FROM repository_replicas
+             WHERE repository_id = $1 AND node_id = $2",
+        )
+        .bind(member)
+        .bind(to)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if applied != Some(write_version) {
+            return Ok(FamilyOutcome::Refused);
+        }
+    }
+    for &(member, _, write_version) in &members {
+        move_primary(&mut tx, member, from, to, write_version).await?;
+    }
+    tx.commit().await?;
+    Ok(FamilyOutcome::Promoted(
+        members.into_iter().map(|(id, _, _)| id).collect(),
+    ))
+}
+
+/// Makes `to` the primary of `repo_id` inside the caller's transaction. `to` holds
+/// `applied_version` writes, and copies ahead of that have to copy again. `from` keeps a copy
+/// with nothing applied, which catches up when its node is back.
+async fn move_primary(
+    conn: &mut PgConnection,
+    repo_id: i64,
+    from: i64,
+    to: i64,
+    applied_version: i64,
+) -> Result<()> {
+    // A forced rollback must not reuse the version of an earlier primary's history.
+    sqlx::query("UPDATE repositories SET storage_node_id = $2, write_version = write_version + CASE WHEN $3 < write_version THEN 1 ELSE 0 END WHERE id = $1")
+        .bind(repo_id)
+        .bind(to)
+        .bind(applied_version)
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query(
+        "UPDATE repository_replicas SET applied_version = LEAST(applied_version, $3)
+         WHERE repository_id = $1 AND node_id <> $2",
+    )
+    .bind(repo_id)
+    .bind(to)
+    .bind(applied_version)
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query("DELETE FROM repository_replicas WHERE repository_id = $1 AND node_id = $2")
+        .bind(repo_id)
+        .bind(to)
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query(
+        "INSERT INTO repository_replicas (repository_id, node_id, synced_at) VALUES ($1, $2, NOW())
+         ON CONFLICT DO NOTHING",
+    )
+    .bind(repo_id)
+    .bind(from)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
+/// Excludes every serving core in this installation during restore and offline repair.
+pub async fn maintenance_lock(pool: &PgPool) -> Result<PgConnection> {
+    let mut connection = codeyard_database::connection::session_connection(pool).await?;
+    let allowed: bool = sqlx::query_scalar(
+        "SELECT pg_try_advisory_lock(723947122,hashtext(COALESCE(current_schema(),'')))",
+    )
+    .fetch_one(&mut connection)
+    .await?;
+    ensure!(
+        allowed,
+        "stop every core node before offline cluster maintenance"
+    );
+    Ok(connection)
+}

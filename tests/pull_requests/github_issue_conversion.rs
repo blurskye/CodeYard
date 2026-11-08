@@ -6,9 +6,9 @@ use crate::support::http_client::Client;
 use axum::{http::StatusCode, Router};
 use base64::Engine;
 
+use codeyard_git_storage::repositories::lifecycle;
 use codeyard_identity::tokens;
 use codeyard_identity::tokens::TokenInput;
-use codeyard_repos_core::repositories::lifecycle;
 use serde_json::{json, Value};
 
 async fn call(
@@ -149,7 +149,7 @@ async fn contract(pg: bool) {
     let (reaction, _) = codeyard_db_repos::reactions::create_reaction(
         f.pool(),
         alice_id,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&alice.session),
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(&alice.session),
         codeyard_db_repos::reactions::Target {
             repo_id: repo.id,
             item_id: source.id,
@@ -163,7 +163,7 @@ async fn contract(pg: bool) {
     let (description_reaction, _) = codeyard_db_repos::reactions::create_reaction(
         f.pool(),
         alice_id,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&alice.session),
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(&alice.session),
         codeyard_db_repos::reactions::Target {
             repo_id: repo.id,
             item_id: source.id,
@@ -308,7 +308,7 @@ async fn contract(pg: bool) {
         f.pool(),
         repo.id,
         alice_id,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), alice_id).await,
         ),
         true,
@@ -319,7 +319,7 @@ async fn contract(pg: bool) {
         f.pool(),
         repo.id,
         alice_id,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), alice_id).await,
         ),
         filler.id,
@@ -361,7 +361,7 @@ async fn contract(pg: bool) {
     codeyard_db_repos::pins::set_pin(
         f.pool(),
         alice_id,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&alice.session),
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(&alice.session),
         repo.id,
         codeyard_db_repos::assignees::AssignedItem::Issue(source.id),
         old_id,
@@ -573,7 +573,7 @@ async fn contract(pg: bool) {
         StatusCode::UNPROCESSABLE_ENTITY,
     )
     .await;
-    let repaired = codeyard_repos_core::repositories::store::repo_store(&repo, None)
+    let repaired = codeyard_git_storage::repositories::store::repo_store(&repo, None)
         .commit_from_primary(&reference)
         .await
         .unwrap();
@@ -701,7 +701,7 @@ async fn contract(pg: bool) {
             alice_id,
             repo.id,
             "bob",
-            Some(codeyard_db_core::models::AccessLevel::Write)
+            Some(codeyard_database::models::AccessLevel::Write)
         )
         .await
         .unwrap(),
@@ -860,19 +860,19 @@ async fn contract(pg: bool) {
             repo.id,
             alice_id,
             "carol",
-            codeyard_db_core::models::AccessLevel::Write,
+            codeyard_database::models::AccessLevel::Write,
         ),
         (
             fork.id,
             bob_id,
             "carol",
-            codeyard_db_core::models::AccessLevel::Read,
+            codeyard_database::models::AccessLevel::Read,
         ),
         (
             fork.id,
             bob_id,
             "alice",
-            codeyard_db_core::models::AccessLevel::Read,
+            codeyard_database::models::AccessLevel::Read,
         ),
     ] {
         assert!(matches!(
@@ -954,12 +954,12 @@ async fn contract(pg: bool) {
     assert_eq!(frozen.head_publisher_id, Some(carol_id));
     assert_eq!(frozen.author_id, alice_id);
     assert_eq!(frozen.head_sha, next["sha"].as_str().unwrap());
-    let live_source = codeyard_repos_core::repositories::store::repo_store(&fork, None)
+    let live_source = codeyard_git_storage::repositories::store::repo_store(&fork, None)
         .commit_from_primary("refs/heads/separate")
         .await
         .unwrap();
     assert_ne!(live_source.sha, frozen.head_sha);
-    let published = codeyard_repos_core::repositories::store::repo_store(&repo, None)
+    let published = codeyard_git_storage::repositories::store::repo_store(&repo, None)
         .commit_from_primary(&format!("refs/pull/{}/head", source.number))
         .await
         .unwrap();
@@ -985,7 +985,7 @@ async fn contract(pg: bool) {
     .unwrap()
     .unwrap();
     assert_ne!(updated.head_sha, frozen.head_sha);
-    let published = codeyard_repos_core::repositories::store::repo_store(&repo, None)
+    let published = codeyard_git_storage::repositories::store::repo_store(&repo, None)
         .commit_from_primary(&format!("refs/pull/{}/head", source.number))
         .await
         .unwrap();

@@ -3,10 +3,10 @@
 use hmac::Mac;
 
 use base64::Engine as _;
-use codeyard_db_core::models::Webhook;
-use codeyard_db_core::models::WebhookDelivery;
-use codeyard_db_core::queries::webhooks::NewDelivery;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::Webhook;
+use codeyard_database::models::WebhookDelivery;
+use codeyard_database::queries::webhooks::NewDelivery;
+use codeyard_database::DbPool;
 use codeyard_db_repos::webhooks as hooks;
 use codeyard_support::crypto::hmac_sha256;
 use codeyard_support::outbound::Refusal;
@@ -195,7 +195,7 @@ async fn current_hook(
         && current.ssl_verify == hook.ssl_verify
         && (!outgoing.automatic
             || (current.active
-                && codeyard_model::webhook_events::subscribes(&current.events, &outgoing.event))))
+                && codeyard_types::webhook_events::subscribes(&current.events, &outgoing.event))))
 }
 
 async fn transmit(

@@ -2,8 +2,8 @@ use crate::assignees::AssignedItem;
 use anyhow::Result;
 use chrono::DateTime;
 use chrono::Utc;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct Pin {
@@ -61,4 +61,4 @@ native_operation!(crate::postgres::pins::get_pins,crate::sqlite::pins::get_pins,
     /// The pins of the issues, or of the pull requests, among `ids` (at most 500).
     fn get_pins(pool:&DbPool,pull_requests:bool,ids:&[i64])->Result<Vec<ItemPin>>);
 native_operation!(crate::postgres::pins::set_pin,crate::sqlite::pins::set_pin,
-    fn set_pin(pool:&DbPool,actor:i64,credential:&codeyard_db_core::queries::users::accounts::AccountCredential<'_>,repo:i64,item:AssignedItem,comment:i64,pinned:bool)->Result<()>);
+    fn set_pin(pool:&DbPool,actor:i64,credential:&codeyard_database::queries::users::accounts::AccountCredential<'_>,repo:i64,item:AssignedItem,comment:i64,pinned:bool)->Result<()>);

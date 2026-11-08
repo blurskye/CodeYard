@@ -8,9 +8,9 @@ use crate::support::database::Database;
 use crate::support::fake_webui_bundle;
 use axum::{http::StatusCode, Router};
 
-use codeyard_actions::progress::Conclusion;
-use codeyard_actions::progress::Event;
-use codeyard_actions::progress::Update;
+use codeyard_runner::progress::Conclusion;
+use codeyard_runner::progress::Event;
+use codeyard_runner::progress::Update;
 
 use serde_json::json;
 
@@ -134,7 +134,7 @@ async fn contract(pg: bool) {
     f.complete_setup().await;
     let alice = f.actor("alice").await;
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard_repos_core::repositories::lifecycle::provision(
+    let repo = codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),

@@ -6,7 +6,7 @@ use axum::http::StatusCode;
 use axum::Json;
 use codeyard_api_http::error::ApiError;
 use codeyard_app::app::AppState;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_git_storage::repositories::store::repo_store;
 use serde::Deserialize;
 use serde::Serialize;
 use std::sync::Arc;
@@ -66,7 +66,7 @@ pub async fn create_tag(
         &state.pool,
         state.cluster.as_ref(),
         &state.ci_runs,
-        codeyard_db_core::queries::credentials::Actor::from((
+        codeyard_database::queries::credentials::Actor::from((
             actor.id,
             codeyard_api_http::session::extract_session_id(&headers).unwrap_or_default(),
         )),
@@ -94,7 +94,7 @@ pub async fn delete_tag(
     codeyard_ci_engine::refs::delete_tag(
         &state.pool,
         state.cluster.as_ref(),
-        codeyard_db_core::queries::credentials::Actor::from((
+        codeyard_database::queries::credentials::Actor::from((
             actor.id,
             codeyard_api_http::session::extract_session_id(&headers).unwrap_or_default(),
         )),

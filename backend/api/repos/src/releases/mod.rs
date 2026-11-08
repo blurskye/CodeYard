@@ -13,7 +13,8 @@ mod pages;
 mod reactions;
 
 /// The largest asset body: the file limit plus room for the form fields.
-const UPLOAD_BODY_LIMIT: usize = codeyard_model::release_integrity::MAX_ASSET_BYTES + 1024 * 1024;
+const UPLOAD_BODY_LIMIT: usize =
+    codeyard_db_repos::release_integrity::MAX_ASSET_BYTES + 1024 * 1024;
 
 pub fn json_router() -> Router<Arc<AppState>> {
     Router::new()

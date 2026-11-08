@@ -7,8 +7,8 @@ use crate::code_owners::split_line;
 use crate::code_owners::LOCATIONS;
 use crate::code_owners::MAX_BYTES;
 use crate::code_owners::MAX_LINES;
-use codeyard_repos_core::context::NodeContext;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_git_storage::context::NodeContext;
+use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_storage::range::ByteRange as BlobRange;
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -58,7 +58,7 @@ fn push(
 }
 
 pub async fn diagnose(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     repository: &Repository,
     path: &str,
     text: &str,
@@ -140,7 +140,7 @@ pub async fn diagnose(
 }
 
 pub async fn load_diagnostics(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     repository: &Repository,
     cluster: Option<&NodeContext>,
     commit: &str,

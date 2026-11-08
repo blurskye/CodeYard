@@ -2,12 +2,12 @@ use crate::organizations::immutable_releases::Change;
 use crate::organizations::immutable_releases::Settings;
 use crate::postgres::organizations::authority::scoped_repos;
 use anyhow::Result;
-use codeyard_db_core::models::OrgRole;
-use codeyard_db_core::pool::PgPool;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_db_core::queries::postgres::organizations::authority::begin;
-use codeyard_db_core::queries::postgres::organizations::authority::begin_read;
-use codeyard_db_core::require_read_org_postgres;
+use codeyard_database::models::OrgRole;
+use codeyard_database::pool::PgPool;
+use codeyard_database::queries::organizations::OrganizationOutcome;
+use codeyard_database::queries::postgres::organizations::authority::begin;
+use codeyard_database::queries::postgres::organizations::authority::begin_read;
+use codeyard_database::require_read_org_postgres;
 use OrganizationOutcome::Applied;
 use OrganizationOutcome::Conflict;
 use OrganizationOutcome::Denied;
@@ -39,7 +39,7 @@ pub async fn repositories(
 ) -> Result<
     OrganizationOutcome<(
         i64,
-        Vec<codeyard_db_core::queries::repository_stats::RepositorySnapshot>,
+        Vec<codeyard_database::queries::repository_stats::RepositorySnapshot>,
     )>,
 > {
     anyhow::ensure!(
@@ -57,7 +57,7 @@ pub async fn repositories(
         .await?;
     let rows = sqlx::query_as(&format!(
         "SELECT r.*,{},o.name AS owner {selection} ORDER BY r.id LIMIT $2 OFFSET $3",
-        codeyard_db_core::queries::postgres::repository_stats::DOCUMENT_FACTS
+        codeyard_database::queries::postgres::repository_stats::DOCUMENT_FACTS
     ))
     .bind(org)
     .bind(limit)

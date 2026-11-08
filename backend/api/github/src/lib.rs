@@ -23,7 +23,7 @@ use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_api_http::shared::github::code_scanning::databases::HOST_UPLOAD_ROUTE as CODEQL_HOST_UPLOAD_ROUTE;
 use codeyard_api_http::shared::github::code_scanning::databases::UPLOAD_ROUTE as CODEQL_UPLOAD_ROUTE;
 use codeyard_app::app::AppState;
-use codeyard_model::github_error::Error;
+use codeyard_types::github_error::Error;
 use std::collections::HashMap;
 use std::sync::Arc;
 mod actions;
@@ -66,8 +66,8 @@ mod users;
 /// A pull request's diff or patch as plain text, for the `/pull/N.diff` and `.patch` pages.
 pub async fn pull_diff_text(
     state: &AppState,
-    repo: &codeyard_db_core::models::Repository,
-    pull: &codeyard_db_core::models::PullRequest,
+    repo: &codeyard_database::models::Repository,
+    pull: &codeyard_database::models::PullRequest,
     patch: bool,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;

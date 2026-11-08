@@ -69,7 +69,7 @@ async fn bounded_administration(pg: bool) {
     let keys = codeyard_db_identity::users::ssh_keys::list_user_key_summaries(
         f.pool(),
         admin,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), admin).await,
         ),
         0,
@@ -81,7 +81,7 @@ async fn bounded_administration(pg: bool) {
         codeyard_db_identity::users::ssh_keys::list_user_key_summaries(
             f.pool(),
             admin,
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+            &codeyard_database::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(f.pool(), admin).await
             ),
             keys.last().unwrap().id
@@ -202,7 +202,7 @@ async fn account_writes(pg: bool) {
         );
     }
     let actor = signed_in.user.id;
-    assert!(codeyard_db_cluster::node_config::set_ai_crawlers(
+    assert!(codeyard_db_placement::node_config::set_ai_crawlers(
         f.pool(),
         actor,
         &signed_in.session_id,
@@ -210,7 +210,7 @@ async fn account_writes(pg: bool) {
     )
     .await
     .unwrap());
-    codeyard_db_cluster::cluster::register_own_node(
+    codeyard_db_placement::cluster::register_own_node(
         f.pool(),
         &"a".repeat(64),
         "test-node",
@@ -219,12 +219,12 @@ async fn account_writes(pg: bool) {
     )
     .await
     .unwrap();
-    let authority = || codeyard_db_cluster::cluster::Authority::Administrator {
+    let authority = || codeyard_db_placement::cluster::Authority::Administrator {
         user_id: actor,
         session: &signed_in.session_id,
     };
     assert!(matches!(
-        codeyard_db_cluster::cluster::set_node_status(
+        codeyard_db_placement::cluster::set_node_status(
             f.pool(),
             authority(),
             "test-node",
@@ -232,12 +232,12 @@ async fn account_writes(pg: bool) {
         )
         .await
         .unwrap(),
-        codeyard_db_core::models::NodeStatusChange::Changed { .. }
+        codeyard_database::models::NodeStatusChange::Changed { .. }
     ));
     codeyard_db_identity::users::sessions::delete_session(f.pool(), &signed_in.session_id)
         .await
         .unwrap();
-    assert!(!codeyard_db_cluster::node_config::set_ai_crawlers(
+    assert!(!codeyard_db_placement::node_config::set_ai_crawlers(
         f.pool(),
         actor,
         &signed_in.session_id,
@@ -246,10 +246,15 @@ async fn account_writes(pg: bool) {
     .await
     .unwrap());
     assert_eq!(
-        codeyard_db_cluster::cluster::set_node_status(f.pool(), authority(), "test-node", "active")
-            .await
-            .unwrap(),
-        codeyard_db_core::models::NodeStatusChange::Denied
+        codeyard_db_placement::cluster::set_node_status(
+            f.pool(),
+            authority(),
+            "test-node",
+            "active"
+        )
+        .await
+        .unwrap(),
+        codeyard_database::models::NodeStatusChange::Denied
     );
     f.execute("UPDATE users SET is_banned=TRUE WHERE id=$1", &[actor])
         .await;

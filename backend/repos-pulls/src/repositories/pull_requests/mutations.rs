@@ -2,6 +2,9 @@ use codeyard_ci_engine::pull_requests::workflows::queue_pull_request_ci;
 use codeyard_ci_engine::runs::CiRuns;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
+use codeyard_git_storage::repositories::pull_requests::database_error;
+use codeyard_git_storage::repositories::pull_requests::OperationError;
+use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_notifications::create::create_and_broadcast_notification;
 use codeyard_notifications::create::NotificationRequest;
@@ -10,9 +13,6 @@ use codeyard_notifications::mentions::MentionSource;
 use codeyard_notifications::watchers::notify_watchers;
 use codeyard_notifications::watchers::WatchEvent;
 use codeyard_notifications::watchers::WatchedItem;
-use codeyard_repos_core::repositories::pull_requests::database_error;
-use codeyard_repos_core::repositories::pull_requests::OperationError;
-use codeyard_repos_core::repositories::store::repo_store;
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
@@ -48,7 +48,7 @@ impl TryFrom<PullRequestSourceInput> for PullRequestSource {
 #[derive(Deserialize)]
 pub struct CreatePullRequestRequest {
     #[serde(skip)]
-    pub foreign_head: Option<codeyard_db_core::cells::repositories::Admission>,
+    pub foreign_head: Option<codeyard_database::cells::repositories::Admission>,
     /// Only server-owned proposals may suppress automatic execution; clients cannot set this.
     #[serde(skip)]
     pub suppress_ci: bool,
@@ -77,7 +77,7 @@ pub struct UpdatePullRequestRequest {
 fn validate_maintainer_edit(
     actor: i64,
     base: i64,
-    head: &codeyard_db_core::models::Repository,
+    head: &codeyard_database::models::Repository,
     enabled: bool,
 ) -> Result<(), OperationError> {
     if enabled
@@ -110,13 +110,13 @@ fn head_publish_error(number: i32, error: RepoError) -> OperationError {
 }
 
 async fn publish_created_head(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     ci: &CiRuns,
-    base: &codeyard_db_core::models::Repository,
-    head: &codeyard_db_core::models::Repository,
-    actor: codeyard_repos_core::store_types::PullHeadActor,
-    pull: &codeyard_db_core::models::PullRequest,
-    foreign: Option<&codeyard_db_core::cells::repositories::Admission>,
+    base: &codeyard_database::models::Repository,
+    head: &codeyard_database::models::Repository,
+    actor: codeyard_git_storage::store_types::PullHeadActor,
+    pull: &codeyard_database::models::PullRequest,
+    foreign: Option<&codeyard_database::cells::repositories::Admission>,
 ) -> Result<(), RepoError> {
     let store = repo_store(base, ci.cluster.as_ref());
     if let Some(foreign) = foreign {
@@ -158,14 +158,14 @@ async fn publish_created_head(
     reason = "Repair retains the original cross-cell head admission."
 )]
 pub(crate) async fn repair_open_pull(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     ci: &CiRuns,
-    repository: &codeyard_db_core::models::Repository,
-    head_repository: &codeyard_db_core::models::Repository,
-    credential: codeyard_repos_core::store_types::PullHeadActor,
-    existing: &codeyard_db_core::models::PullRequest,
+    repository: &codeyard_database::models::Repository,
+    head_repository: &codeyard_database::models::Repository,
+    credential: codeyard_git_storage::store_types::PullHeadActor,
+    existing: &codeyard_database::models::PullRequest,
     suppress_ci: bool,
-    foreign: Option<&codeyard_db_core::cells::repositories::Admission>,
+    foreign: Option<&codeyard_database::cells::repositories::Admission>,
 ) -> Result<(), OperationError> {
     let actor_id = credential.user;
     let number = existing.number;
@@ -188,7 +188,7 @@ pub(crate) async fn repair_open_pull(
             ci,
             actor_id,
             existing.id,
-            (!suppress_ci).then_some(codeyard_db_core::models::AccessLevel::Owner),
+            (!suppress_ci).then_some(codeyard_database::models::AccessLevel::Owner),
         )
         .await
         .map_err(|_| OperationError::Opened { number })?;
@@ -206,7 +206,7 @@ pub(crate) async fn repair_open_pull(
             &current,
             actor_id,
             false,
-            codeyard_db_core::models::AccessLevel::Owner,
+            codeyard_database::models::AccessLevel::Owner,
         )
         .await;
     }
@@ -218,17 +218,17 @@ pub(crate) async fn repair_open_pull(
 }
 
 pub async fn create_pull_request(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     ci: &CiRuns,
     broadcaster: &NotificationBroadcaster,
-    actor_id: impl Into<codeyard_repos_core::store_types::PullHeadActor>,
+    actor_id: impl Into<codeyard_git_storage::store_types::PullHeadActor>,
     owner: String,
     repo: String,
     req: CreatePullRequestRequest,
-) -> Result<codeyard_db_core::models::PullRequest, OperationError> {
+) -> Result<codeyard_database::models::PullRequest, OperationError> {
     let credential = actor_id.into();
     let actor_id = credential.user;
-    let user = codeyard_repos_core::repositories::pull_requests::actor(pool, actor_id).await?;
+    let user = codeyard_git_storage::repositories::pull_requests::actor(pool, actor_id).await?;
     let repository = codeyard_db_repos::repositories::records::get_repository(pool, &owner, &repo)
         .await
         .map_err(database_error)?
@@ -237,7 +237,7 @@ pub async fn create_pull_request(
             message: "Repository not found".to_owned(),
         })?;
 
-    codeyard_repos_core::repositories::pull_requests::require_read(pool, &user, &repository)
+    codeyard_git_storage::repositories::pull_requests::require_read(pool, &user, &repository)
         .await?;
     let mut converted_retry = None;
     let (source_issue, title, body) = match req.source {
@@ -265,7 +265,7 @@ pub async fn create_pull_request(
                 .await
                 .map_err(database_error)?
                 .ok_or_else(|| {
-                    codeyard_repos_core::repositories::pull_requests::write_error(
+                    codeyard_git_storage::repositories::pull_requests::write_error(
                         codeyard_db_repos::pull_requests::records::IssueConversionRefusal::Missing.into(),
                     )
                 })?;
@@ -276,8 +276,8 @@ pub async fn create_pull_request(
         }
         PullRequestSource::New { title, body } => (None, title, body.unwrap_or_default()),
     };
-    let checked = codeyard_model::issue_input::validate_title(&title)
-        .and_then(|_| codeyard_model::issue_input::validate_body(&body, false));
+    let checked = codeyard_types::issue_input::validate_title(&title)
+        .and_then(|_| codeyard_types::issue_input::validate_body(&body, false));
     if let Err(message) = checked {
         return Err(OperationError::Invalid {
             code: "validation_error",
@@ -322,7 +322,7 @@ pub async fn create_pull_request(
         let source = foreign
             .read(pool)
             .await
-            .map_err(codeyard_repos_core::repositories::pull_requests::write_error)?;
+            .map_err(codeyard_git_storage::repositories::pull_requests::write_error)?;
         if source.repository.forked_from_id != Some(repository.id) {
             return Err(OperationError::Denied {
                 code: "read_denied",
@@ -330,7 +330,7 @@ pub async fn create_pull_request(
             });
         }
     } else {
-        codeyard_repos_core::repositories::pull_requests::require_read(
+        codeyard_git_storage::repositories::pull_requests::require_read(
             pool,
             &user,
             &head_repository,
@@ -425,7 +425,7 @@ pub async fn create_pull_request(
             || existing.base_branch != req.base_branch
         {
             return Err(
-                codeyard_repos_core::repositories::pull_requests::write_error(
+                codeyard_git_storage::repositories::pull_requests::write_error(
                     codeyard_db_repos::pull_requests::records::IssueConversionRefusal::Missing
                         .into(),
                 ),
@@ -529,7 +529,7 @@ pub async fn create_pull_request(
                 Ok(duplicate) => duplicate.number,
                 Err(error) => {
                     return Err(
-                        codeyard_repos_core::repositories::pull_requests::write_error(error),
+                        codeyard_git_storage::repositories::pull_requests::write_error(error),
                     )
                 }
             };
@@ -585,7 +585,7 @@ pub async fn create_pull_request(
             ci,
             user.id,
             pull_request.id,
-            (!req.suppress_ci).then_some(codeyard_db_core::models::AccessLevel::Owner),
+            (!req.suppress_ci).then_some(codeyard_database::models::AccessLevel::Owner),
         )
         .await
         .map_err(|_| OperationError::Opened {
@@ -686,7 +686,7 @@ pub async fn create_pull_request(
     )
     .await;
 
-    let payload = codeyard_repos_core::repositories::pull_requests::emit_pull_request_event(
+    let payload = codeyard_git_storage::repositories::pull_requests::emit_pull_request_event(
         pool,
         ci.cluster.as_ref(),
         &repository,
@@ -703,7 +703,7 @@ pub async fn create_pull_request(
             &repository,
             &pull_request,
             user.id,
-            codeyard_db_core::models::AccessLevel::Owner,
+            codeyard_database::models::AccessLevel::Owner,
             &payload,
         )
         .await;
@@ -713,19 +713,19 @@ pub async fn create_pull_request(
 }
 
 pub async fn update_pull_request(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     ci: &CiRuns,
     broadcaster: &NotificationBroadcaster,
     actor_id: i64,
     (repository_id, number): (i64, i32),
     req: UpdatePullRequestRequest,
-) -> Result<codeyard_db_core::models::PullRequest, OperationError> {
+) -> Result<codeyard_database::models::PullRequest, OperationError> {
     let (repository, owner) =
-        codeyard_repos_core::repositories::pull_requests::repository(pool, repository_id).await?;
+        codeyard_git_storage::repositories::pull_requests::repository(pool, repository_id).await?;
     let repo = repository.name.clone();
 
-    let user = codeyard_repos_core::repositories::pull_requests::actor(pool, actor_id).await?;
-    codeyard_repos_core::repositories::pull_requests::require_read(pool, &user, &repository)
+    let user = codeyard_git_storage::repositories::pull_requests::actor(pool, actor_id).await?;
+    codeyard_git_storage::repositories::pull_requests::require_read(pool, &user, &repository)
         .await?;
     let existing =
         codeyard_db_repos::pull_requests::records::get_pull_request(pool, repository.id, number)
@@ -807,11 +807,11 @@ pub async fn update_pull_request(
     if req
         .title
         .as_ref()
-        .is_some_and(|title| codeyard_model::issue_input::validate_title(title).is_err())
+        .is_some_and(|title| codeyard_types::issue_input::validate_title(title).is_err())
         || req
             .body
             .as_ref()
-            .is_some_and(|body| codeyard_model::issue_input::validate_body(body, false).is_err())
+            .is_some_and(|body| codeyard_types::issue_input::validate_body(body, false).is_err())
         || !matches!(req.expected_state.as_str(), "open" | "closed" | "merged")
     {
         return Err(OperationError::Invalid {
@@ -834,7 +834,7 @@ pub async fn update_pull_request(
                 stack,
             )
             .await
-            .map_err(codeyard_repos_core::repositories::pull_requests::write_error)?;
+            .map_err(codeyard_git_storage::repositories::pull_requests::write_error)?;
             codeyard_db_repos::pull_requests::records::reopened_stack_base(&existing, &members)
         } else {
             None
@@ -882,7 +882,7 @@ pub async fn update_pull_request(
             message: format!("Pull request #{} is already open for these branches", duplicate.number),
         },
         Err(error) => {
-            if error.is::<codeyard_db_repos::pull_caps::PullCapReached>() {return codeyard_repos_core::repositories::pull_requests::write_error(error);}
+            if error.is::<codeyard_db_repos::pull_caps::PullCapReached>() {return codeyard_git_storage::repositories::pull_requests::write_error(error);}
             tracing::error!(pull_request_id = existing.id, "conditional pull request update failed");
             OperationError::Unavailable { code: "database_error", message: "Unable to save this entry; your submission was not confirmed".to_owned() }
         }
@@ -919,7 +919,7 @@ pub async fn update_pull_request(
             ci,
             user.id,
             pull_request.id,
-            Some(codeyard_db_core::models::AccessLevel::Owner),
+            Some(codeyard_database::models::AccessLevel::Owner),
         )
         .await
         .map_err(|_| OperationError::Updated { number })?;
@@ -963,7 +963,7 @@ pub async fn update_pull_request(
     } else {
         "reopened"
     };
-    let payload = codeyard_repos_core::repositories::pull_requests::emit_pull_request_event(
+    let payload = codeyard_git_storage::repositories::pull_requests::emit_pull_request_event(
         pool,
         ci.cluster.as_ref(),
         &repository,
@@ -979,7 +979,7 @@ pub async fn update_pull_request(
         &repository,
         &pull_request,
         user.id,
-        codeyard_db_core::models::AccessLevel::Owner,
+        codeyard_database::models::AccessLevel::Owner,
         &payload,
     )
     .await;
@@ -989,8 +989,8 @@ pub async fn update_pull_request(
 
 /// The `changes` document of an `edited` event: the earlier value of each field that changed.
 fn edited_changes(
-    before: &codeyard_db_core::models::PullRequest,
-    after: &codeyard_db_core::models::PullRequest,
+    before: &codeyard_database::models::PullRequest,
+    after: &codeyard_database::models::PullRequest,
 ) -> serde_json::Map<String, serde_json::Value> {
     let mut changes = serde_json::Map::new();
     if before.title != after.title {
@@ -1012,13 +1012,13 @@ fn edited_changes(
 /// state and time it just read. A concurrent change, such as gh adding labels while it saves the
 /// title, moves that time, so read the pull request again and retry instead of refusing.
 pub async fn update_pull_request_latest(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     ci: &CiRuns,
     broadcaster: &NotificationBroadcaster,
     actor_id: i64,
     target: (i64, i32),
     mut req: UpdatePullRequestRequest,
-) -> Result<codeyard_db_core::models::PullRequest, OperationError> {
+) -> Result<codeyard_database::models::PullRequest, OperationError> {
     for _ in 0..3 {
         let refused =
             match update_pull_request(pool, ci, broadcaster, actor_id, target, req.clone()).await {
@@ -1047,8 +1047,8 @@ pub async fn update_pull_request_latest(
 /// can change its base, and only to a branch of this repository other than its own head branch.
 async fn base_branch_commit(
     ci: &CiRuns,
-    repository: &codeyard_db_core::models::Repository,
-    pull_request: &codeyard_db_core::models::PullRequest,
+    repository: &codeyard_database::models::Repository,
+    pull_request: &codeyard_database::models::PullRequest,
     branch: &str,
 ) -> Result<String, OperationError> {
     if pull_request.state != "open" {
@@ -1082,16 +1082,16 @@ async fn base_branch_commit(
 /// The repository, the actor and the pull request a stack change works on. Only people who can
 /// write may change stacks, and a missing pull request is refused before anything changes.
 async fn stack_change_target(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     actor_id: i64,
     owner: &str,
     repo: &str,
     number: i32,
 ) -> Result<
     (
-        codeyard_db_core::models::Repository,
-        codeyard_db_core::models::User,
-        codeyard_db_core::models::PullRequest,
+        codeyard_database::models::Repository,
+        codeyard_database::models::User,
+        codeyard_database::models::PullRequest,
     ),
     OperationError,
 > {
@@ -1102,8 +1102,8 @@ async fn stack_change_target(
             code: "not_found",
             message: "Repository not found".to_owned(),
         })?;
-    let user = codeyard_repos_core::repositories::pull_requests::actor(pool, actor_id).await?;
-    codeyard_repos_core::repositories::pull_requests::require_write(pool, &user, &repository)
+    let user = codeyard_git_storage::repositories::pull_requests::actor(pool, actor_id).await?;
+    codeyard_git_storage::repositories::pull_requests::require_write(pool, &user, &repository)
         .await?;
     let existing =
         codeyard_db_repos::pull_requests::records::get_pull_request(pool, repository.id, number)
@@ -1120,13 +1120,13 @@ async fn stack_change_target(
 /// base branch, and merged pull requests keep the stack. A pull request in no stack is returned
 /// unchanged. The database reads the stack when it writes, not from an earlier read.
 pub async fn unstack_pull_request(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     ci: &CiRuns,
     actor_id: i64,
     owner: String,
     repo: String,
     number: i32,
-) -> Result<codeyard_db_core::models::PullRequest, OperationError> {
+) -> Result<codeyard_database::models::PullRequest, OperationError> {
     let (repository, user, existing) =
         stack_change_target(pool, actor_id, &owner, &repo, number).await?;
     let unstacked = codeyard_db_repos::pull_requests::records::unstack_pull_requests(
@@ -1185,13 +1185,13 @@ pub async fn unstack_pull_request(
 /// Adds a pull request to the stack of the open pull request its base branch names, or starts a
 /// stack with that pull request. Nothing else adds a pull request to a stack.
 pub async fn unstack_named_stack(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     ci: &CiRuns,
     actor_id: i64,
     namespace: (String, String),
     stack_id: i64,
 ) -> Result<usize, OperationError> {
-    let user = codeyard_repos_core::repositories::pull_requests::actor(pool, actor_id).await?;
+    let user = codeyard_git_storage::repositories::pull_requests::actor(pool, actor_id).await?;
     let repository =
         codeyard_db_repos::repositories::records::get_repository(pool, &namespace.0, &namespace.1)
             .await
@@ -1200,7 +1200,7 @@ pub async fn unstack_named_stack(
                 code: "not_found",
                 message: "Repository not found".into(),
             })?;
-    codeyard_repos_core::repositories::pull_requests::require_write(pool, &user, &repository)
+    codeyard_git_storage::repositories::pull_requests::require_write(pool, &user, &repository)
         .await?;
     let rows = codeyard_db_repos::pull_requests::records::unstack_named_stack(
         pool,
@@ -1245,7 +1245,7 @@ pub async fn unstack_named_stack(
 }
 
 pub async fn join_stack_batch(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     ci: &CiRuns,
     actor_id: i64,
     namespace: (String, String),
@@ -1253,7 +1253,7 @@ pub async fn join_stack_batch(
     ids: &[i64],
     creating: bool,
 ) -> Result<(), OperationError> {
-    let user = codeyard_repos_core::repositories::pull_requests::actor(pool, actor_id).await?;
+    let user = codeyard_git_storage::repositories::pull_requests::actor(pool, actor_id).await?;
     let repository =
         codeyard_db_repos::repositories::records::get_repository(pool, &namespace.0, &namespace.1)
             .await
@@ -1262,7 +1262,7 @@ pub async fn join_stack_batch(
                 code: "not_found",
                 message: "Repository not found".into(),
             })?;
-    codeyard_repos_core::repositories::pull_requests::require_write(pool, &user, &repository)
+    codeyard_git_storage::repositories::pull_requests::require_write(pool, &user, &repository)
         .await?;
     let result = codeyard_db_repos::pull_requests::records::join_pull_request_stack_batch(
         pool,
@@ -1315,13 +1315,13 @@ pub async fn join_stack_batch(
 }
 
 pub async fn join_stack(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     ci: &CiRuns,
     actor_id: i64,
     owner: String,
     repo: String,
     number: i32,
-) -> Result<codeyard_db_core::models::PullRequest, OperationError> {
+) -> Result<codeyard_database::models::PullRequest, OperationError> {
     let (repository, user, existing) =
         stack_change_target(pool, actor_id, &owner, &repo, number).await?;
     let joined = codeyard_db_repos::pull_requests::records::join_pull_request_stack(
@@ -1417,26 +1417,26 @@ fn join_refusal(reason: codeyard_db_repos::pull_requests::records::StackRefusal)
 }
 
 pub async fn mark_pull_request_ready(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     ci: &CiRuns,
     actor_id: i64,
     owner: String,
     repo: String,
     number: i32,
     expected: Option<&str>,
-) -> Result<codeyard_db_core::models::PullRequest, OperationError> {
+) -> Result<codeyard_database::models::PullRequest, OperationError> {
     set_pull_request_draft(pool, ci, actor_id, (owner, repo, number), expected, false).await
 }
 
 pub async fn set_pull_request_draft(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     ci: &CiRuns,
     actor_id: i64,
     (owner, repo, number): (String, String, i32),
     expected: Option<&str>,
     is_draft: bool,
-) -> Result<codeyard_db_core::models::PullRequest, OperationError> {
-    let user = codeyard_repos_core::repositories::pull_requests::actor(pool, actor_id).await?;
+) -> Result<codeyard_database::models::PullRequest, OperationError> {
+    let user = codeyard_git_storage::repositories::pull_requests::actor(pool, actor_id).await?;
     let repository = codeyard_db_repos::repositories::records::get_repository(pool, &owner, &repo)
         .await
         .map_err(database_error)?
@@ -1444,7 +1444,7 @@ pub async fn set_pull_request_draft(
             code: "not_found",
             message: "Repository not found".to_owned(),
         })?;
-    codeyard_repos_core::repositories::pull_requests::require_read(pool, &user, &repository)
+    codeyard_git_storage::repositories::pull_requests::require_read(pool, &user, &repository)
         .await?;
     let existing =
         codeyard_db_repos::pull_requests::records::get_pull_request(pool, repository.id, number)
@@ -1465,7 +1465,7 @@ pub async fn set_pull_request_draft(
     .await
     .map_err(|error| {
         if error.is::<codeyard_db_repos::pull_caps::PullCapReached>() {
-            return codeyard_repos_core::repositories::pull_requests::write_error(error);
+            return codeyard_git_storage::repositories::pull_requests::write_error(error);
         }
         tracing::error!(
             pull_request_id = existing.id,
@@ -1496,7 +1496,7 @@ pub async fn set_pull_request_draft(
     };
 
     if is_draft {
-        let payload = codeyard_repos_core::repositories::pull_requests::emit_pull_request_event(
+        let payload = codeyard_git_storage::repositories::pull_requests::emit_pull_request_event(
             pool,
             ci.cluster.as_ref(),
             &repository,
@@ -1512,7 +1512,7 @@ pub async fn set_pull_request_draft(
             &repository,
             &pull_request,
             user.id,
-            codeyard_db_core::models::AccessLevel::Owner,
+            codeyard_database::models::AccessLevel::Owner,
             &payload,
         )
         .await;
@@ -1528,7 +1528,7 @@ pub async fn set_pull_request_draft(
         ci,
         user.id,
         pull_request.id,
-        Some(codeyard_db_core::models::AccessLevel::Owner),
+        Some(codeyard_database::models::AccessLevel::Owner),
     )
     .await;
     if let Err(error) = &refreshed {
@@ -1550,7 +1550,7 @@ pub async fn set_pull_request_draft(
     )
     .await;
 
-    let payload = codeyard_repos_core::repositories::pull_requests::emit_pull_request_event(
+    let payload = codeyard_git_storage::repositories::pull_requests::emit_pull_request_event(
         pool,
         ci.cluster.as_ref(),
         &repository,
@@ -1566,7 +1566,7 @@ pub async fn set_pull_request_draft(
         &repository,
         &pull_request,
         user.id,
-        codeyard_db_core::models::AccessLevel::Owner,
+        codeyard_database::models::AccessLevel::Owner,
         &payload,
     )
     .await;

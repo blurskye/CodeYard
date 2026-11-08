@@ -10,7 +10,7 @@ use codeyard_db_actions::secrets;
 use std::{str::FromStr, time::Duration};
 
 async fn attempt(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     actor: i64,
     repo: i64,
     operation: u8,
@@ -23,7 +23,7 @@ async fn attempt(
             actor,
             repo,
             NAME,
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&format!(
+            &codeyard_database::queries::users::accounts::AccountCredential::Session(&format!(
                 "{actor:064x}"
             )),
         )
@@ -192,9 +192,9 @@ async fn sqlite_secrets_require_reserved_writer_even_for_metadata() {
                 .busy_timeout(Duration::ZERO),
         )
         .await
-        .map(codeyard_db_core::pool::Pool::from)
+        .map(codeyard_database::pool::Pool::from)
         .expect("required independent SQLite contention connection");
-    let second: codeyard_db_core::DbPool = raw.clone().into();
+    let second: codeyard_database::DbPool = raw.clone().into();
     let mut revoke = f.raw.begin_with("BEGIN IMMEDIATE").await.unwrap();
     for operation in 0..3 {
         let error = attempt(&second, actor, repo, operation)

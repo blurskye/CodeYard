@@ -80,13 +80,13 @@ pub async fn sidebar(
             Owner::User(id) => {
                 codeyard_db_identity::users::accounts::get_user_by_id(pool, id)
                     .await?
-                    .ok_or(codeyard_model::project_query::Refusal::Missing)?
+                    .ok_or(codeyard_types::project_query::Refusal::Missing)?
                     .username
             }
             Owner::Organization(id) => {
                 codeyard_db_orgs::organizations::profiles::get_public_organization_by_id(pool, id)
                     .await?
-                    .ok_or(codeyard_model::project_query::Refusal::Missing)?
+                    .ok_or(codeyard_types::project_query::Refusal::Missing)?
                     .name
             }
         };
@@ -117,7 +117,7 @@ pub async fn owner(ctx: &PageContext, params: &Params) -> anyhow::Result<(Owner,
             name,
         )
         .await?
-        .ok_or(codeyard_model::project_query::Refusal::Missing)?;
+        .ok_or(codeyard_types::project_query::Refusal::Missing)?;
         let base = format!(
             "/orgs/{}/projects",
             codeyard_types::paths::encode_component(&org.name)
@@ -126,11 +126,11 @@ pub async fn owner(ctx: &PageContext, params: &Params) -> anyhow::Result<(Owner,
     } else {
         let name = params
             .get("username")
-            .ok_or(codeyard_model::project_query::Refusal::Missing)?;
+            .ok_or(codeyard_types::project_query::Refusal::Missing)?;
         let user =
             codeyard_db_identity::users::accounts::get_user_by_username(&ctx.state.pool, name)
                 .await?
-                .ok_or(codeyard_model::project_query::Refusal::Missing)?;
+                .ok_or(codeyard_types::project_query::Refusal::Missing)?;
         let base = format!(
             "/users/{}/projects",
             codeyard_types::paths::encode_component(&user.username)

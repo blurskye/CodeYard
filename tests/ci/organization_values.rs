@@ -14,7 +14,7 @@ use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
 use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
 use codeyard_db_repos::repositories::creation::RepositoryTarget;
 
-use codeyard_db_core::models::OrgRole;
+use codeyard_database::models::OrgRole;
 use codeyard_storage::ObjectStore;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -68,7 +68,7 @@ async fn contract(pg: bool) {
         ("foreign", other.id, true),
     ] {
         repos.push(
-            codeyard_repos_core::repositories::lifecycle::provision(
+            codeyard_git_storage::repositories::lifecycle::provision(
                 (f.pool(), None),
                 root.path(),
                 RepositoryCreationOwner {
@@ -657,7 +657,7 @@ async fn contract(pg: bool) {
             f.pool(),
             None,
             manager,
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+            &codeyard_database::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(f.pool(), manager).await
             ),
             org.id,
@@ -705,7 +705,7 @@ async fn transfer_selections(pg: bool) {
         ));
     }
     let root = tempfile::tempdir().unwrap();
-    let repo = codeyard_repos_core::repositories::lifecycle::provision(
+    let repo = codeyard_git_storage::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         RepositoryCreationOwner {
@@ -725,7 +725,7 @@ async fn transfer_selections(pg: bool) {
             f.pool(),
             Some(&encryptor),
             owner,
-            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+            &codeyard_database::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(f.pool(), owner).await,
             ),
             organizations[0].id,
@@ -757,7 +757,7 @@ async fn transfer_selections(pg: bool) {
             1
         );
     }
-    codeyard_repos_core::repositories::lifecycle::transfer(
+    codeyard_git_storage::repositories::lifecycle::transfer(
         f.pool(),
         None,
         owner,
@@ -793,7 +793,7 @@ async fn transfer_selections(pg: bool) {
         .1
         .is_empty());
     }
-    codeyard_repos_core::repositories::lifecycle::transfer(
+    codeyard_git_storage::repositories::lifecycle::transfer(
         f.pool(),
         None,
         owner,

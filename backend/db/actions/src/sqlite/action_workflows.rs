@@ -1,7 +1,7 @@
 use crate::action_workflows::Workflow;
 use anyhow::Result;
-use codeyard_db_core::models::CiRun;
-use codeyard_db_core::pool::SqlitePool;
+use codeyard_database::models::CiRun;
+use codeyard_database::pool::SqlitePool;
 use codeyard_db_repos::repositories::records::RepositorySettingsRefusal;
 
 pub async fn register_workflows(
@@ -63,7 +63,7 @@ pub async fn workflow_for_path(
 
 pub async fn set_workflow_enabled(
     pool: &SqlitePool,
-    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    actor: impl Into<codeyard_database::queries::credentials::Actor>,
     repo: i64,
     id: i64,
     enabled: bool,
@@ -72,12 +72,12 @@ pub async fn set_workflow_enabled(
     let actor = credential.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::sqlite::discussions::lock_write_authority(&mut tx, actor, repo)
+        codeyard_database::queries::sqlite::discussions::lock_write_authority(&mut tx, actor, repo)
             .await?,
         RepositorySettingsRefusal::Denied
     );
     anyhow::ensure!(
-        codeyard_db_core::queries::sqlite::credentials::writes(
+        codeyard_database::queries::sqlite::credentials::writes(
             &mut tx,
             &credential,
             Some(repo),

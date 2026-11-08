@@ -19,7 +19,7 @@ const OPERATIONS: [Operation; 5] = [
 ];
 
 async fn invisible(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     recipient: i64,
     notification: i64,
     op: Operation,
@@ -83,7 +83,7 @@ async fn postgres_notification_operations_wait_for_recipient_row_then_recheck() 
             fixture.pool(),
             recipient,
             repo,
-            codeyard_db_core::models::repositories::AccessLevel::Read,
+            codeyard_database::models::repositories::AccessLevel::Read,
         )
         .await
         .unwrap();
@@ -166,7 +166,7 @@ async fn postgres_notification_operations_wait_for_uncommitted_grant_revocation(
             fixture.pool(),
             recipient,
             repo,
-            codeyard_db_core::models::repositories::AccessLevel::Read,
+            codeyard_database::models::repositories::AccessLevel::Read,
         )
         .await
         .unwrap();
@@ -212,7 +212,7 @@ async fn postgres_notification_write_keeps_its_grant_until_commit() {
         fixture.pool(),
         recipient,
         repo,
-        codeyard_db_core::models::repositories::AccessLevel::Read,
+        codeyard_database::models::repositories::AccessLevel::Read,
     )
     .await
     .unwrap();
@@ -288,7 +288,7 @@ async fn sqlite_notification_operations_require_reserved_writer_then_recheck() {
         fixture.pool(),
         recipient,
         repo,
-        codeyard_db_core::models::repositories::AccessLevel::Read,
+        codeyard_database::models::repositories::AccessLevel::Read,
     )
     .await
     .unwrap();
@@ -308,9 +308,9 @@ async fn sqlite_notification_operations_require_reserved_writer_then_recheck() {
                 .busy_timeout(Duration::ZERO),
         )
         .await
-        .map(codeyard_db_core::pool::Pool::from)
+        .map(codeyard_database::pool::Pool::from)
         .unwrap();
-    let second: codeyard_db_core::DbPool = raw.clone().into();
+    let second: codeyard_database::DbPool = raw.clone().into();
     let before = fixture.history(recipient).await;
     let mut revoker = f.raw.begin_with("BEGIN IMMEDIATE").await.unwrap();
     for op in OPERATIONS {
@@ -384,8 +384,8 @@ async fn sqlite_notification_sql_failure_is_not_empty_success() {
 /// and the read starts only once the deletion is queued. Releasing the holder then lets both
 /// finish, or deadlocks if the read holds a source lock that the deletion needs.
 async fn delete_fork_during_read(
-    pool: &codeyard_db_core::DbPool,
-    raw: &codeyard_db_core::pool::PgPool,
+    pool: &codeyard_database::DbPool,
+    raw: &codeyard_database::pool::PgPool,
     owner: i64,
     reader: i64,
     fork: i64,
@@ -483,7 +483,7 @@ async fn postgres_fork_deletion_and_notification_reads_take_the_source_first() {
                     fixture.pool(),
                     reader,
                     repo,
-                    codeyard_db_core::models::repositories::AccessLevel::Read,
+                    codeyard_database::models::repositories::AccessLevel::Read,
                 )
                 .await
                 .unwrap();
@@ -526,7 +526,7 @@ async fn postgres_fork_rename_and_owner_ban_do_not_deadlock() {
     .await
     .unwrap()
     {
-        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(org) => org.id,
+        codeyard_database::queries::organizations::OrganizationOutcome::Applied(org) => org.id,
         other => panic!("organization must be created: {other:?}"),
     };
     let source = fixture.repo(owner, Some(org), "fork_ban_source").await;

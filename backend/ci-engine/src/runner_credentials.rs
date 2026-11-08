@@ -1,8 +1,8 @@
 //! Runner credentials use cluster pairing unchanged; removal has its own hash domain.
 use anyhow::Context;
 use anyhow::Result;
-use codeyard_cluster_core::pairing::JoinTicket;
-use codeyard_repos_core::context::NodeContext;
+use codeyard_git_storage::context::NodeContext;
+use codeyard_nodes::pairing::JoinTicket;
 use serde::Deserialize;
 use serde::Serialize;
 use sha2::Digest;
@@ -24,7 +24,7 @@ impl JitConfig {
             .context("invalid runner configuration")?;
         let config: Self = serde_json::from_slice(&bytes)
             .map_err(|_| anyhow::anyhow!("invalid runner configuration"))?;
-        codeyard_cluster_core::pairing::normalize_name(&config.node_name)?;
+        codeyard_nodes::pairing::normalize_name(&config.node_name)?;
         JoinTicket::decode(&config.ticket)
             .map_err(|_| anyhow::anyhow!("invalid runner pairing credential"))?;
         anyhow::ensure!(
@@ -110,11 +110,11 @@ pub fn remove_hash(token: &str) -> String {
     hex::encode(hash.finalize())
 }
 pub async fn ticket(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     context: Option<&NodeContext>,
 ) -> Result<JoinTicket> {
     let core = context.context("runner registration requires a serving PostgreSQL cluster core")?;
-    let node = codeyard_db_cluster::cluster::get_node_by_id(pool, core.node_id)
+    let node = codeyard_db_placement::cluster::get_node_by_id(pool, core.node_id)
         .await?
         .filter(|n| n.status == "active")
         .context("runner core is unavailable")?;
@@ -135,7 +135,7 @@ mod tests {
         let key = codeyard_support::node_identity::NodeKey::generate();
         let ticket = JoinTicket::new(
             key.public_key(),
-            codeyard_cluster_core::transport::NodeAddress {
+            codeyard_nodes::transport::NodeAddress {
                 tcp: vec!["127.0.0.1:1".parse().unwrap()],
                 ..Default::default()
             },

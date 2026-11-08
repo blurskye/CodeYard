@@ -1,4 +1,4 @@
-pub trait RepositoryServices: codeyard_repos_core::request_context::RequestContext {
+pub trait RepositoryServices: codeyard_git_storage::request_context::RequestContext {
     fn secret_encryptor(
         &self,
     ) -> &Option<std::sync::Arc<codeyard_support::secrets::SecretEncryptor>>;
@@ -8,7 +8,7 @@ pub trait RepositoryServices: codeyard_repos_core::request_context::RequestConte
     ) -> &std::sync::Arc<codeyard_notifications::broadcast::NotificationBroadcaster>;
     fn git_tasks(
         &self,
-    ) -> &std::sync::Arc<codeyard_repos_core::repositories::git_sessions::GitTasks>;
+    ) -> &std::sync::Arc<codeyard_git_storage::repositories::git_sessions::GitTasks>;
     fn repository_downloads(&self) -> &std::sync::Arc<tokio::sync::Semaphore>;
     fn repos_path(&self) -> &std::path::PathBuf;
 }
@@ -28,7 +28,7 @@ impl<T: RepositoryServices> RepositoryServices for std::sync::Arc<T> {
     }
     fn git_tasks(
         &self,
-    ) -> &std::sync::Arc<codeyard_repos_core::repositories::git_sessions::GitTasks> {
+    ) -> &std::sync::Arc<codeyard_git_storage::repositories::git_sessions::GitTasks> {
         (**self).git_tasks()
     }
     fn repository_downloads(&self) -> &std::sync::Arc<tokio::sync::Semaphore> {

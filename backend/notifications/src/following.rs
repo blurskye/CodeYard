@@ -3,7 +3,7 @@
 use crate::broadcast::NotificationBroadcaster;
 use crate::create::create_and_broadcast_notification;
 use crate::create::NotificationRequest;
-use codeyard_db_core::DbPool;
+use codeyard_database::DbPool;
 use serde_json::json;
 
 pub struct FollowStatus {
@@ -64,7 +64,7 @@ pub async fn change(
     pool: &DbPool,
     broadcaster: &NotificationBroadcaster,
     actor: i64,
-    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_database::queries::users::accounts::AccountCredential<'_>,
     username: &str,
     follow: bool,
 ) -> Result<FollowStatus, FollowError> {

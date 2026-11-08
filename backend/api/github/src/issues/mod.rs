@@ -15,8 +15,8 @@ use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
 use codeyard_db_repos::assignees::AssignedItem;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -24,9 +24,9 @@ use std::sync::Arc;
 /// The documents of items in several repositories, in the order given. Items of one repository
 /// are read together.
 pub(super) async fn documents_across(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     reader: Reader<'_>,
-    items: &[(&codeyard_db_core::models::Repository, &str, AssignedItem)],
+    items: &[(&codeyard_database::models::Repository, &str, AssignedItem)],
 ) -> Result<Vec<Value>> {
     let mut groups: Vec<(i64, Vec<usize>)> = Vec::new();
     for (index, (repo, _, _)) in items.iter().enumerate() {
@@ -52,7 +52,7 @@ pub(super) async fn documents_across(
 }
 
 pub(super) async fn required_issue(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     repo: i64,
     number: &str,
 ) -> Result<i64> {
@@ -128,7 +128,7 @@ async fn list(
             } else {
                 name.clone()
             };
-            codeyard_model::account_input::validate_namespace(&name, 3)
+            codeyard_types::account_input::validate_namespace(&name, 3)
                 .map_err(|_| Error::invalid("Invalid mentioned user"))?;
             Ok::<_, Error>(name)
         })
@@ -252,7 +252,7 @@ pub(super) fn operation_error(error: codeyard_repos_pulls::issues::OperationErro
 }
 
 pub(super) fn pull_error(
-    error: codeyard_repos_core::repositories::pull_requests::OperationError,
+    error: codeyard_git_storage::repositories::pull_requests::OperationError,
 ) -> Error {
     crate::pulls::mutations::operation_error(error)
 }
@@ -290,7 +290,7 @@ pub fn assignment_error(error: anyhow::Error) -> Error {
 pub async fn apply_metadata(
     state: &AppState,
     authentication: &codeyard_identity::github_auth::Authentication,
-    repo: &codeyard_db_core::models::Repository,
+    repo: &codeyard_database::models::Repository,
     item: AssignedItem,
     detail: (&str, i32, &str),
     metadata: Metadata,

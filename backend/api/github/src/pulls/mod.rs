@@ -13,10 +13,10 @@ use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
-use codeyard_repos_core::api_shared::github::contents::store_error;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_git_storage::api_shared::github::contents::store_error;
+use codeyard_git_storage::repositories::store::repo_store;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -37,8 +37,8 @@ async fn target(
     name: &str,
     number: i32,
 ) -> Result<(
-    codeyard_db_core::models::Repository,
-    codeyard_db_core::models::PullRequest,
+    codeyard_database::models::Repository,
+    codeyard_database::models::PullRequest,
 )> {
     let (repo, _) = repository(state, headers, owner, name, false).await?;
     let pull =
@@ -59,8 +59,8 @@ async fn person(state: &AppState, id: i64) -> Result<Value> {
 }
 
 pub(super) async fn association(
-    pool: &codeyard_db_core::DbPool,
-    repo: &codeyard_db_core::models::Repository,
+    pool: &codeyard_database::DbPool,
+    repo: &codeyard_database::models::Repository,
     user_id: i64,
 ) -> Result<&'static str> {
     codeyard_identity::repository_access::author_association(pool, repo, user_id)
@@ -71,8 +71,8 @@ pub(super) async fn association(
 pub(super) async fn readable_head(
     state: &AppState,
     auth: Option<&codeyard_identity::github_auth::Authentication>,
-    pull: &codeyard_db_core::models::PullRequest,
-) -> Result<Option<codeyard_db_core::models::Repository>> {
+    pull: &codeyard_database::models::PullRequest,
+) -> Result<Option<codeyard_database::models::Repository>> {
     match pull.head_repo_id {
         Some(id) => crate::auth::referenced_repository(state, auth, id).await,
         None => Ok(None),
@@ -83,7 +83,7 @@ pub(super) async fn readable_head(
 /// names the head owner, but not the repository.
 pub(super) async fn hidden_head(
     state: &AppState,
-    pull: &codeyard_db_core::models::PullRequest,
+    pull: &codeyard_database::models::PullRequest,
 ) -> Result<Value> {
     let head = match pull.head_repo_id {
         Some(id) => codeyard_db_repos::repositories::records::get_repository_by_id(&state.pool, id)
@@ -114,9 +114,9 @@ pub(super) async fn hidden_head(
 pub(super) async fn document(
     state: &AppState,
     headers: &HeaderMap,
-    repo: &codeyard_db_core::models::Repository,
+    repo: &codeyard_database::models::Repository,
     owner: &str,
-    pull: &codeyard_db_core::models::PullRequest,
+    pull: &codeyard_database::models::PullRequest,
     detail: bool,
 ) -> Result<Value> {
     let viewer = codeyard_identity::github_auth::authenticate(state, headers, false).await?;
@@ -211,7 +211,7 @@ pub(super) async fn document(
     }
     value["requested_reviewers"] = json!(requested);
     value["auto_merge"] =
-        codeyard_repos_core::webhooks::documents::auto_merge(&state.pool, pull.id)
+        codeyard_git_storage::webhooks::documents::auto_merge(&state.pool, pull.id)
             .await
             .map_err(Error::unavailable)?;
     value["requested_teams"] = json!(
@@ -348,8 +348,8 @@ async fn get_pull(
 /// The pull request's diff or patch as plain text, for `gh pr diff` and `.diff` links.
 pub(super) async fn diff_response(
     state: &AppState,
-    repo: &codeyard_db_core::models::Repository,
-    pull: &codeyard_db_core::models::PullRequest,
+    repo: &codeyard_database::models::Repository,
+    pull: &codeyard_database::models::PullRequest,
     media: crate::diff_media::Media,
 ) -> Result<Response> {
     let store = repo_store(repo, state.cluster.as_ref());

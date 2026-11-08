@@ -1,8 +1,8 @@
 use anyhow::Result;
 use chrono::DateTime;
 use chrono::Utc;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::DbPool;
+use codeyard_database::native_operation;
+use codeyard_database::DbPool;
 use serde_json::Value;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -116,10 +116,10 @@ pub fn valid_state(state: &str) -> bool {
     )
 }
 pub struct Resolution {
-    pub issue: codeyard_db_core::models::Issue,
+    pub issue: codeyard_database::models::Issue,
     pub suggestion: Suggestion,
     pub assignment: Option<i64>,
-    pub closed_issue: Option<codeyard_db_core::models::Issue>,
+    pub closed_issue: Option<codeyard_database::models::Issue>,
     pub invalidated: bool,
 }
 #[derive(Clone, Copy, Debug, thiserror::Error)]
@@ -170,7 +170,7 @@ pub fn refusal(error: &anyhow::Error) -> Option<Refusal> {
         );
     }
     if error
-        .downcast_ref::<codeyard_db_core::queries::discussions::DiscussionWriteRefusal>()
+        .downcast_ref::<codeyard_database::queries::discussions::DiscussionWriteRefusal>()
         .is_some()
     {
         return Some(Refusal::Denied);
@@ -183,10 +183,10 @@ native_operation!(crate::postgres::suggestions::enabled,crate::sqlite::suggestio
 native_operation!(crate::postgres::suggestions::can_triage,crate::sqlite::suggestions::can_triage,
     fn can_triage(pool:&DbPool,repo:i64,actor:i64)->Result<bool>);
 native_operation!(crate::postgres::suggestions::set_enabled,crate::sqlite::suggestions::set_enabled,
-    fn set_enabled(pool:&DbPool,repo:i64,actor:i64,credential:&codeyard_db_core::queries::users::accounts::AccountCredential<'_>,enabled:bool)->Result<()>);
+    fn set_enabled(pool:&DbPool,repo:i64,actor:i64,credential:&codeyard_database::queries::users::accounts::AccountCredential<'_>,enabled:bool)->Result<()>);
 native_operation!(crate::postgres::suggestions::list,crate::sqlite::suggestions::list,
     fn list(pool:&DbPool,repo:i64,actor:i64,issue:i64,filter:&ListFilter<'_>)->Result<Vec<Suggestion>>);
 native_operation!(crate::postgres::suggestions::propose,crate::sqlite::suggestions::propose,
-    fn propose(pool:&DbPool,repo:i64,actor:i64,credential:&codeyard_db_core::queries::users::accounts::AccountCredential<'_>,issue:i64,proposal:&Proposal,target_repository:Option<i64>)->Result<Suggestion>);
+    fn propose(pool:&DbPool,repo:i64,actor:i64,credential:&codeyard_database::queries::users::accounts::AccountCredential<'_>,issue:i64,proposal:&Proposal,target_repository:Option<i64>)->Result<Suggestion>);
 native_operation!(crate::postgres::suggestions::resolve,crate::sqlite::suggestions::resolve,
-    fn resolve(pool:&DbPool,repo:i64,actor:i64,credential:&codeyard_db_core::queries::users::accounts::AccountCredential<'_>,issue:i64,id:i64,approve:bool)->Result<Resolution>);
+    fn resolve(pool:&DbPool,repo:i64,actor:i64,credential:&codeyard_database::queries::users::accounts::AccountCredential<'_>,issue:i64,id:i64,approve:bool)->Result<Resolution>);

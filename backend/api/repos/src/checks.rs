@@ -12,9 +12,9 @@ use axum::Router;
 use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_api_http::context::PageContext;
 use codeyard_app::app::AppState;
+use codeyard_database::models::Repository;
 use codeyard_db_actions::checks::Credential;
 use codeyard_db_actions::checks::ANNOTATIONS_PER_PAGE;
-use codeyard_db_core::models::Repository;
 use codeyard_webui::app::Page;
 use codeyard_webui::pages::repos::checks as view;
 use codeyard_webui::pages::repos::page::Page as RepoPage;
@@ -208,7 +208,7 @@ async fn submit(
             &owner,
             actor,
             Credential::Session(&session),
-            codeyard_db_core::queries::ci::CiCredential::Session(session.clone()),
+            codeyard_database::queries::ci::CiCredential::Session(session.clone()),
             run.suite_id,
             None,
         )

@@ -2,10 +2,10 @@ use crate::users::blocks::BlockTargetMissing;
 use crate::users::blocks::InteractionBlocked;
 use crate::users::blocks::InvalidBlock;
 use anyhow::Result;
-use codeyard_db_core::models::User;
-use codeyard_db_core::pool::PgPool;
-use codeyard_db_core::queries::postgres::users::blocks::repository_interaction_blocked;
-use codeyard_db_core::queries::users::accounts::AccountCredential;
+use codeyard_database::models::User;
+use codeyard_database::pool::PgPool;
+use codeyard_database::queries::postgres::users::blocks::repository_interaction_blocked;
+use codeyard_database::queries::users::accounts::AccountCredential;
 use sqlx::PgConnection;
 
 pub async fn list_blocks(pool: &PgPool, user: i64, limit: i64, offset: i64) -> Result<Vec<User>> {
@@ -31,7 +31,7 @@ pub async fn require_repository_interaction(
     actor: i64,
     repo: i64,
 ) -> Result<()> {
-    codeyard_db_core::queries::postgres::users::transitions::lock_accounts_shared(
+    codeyard_database::queries::postgres::users::transitions::lock_accounts_shared(
         connection,
         &[actor],
     )
@@ -107,7 +107,7 @@ pub async fn change_block(
             .bind(owner).bind(actor).execute(&mut *tx).await?;
         let runs: Vec<i64> = sqlx::query_scalar(&format!("SELECT id FROM ci_runs WHERE triggered_by_id=$2 AND repo_id IN ({repositories}) AND (status IN ('queued','running') OR completed_at>clock_timestamp()-INTERVAL '1 hour')"))
             .bind(owner).bind(actor).fetch_all(&mut *tx).await?;
-        codeyard_db_core::queries::postgres::ci::stop_ci_runs(&mut tx, &runs).await?;
+        codeyard_database::queries::postgres::ci::stop_ci_runs(&mut tx, &runs).await?;
     }
     sqlx::query("DELETE FROM notifications WHERE (user_id=$1 AND actor_id=$2) OR (user_id=$2 AND actor_id=$1)").bind(user).bind(target).execute(&mut *tx).await?;
     tx.commit().await?;

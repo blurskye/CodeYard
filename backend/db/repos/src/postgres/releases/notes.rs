@@ -1,5 +1,5 @@
 use anyhow::Result;
-use codeyard_db_core::pool::PgPool;
+use codeyard_database::pool::PgPool;
 use sqlx::Postgres;
 use sqlx::QueryBuilder;
 

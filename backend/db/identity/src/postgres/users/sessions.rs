@@ -2,11 +2,11 @@ use anyhow::Result;
 use chrono::DateTime;
 use chrono::Duration;
 use chrono::Utc;
-use codeyard_db_core::models::BrowserSession;
-use codeyard_db_core::models::OAuthState;
-use codeyard_db_core::models::Session;
-use codeyard_db_core::models::User;
-use codeyard_db_core::pool::PgPool;
+use codeyard_database::models::BrowserSession;
+use codeyard_database::models::OAuthState;
+use codeyard_database::models::Session;
+use codeyard_database::models::User;
+use codeyard_database::pool::PgPool;
 use codeyard_support::crypto::is_hex_token;
 use subtle::ConstantTimeEq;
 
@@ -185,7 +185,7 @@ pub async fn rotate_authenticated_session(
     ip_address: Option<&str>,
     expires_at: DateTime<Utc>,
 ) -> Result<Option<BrowserSession>> {
-    if codeyard_types::cells::Secret::cookie(fresh).is_err() || old == Some(fresh) {
+    if codeyard_types::cell_ids::Secret::cookie(fresh).is_err() || old == Some(fresh) {
         anyhow::bail!("Authenticated session requires a fresh random identifier");
     }
     let mut tx = pool.begin().await?;
@@ -195,7 +195,7 @@ pub async fn rotate_authenticated_session(
     ) {
         // Account authority precedes browser, configuration and organization locks, as in
         // account restrictions and private-provider enrollment.
-        codeyard_db_core::queries::postgres::users::transitions::lock_accounts_shared(
+        codeyard_database::queries::postgres::users::transitions::lock_accounts_shared(
             &mut tx,
             &[user_id],
         )
@@ -243,7 +243,7 @@ pub async fn rotate_authenticated_session(
         subject,
     } = credential
     {
-        if codeyard_model::oauth_apps::organization_from_oidc_provider(provider)
+        if codeyard_types::oauth_apps::organization_from_oidc_provider(provider)
             != Some(organization)
         {
             return Ok(None);
@@ -256,11 +256,11 @@ pub async fn rotate_authenticated_session(
             return Ok(None);
         };
         if !matches!(
-            codeyard_db_core::queries::postgres::organizations::authority::authority(
+            codeyard_database::queries::postgres::organizations::authority::authority(
                 &mut tx, user_id, org
             )
             .await?,
-            codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(_)
+            codeyard_database::queries::organizations::OrganizationOutcome::Applied(_)
         ) {
             return Ok(None);
         }
@@ -363,7 +363,7 @@ pub async fn create_browser_session(
     ip_address: Option<&str>,
     expires_at: DateTime<Utc>,
 ) -> Result<BrowserSession> {
-    if codeyard_types::cells::Secret::cookie(id).is_err() {
+    if codeyard_types::cell_ids::Secret::cookie(id).is_err() {
         anyhow::bail!("Session requires a random identifier");
     }
     let mut tx = pool.begin().await?;
@@ -432,7 +432,7 @@ pub async fn get_or_create_csrf_token(
     candidate: &str,
     ttl_seconds: i64,
 ) -> Result<Option<String>> {
-    if codeyard_types::cells::Secret::cookie(id).is_err()
+    if codeyard_types::cell_ids::Secret::cookie(id).is_err()
         || !is_hex_token(candidate, 64)
         || !(1..=7200).contains(&ttl_seconds)
     {
@@ -569,7 +569,7 @@ pub async fn session_page(
     crate::postgres::users::transitions::require_account(
         &mut tx,
         user,
-        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(current),
+        &codeyard_database::queries::users::accounts::AccountCredential::Session(current),
     )
     .await?;
     let rows = sqlx::query_as("SELECT id,user_id,user_agent,ip_address::text AS ip_address,expires_at,created_at,ordinal FROM sessions WHERE user_id=$1 AND expires_at>clock_timestamp() AND ($2<=0 OR ordinal<=$2) ORDER BY ordinal DESC LIMIT 101")

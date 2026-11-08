@@ -1,7 +1,7 @@
 use crate::import_authors::Author;
 use anyhow::Result;
-use codeyard_db_core::pool::PgPool;
-use codeyard_db_core::queries::source_imports::ImportRefusal;
+use codeyard_database::pool::PgPool;
+use codeyard_database::queries::source_imports::ImportRefusal;
 
 pub async fn record(
     pool: &PgPool,
@@ -11,7 +11,7 @@ pub async fn record(
 ) -> Result<Vec<Author>> {
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::postgres::discussions::lock_admin_authority(
+        codeyard_database::queries::postgres::discussions::lock_admin_authority(
             &mut tx, actor, repo
         )
         .await?,
@@ -47,7 +47,7 @@ pub async fn map(
 ) -> Result<Option<Author>> {
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::postgres::discussions::lock_admin_authority(
+        codeyard_database::queries::postgres::discussions::lock_admin_authority(
             &mut tx, actor, repo
         )
         .await?,

@@ -1,7 +1,7 @@
 use codeyard_db_repos::assignees::AssignedItem;
 use codeyard_identity::database_context::DatabaseContext;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
 use serde_json::json;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -22,8 +22,8 @@ pub enum Reader<'a> {
 
 /// The REST issue document that webhook payloads send. `None` when the item is gone.
 pub async fn webhook_document(
-    pool: &codeyard_db_core::DbPool,
-    repo: &codeyard_db_core::models::Repository,
+    pool: &codeyard_database::DbPool,
+    repo: &codeyard_database::models::Repository,
     owner: &str,
     item: AssignedItem,
 ) -> Option<Value> {
@@ -33,9 +33,9 @@ pub async fn webhook_document(
 }
 
 pub async fn document(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     reader: Reader<'_>,
-    repo: &codeyard_db_core::models::Repository,
+    repo: &codeyard_database::models::Repository,
     owner: &str,
     item: AssignedItem,
 ) -> Result<Value> {
@@ -48,9 +48,9 @@ pub async fn document(
 /// The issue documents of `items`, all in `repo`, in the same order. An item that is gone or in
 /// another repository is missing.
 pub async fn documents(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     reader: Reader<'_>,
-    repo: &codeyard_db_core::models::Repository,
+    repo: &codeyard_database::models::Repository,
     owner: &str,
     items: &[AssignedItem],
 ) -> Result<Vec<Value>> {
@@ -105,21 +105,21 @@ fn sorted(mut ids: Vec<i64>) -> Vec<i64> {
 
 /// Up to 100 documents. Each kind of metadata is read in one batch for the whole page.
 pub async fn documents_page(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     reader: Reader<'_>,
-    repo: &codeyard_db_core::models::Repository,
+    repo: &codeyard_database::models::Repository,
     owner: &str,
     items: &[AssignedItem],
 ) -> Result<Vec<Value>> {
     let (issue_ids, pull_ids) = split(items);
-    let issues: HashMap<i64, codeyard_db_core::models::Issue> =
+    let issues: HashMap<i64, codeyard_database::models::Issue> =
         codeyard_db_repos::issues::get_issues_by_ids(pool, repo.id, &issue_ids)
             .await
             .map_err(Error::unavailable)?
             .into_iter()
             .map(|issue| (issue.id, issue))
             .collect();
-    let pulls: HashMap<i64, codeyard_db_core::models::PullRequest> =
+    let pulls: HashMap<i64, codeyard_database::models::PullRequest> =
         codeyard_db_repos::pull_requests::records::get_pull_requests_by_ids(
             pool, repo.id, &pull_ids,
         )
@@ -132,7 +132,7 @@ pub async fn documents_page(
         AssignedItem::Issue(id) => issues.contains_key(&id),
         AssignedItem::PullRequest(id) => pulls.contains_key(&id),
     };
-    let milestones: HashMap<i64, codeyard_db_core::models::MilestoneSummary> =
+    let milestones: HashMap<i64, codeyard_database::models::MilestoneSummary> =
         codeyard_db_repos::milestones::get_milestones_by_ids(
             pool,
             repo.id,
@@ -150,7 +150,7 @@ pub async fn documents_page(
         .map(|summary| (summary.milestone.id, summary))
         .collect();
     // People: authors, closers and milestone creators by id, assignees by name, each read once.
-    let users: HashMap<i64, codeyard_db_core::models::User> =
+    let users: HashMap<i64, codeyard_database::models::User> =
         codeyard_db_identity::users::accounts::get_users_by_ids(
             pool,
             &sorted(
@@ -191,7 +191,7 @@ pub async fn documents_page(
     let mut names: Vec<String> = assigned.values().flatten().cloned().collect();
     names.sort_unstable();
     names.dedup();
-    let assignees: HashMap<String, codeyard_db_core::models::User> = if names.is_empty() {
+    let assignees: HashMap<String, codeyard_database::models::User> = if names.is_empty() {
         HashMap::new()
     } else {
         codeyard_db_identity::users::accounts::get_users_by_usernames(pool, &names)
@@ -362,7 +362,7 @@ pub async fn documents_page(
         value["pinned_comment"] = match pins.get(&(pull, id)) {
             Some(pin) => {
                 let comment_id =
-                    codeyard_model::webhook_ids::conversation_comment_id(pin.comment_id, pull);
+                    codeyard_types::webhook_ids::conversation_comment_id(pin.comment_id, pull);
                 let comment = crate::comment_documents::find(pool, repo.id, comment_id).await?;
                 crate::comment_documents::document(pool, repo, owner, &comment).await?
             }
@@ -411,9 +411,9 @@ struct Summary {
 /// The relationship counts of `issue_ids`, all in `repo`, from the related issues the reader may
 /// read.
 async fn relationship_summaries(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     reader: Reader<'_>,
-    repo: &codeyard_db_core::models::Repository,
+    repo: &codeyard_database::models::Repository,
     issue_ids: &[i64],
 ) -> Result<HashMap<i64, Summary>> {
     let mut rows = Vec::new();
@@ -480,9 +480,9 @@ pub fn assignee_names(names: Vec<String>) -> Result<Vec<String>> {
 }
 
 pub async fn resolve_assignees(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     names: &[String],
-) -> Result<Vec<codeyard_db_core::models::User>> {
+) -> Result<Vec<codeyard_database::models::User>> {
     let users = codeyard_db_identity::users::accounts::get_users_by_usernames(pool, names)
         .await
         .map_err(Error::unavailable)?;
@@ -496,7 +496,7 @@ pub async fn resolve_assignees(
 pub struct Metadata {
     pub issue_type: Option<Option<i64>>,
     pub labels: Option<Vec<i64>>,
-    pub assignees: Option<Vec<codeyard_db_core::models::User>>,
+    pub assignees: Option<Vec<codeyard_database::models::User>>,
     pub milestone: Option<Option<i32>>,
 }
 
@@ -519,9 +519,9 @@ impl Metadata {
 }
 
 pub async fn metadata(
-    pool: &codeyard_db_core::DbPool,
-    repo: &codeyard_db_core::models::Repository,
-    actor: &codeyard_db_core::models::User,
+    pool: &codeyard_database::DbPool,
+    repo: &codeyard_database::models::Repository,
+    actor: &codeyard_database::models::User,
     input: &Value,
 ) -> Result<Metadata> {
     if !codeyard_identity::repository_access::can_triage(pool, actor, repo)

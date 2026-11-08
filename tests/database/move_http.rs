@@ -5,8 +5,8 @@ use axum::{
     http::{Request, StatusCode},
     Router,
 };
-use codeyard_db_cluster::moves::{self, Account};
-use codeyard_model::cells::ObjectKind;
+use codeyard_db_placement::moves::{self, Account};
+use codeyard_types::cells::ObjectKind;
 use serde_json::{json, Value};
 use std::{sync::Arc, time::Duration};
 use tower::ServiceExt;
@@ -77,7 +77,7 @@ pub(crate) async fn token(database: &PostgresDatabase, user: i64) -> String {
 }
 
 pub(crate) async fn app(database: &PostgresDatabase, root: &std::path::Path) -> Router {
-    codeyard_db_cluster::node_config::upsert_node_configuration(&database.pool, "public", true)
+    codeyard_db_placement::node_config::upsert_node_configuration(&database.pool, "public", true)
         .await
         .unwrap();
     let store = Arc::new(
@@ -162,13 +162,15 @@ async fn an_organization_with_a_thousand_members_moves_without_restoring_a_revok
     let mut source = PostgresDatabase::new().await;
     let mut target = PostgresDatabase::new().await;
     for (database, prefix) in [(&source, 1), (&target, 2)] {
-        codeyard_db_core::cells::initialize(
+        codeyard_database::cells::initialize(
             &database.pool,
-            codeyard_types::cells::Prefix::new(prefix),
+            codeyard_types::cell_ids::Prefix::new(prefix),
         )
         .await
         .unwrap();
-        codeyard_db_core::cells::load(&database.pool).await.unwrap();
+        codeyard_database::cells::load(&database.pool)
+            .await
+            .unwrap();
     }
     let owner = codeyard_db_identity::users::accounts::create_user(&source.pool, "owner", None)
         .await

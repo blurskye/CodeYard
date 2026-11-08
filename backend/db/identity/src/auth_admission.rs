@@ -1,7 +1,7 @@
 //! Failed-login limits per client address and per account, shared by every node. Storage that
 //! cannot answer denies the attempt.
 
-use codeyard_db_core::DbPool;
+use codeyard_database::DbPool;
 use sha2::{Digest, Sha256};
 use std::time::Duration;
 

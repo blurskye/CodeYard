@@ -1,8 +1,8 @@
 //! Byte objects share authenticated node transport, but never Git/user authorization.
 use crate::RpcHandler;
-use codeyard_db_cluster::objects as db;
+use codeyard_db_placement::objects as db;
 use codeyard_git::error::RepoError;
-use codeyard_repos_core::wire::{invalid, unavailable, Operation, Request};
+use codeyard_git_storage::wire::{invalid, unavailable, Operation, Request};
 use codeyard_storage::{local::LocalStore, nodes::Declaration, Upload};
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};

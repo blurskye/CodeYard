@@ -15,8 +15,8 @@ use std::{str::FromStr, time::Duration};
 // This handler suite needs only a disposable SQLite handle, not the shared
 // fixture's unrelated PostgreSQL/reopen API. Keep its ownership local.
 struct NativeDatabase {
-    pool: codeyard_db_core::DbPool,
-    raw: codeyard_db_core::pool::SqlitePool,
+    pool: codeyard_database::DbPool,
+    raw: codeyard_database::pool::SqlitePool,
     _directory: tempfile::TempDir,
 }
 impl NativeDatabase {
@@ -26,10 +26,10 @@ impl NativeDatabase {
             "sqlite://{}",
             directory.path().join("application.sqlite").display()
         );
-        let pool = codeyard_db_core::init_db(&url)
+        let pool = codeyard_database::init_db(&url)
             .await
             .expect("native SQLite open");
-        codeyard_db_core::run_migrations(&pool)
+        codeyard_database::run_migrations(&pool)
             .await
             .expect("native SQLite migration");
         let raw = SqlitePoolOptions::new()
@@ -43,7 +43,7 @@ impl NativeDatabase {
                     .busy_timeout(Duration::from_secs(3)),
             )
             .await
-            .map(codeyard_db_core::pool::Pool::from)
+            .map(codeyard_database::pool::Pool::from)
             .expect("owned raw fixture handle");
         Self {
             pool,
@@ -67,12 +67,12 @@ fn token() -> String {
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
 use codeyard_git::error::RepoError;
-use codeyard_repos_core::repositories::store::RepoStore;
+use codeyard_git_storage::repositories::store::RepoStore;
 use codeyard_storage::ObjectStore;
 use tower::ServiceExt;
 
 struct Actor {
-    user: codeyard_db_core::models::User,
+    user: codeyard_database::models::User,
     session: String,
     csrf: String,
 }
@@ -83,9 +83,9 @@ struct Fixture {
     owner: Actor,
     admin: Actor,
     member: Actor,
-    public: codeyard_db_core::models::Repository,
-    private: codeyard_db_core::models::Repository,
-    personal: codeyard_db_core::models::Repository,
+    public: codeyard_database::models::Repository,
+    private: codeyard_database::models::Repository,
+    personal: codeyard_database::models::Repository,
     sha: String,
 }
 impl Fixture {
@@ -181,7 +181,7 @@ impl Fixture {
             sha,
         }
     }
-    async fn actor(pool: &codeyard_db_core::DbPool, username: &str) -> Actor {
+    async fn actor(pool: &codeyard_database::DbPool, username: &str) -> Actor {
         let user = codeyard_db_identity::users::accounts::create_user(pool, username, None)
             .await
             .unwrap();
@@ -312,14 +312,14 @@ impl Fixture {
         .unwrap();
         assert_eq!(unrelated_memberships, 0);
     }
-    async fn review(&self, repository: &codeyard_db_core::models::Repository) -> (i32, i64) {
+    async fn review(&self, repository: &codeyard_database::models::Repository) -> (i32, i64) {
         // Fixture discussion data, not an authorized
         // contribution from the same-numbered unrelated account.
-        let pull = sqlx::query_as::<_, codeyard_db_core::models::PullRequest>(
+        let pull = sqlx::query_as::<_, codeyard_database::models::PullRequest>(
             "INSERT INTO pull_requests(repo_id,number,author_id,title,body,head_branch,head_sha,base_branch,base_sha,is_draft) VALUES(?1,(SELECT COALESCE(MAX(number),0)+1 FROM pull_requests WHERE repo_id=?1),?2,'Fixture pull','','topic',?3,'main',?3,TRUE) RETURNING *",
         ).bind(repository.id).bind(self.member.user.id).bind(&self.sha)
             .fetch_one(&self.database.raw).await.unwrap();
-        let review = sqlx::query_as::<_, codeyard_db_core::models::PullRequestReview>(
+        let review = sqlx::query_as::<_, codeyard_database::models::PullRequestReview>(
             "INSERT INTO pr_reviews(pull_request_id,author_id,state,commit_sha) VALUES(?1,?2,'approved',?3) RETURNING *",
         ).bind(pull.id).bind(self.admin.user.id).bind(&self.sha)
             .fetch_one(&self.database.raw).await.unwrap();
@@ -329,7 +329,7 @@ impl Fixture {
 
 async fn denied_owner_operations(
     fixture: &Fixture,
-    repository: &codeyard_db_core::models::Repository,
+    repository: &codeyard_database::models::Repository,
 ) {
     assert_eq!(repository.owner_kind, "org");
     assert_eq!(repository.owner_org_id, Some(fixture.owner.user.id));
@@ -337,7 +337,7 @@ async fn denied_owner_operations(
         &fixture.database.pool,
         fixture.member.user.id,
         repository.id,
-        codeyard_db_core::models::AccessLevel::Read,
+        codeyard_database::models::AccessLevel::Read,
     )
     .await
     .unwrap();
@@ -381,7 +381,7 @@ async fn denied_owner_operations(
         )
         .await
         .unwrap(),
-        codeyard_db_core::models::AccessLevel::Read
+        codeyard_database::models::AccessLevel::Read
     );
     let rules = codeyard_db_repos::repositories::protection::list_branch_protection_rules(
         &fixture.database.pool,
@@ -435,7 +435,7 @@ async fn private_org_equal_user_id_denied_even_with_explicit_read_access() {
         &fixture.database.pool,
         fixture.owner.user.id,
         fixture.private.id,
-        codeyard_db_core::models::AccessLevel::Read,
+        codeyard_database::models::AccessLevel::Read,
     )
     .await
     .unwrap();
@@ -458,7 +458,7 @@ async fn native_forms_and_page_controls_do_not_treat_org_id_as_personal_owner() 
         &fixture.database.pool,
         fixture.owner.user.id,
         fixture.private.id,
-        codeyard_db_core::models::AccessLevel::Read,
+        codeyard_database::models::AccessLevel::Read,
     )
     .await
     .unwrap();
@@ -554,7 +554,7 @@ async fn native_forms_and_page_controls_do_not_treat_org_id_as_personal_owner() 
         )
         .await
         .unwrap(),
-        codeyard_db_core::models::AccessLevel::Write
+        codeyard_database::models::AccessLevel::Write
     );
     assert_eq!(
         fixture
@@ -748,13 +748,13 @@ async fn collaborator_api_projects_canonical_levels_without_changing_privileges_
     let base = "/api/repos/overlapping_user/personal";
     let mut actors = Vec::new();
     for (level, name) in [
-        (codeyard_db_core::models::AccessLevel::None, "none"),
-        (codeyard_db_core::models::AccessLevel::Read, "read"),
-        (codeyard_db_core::models::AccessLevel::Triage, "triage"),
-        (codeyard_db_core::models::AccessLevel::Write, "write"),
-        (codeyard_db_core::models::AccessLevel::Maintain, "maintain"),
-        (codeyard_db_core::models::AccessLevel::Admin, "admin"),
-        (codeyard_db_core::models::AccessLevel::Owner, "owner"),
+        (codeyard_database::models::AccessLevel::None, "none"),
+        (codeyard_database::models::AccessLevel::Read, "read"),
+        (codeyard_database::models::AccessLevel::Triage, "triage"),
+        (codeyard_database::models::AccessLevel::Write, "write"),
+        (codeyard_database::models::AccessLevel::Maintain, "maintain"),
+        (codeyard_database::models::AccessLevel::Admin, "admin"),
+        (codeyard_database::models::AccessLevel::Owner, "owner"),
     ] {
         let actor = Fixture::actor(&fixture.database.pool, &format!("level_{name}")).await;
         codeyard_db_repos::repositories::access::grant_repo_access(
@@ -794,14 +794,14 @@ async fn collaborator_api_projects_canonical_levels_without_changing_privileges_
         // a floor and a direct Owner value is not ownership authority.
         let effective = if matches!(
             level,
-            codeyard_db_core::models::AccessLevel::None
-                | codeyard_db_core::models::AccessLevel::Owner
+            codeyard_database::models::AccessLevel::None
+                | codeyard_database::models::AccessLevel::Owner
         ) {
-            codeyard_db_core::models::AccessLevel::Read
+            codeyard_database::models::AccessLevel::Read
         } else {
             *level
         };
-        let effective_name = if effective == codeyard_db_core::models::AccessLevel::Read {
+        let effective_name = if effective == codeyard_database::models::AccessLevel::Read {
             "read"
         } else {
             *name
@@ -1010,7 +1010,7 @@ async fn organization_engagement_forks_and_pulls_never_notify_same_numbered_user
         &fixture.database.pool,
         fixture.member.user.id,
         fixture.personal.id,
-        codeyard_db_core::models::AccessLevel::Read,
+        codeyard_database::models::AccessLevel::Read,
     )
     .await
     .unwrap();
@@ -1132,7 +1132,7 @@ async fn valid_ref_without_workflow_directory_has_empty_actions_not_outage() {
         )
         .unwrap();
     let store = RepoStore::from_disk_path(directory.path().to_str().unwrap());
-    let workflows = codeyard_repos_core::workflows::list_workflows_for_ref(&store, "main").await;
+    let workflows = codeyard_git_storage::workflows::list_workflows_for_ref(&store, "main").await;
     let kind = workflows
         .as_ref()
         .err()
@@ -1146,14 +1146,14 @@ async fn valid_ref_without_workflow_directory_has_empty_actions_not_outage() {
     // A nonexistent ref or missing repository must remain an error, not be
     // mistaken for an existing commit without workflow definitions.
     assert!(
-        codeyard_repos_core::workflows::list_workflows_for_ref(&store, "missing-ref")
+        codeyard_git_storage::workflows::list_workflows_for_ref(&store, "missing-ref")
             .await
             .is_err()
     );
     let missing = directory.path().join("missing-repository");
     let missing = RepoStore::from_disk_path(missing.to_str().unwrap());
     assert!(
-        codeyard_repos_core::workflows::list_workflows_for_ref(&missing, "main")
+        codeyard_git_storage::workflows::list_workflows_for_ref(&missing, "main")
             .await
             .is_err()
     );

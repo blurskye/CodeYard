@@ -25,12 +25,12 @@ use codeyard_db_actions::deployments::NewDeployment;
 use codeyard_db_actions::deployments::NewStatus;
 use codeyard_db_actions::deployments::Refusal;
 use codeyard_db_actions::deployments::Status;
-use codeyard_model::github_error::Error;
-use codeyard_model::github_error::Result;
-use codeyard_model::urls::repo_url;
-use codeyard_repos_core::api_shared::github::contents::store_error;
-use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_git_storage::api_shared::github::contents::store_error;
+use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_repos_pulls::repositories::merges::BranchMerge;
+use codeyard_types::github_error::Error;
+use codeyard_types::github_error::Result;
+use codeyard_types::urls::repo_url;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -237,7 +237,7 @@ async fn create(
     let deployment = value.clone();
     let snapshot = repo.clone();
     let sender = codeyard_webhooks::payloads::Person::of(actor);
-    codeyard_repos_core::webhooks::emit(&state.pool, &repo, codeyard_model::webhook_events::DEPLOYMENT, vec![actor.id], move |owner, _| json!({"deployment": deployment, "repository": codeyard_webhooks::payloads::repository(&snapshot, owner), "sender": codeyard_webhooks::payloads::person(&sender)})).await;
+    codeyard_git_storage::webhooks::emit(&state.pool, &repo, codeyard_types::webhook_events::DEPLOYMENT, vec![actor.id], move |owner, _| json!({"deployment": deployment, "repository": codeyard_webhooks::payloads::repository(&snapshot, owner), "sender": codeyard_webhooks::payloads::person(&sender)})).await;
     Ok((
         StatusCode::CREATED,
         [(
@@ -356,7 +356,7 @@ async fn statuses(
         let deployment = document(&state, &deployment, owner, name).await?;
         let snapshot = repo.clone();
         let sender = codeyard_webhooks::payloads::Person::of(&actor);
-        codeyard_repos_core::webhooks::emit(&state.pool, &repo, codeyard_model::webhook_events::DEPLOYMENT_STATUS, vec![actor.id], move |owner, _| json!({"deployment_status": value, "deployment": deployment, "repository": codeyard_webhooks::payloads::repository(&snapshot, owner), "sender": codeyard_webhooks::payloads::person(&sender)})).await;
+        codeyard_git_storage::webhooks::emit(&state.pool, &repo, codeyard_types::webhook_events::DEPLOYMENT_STATUS, vec![actor.id], move |owner, _| json!({"deployment_status": value, "deployment": deployment, "repository": codeyard_webhooks::payloads::repository(&snapshot, owner), "sender": codeyard_webhooks::payloads::person(&sender)})).await;
     }
     let value = result.ok_or_else(|| Error::unavailable(()))?;
     Ok((

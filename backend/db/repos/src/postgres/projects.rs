@@ -8,9 +8,9 @@ use crate::projects::ProjectContents;
 use crate::projects::SelectOption;
 use crate::projects::Settings;
 use anyhow::Result;
-use codeyard_db_core::pool::PgPool;
-use codeyard_db_core::queries::users::accounts::AccountCredential;
-use codeyard_model::project_query::Refusal;
+use codeyard_database::pool::PgPool;
+use codeyard_database::queries::users::accounts::AccountCredential;
+use codeyard_types::project_query::Refusal;
 use sqlx::Postgres;
 use sqlx::Transaction;
 pub(crate) mod exports;
@@ -27,7 +27,7 @@ async fn owner_authority(
     if let Owner::User(user) = owner {
         anyhow::ensure!(user == actor, Refusal::Denied);
     }
-    codeyard_db_core::queries::postgres::users::transitions::lock_accounts_shared(tx, &[actor])
+    codeyard_database::queries::postgres::users::transitions::lock_accounts_shared(tx, &[actor])
         .await?;
     let (kind, id) = owner.parts();
     let table = if kind == "user" {
@@ -73,7 +73,7 @@ async fn write_project(
     credential: &AccountCredential<'_>,
     id: i64,
 ) -> Result<Project> {
-    codeyard_db_core::queries::postgres::users::transitions::lock_accounts_shared(tx, &[actor])
+    codeyard_database::queries::postgres::users::transitions::lock_accounts_shared(tx, &[actor])
         .await?;
     let project: Project =
         sqlx::query_as("SELECT * FROM projects WHERE id=$1 AND deleted_at IS NULL")
@@ -88,7 +88,7 @@ async fn write_project(
     };
     owner_authority(tx, actor, owner, false).await?;
     anyhow::ensure!(
-        codeyard_db_core::queries::postgres::users::transitions::credential_live(
+        codeyard_database::queries::postgres::users::transitions::credential_live(
             tx, actor, credential, true
         )
         .await?,
@@ -113,7 +113,7 @@ async fn readable_at(
     id: i64,
     include_deleted: bool,
 ) -> Result<()> {
-    codeyard_db_core::queries::postgres::users::transitions::lock_accounts_shared(
+    codeyard_database::queries::postgres::users::transitions::lock_accounts_shared(
         tx,
         &viewer.into_iter().collect::<Vec<_>>(),
     )
@@ -145,7 +145,7 @@ pub async fn create(
     owner_authority(&mut tx, actor, owner, true).await?;
     let (kind, id) = owner.parts();
     anyhow::ensure!(
-        codeyard_db_core::queries::postgres::users::transitions::credential_live(
+        codeyard_database::queries::postgres::users::transitions::credential_live(
             &mut tx, actor, credential, true
         )
         .await?,
@@ -241,7 +241,7 @@ pub async fn list(
 pub async fn get(pool: &PgPool, viewer: Option<i64>, owner: Owner, number: i64) -> Result<Project> {
     let mut tx = pool.begin().await?;
     let (kind, id) = owner.parts();
-    codeyard_db_core::queries::postgres::users::transitions::lock_accounts_shared(
+    codeyard_database::queries::postgres::users::transitions::lock_accounts_shared(
         &mut tx,
         &viewer.into_iter().collect::<Vec<_>>(),
     )

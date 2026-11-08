@@ -2,8 +2,8 @@ use anyhow::ensure;
 use anyhow::Result;
 use chrono::DateTime;
 use chrono::Utc;
-use codeyard_db_core::models::CiLogLine;
-use codeyard_model::ci::LogLine;
+use codeyard_database::models::CiLogLine;
+use codeyard_types::ci::LogLine;
 use flate2::read::ZlibDecoder;
 use flate2::write::ZlibEncoder;
 use flate2::Compression;
@@ -93,7 +93,7 @@ impl LogRange {
 
     pub async fn extend(
         &mut self,
-        pool: &codeyard_db_core::DbPool,
+        pool: &codeyard_database::DbPool,
         chunks: Vec<Chunk>,
     ) -> Result<()> {
         for chunk in chunks {
@@ -164,7 +164,7 @@ impl Chunk {
         );
         let mut prepared = Vec::with_capacity(lines.len());
         for line in lines {
-            prepared.extend(codeyard_db_core::ci_logs::prepare_logs(&[line])?);
+            prepared.extend(codeyard_database::ci_logs::prepare_logs(&[line])?);
         }
         let lines = prepared;
         ensure!(
@@ -206,18 +206,18 @@ pub(crate) struct StoredChunk {
 }
 
 async fn append_within_deadline(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     run: i64,
     worker: &str,
     sequence: i64,
     lines: &[LogLine],
 ) -> Result<bool> {
-    use codeyard_db_core::DbPool;
+    use codeyard_database::DbPool;
     ensure!(
         (0..100_000).contains(&sequence),
         "invalid CI upload sequence"
     );
-    let lines = codeyard_db_core::ci_logs::prepare_logs(lines)?;
+    let lines = codeyard_database::ci_logs::prepare_logs(lines)?;
     let hash = request_hash(&lines)?;
     // Contention can only come from another upload to this same run. Leave reserved
     // objects for the ordinary expiry sweep if authority or allocation changes during I/O.
@@ -242,7 +242,7 @@ async fn append_within_deadline(
             Preparation::Upload { lines, bytes } => (lines, bytes),
         };
         let (kept, _, _) =
-            codeyard_db_core::ci_logs::admit_log_lines(stored_lines, stored_bytes, &lines);
+            codeyard_database::ci_logs::admit_log_lines(stored_lines, stored_bytes, &lines);
         let (data, _) = encode(&kept)?;
         let upload = StoredChunk {
             key,
@@ -273,14 +273,14 @@ async fn append_within_deadline(
 }
 
 async fn read_range_within_deadline(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     run: i64,
     after: i64,
     before: i64,
     limit: i64,
     reverse: bool,
 ) -> Result<Vec<CiLogLine>> {
-    use codeyard_db_core::DbPool;
+    use codeyard_database::DbPool;
     let mut range = LogRange::new(after, before, limit, reverse)?;
     while !range.complete() {
         // Queries return metadata only and release their connection before object I/O.
@@ -309,14 +309,14 @@ async fn read_range_within_deadline(
 }
 
 pub(crate) async fn append(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     run: i64,
     worker: &str,
     sequence: i64,
     lines: &[LogLine],
 ) -> Result<bool> {
     tokio::time::timeout(
-        codeyard_db_core::ci_logs::io_timeout()?,
+        codeyard_database::ci_logs::io_timeout()?,
         append_within_deadline(pool, run, worker, sequence, lines),
     )
     .await
@@ -324,7 +324,7 @@ pub(crate) async fn append(
 }
 
 pub(crate) async fn read_range(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     run: i64,
     after: i64,
     before: i64,
@@ -332,7 +332,7 @@ pub(crate) async fn read_range(
     reverse: bool,
 ) -> Result<Vec<CiLogLine>> {
     tokio::time::timeout(
-        codeyard_db_core::ci_logs::io_timeout()?,
+        codeyard_database::ci_logs::io_timeout()?,
         read_range_within_deadline(pool, run, after, before, limit, reverse),
     )
     .await

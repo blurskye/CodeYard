@@ -1,16 +1,16 @@
 use crate::support::database::Database;
 use crate::support::organizations::applied;
 
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
+use codeyard_database::queries::organizations::OrganizationOutcome;
 use codeyard_db_orgs::organizations::profiles::NewOrganization;
 use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
 
-use codeyard_db_core::models::OrgRole;
-use codeyard_db_core::queries::rulesets::records::ListFilter;
-use codeyard_db_core::queries::rulesets::records::Owner;
-use codeyard_db_core::queries::rulesets::records::Page;
-use codeyard_db_core::queries::rulesets::records::SuiteFilter;
-use codeyard_db_core::queries::rulesets::Definition;
+use codeyard_database::models::OrgRole;
+use codeyard_database::queries::rulesets::records::ListFilter;
+use codeyard_database::queries::rulesets::records::Owner;
+use codeyard_database::queries::rulesets::records::Page;
+use codeyard_database::queries::rulesets::records::SuiteFilter;
+use codeyard_database::queries::rulesets::Definition;
 use serde_json::json;
 
 async fn contract(pg: bool) {

@@ -12,7 +12,7 @@ use codeyard_db_orgs::organizations::profiles::NewOrganization;
 use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
 
 use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
-use codeyard_repos_core::repositories::lifecycle;
+use codeyard_git_storage::repositories::lifecycle;
 use codeyard_webui::app::Page;
 use codeyard_webui::pages::account;
 use codeyard_webui::pages::settings::fine_grained::Model;
@@ -199,8 +199,9 @@ async fn contract(pg: bool) {
     assert_eq!(reply.status, 200, "{}", reply.text());
     let first = value(&reply.text());
     let framed =
-        codeyard_types::cells::Secret::token(&first, codeyard_types::tokens::FGPAT_PREFIX).unwrap();
-    assert_eq!(framed.cell, codeyard_types::cells::Prefix::ZERO);
+        codeyard_types::cell_ids::Secret::token(&first, codeyard_types::tokens::FGPAT_PREFIX)
+            .unwrap();
+    assert_eq!(framed.cell, codeyard_types::cell_ids::Prefix::ZERO);
     assert_eq!(framed.secret.len(), 64);
     let row = codeyard_db_identity::fine_grained_tokens::list_before(f.pool(), alice, None)
         .await

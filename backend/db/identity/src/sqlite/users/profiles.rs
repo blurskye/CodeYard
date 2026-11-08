@@ -2,16 +2,16 @@ use crate::users::profiles::InvalidPublicEmail;
 use crate::users::profiles::ProfilePatch;
 use crate::users::profiles::ProfileSettings;
 use anyhow::Result;
-use codeyard_db_core::models::User;
-use codeyard_db_core::pool::SqlitePool;
-use codeyard_db_core::queries::users::accounts::AccountCredential;
+use codeyard_database::models::User;
+use codeyard_database::pool::SqlitePool;
+use codeyard_database::queries::users::accounts::AccountCredential;
 
 pub async fn account_statistics(
     pool: &SqlitePool,
     user: i64,
     token: i64,
 ) -> Result<Option<crate::users::profiles::AccountStatistics>> {
-    let readable = codeyard_db_core::queries::sqlite::repositories::access::readable_condition();
+    let readable = codeyard_database::queries::sqlite::repositories::access::readable_condition();
     Ok(sqlx::query_as(&format!("SELECT
         (SELECT COUNT(*) FROM gists g JOIN repositories r ON r.id=g.repo_id WHERE r.owner_user_id=?1 AND g.ready AND g.is_public) AS public_gists,
         (SELECT COUNT(*) FROM gists g JOIN repositories r ON r.id=g.repo_id WHERE r.owner_user_id=?1 AND g.ready AND NOT g.is_public) AS private_gists,
@@ -29,7 +29,7 @@ pub async fn account_statistics(
                 AND ((instr(','||o.scopes||',',',user,')=0 AND instr(','||o.scopes||',',',read:user,')=0)
                     OR (o.client_id<>?3 AND NOT EXISTS(SELECT 1 FROM oauth_applications a WHERE a.client_id=o.client_id))
                     OR EXISTS(SELECT 1 FROM oauth_applications a WHERE a.client_id=o.client_id AND a.is_github_app))))"))
-        .bind(user).bind(token).bind(codeyard_model::identity::CLI_CLIENT).fetch_optional(pool).await?)
+        .bind(user).bind(token).bind(codeyard_types::identity::CLI_CLIENT).fetch_optional(pool).await?)
 }
 
 pub async fn public_email(pool: &SqlitePool, user: i64) -> Result<Option<String>> {

@@ -16,10 +16,10 @@ use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
 
 use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
 use codeyard_db_repos::repositories::creation::RepositoryTarget;
+use codeyard_git_storage::repositories::lifecycle;
 use codeyard_identity::fine_grained;
 use codeyard_identity::fine_grained::Access;
 use codeyard_identity::fine_grained::Owner;
-use codeyard_repos_core::repositories::lifecycle;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
@@ -92,7 +92,7 @@ async fn git_refs(router: &Router, token: &str, repo: &str, service: &str) -> u1
 }
 
 async fn token(
-    pool: &codeyard_db_core::DbPool,
+    pool: &codeyard_database::DbPool,
     user: i64,
     session: &str,
     owner: Owner,
@@ -203,9 +203,9 @@ async fn contract(pg: bool) {
     )
     .await;
     let framed =
-        codeyard_types::cells::Secret::token(&public, codeyard_types::tokens::FGPAT_PREFIX)
+        codeyard_types::cell_ids::Secret::token(&public, codeyard_types::tokens::FGPAT_PREFIX)
             .unwrap();
-    assert_eq!(framed.cell, codeyard_types::cells::Prefix::ZERO);
+    assert_eq!(framed.cell, codeyard_types::cell_ids::Prefix::ZERO);
     assert_eq!(framed.secret.len(), 64);
 
     // REST: what each selection reaches. Outside the token a private repository is missing.

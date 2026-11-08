@@ -151,7 +151,7 @@ pub(super) async fn send(
             actor,
             event_type.clone(),
             payload,
-            codeyard_db_core::queries::ci::CiCredential::Session(session),
+            codeyard_database::queries::ci::CiCredential::Session(session),
         )
         .await;
     match result {

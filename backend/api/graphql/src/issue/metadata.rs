@@ -11,7 +11,7 @@ use codeyard_db_identity::relationships::Kind;
 use codeyard_db_identity::relationships::Order;
 use codeyard_db_repos::discussion_search::Search;
 use codeyard_db_repos::discussion_search::Sort;
-use codeyard_model::node_id;
+use codeyard_types::node_id;
 
 pub(crate) fn issue_type(
     item: &codeyard_db_repos::issue_attributes::Attribute,
@@ -63,7 +63,7 @@ pub(super) async fn resolve(
     ctx: &Arguments,
     request: &RequestContext,
     parent: &Value,
-    repo: &codeyard_db_core::models::Repository,
+    repo: &codeyard_database::models::Repository,
     id: i64,
 ) -> Result<Value> {
     let pool = &request.state.pool;
@@ -179,7 +179,7 @@ pub(super) async fn resolve(
 pub(crate) async fn repository(
     ctx: &Arguments,
     request: &RequestContext,
-    repo: &codeyard_db_core::models::Repository,
+    repo: &codeyard_database::models::Repository,
 ) -> Result<Value> {
     crate::connection::validate(ctx)?;
     let rows = codeyard_db_repos::issue_attributes::catalog(

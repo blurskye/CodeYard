@@ -1,11 +1,11 @@
 use anyhow::Result;
 use chrono::DateTime;
 use chrono::Utc;
-use codeyard_db_core::models::PersonalAccessToken;
-use codeyard_db_core::models::Repository;
-use codeyard_db_core::native_operation;
-use codeyard_db_core::queries::github_apps::Token;
-use codeyard_db_core::DbPool;
+use codeyard_database::models::PersonalAccessToken;
+use codeyard_database::models::Repository;
+use codeyard_database::native_operation;
+use codeyard_database::queries::github_apps::Token;
+use codeyard_database::DbPool;
 
 #[derive(Clone, Debug, sqlx::FromRow)]
 pub struct App {
@@ -113,7 +113,7 @@ pub enum RepositoryChange {
     LastRepository,
 }
 native_operation!(crate::postgres::github_apps::change_repository, crate::sqlite::github_apps::change_repository,
-    fn change_repository(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, id: i64, repo: i64, add: bool) -> Result<RepositoryChange>);
+    fn change_repository(pool: &DbPool, actor: impl Into<codeyard_database::queries::credentials::Actor>, id: i64, repo: i64, add: bool) -> Result<RepositoryChange>);
 native_operation!(crate::postgres::github_apps::issue, crate::sqlite::github_apps::issue,
     fn issue(pool: &DbPool, app: i64, installation: i64, actor: Option<i64>, source: Option<&str>, hash: &str, permissions: &str, repos: &str, write: bool) -> Result<Option<PersonalAccessToken>>);
 native_operation!(crate::postgres::github_apps::token, crate::sqlite::github_apps::token,
