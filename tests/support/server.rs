@@ -35,6 +35,13 @@ pub async fn spawn_on_free_ports<Ready: Future<Output = bool>>(
         drop(listeners);
         let output = File::create(log).unwrap();
         let mut child = command(&addresses)
+            // Unoptimized server futures need the same stack budget as the E2E servers.
+            .env("RUST_MIN_STACK", "33554432")
+            // Workspace test features also apply to the child binary's receive hooks.
+            .envs(
+                std::env::var_os("GITSERV_TEST_OPENSSH_HELPER")
+                    .map(|helper| ("GITSERV_TEST_OPENSSH_HELPER", helper)),
+            )
             .stdin(Stdio::null())
             .stdout(output.try_clone().unwrap())
             .stderr(output)

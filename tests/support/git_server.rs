@@ -20,6 +20,13 @@ pub struct Server {
 }
 impl Drop for Server {
     fn drop(&mut self) {
+        if std::thread::panicking() {
+            eprintln!(
+                "server log {}:\n{}",
+                self.log.display(),
+                std::fs::read_to_string(&self.log).unwrap_or_default()
+            );
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
