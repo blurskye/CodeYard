@@ -89,7 +89,10 @@ pub async fn synchronize(
                 let mut expanded = 0u64;
                 for i in 0..archive.len() {
                     let mut entry = archive.by_index(i)?;
-                    if entry.is_dir() || !entry.name().ends_with(".json") {
+                    let Ok(name) = entry.name().map(std::borrow::Cow::into_owned) else {
+                        continue;
+                    };
+                    if entry.is_dir() || !name.ends_with(".json") {
                         continue;
                     }
                     ensure!(
@@ -118,7 +121,7 @@ pub async fn synchronize(
                     match Advisory::parse(&bytes).and_then(Advisory::prepare) {
                         Ok(record) => records.push(record),
                         Err(error) => {
-                            tracing::warn!(entry = entry.name(), %error, "OSV record was skipped")
+                            tracing::warn!(entry = name, %error, "OSV record was skipped")
                         }
                     }
                 }

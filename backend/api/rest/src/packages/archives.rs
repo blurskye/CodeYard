@@ -128,7 +128,8 @@ pub(super) fn nuspec(bytes: &[u8]) -> Result<Vec<u8>> {
     let mut result = None;
     for index in 0..archive.len() {
         let entry = archive.by_index(index).map_err(|_| Error::invalid())?;
-        if !entry.name().contains('/') && entry.name().to_ascii_lowercase().ends_with(".nuspec") {
+        let name = entry.name().map_err(|_| Error::invalid())?;
+        if !name.contains('/') && name.to_ascii_lowercase().ends_with(".nuspec") {
             if result.is_some() || entry.is_dir() {
                 return Err(Error::invalid());
             }

@@ -94,9 +94,9 @@ pub(super) async fn contract(
                 .read_to_string(&mut whole)
                 .unwrap();
             assert_eq!(whole, text);
-            assert!(archive
-                .file_names()
-                .all(|name| !name.starts_with('/') && !name.split('/').any(|part| part == "..")));
+            assert!(archive.file_names().all(|name| name.is_ok_and(
+                |name| !name.starts_with('/') && !name.split('/').any(|part| part == "..")
+            )));
         } else {
             assert_eq!(headers["content-type"], "text/plain; charset=utf-8");
             assert!(String::from_utf8(body).unwrap().contains("observed output"));

@@ -1,9 +1,10 @@
-//! Opening untrusted ZIP archives. The `zip` reader reserves and parses as many central
-//! directory entries as the end record it picks advertises, and it tries every end record
-//! signature in the file, from the back, until one works. So each record the reader could
-//! accept is found first, as the reader would, and the archive is refused if more than one
-//! non-empty record could be used or if one advertises more entries than the caller accepts. A signature that
-//! merely occurs inside an entry is not such a record.
+//! Opening untrusted ZIP archives. The `zip` reader parses as many central directory entries as
+//! the end record it picks advertises, and falls back to earlier end record signatures when one
+//! fails. So every end record anywhere in the file that a reader could use is found first, and
+//! the archive is refused if more than one non-empty record could be used or if one advertises
+//! more entries than the caller accepts. A signature that merely occurs inside an entry is not
+//! such a record. The opened archive's entry count is checked again, so the bound holds whichever
+//! record the reader picks.
 use std::io::Cursor;
 use zip::read::ArchiveOffset;
 use zip::read::Config;
@@ -98,7 +99,12 @@ pub fn open<B: AsRef<[u8]>>(
     let config = Config {
         archive_offset: ArchiveOffset::Known(0),
     };
-    Ok(zip::ZipArchive::with_config(config, Cursor::new(bytes))?)
+    let archive = zip::ZipArchive::with_config(config, Cursor::new(bytes))?;
+    anyhow::ensure!(
+        archive.len() <= max_entries,
+        "The ZIP archive has more than {max_entries} entries"
+    );
+    Ok(archive)
 }
 
 #[cfg(test)]
