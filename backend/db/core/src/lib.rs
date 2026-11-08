@@ -35,7 +35,7 @@ pub mod pool;
 pub mod postgres;
 pub mod sqlite;
 
-pub use connection::{init_db, sqlite_file, DbPool};
+pub use connection::{init_db, open_migrated, sqlite_file, DbPool};
 pub use migrations::run_migrations;
 pub mod ci_admission;
 pub mod ci_concurrency;

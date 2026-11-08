@@ -76,8 +76,7 @@ config:
 terminationGracePeriodSeconds: 100
 # Temporary /data capacity for stateless nodes, not storage repository disks.
 scratchSizeLimit: 4Gi
-# Temporary /tmp capacity per pod. Core roles keep /tmp in memory, so it counts toward
-# their memory limit; runners keep it on disk.
+# Temporary /tmp capacity per pod, on the node's disk.
 tmpSizeLimit: 1Gi
 # Labels and annotations applied to all pods.
 podLabels: {}

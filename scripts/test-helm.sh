@@ -63,13 +63,12 @@ grep -q 'name: codeyard-storage-join' "$work/storage.yaml"
 grep -q 'volumeClaimTemplates:' "$work/storage.yaml"
 grep -q 'type: OnDelete' "$work/storage.yaml"
 [[ -z $(resource "$work/all.yaml" Secret codeyard) ]]
-# Git push sockets and the SSH host key need a sticky /tmp, which only a memory emptyDir is.
+# Git push sockets and the SSH host key live in the private state directory.
 resource "$work/all.yaml" Deployment codeyard-ssh > "$work/ssh.yaml"
-grep -q 'value: /tmp/host_key' "$work/ssh.yaml"
+grep -q 'value: /data/state/host_key' "$work/ssh.yaml"
 resource "$work/all.yaml" Deployment codeyard-web | grep -q 'preStop:'
-for file in ssh.yaml storage.yaml; do grep -q 'medium: Memory' "$work/$file"; done
-if grep -q 'medium: Memory' "$work/runner.yaml"; then
-    echo 'Runner /tmp should stay on disk' >&2
+if grep -q 'medium: Memory' "$work/all.yaml"; then
+    echo '/tmp should stay on disk' >&2
     exit 1
 fi
 

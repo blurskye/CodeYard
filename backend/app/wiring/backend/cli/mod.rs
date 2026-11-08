@@ -174,6 +174,13 @@ pub fn run() -> Result<()> {
             .with_writer(std::io::stderr)
             .with_env_filter(EnvFilter::new("warn"))
             .init();
+        // Receive hooks are started with the server's state directory, where their socket
+        // path checks stop. Without a usable one the checks walk up to `/`.
+        #[cfg(target_os = "linux")]
+        codeyard_repos_core::repositories::git_sessions::private_files::trust_state_dir(
+            &early_cli.state_dir,
+        )
+        .ok();
         // Key lookup is a short-lived client, not another application runtime
         // with one worker thread per host CPU for each authentication attempt.
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -309,10 +316,7 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
         pool.close().await;
         return Ok(());
     }
-    let pool = codeyard_db_core::init_db(&database_url)
-        .await
-        .map_err(|_| anyhow::anyhow!("could not open the configured application database"))?;
-    codeyard_db_core::run_migrations(&pool).await?;
+    let pool = codeyard_db_core::open_migrated(&database_url).await?;
     if matches!(
         &cli.command,
         Commands::User {

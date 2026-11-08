@@ -32,7 +32,72 @@ fn same_inode(left: &Metadata, right: &Metadata) -> bool {
     left.dev() == right.dev() && left.ino() == right.ino()
 }
 
+/// The server's private state directory, once trusted by `trust_state_dir`.
+static STATE_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// Makes `state` the top of every ancestor check below it, as OpenSSH's StrictModes stops at
+/// the home directory. It must be owned by this user and closed to others (0700, as the server
+/// creates it). Where it lives is the operator's choice, as for the database and node keys it
+/// holds; a Kubernetes volume, for one, is a world-writable directory without the sticky bit.
+pub fn trust_state_dir(state: &Path) -> Result<()> {
+    let state = std::fs::canonicalize(state)?;
+    let meta = std::fs::symlink_metadata(&state)?;
+    ensure!(
+        meta.is_dir() && meta.uid() == effective_uid() && meta.mode() & 0o077 == 0,
+        "state directory must be owned and private (0700)"
+    );
+    ensure!(
+        *STATE_DIR.get_or_init(|| state.clone()) == state,
+        "another state directory is already trusted"
+    );
+    Ok(())
+}
+
+/// The trusted state directory, for receive hooks started by this server.
+pub fn trusted_state_dir() -> Option<&'static Path> {
+    STATE_DIR.get().map(PathBuf::as_path)
+}
+
+/// Where Git receives make their private socket directories: `run` in the trusted state
+/// directory, or the system temporary directory when none is trusted (commands and tests).
+pub fn run_dir() -> Option<PathBuf> {
+    STATE_DIR.get().map(|state| state.join("run"))
+}
+
+/// The longest state directory that leaves room for `run/git-receive-XXXXXX/broker.sock` in
+/// a Unix socket address (107 bytes and a NUL).
+const LONGEST_STATE_DIR: usize = 107 - "/run/git-receive-XXXXXX/broker.sock".len();
+
+/// Server start: trusts the state directory and empties its `run` directory, which can only
+/// hold the sockets of an earlier server that was killed. The caller holds the state
+/// directory lock, so no other server uses them. A state directory whose path cannot hold
+/// a socket or appear in a hook script leaves the sockets in the system temporary directory.
+pub fn prepare_run_dir(state: &Path) -> Result<()> {
+    let state = std::fs::canonicalize(state)?;
+    if state.as_os_str().len() > LONGEST_STATE_DIR || shell_safe_path(&state).is_err() {
+        tracing::warn!(
+            state = %state.display(),
+            "the state directory path is too long or has unusual characters; Git receive sockets stay in the system temporary directory"
+        );
+        return Ok(());
+    }
+    trust_state_dir(&state)?;
+    let run = run_dir().context("state directory required")?;
+    match std::fs::remove_dir_all(&run) {
+        Ok(()) => {}
+        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+    DirBuilder::new().mode(0o700).create(&run)?;
+    Ok(())
+}
+
+/// Checks `path` and its parents up to the trusted state directory, or up to `/`.
 pub fn ancestors(path: &Path, uid: u32) -> Result<()> {
+    ancestors_below(path, uid, trusted_state_dir())
+}
+
+fn ancestors_below(path: &Path, uid: u32, state: Option<&Path>) -> Result<()> {
     for ancestor in path.ancestors() {
         let meta = std::fs::symlink_metadata(ancestor)?;
         ensure!(
@@ -51,6 +116,12 @@ pub fn ancestors(path: &Path, uid: u32) -> Result<()> {
             meta.mode() & 0o022 == 0 || sticky_root,
             "writable path ancestor"
         );
+        if state.is_some_and(|state| state == ancestor)
+            && meta.uid() == uid
+            && meta.mode() & 0o077 == 0
+        {
+            break;
+        }
     }
     Ok(())
 }
@@ -231,6 +302,40 @@ mod tests {
             .unwrap()
             .file_type()
             .is_symlink());
+    }
+
+    #[test]
+    fn a_private_state_directory_is_trusted_under_a_shared_volume() {
+        // A Kubernetes emptyDir is world-writable without the sticky bit.
+        let directory = codeyard_actions::fs::private_tempdir("openssh-volume-", None).unwrap();
+        let volume = directory.path().join("data");
+        std::fs::create_dir(&volume).unwrap();
+        std::fs::set_permissions(&volume, std::fs::Permissions::from_mode(0o777)).unwrap();
+        let state = volume.join("state");
+        DirBuilder::new().mode(0o700).create(&state).unwrap();
+        let uid = effective_uid();
+        let run = state.join("run");
+        DirBuilder::new().mode(0o700).create(&run).unwrap();
+        assert!(ancestors_below(&run, uid, None).is_err());
+        ancestors_below(&run, uid, Some(&state)).unwrap();
+        assert!(trust_state_dir(&volume).is_err());
+
+        let receive = codeyard_actions::fs::private_tempdir("git-receive-", Some(&run)).unwrap();
+        let socket = receive.path().join("broker.sock");
+        assert!(ancestors_below(&socket, uid, None).is_err());
+        ancestors_below(receive.path(), uid, Some(&state)).unwrap();
+        assert_eq!(
+            std::fs::metadata(receive.path()).unwrap().mode() & 0o777,
+            0o700
+        );
+
+        // The state directory itself must stay private to be the top of the check.
+        std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o750)).unwrap();
+        assert!(ancestors_below(&run, uid, Some(&state)).is_err());
+        std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o700)).unwrap();
+        // Everything below it is still checked.
+        std::fs::set_permissions(&run, std::fs::Permissions::from_mode(0o777)).unwrap();
+        assert!(ancestors_below(receive.path(), uid, Some(&state)).is_err());
     }
 
     #[tokio::test]

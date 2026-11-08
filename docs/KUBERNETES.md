@@ -120,14 +120,23 @@ reads as the signed-in owner running, then check that every acknowledged issue i
 there. The run revokes the test account's tokens when it ends.
 
 Measured on 2026-11-08 on seven k3s 1.35 nodes (4 vCPU, 8 GB, `local-path` volumes) with
-CloudNativePG 1.30.1 and PostgreSQL 18.6:
+CloudNativePG 1.30.1 and PostgreSQL 18.6, after the startup database wait and the move of
+push sockets into the state directory. The earlier run without them is in brackets:
 
 | Step | Cluster event | Writes | Page reads | Acknowledged issues lost | Web restarts |
 |---|---|---|---|---|---|
-| Crash the primary pod (1 s grace) | standby promoted after 21 s | back after 27 s, 17 of 39 failed | back after 27 s | 0 | 0 |
-| Cordon and drain its node | switchover after 4 s, drain done in 30 s | back after 9 s, 4 of 31 failed | back after 9 s | 0 | 0 |
-| Rolling restart of web | 23 s | 0 of 28 failed | 0 of 161 failed | 0 | 0 |
-| Scale web from 2 to 4 under load | 4 ready after 12 s | 0 of 42 failed | 0 of 448 failed | 0 | 0 |
+| Crash the primary pod (1 s grace) | standby promoted after 21 s (21 s) | back after 24 s (27 s), 21 of 43 failed (17 of 39) | back after 24 s (27 s) | 0 (0) | 0 (0) |
+| Cordon and drain its node | switchover after 5 s (4 s), drain done in 30 s (30 s) | back after 9 s (9 s), 8 of 36 failed (4 of 31) | back after 9 s (9 s) | 0 (0) | 0 (0) |
+| Rolling restart of web | 23 s (23 s) | 0 of 29 failed (0 of 28) | 0 of 164 failed (0 of 161) | 0 (0) | 0 (0) |
+| Scale web from 2 to 4 under load | 4 ready after 12 s (12 s) | 0 of 39 failed (0 of 42) | 0 of 420 failed (0 of 448) | 0 (0) | 0 (0) |
+
+No pod restarted during these steps. In the earlier run the SSH pod restarted twice when
+it started while the database was unreachable. Now every role retries the connection and the
+migration lock with backoff for up to `DATABASE_CONNECT_WAIT_SECONDS` (default 60) before it
+exits; an SSH pod deleted together with the primary was serving after 26 s without a
+restart. On a fresh install pods can still restart once or twice, because the first
+migration's commit waits until a synchronous standby exists. The write and read gaps are set
+by promotion and by sessions living on the primary, so this change does not shorten them.
 
 The web pods reconnect through PgBouncer without restarting. Page reads stop together with
 writes: sessions live on the primary, and the replica URL is used only for replicas that
@@ -188,9 +197,9 @@ need an explicit pod restart. Do not delete storage PVCs on uninstall.
 Web/storage probes use `/ready`; SSH currently has TCP probes only and database-free
 runners have no health listener/probes. Core pods wait five seconds (preStop) so Services
 drop them, then SIGTERM runs the bounded server shutdown, which may take up to 100 seconds;
-use the nodes page or drain API before removing pods. Core pods keep `/tmp` in memory
-because the server refuses Git push sockets and the SSH host key under a non-sticky
-world-writable directory, so `tmpSizeLimit` counts toward their memory. Disruption budgets
+use the nodes page or drain API before removing pods. Git push sockets and the SSH host
+key live in the private (0700) state directory `/data/state`, so `/tmp` is an ordinary
+disk volume. Disruption budgets
 do not guarantee Git durability. Runner/KEDA scale-down can interrupt active jobs during
 shutdown; it is not idle-only draining. Storage must **never**
 autoscale down: first move and verify every primary and replica assignment elsewhere.
