@@ -1,8 +1,8 @@
-use crate::models::OrgRole;
-use crate::pool::SqlitePool;
-use crate::queries::credentials::Actor;
-use crate::queries::organizations::OrganizationOutcome;
-use crate::queries::secrets::SecretsError;
+use codeyard_database::models::OrgRole;
+use codeyard_database::pool::SqlitePool;
+use codeyard_database::queries::credentials::Actor;
+use codeyard_database::queries::organizations::OrganizationOutcome;
+use codeyard_database::queries::secrets::SecretsError;
 use sqlx::Sqlite;
 use sqlx::Transaction;
 pub async fn authorized(
@@ -13,12 +13,16 @@ pub async fn authorized(
 ) -> Result<Transaction<'_, Sqlite>, SecretsError> {
     let actor = actor.into();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    match crate::queries::sqlite::organizations::authority::authority(&mut tx, actor.user_id, org)
-        .await
-        .map_err(SecretsError::authority)?
+    match codeyard_database::queries::sqlite::organizations::authority::authority(
+        &mut tx,
+        actor.user_id,
+        org,
+    )
+    .await
+    .map_err(SecretsError::authority)?
     {
         OrganizationOutcome::Applied(OrgRole::Owner | OrgRole::Admin) => {
-            if !crate::queries::sqlite::credentials::organization(
+            if !codeyard_database::queries::sqlite::credentials::organization(
                 &mut tx,
                 &actor,
                 org,

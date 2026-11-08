@@ -76,7 +76,7 @@ pub(super) async fn build(
     let oidc = codeyard_db_actions::oidc::settings(
         &ctx.state.pool,
         actor,
-        codeyard_database::queries::oidc::Scope::Organization(org),
+        codeyard_db_actions::oidc::Scope::Organization(org),
     )
     .await
     .map_err(ValueError::Authority)?;
@@ -161,7 +161,7 @@ async fn change(
     if action.starts_with("oidc-") {
         let result = match action.as_str() {
             "oidc-save" => {
-                let mut settings = codeyard_database::queries::oidc::Settings::from_keys(
+                let mut settings = codeyard_db_actions::oidc::Settings::from_keys(
                     false,
                     field(&form, "include_claim_keys"),
                 );
@@ -171,7 +171,7 @@ async fn change(
                 codeyard_db_actions::oidc::save_settings(
                     &ctx.state.pool,
                     (actor, &credential),
-                    codeyard_database::queries::oidc::Scope::Organization(org),
+                    codeyard_db_actions::oidc::Scope::Organization(org),
                     &settings,
                 )
                 .await

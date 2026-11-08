@@ -52,8 +52,8 @@ pub fn protection_write_error(
 /// The status of a refused native OIDC settings save: a denial is 403, any other typed refusal
 /// is 422, and an untyped failure is 503.
 pub fn oidc_settings_status(error: &anyhow::Error) -> StatusCode {
-    match error.downcast_ref::<codeyard_database::queries::oidc::Refusal>() {
-        Some(codeyard_database::queries::oidc::Refusal::Denied) => StatusCode::FORBIDDEN,
+    match error.downcast_ref::<codeyard_db_actions::oidc::Refusal>() {
+        Some(codeyard_db_actions::oidc::Refusal::Denied) => StatusCode::FORBIDDEN,
         Some(_) => StatusCode::UNPROCESSABLE_ENTITY,
         None => StatusCode::SERVICE_UNAVAILABLE,
     }

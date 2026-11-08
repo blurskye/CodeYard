@@ -1,7 +1,7 @@
 use crate::action_concurrency::Group;
 use crate::action_concurrency::Member;
+use crate::ci_concurrency::Configuration;
 use anyhow::Result;
-use codeyard_database::ci_concurrency::Configuration;
 use codeyard_database::models::CiRun;
 use codeyard_database::pool::PgPool;
 use sqlx::PgConnection;

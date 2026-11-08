@@ -1,8 +1,8 @@
 //! Repository events use the default branch's workflow and the webhook's unchanged document.
 use crate::runs::CiRuns;
-use codeyard_database::ci_admission::AdmissionError;
 use codeyard_database::models::AccessLevel;
 use codeyard_database::models::Repository;
+use codeyard_db_actions::ci_admission::AdmissionError;
 use codeyard_git_storage::receive_ci::CiRunRequest;
 use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_types::workflow_glob::WorkflowMatchBudget;

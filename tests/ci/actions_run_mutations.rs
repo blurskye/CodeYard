@@ -7,7 +7,7 @@ use crate::support::database::Database;
 use crate::support::fake_webui_bundle;
 use axum::http::StatusCode;
 
-use codeyard_database::ci_admission::AdmissionError;
+use codeyard_db_actions::ci_admission::AdmissionError;
 
 use codeyard_db_actions::ci::CiRunDeletion;
 use codeyard_types::ci::LogLine;

@@ -522,7 +522,7 @@ pub async fn record_download(
     ip: Option<IpAddr>,
 ) -> Result<(), sqlx::Error> {
     sqlx::query("INSERT INTO download_rate_limit (user_id, file_id, reason, ip_address) VALUES (?1,?2,?3,?4)")
-        .bind(user_id).bind(file_id).bind(reason).bind(ip.map(codeyard_database::queries::sqlite::inet::address)).execute(pool).await?;
+        .bind(user_id).bind(file_id).bind(reason).bind(ip.map(codeyard_db_identity::sqlite::inet::address)).execute(pool).await?;
     Ok(())
 }
 

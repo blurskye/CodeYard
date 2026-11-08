@@ -26,14 +26,22 @@ impl From<anyhow::Error> for AdmissionError {
             Ok(error) => return error,
             Err(error) => error,
         };
-        match error.downcast::<crate::ci_policy::CiAdmissionRefusal>() {
-            Ok(crate::ci_policy::CiAdmissionRefusal::WorkflowDisabled) => {
+        match error.downcast::<codeyard_database::ci_policy::CiAdmissionRefusal>() {
+            Ok(codeyard_database::ci_policy::CiAdmissionRefusal::WorkflowDisabled) => {
                 Self::WorkflowDisabled("Workflow is disabled")
             }
-            Ok(crate::ci_policy::CiAdmissionRefusal::Missing(message)) => Self::Missing(message),
-            Ok(crate::ci_policy::CiAdmissionRefusal::Denied(message)) => Self::Denied(message),
-            Ok(crate::ci_policy::CiAdmissionRefusal::Conflict(message)) => Self::Conflict(message),
-            Ok(crate::ci_policy::CiAdmissionRefusal::Invalid(message)) => Self::Invalid(message),
+            Ok(codeyard_database::ci_policy::CiAdmissionRefusal::Missing(message)) => {
+                Self::Missing(message)
+            }
+            Ok(codeyard_database::ci_policy::CiAdmissionRefusal::Denied(message)) => {
+                Self::Denied(message)
+            }
+            Ok(codeyard_database::ci_policy::CiAdmissionRefusal::Conflict(message)) => {
+                Self::Conflict(message)
+            }
+            Ok(codeyard_database::ci_policy::CiAdmissionRefusal::Invalid(message)) => {
+                Self::Invalid(message)
+            }
             Err(_) => Self::Unavailable,
         }
     }

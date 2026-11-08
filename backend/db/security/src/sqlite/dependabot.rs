@@ -202,7 +202,7 @@ pub async fn update_repository_access(
     add: &[i64],
     remove: &[i64],
 ) -> Result<(), SecretsError> {
-    codeyard_database::queries::dependabot::validate_repository_access(add, remove)?;
+    codeyard_db_actions::dependabot::validate_repository_access(add, remove)?;
     let mut tx = authorized(pool, actor, org, true).await?;
     let mut ids: Vec<_> = add.iter().chain(remove).copied().collect();
     ids.sort_unstable();
@@ -232,6 +232,6 @@ pub async fn set_repository_access_default(
     Ok(())
 }
 
-use codeyard_database::queries::sqlite::dependabot::check_repositories;
+use codeyard_db_actions::sqlite::dependabot::check_repositories;
 
-use codeyard_database::queries::sqlite::dependabot::authorized;
+use codeyard_db_actions::sqlite::dependabot::authorized;

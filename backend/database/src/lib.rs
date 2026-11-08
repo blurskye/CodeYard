@@ -37,9 +37,6 @@ pub mod sqlite;
 
 pub use connection::{init_db, open_migrated, sqlite_file, DbPool};
 pub use migrations::run_migrations;
-pub mod ci_admission;
-pub mod ci_concurrency;
-pub mod ci_concurrency_resolve;
 pub mod ci_logs;
 pub mod ci_messages;
 pub mod ci_policy;

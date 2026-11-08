@@ -33,8 +33,7 @@ pub async fn create(
     let credential = actor.into();
     let actor = credential.user_id;
     let mut tx = begin(pool).await?;
-    let owner =
-        codeyard_database::queries::postgres::attestations::repository_owner(&mut tx, repo).await?;
+    let owner = codeyard_db_repos::postgres::attestations::repository_owner(&mut tx, repo).await?;
     lock(&mut tx, &owner.0, owner.1).await?;
     anyhow::ensure!(
         codeyard_database::queries::postgres::discussions::lock_write_authority(
@@ -52,8 +51,7 @@ pub async fn create(
         Refusal::Denied
     );
     anyhow::ensure!(
-        codeyard_database::queries::postgres::attestations::repository_owner(&mut tx, repo).await?
-            == owner,
+        codeyard_db_repos::postgres::attestations::repository_owner(&mut tx, repo).await? == owner,
         Refusal::Missing
     );
     // Retain the bundle row until its association commits; collection skips this publisher.
@@ -195,4 +193,4 @@ pub async fn delete(
     Ok(count)
 }
 
-use codeyard_database::queries::postgres::attestations::lock;
+use codeyard_db_repos::postgres::attestations::lock;

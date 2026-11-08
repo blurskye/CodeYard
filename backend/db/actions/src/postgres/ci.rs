@@ -451,12 +451,8 @@ async fn schedule_concurrency(
     let config = if let Some((expression, contexts)) = &scheduling.concurrency_expression {
         let actor: Option<(i64, String)> = sqlx::query_as("SELECT u.id,u.username FROM ci_runs origin JOIN users u ON u.id=origin.triggered_by_id WHERE origin.id=$1")
             .bind(run.workflow_run_id.unwrap_or(run.id)).fetch_optional(&mut **tx).await?;
-        let contexts =
-            codeyard_database::ci_concurrency_resolve::run_contexts(contexts.clone(), run, actor);
-        Some(
-            codeyard_database::ci_concurrency_resolve::resolve(expression.clone(), contexts)
-                .await?,
-        )
+        let contexts = crate::ci_concurrency_resolve::run_contexts(contexts.clone(), run, actor);
+        Some(crate::ci_concurrency_resolve::resolve(expression.clone(), contexts).await?)
     } else {
         scheduling.concurrency.clone()
     };

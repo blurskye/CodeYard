@@ -1,9 +1,9 @@
 use crate::runs::CiRuns;
 use anyhow::Context;
-use codeyard_database::ci_admission::AdmissionError;
 use codeyard_database::models::PullRequest;
 use codeyard_database::models::Repository;
 use codeyard_database::DbPool;
+use codeyard_db_actions::ci_admission::AdmissionError;
 use codeyard_git_storage::receive_ci::CiRunRequest;
 use codeyard_git_storage::repositories::pull_requests::OperationError;
 use codeyard_git_storage::repositories::store::repo_store;

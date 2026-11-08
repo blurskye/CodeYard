@@ -20,8 +20,8 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_app::app::AppState;
-use codeyard_database::queries::attestation_validation::AttestationError;
 use codeyard_db_security::attestation_validation as store;
+use codeyard_db_security::attestation_validation::AttestationError;
 use codeyard_db_security::attestation_validation::PreparedBundle;
 use codeyard_types::github_error::Error;
 use codeyard_types::github_error::Result;
@@ -139,7 +139,7 @@ async fn list(
     let Query(query) = query.map_err(|_| Error::invalid("Invalid attestation pagination"))?;
     let after = decode_cursor(query.after.as_deref(), "after")?;
     let before = decode_cursor(query.before.as_deref(), "before")?;
-    let page = codeyard_database::queries::attestation_validation::Page {
+    let page = codeyard_db_security::attestation_validation::Page {
         after,
         before,
         limit: codeyard_api_http::shared::github::pagination::page_size(query.per_page) as i64,

@@ -257,9 +257,7 @@ async fn list(
 ) -> Result<Response> {
     let (actor, org) = actor(&state, &headers, &params, false).await?;
     let digest = &params["subject_digest"];
-    if !digest.starts_with("sha256:")
-        || !codeyard_database::queries::attestations::valid_digest(digest)
-    {
+    if !digest.starts_with("sha256:") || !codeyard_db_repos::attestations::valid_digest(digest) {
         return Err(Error::validation(
             "ArtifactMetadata",
             "subject_digest",

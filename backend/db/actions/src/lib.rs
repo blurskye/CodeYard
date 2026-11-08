@@ -44,4 +44,8 @@ pub mod secrets;
 
 pub mod sqlite;
 
+pub mod ci_admission;
+pub mod ci_concurrency;
+pub mod ci_concurrency_resolve;
+pub mod dependabot;
 pub mod variables;

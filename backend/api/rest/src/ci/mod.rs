@@ -47,7 +47,7 @@ mod tests {
     use axum::http::StatusCode;
     use axum::Json;
     use codeyard_api_http::shared::ci::admission_error;
-    use codeyard_database::ci_admission::AdmissionError;
+    use codeyard_db_actions::ci_admission::AdmissionError;
     #[test]
     fn typed_refusals_keep_http_categories() {
         assert_eq!(

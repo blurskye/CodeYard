@@ -80,7 +80,7 @@ impl Configuration {
             return Err(RegistryError::Invalid("visibility"));
         }
         if let Some(ids) = &self.selected_repository_ids {
-            codeyard_database::queries::dependabot::validate_repository_access(ids, &[])?;
+            crate::dependabot::validate_repository_access(ids, &[])?;
         }
         let required: Vec<(&str, Option<&str>)> = match self.auth_type.as_str() {
             "token" => vec![],

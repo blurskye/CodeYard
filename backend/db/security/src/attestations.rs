@@ -107,7 +107,7 @@ native_operation!(crate::postgres::attestations::delete, crate::sqlite::attestat
 
 #[cfg(test)]
 mod tests {
-    use codeyard_database::queries::attestations::valid_digest;
+    use codeyard_db_repos::attestations::valid_digest;
 
     #[test]
     fn digests_are_lowercase_hex_of_the_named_length() {

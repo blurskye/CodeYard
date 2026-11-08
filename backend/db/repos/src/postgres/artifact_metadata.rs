@@ -25,7 +25,7 @@ type Tx<'a> = Transaction<'a, Postgres>;
 async fn begin(pool: &PgPool, org: Option<i64>) -> Result<Tx<'_>> {
     let mut tx = pool.begin().await?;
     if let Some(org) = org {
-        codeyard_database::queries::postgres::attestations::lock(&mut tx, "org", org).await?;
+        crate::postgres::attestations::lock(&mut tx, "org", org).await?;
     }
     Ok(tx)
 }
@@ -471,7 +471,7 @@ pub async fn process_job(pool: &PgPool, id: Option<i64>) -> Result<bool> {
         tx.commit().await?;
         return Ok(false);
     };
-    codeyard_database::queries::postgres::attestations::lock(&mut tx, "org", job.org_id).await?;
+    crate::postgres::attestations::lock(&mut tx, "org", job.org_id).await?;
     let actor = Actor {
         user: job.actor_id,
         token: job.token_id,

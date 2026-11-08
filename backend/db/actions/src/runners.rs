@@ -285,7 +285,7 @@ impl Eligibility {
 pub struct Scheduling {
     pub labels: Vec<String>,
     pub group: Option<String>,
-    pub concurrency: Option<codeyard_database::ci_concurrency::Configuration>,
+    pub concurrency: Option<crate::ci_concurrency::Configuration>,
     /// Expression and non-run contexts retained until the enqueue transaction assigns identity.
     pub concurrency_expression: Option<(serde_yaml::Value, codeyard_runner::expressions::Contexts)>,
 }

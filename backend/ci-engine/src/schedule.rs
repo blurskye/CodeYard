@@ -5,7 +5,7 @@ use anyhow::Result;
 use chrono::DateTime;
 use chrono::Timelike;
 use chrono::Utc;
-use codeyard_database::ci_admission::AdmissionError;
+use codeyard_db_actions::ci_admission::AdmissionError;
 use codeyard_git_storage::receive_ci::CiRunRequest;
 use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_git_storage::workflow_schedule::parse;

@@ -52,8 +52,7 @@ impl Artifact {
     pub fn validate(&self) -> Result<()> {
         text(&self.name, 1, 256)?;
         anyhow::ensure!(
-            self.digest.starts_with("sha256:")
-                && codeyard_database::queries::attestations::valid_digest(&self.digest),
+            self.digest.starts_with("sha256:") && crate::attestations::valid_digest(&self.digest),
             Refusal::Invalid
         );
         if let Some(version) = &self.version {

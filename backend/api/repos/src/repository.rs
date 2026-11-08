@@ -463,7 +463,7 @@ pub(super) async fn settings_model(
         let oidc = codeyard_db_actions::oidc::settings(
             pool,
             viewer.id,
-            codeyard_database::queries::oidc::Scope::Repository(loaded.repository.id),
+            codeyard_db_actions::oidc::Scope::Repository(loaded.repository.id),
         )
         .await
         .map_err(|_| unavailable(ctx))?;
@@ -1957,14 +1957,14 @@ async fn mutate(
             Ok(settings_section_url(&base, action))
         }
         "oidc-settings" => {
-            let settings = codeyard_database::queries::oidc::Settings::from_keys(
+            let settings = codeyard_db_actions::oidc::Settings::from_keys(
                 checkbox(form, "use_default"),
                 &field(form, "include_claim_keys"),
             );
             codeyard_db_actions::oidc::save_settings(
                 pool,
                 ctx.database_actor(actor.id),
-                codeyard_database::queries::oidc::Scope::Repository(repository.id),
+                codeyard_db_actions::oidc::Scope::Repository(repository.id),
                 &settings,
             )
             .await

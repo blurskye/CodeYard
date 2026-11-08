@@ -157,7 +157,7 @@ async fn list(
         .get("subject_digest")
         .or_else(|| params.get("attestation_id"))
         .ok_or_else(Error::missing)?;
-    if !codeyard_database::queries::attestations::valid_digest(digest) {
+    if !codeyard_db_repos::attestations::valid_digest(digest) {
         return Err(Error::validation(
             "Attestation",
             "subject_digest",
@@ -213,7 +213,7 @@ async fn bulk_list(
         || input
             .subject_digests
             .iter()
-            .any(|digest| !codeyard_database::queries::attestations::valid_digest(digest))
+            .any(|digest| !codeyard_db_repos::attestations::valid_digest(digest))
     {
         return Err(Error::validation(
             "Attestation",
@@ -336,9 +336,9 @@ async fn remove(
             (None, Some(digests))
                 if !digests.is_empty()
                     && digests.len() <= 1024
-                    && digests.iter().all(|digest| {
-                        codeyard_database::queries::attestations::valid_digest(digest)
-                    }) =>
+                    && digests
+                        .iter()
+                        .all(|digest| codeyard_db_repos::attestations::valid_digest(digest)) =>
             {
                 (vec![], digests)
             }
@@ -355,7 +355,7 @@ async fn remove(
         )
     } else {
         let digest = &params["subject_digest"];
-        if !codeyard_database::queries::attestations::valid_digest(digest) {
+        if !codeyard_db_repos::attestations::valid_digest(digest) {
             return Err(Error::validation(
                 "Attestation",
                 "subject_digest",

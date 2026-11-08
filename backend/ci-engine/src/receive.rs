@@ -15,7 +15,7 @@ impl ReceiveCi for CiRuns {
         credential: Option<codeyard_database::queries::ci::CiCredential>,
     ) -> futures_util::future::BoxFuture<
         'a,
-        Result<codeyard_database::models::CiRun, codeyard_database::ci_admission::AdmissionError>,
+        Result<codeyard_database::models::CiRun, codeyard_db_actions::ci_admission::AdmissionError>,
     > {
         Box::pin(self.trigger_event_run(request, access, payload, credential))
     }

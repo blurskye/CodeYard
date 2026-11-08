@@ -1,7 +1,7 @@
 use anyhow::Result;
 use codeyard_ci::config::CiConfig;
 use codeyard_ci::config::CiPipelineKind;
-use codeyard_database::ci_admission::AdmissionError;
+use codeyard_db_actions::ci_admission::AdmissionError;
 use codeyard_git::error::ErrorKind;
 use codeyard_git_storage::receive_ci::CiRunRequest;
 use codeyard_git_storage::repositories::store::repo_store;

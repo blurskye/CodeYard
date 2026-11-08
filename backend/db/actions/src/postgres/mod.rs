@@ -40,4 +40,6 @@ pub mod runners;
 
 pub mod secrets;
 
+pub mod dependabot;
+pub mod oidc_settings;
 pub mod variables;

@@ -104,7 +104,7 @@ async fn model(ctx: &PageContext, params: &Params) -> Result<view::Page, Respons
     };
     let digest = ctx.query.get("digest").cloned().unwrap_or_default();
     let predicate = ctx.query.get("predicate").cloned().unwrap_or_default();
-    if !digest.is_empty() && !codeyard_database::queries::attestations::valid_digest(&digest) {
+    if !digest.is_empty() && !codeyard_db_repos::attestations::valid_digest(&digest) {
         return Err(ctx.error(
             StatusCode::BAD_REQUEST,
             "Enter a complete lowercase SHA-256 or SHA-512 subject digest.",

@@ -1,5 +1,5 @@
 //! Admission snapshots called workflows so workers never fetch a moving ref or another repository.
-use codeyard_database::ci_admission::AdmissionError;
+use codeyard_db_actions::ci_admission::AdmissionError;
 use codeyard_git::error::ErrorKind;
 use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_git_storage::workflows::is_safe_ref;

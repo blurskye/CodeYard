@@ -28,4 +28,5 @@ pub mod relationships;
 
 pub mod signature_verifications;
 
+pub mod inet;
 pub mod users;

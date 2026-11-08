@@ -16,8 +16,6 @@ pub mod code_security;
 
 pub mod credentials;
 
-pub mod dependabot;
-
 pub mod dependabot_alerts;
 
 pub mod dependency_graph;
@@ -30,17 +28,11 @@ pub mod files;
 
 pub mod fine_grained_tokens;
 
-pub mod inet;
-
 pub mod notifications;
-
-pub mod oidc_settings;
 
 pub mod organizations;
 
 pub mod repositories;
-
-pub mod repository_attestations;
 
 pub mod repository_stats;
 

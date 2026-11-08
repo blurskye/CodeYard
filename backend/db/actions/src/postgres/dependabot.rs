@@ -1,8 +1,8 @@
-use crate::models::OrgRole;
-use crate::pool::PgPool;
-use crate::queries::credentials::Actor;
-use crate::queries::organizations::OrganizationOutcome;
-use crate::queries::secrets::SecretsError;
+use codeyard_database::models::OrgRole;
+use codeyard_database::pool::PgPool;
+use codeyard_database::queries::credentials::Actor;
+use codeyard_database::queries::organizations::OrganizationOutcome;
+use codeyard_database::queries::secrets::SecretsError;
 use sqlx::Postgres;
 use sqlx::Transaction;
 pub async fn authorized(
@@ -13,12 +13,16 @@ pub async fn authorized(
 ) -> Result<Transaction<'_, Postgres>, SecretsError> {
     let actor = actor.into();
     let mut tx = pool.begin().await?;
-    match crate::queries::postgres::organizations::authority::authority(&mut tx, actor.user_id, org)
-        .await
-        .map_err(SecretsError::authority)?
+    match codeyard_database::queries::postgres::organizations::authority::authority(
+        &mut tx,
+        actor.user_id,
+        org,
+    )
+    .await
+    .map_err(SecretsError::authority)?
     {
         OrganizationOutcome::Applied(OrgRole::Owner | OrgRole::Admin) => {
-            if !crate::queries::postgres::credentials::organization(
+            if !codeyard_database::queries::postgres::credentials::organization(
                 &mut tx,
                 &actor,
                 org,

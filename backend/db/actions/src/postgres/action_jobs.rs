@@ -1,11 +1,11 @@
 use crate::action_jobs::Job;
 use crate::action_jobs::Page;
 use crate::action_jobs::Step;
+use crate::ci_concurrency::Configuration;
 use anyhow::ensure;
 use anyhow::Result;
 use chrono::DateTime;
 use chrono::Utc;
-use codeyard_database::ci_concurrency::Configuration;
 use codeyard_database::models::CiRun;
 use codeyard_database::pool::PgPool;
 use codeyard_runner::progress::Annotation;

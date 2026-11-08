@@ -9,7 +9,7 @@ impl Configuration {
     pub fn validate(&self) -> Result<()> {
         anyhow::ensure!(
             codeyard_runner::workflow::valid_concurrency_group(&self.group),
-            crate::ci_policy::CiAdmissionRefusal::Invalid("Invalid concurrency group")
+            codeyard_database::ci_policy::CiAdmissionRefusal::Invalid("Invalid concurrency group")
         );
         Ok(())
     }

@@ -22,7 +22,7 @@ pub async fn list(
         (0..i64::MAX).contains(&after)
             && matches!(kind, "deployment" | "storage")
             && digest.starts_with("sha256:")
-            && codeyard_database::queries::attestations::valid_digest(digest),
+            && crate::attestations::valid_digest(digest),
         Refusal::Invalid
     );
     match pool {

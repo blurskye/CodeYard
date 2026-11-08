@@ -4,10 +4,6 @@ pub mod action_settings;
 
 pub mod actions;
 
-pub mod attestation_validation;
-
-pub mod attestations;
-
 pub mod ci;
 
 pub mod ci_tokens;
@@ -15,8 +11,6 @@ pub mod ci_tokens;
 pub mod code_security;
 
 pub mod credentials;
-
-pub mod dependabot;
 
 pub mod dependabot_alerts;
 
@@ -35,8 +29,6 @@ pub mod github_apps;
 pub mod notifications;
 
 pub mod oauth_apps;
-
-pub mod oidc;
 
 pub mod organizations;
 

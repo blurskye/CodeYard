@@ -28,9 +28,7 @@ pub async fn create_session(
     .bind(session_id)
     .bind(user_id)
     .bind(user_agent)
-    .bind(codeyard_database::queries::sqlite::inet::encode(
-        ip_address,
-    )?)
+    .bind(crate::sqlite::inet::encode(ip_address)?)
     .bind(codeyard_database::queries::sqlite::time::encode(expires_at))
     .fetch_one(pool)
     .await?;
@@ -350,7 +348,7 @@ pub async fn create_browser_session(
         anyhow::bail!("Session expiry must be in the future");
     }
     let session = sqlx::query_as::<_, BrowserSession>("INSERT INTO anonymous_sessions (id,user_agent,ip_address,expires_at) VALUES (?1,?2,?3,min(?4,strftime('%Y-%m-%dT%H:%M:%f000Z','now','+365 days'))) RETURNING id,NULL AS user_id,created_at,expires_at")
-        .bind(id).bind(user_agent).bind(codeyard_database::queries::sqlite::inet::encode(ip_address)?).bind(codeyard_database::queries::sqlite::time::encode(expires_at)).fetch_one(&mut *tx).await?;
+        .bind(id).bind(user_agent).bind(crate::sqlite::inet::encode(ip_address)?).bind(codeyard_database::queries::sqlite::time::encode(expires_at)).fetch_one(&mut *tx).await?;
     tx.commit().await?;
     Ok(session)
 }

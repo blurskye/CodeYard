@@ -66,4 +66,5 @@ pub mod suggestions;
 
 pub mod timeline;
 
+pub mod attestations;
 pub mod webhooks;

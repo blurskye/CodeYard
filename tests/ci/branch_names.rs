@@ -590,7 +590,7 @@ async fn queued_runs_use_short_branch_names_and_tags_stay_distinct() {
         .unwrap_err();
     assert!(matches!(
         refused,
-        codeyard_database::ci_admission::AdmissionError::InvalidRequest(_)
+        codeyard_db_actions::ci_admission::AdmissionError::InvalidRequest(_)
     ));
     // What the database holds is what the run list shows.
     let stored: Vec<String> =

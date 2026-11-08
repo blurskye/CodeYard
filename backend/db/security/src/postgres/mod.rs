@@ -16,4 +16,5 @@ pub mod dependency_graph;
 
 pub mod secret_scanning;
 
+pub mod repository_attestations;
 pub mod vulnerabilities;

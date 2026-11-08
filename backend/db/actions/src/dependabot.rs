@@ -1,4 +1,4 @@
-use crate::queries::secrets::SecretsError;
+use codeyard_database::queries::secrets::SecretsError;
 pub fn validate_repository_access(add: &[i64], remove: &[i64]) -> Result<(), SecretsError> {
     if add.len() > 1000
         || remove.len() > 1000

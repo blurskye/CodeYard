@@ -44,7 +44,7 @@ pub trait ReceiveCi: Send + Sync {
         credential: Option<codeyard_database::queries::ci::CiCredential>,
     ) -> futures_util::future::BoxFuture<
         'a,
-        Result<codeyard_database::models::CiRun, codeyard_database::ci_admission::AdmissionError>,
+        Result<codeyard_database::models::CiRun, codeyard_db_actions::ci_admission::AdmissionError>,
     >;
     fn refresh_open_pull_requests<'a>(
         &'a self,

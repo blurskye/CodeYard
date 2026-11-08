@@ -156,7 +156,7 @@ async fn show(
     if !matches!(kind.as_str(), "deployment" | "storage")
         || (!digest.is_empty()
             && (!digest.starts_with("sha256:")
-                || !codeyard_database::queries::attestations::valid_digest(&digest)))
+                || !codeyard_db_repos::attestations::valid_digest(&digest)))
     {
         return ctx.error(
             StatusCode::BAD_REQUEST,

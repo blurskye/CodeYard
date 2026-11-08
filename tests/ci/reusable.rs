@@ -7,7 +7,7 @@ use codeyard_ci::config::CiExecutionMode;
 use codeyard_ci::config::CiPipelineKind;
 use codeyard_ci_engine::queue::RunQueue;
 use codeyard_ci_engine::workers::CiWorkers;
-use codeyard_database::ci_admission::AdmissionError;
+use codeyard_db_actions::ci_admission::AdmissionError;
 use codeyard_git_storage::receive_ci::CiRunRequest;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_storage::ObjectStore;

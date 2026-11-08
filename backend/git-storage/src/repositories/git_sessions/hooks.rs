@@ -1190,7 +1190,7 @@ impl Gateway {
                     .await;
                 if matches!(
                     result,
-                    Err(codeyard_database::ci_admission::AdmissionError::WorkflowDisabled(_))
+                    Err(codeyard_db_actions::ci_admission::AdmissionError::WorkflowDisabled(_))
                 ) {
                     continue;
                 }
