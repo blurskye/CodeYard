@@ -36,7 +36,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 CHART = ROOT / "deploy/helm/codeyard"
-FORMS = ROOT / "scripts/e2e-web.py"
+FORMS = ROOT / "tests/e2e/e2e-web.py"
 CNPG_VERSION = "1.30.1"
 CNPG_MANIFEST = (
     "https://github.com/cloudnative-pg/cloudnative-pg/releases/download/"

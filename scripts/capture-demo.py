@@ -28,7 +28,7 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright
 
 ROOT = Path(__file__).resolve().parent.parent
-HELPER = ROOT / "scripts/e2e-web.py"
+HELPER = ROOT / "tests/e2e/e2e-web.py"
 DESKTOP = {"width": 1600, "height": 900}
 PHONE = {"width": 390, "height": 844}
 

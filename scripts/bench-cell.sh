@@ -134,7 +134,7 @@ try:
         raise RuntimeError('Server did not become ready')
 
     def form(path, action, fields, status='303', output=()):
-        args = ['python3', '-I', root / 'scripts/e2e-web.py', 'form', '--base', base,
+        args = ['python3', '-I', root / 'tests/e2e/e2e-web.py', 'form', '--base', base,
                 '--jar', work / 'jar.json', '--who', 'bench', path, '--action', action, '--status', status]
         if fields.get('action') == 'create':
             args += ['--has', 'action=create']

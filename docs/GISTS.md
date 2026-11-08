@@ -61,7 +61,7 @@ On the builder, build the server and the release browser bundle, then run:
 ```sh
 cargo build --locked --bin codeyard
 bash scripts/build-webui.sh release
-xvfb-run -a python3 scripts/test-gists-browser.py --headed
+xvfb-run -a python3 tests/browser/test-gists-browser.py --headed
 ```
 
 Unstripped debug WASM exceeds the runtime's 64 MiB asset limit; do not raise that

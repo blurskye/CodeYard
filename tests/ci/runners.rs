@@ -1220,7 +1220,7 @@ async fn runner_settings_browser() {
             .unwrap();
     });
     let result = tokio::process::Command::new("python3")
-        .arg("scripts/test-runners-browser.py")
+        .arg("tests/browser/test-runners-browser.py")
         .arg(&base)
         .arg(org.id.to_string())
         .env("CODEYARD_TEST_SESSION", &session.session)

@@ -428,11 +428,11 @@ must verify signatures, verification material, signer identity and their own tru
 5. Open the running row. The steps and logs update about every two seconds and
    the run ends with `LIVE_CI_PASSED`.
 
-`scripts/test-actions-live.py` is an older browser script for the same check. It has
+`tests/browser/test-actions-live.py` is an older browser script for the same check. It has
 not been run against the current interface, so treat its result as unverified:
 
 ```sh
-uv run --with playwright python scripts/test-actions-live.py \
+uv run --with playwright python tests/browser/test-actions-live.py \
   --base-url http://localhost:3000 \
   --owner YOUR_TEST_USER --repo YOUR_TEST_REPO \
   --username YOUR_TEST_USER --password-file /path/to/password-file

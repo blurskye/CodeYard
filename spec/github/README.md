@@ -9,5 +9,5 @@ coverage document and the GraphQL schema, and to check responses in tests.
 | `schema.docs.graphql` | github/docs, `src/graphql/data/fpt/schema.docs.graphql` | 5815d11586b0796688963a98c889680e60d72dc4 | MIT, `LICENSE-docs-code.md` |
 
 The REST archive also contains the action-specific `components.schemas.webhook-*` payload
-schemas. `scripts/e2e-github.py` validates actual signed deliveries against these documents,
+schemas. `tests/e2e/e2e-github.py` validates actual signed deliveries against these documents,
 with local references only and OpenAPI nullable semantics. It does not fetch schemas at runtime.

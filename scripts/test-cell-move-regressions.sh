@@ -9,6 +9,6 @@ cargo build --locked -p codeyard -p codeyard-runner --bin codeyard --bin codeyar
 export GITSERV_TEST_OPENSSH_HELPER=$(python3 -I scripts/cargo-executable.py codeyard <"$artifacts")
 export CODEYARD_ACTIONS_BIN=$(python3 -I scripts/cargo-executable.py codeyard-actions <"$artifacts")
 status=0
-cargo test --locked -p codeyard --test cluster -- cells_authorization::foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_answers --exact --nocapture || status=1
-cargo test --locked -p codeyard --test cluster -- replicas::a_complete_copy_removes_stale_unusable_directories_only --exact --nocapture || status=1
+cargo test --locked -p codeyard --test cells -- authorization::foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_answers --exact --nocapture || status=1
+cargo test --locked -p codeyard --test placement -- replicas::a_complete_copy_removes_stale_unusable_directories_only --exact --nocapture || status=1
 exit "$status"

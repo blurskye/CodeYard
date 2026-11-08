@@ -164,7 +164,7 @@ async fn main() {
     let mut command = tokio::process::Command::new(python);
     command
         .args([
-            "scripts/test-actions-values-ui.py",
+            "tests/browser/test-actions-values-ui.py",
             &base,
             "/alice/project",
             &format!("/settings/organizations/{}?tab=actions", org.id),

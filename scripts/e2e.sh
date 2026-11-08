@@ -53,7 +53,7 @@ fi
 exec < /dev/null
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$ROOT" || exit 2
-HELPER=$ROOT/scripts/e2e-web.py
+HELPER=$ROOT/tests/e2e/e2e-web.py
 
 E2E_DATABASES=${E2E_DATABASES:-sqlite postgres pgbouncer replica cluster quorum cells}
 E2E_PROFILE=${E2E_PROFILE:-release}
@@ -77,7 +77,7 @@ esac
 PROFILE_DIR=$TARGET_DIR/${CARGO_BUILD_TARGET:+$CARGO_BUILD_TARGET/}$E2E_PROFILE
 BIN=$PROFILE_DIR/codeyard
 ACTIONS_BIN=$PROFILE_DIR/codeyard-actions
-GITHUB_HELPER=$ROOT/scripts/e2e-github.py
+GITHUB_HELPER=$ROOT/tests/e2e/e2e-github.py
 GITHUB_PYTHON=${CODEYARD_E2E_PYTHON:-python3}
 
 # ssh and ssh-keygen may be outside PATH (NixOS keeps them in the system profile).
@@ -1856,10 +1856,10 @@ t_gh_sweep() {
     local -a skip=()
     # Cases that need a finished CI run report SKIP where local runs cannot execute.
     [[ -z $CI_RUNS_UNAVAILABLE ]] || skip=(--skip-runs "$CI_RUNS_UNAVAILABLE")
-    "$GITHUB_PYTHON" -I "$ROOT/scripts/gh_sweep/harness.py" --base "$BASE" --workers "${E2E_GH_SWEEP_WORKERS:-4}" \
+    "$GITHUB_PYTHON" -I "$ROOT/tests/e2e/gh_sweep/harness.py" --base "$BASE" --workers "${E2E_GH_SWEEP_WORKERS:-4}" \
         --per-account 2 --record-output "$RUN/gh-sweep-argv.json" "${skip[@]}" >"$RUN/gh-sweep.txt" 2>&1 || rc=$?
     grep '^SWEEP ' "$RUN/gh-sweep.txt" || echo "the sweep printed no totals; see $RUN/gh-sweep.txt"
-    "$GITHUB_PYTHON" -I "$ROOT/scripts/gh_sweep/harness.py" --check --records "$RUN/gh-sweep-argv.json" \
+    "$GITHUB_PYTHON" -I "$ROOT/tests/e2e/gh_sweep/harness.py" --check --records "$RUN/gh-sweep-argv.json" \
         | "$GITHUB_PYTHON" -I -c 'import json, sys; r = json.load(sys.stdin); print("gh sweep flags not exercised:", len(r["missing_flags"]), "waived:", r["waived"])'
     return $rc
 }
@@ -3092,7 +3092,7 @@ t_cluster_drain_worker() {
 }
 
 t_cluster_browser() {
-    "$GITHUB_PYTHON" -I "$ROOT/scripts/test-cluster-browser.py" "$BASE" "$RUN/jar-alice.json" ci1 \
+    "$GITHUB_PYTHON" -I "$ROOT/tests/browser/test-cluster-browser.py" "$BASE" "$RUN/jar-alice.json" ci1 \
         "http://127.0.0.1:${HTTP_PORTS[web2]}" "$RUN/jar-bob.json"
 }
 
@@ -3427,7 +3427,7 @@ run_cells_round() {
     step -f -i 'cells: disposable directory and two native databases' prepare_cells_databases
     if [[ $ROUND_BLOCKED == 0 ]]; then
         step -f 'cells: real public router, foreign gh and Git, revocation and outage acceptance' \
-            "$GITHUB_PYTHON" -I "$ROOT/scripts/e2e-cells.py" --run "$RUN" --binary "$BIN"
+            "$GITHUB_PYTHON" -I "$ROOT/tests/e2e/e2e-cells.py" --run "$RUN" --binary "$BIN"
     fi
     step -i 'cells: remove the disposable databases' drop_pg
 }

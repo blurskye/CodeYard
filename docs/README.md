@@ -42,10 +42,10 @@ Start with the [README](../README.md) for setup.
 - `cargo audit` checks `Cargo.lock`; the advisories we accept are listed with reasons in
   `.cargo/audit.toml`.
 - `scripts/release.sh` builds the release binary and browser bundle on this machine, then the server image from them.
-- `scripts/test-actions-ui.py` checks pre-seeded fixture runs without mutating CI;
-  `scripts/test-actions-live.py` dispatches a real workflow against an explicitly prepared
+- `tests/browser/test-actions-ui.py` checks pre-seeded fixture runs without mutating CI;
+  `tests/browser/test-actions-live.py` dispatches a real workflow against an explicitly prepared
   trusted runner and test repository. Neither is part of CI or `scripts/e2e.sh`.
-- `scripts/test-gists-browser.py --headed` uses an owned disposable installation to check
+- `tests/browser/test-gists-browser.py --headed` uses an owned disposable installation to check
   no-JavaScript forms, hydrated gist navigation and 375px/1280px layouts.
 - Hydration, navigation, drafts and visual interaction require Playwright in real Chromium;
   final visual sign-off requires a headed-browser run. Served JS/WASM alone is not enough.
