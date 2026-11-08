@@ -148,17 +148,17 @@ pub async fn oauth_redirect(
         }
     }
     // Always replace the browser nonce; only the latest flow in this browser completes.
-    let nonce = codeyard_support::crypto::random_hex();
+    let nonce = codeyard_security::crypto::random_hex();
     let token = match state
         .pool
         .cell_prefix()
-        .cookie(&codeyard_support::crypto::random_hex())
+        .cookie(&codeyard_security::crypto::random_hex())
     {
         Ok(token) => token,
         Err(_) => return failure(OAuthError::StateUnavailable, &provider),
     };
     let verifier = if codeyard_identity::oauth::providers::supports_pkce(&provider) {
-        codeyard_support::crypto::random_hex()
+        codeyard_security::crypto::random_hex()
     } else {
         String::new()
     };

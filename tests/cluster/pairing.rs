@@ -14,7 +14,7 @@ use codeyard_nodes::transport::NodeAddress;
 use codeyard_nodes::transport::Relay;
 use codeyard_nodes::transport::ALPN_PAIR;
 use codeyard_nodes::transport::ALPN_RPC;
-use codeyard_support::node_identity::NodeKey;
+use codeyard_security::node_identity::NodeKey;
 
 use codeyard_database::models::JoinOutcome;
 use codeyard_database::models::NodeStatusChange;
@@ -819,7 +819,7 @@ async fn serving_nodes_register_report_their_address_and_pair_with_a_token() {
     )
     .await
     .unwrap();
-    let key_a = codeyard_support::node_identity::load_existing(state_a.path())
+    let key_a = codeyard_security::node_identity::load_existing(state_a.path())
         .unwrap()
         .expect("the key was saved");
     let row = codeyard_db_placement::cluster::get_node_by_public_key(&db.pool, &key_a.public_hex())
@@ -894,7 +894,7 @@ async fn serving_nodes_register_report_their_address_and_pair_with_a_token() {
     )
     .await
     .unwrap();
-    let key_b = codeyard_support::node_identity::load_existing(state_b.path())
+    let key_b = codeyard_security::node_identity::load_existing(state_b.path())
         .unwrap()
         .unwrap();
     let row = codeyard_db_placement::cluster::get_node_by_public_key(&db.pool, &key_b.public_hex())
@@ -1582,7 +1582,7 @@ async fn withdrawing_gives_up_when_the_node_row_is_locked() {
     .await
     .unwrap();
     core.publish().await.unwrap();
-    let key = codeyard_support::node_identity::load_existing(state.path())
+    let key = codeyard_security::node_identity::load_existing(state.path())
         .unwrap()
         .expect("the key was saved");
 

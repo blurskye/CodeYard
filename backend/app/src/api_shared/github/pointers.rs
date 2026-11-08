@@ -27,7 +27,7 @@ pub async fn remote(
     wanted: usize,
 ) -> Result<Option<Vec<Value>>> {
     let credential = github_auth::credential(headers).ok_or_else(github_auth::required)?;
-    if codeyard_support::token_hash::token_hash(credential) != auth.token.token_hash {
+    if codeyard_security::token_hash::token_hash(credential) != auth.token.token_hash {
         return Err(github_auth::required());
     }
     Ok(read(
@@ -88,7 +88,7 @@ pub async fn stars(
         let valid = match actor.credential() {
             Some(AccountCredential::Session(session)) => session == value,
             Some(AccountCredential::Token(_, hash) | AccountCredential::ForeignToken(_, hash)) => {
-                codeyard_support::token_hash::token_hash(value) == hash
+                codeyard_security::token_hash::token_hash(value) == hash
             }
             _ => false,
         };

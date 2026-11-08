@@ -493,13 +493,13 @@ async fn contract(pg: bool) {
     .await;
     assert_eq!(requests, json!([]));
     // A real OAuth exchange supplies an app-owned user credential for narrowing.
-    let code = codeyard_support::crypto::random_hex();
+    let code = codeyard_security::crypto::random_hex();
     codeyard_db_identity::oauth_apps::save_grant(
         f.pool(),
         &codeyard_db_identity::oauth_apps::Grant {
-            hash: codeyard_support::token_hash::token_hash(&code),
+            hash: codeyard_security::token_hash::token_hash(&code),
             client_id: app.client_id.clone(),
-            user_code: codeyard_support::crypto::random_hex(),
+            user_code: codeyard_security::crypto::random_hex(),
             scopes: "repo".into(),
             expires_at: chrono::Utc::now().timestamp() + 60,
             interval: 5,
@@ -518,7 +518,7 @@ async fn contract(pg: bool) {
     assert!(matches!(
         codeyard_db_identity::oauth_apps::exchange(
             f.pool(),
-            &codeyard_support::token_hash::token_hash(&code),
+            &codeyard_security::token_hash::token_hash(&code),
             &app.client_id,
             "web",
             Some(&app.homepage),
@@ -536,7 +536,7 @@ async fn contract(pg: bool) {
         &format!(
             "UPDATE personal_access_tokens SET expires_at='{}' WHERE token_hash='{}'",
             parent_expiry.to_rfc3339_opts(chrono::SecondsFormat::Micros, true),
-            codeyard_support::token_hash::token_hash("user-app-token")
+            codeyard_security::token_hash::token_hash("user-app-token")
         ),
         &[],
     )

@@ -6,7 +6,7 @@ use axum::http::StatusCode;
 use axum::Json;
 use codeyard_app::app::AppState;
 use codeyard_db_identity::github_apps::App;
-use codeyard_support::token_hash::token_hash;
+use codeyard_security::token_hash::token_hash;
 use codeyard_types::github_error::Error;
 use codeyard_types::github_error::Result;
 use codeyard_webhooks::settings::HookError;
@@ -37,7 +37,7 @@ pub(super) async fn convert(
     let webhook_secret = manifest
         .hook_url
         .as_ref()
-        .map(|_| codeyard_support::crypto::random_hex());
+        .map(|_| codeyard_security::crypto::random_hex());
     let fields = if let Some(url) = &manifest.hook_url {
         let form = HookForm {
             username: None,
@@ -78,13 +78,13 @@ pub(super) async fn convert(
     let (private, public) = codeyard_identity::github_apps::generate_key()
         .await
         .map_err(Error::unavailable)?;
-    let client_secret = codeyard_support::crypto::random_hex();
+    let client_secret = codeyard_security::crypto::random_hex();
     let app = App {
         id: 0,
         owner_id: draft.user_id.ok_or_else(Error::missing)?,
         bot_id: 0,
         is_public: manifest.is_public,
-        client_id: format!("Iv1.{}", &codeyard_support::crypto::random_hex()[..16]),
+        client_id: format!("Iv1.{}", &codeyard_security::crypto::random_hex()[..16]),
         slug: manifest.slug,
         name: manifest.name,
         description: manifest.description,

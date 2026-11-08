@@ -6,7 +6,7 @@ use codeyard_database::cells::search::{
 };
 use codeyard_db_directory::Directory;
 use codeyard_router::directory::{Client, Listener};
-use codeyard_support::node_identity::NodeKey;
+use codeyard_security::node_identity::NodeKey;
 use codeyard_types::cell_ids::Prefix;
 use codeyard_types::cells::{Cell, State};
 use serde_json::json;

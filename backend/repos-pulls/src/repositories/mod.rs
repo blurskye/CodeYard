@@ -1,11 +1,9 @@
 //! Repository operations shared by the HTML pages, JSON API and SSH.
 
 pub mod advisories;
-pub mod catalog_search;
 pub mod commit_comments;
 pub mod commit_pulls;
 pub mod community;
-pub mod content_search;
 pub mod dependencies;
 pub mod dependency_graph;
 pub mod files;

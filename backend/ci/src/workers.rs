@@ -98,7 +98,7 @@ impl CiWorkers {
         // finish, each worker recovers again before its first claim.
         let mut recovered = true;
         if recover {
-            codeyard_support::fs::private_dir(&self.cleanup_dir)?;
+            codeyard_security::fs::private_dir(&self.cleanup_dir)?;
             // A Podman socket that accepts connections but never answers must not hold up the
             // listeners. Records the pass does not reach stay on disk for the background pass.
             match tokio::time::timeout(

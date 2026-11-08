@@ -66,7 +66,7 @@ impl Fixture {
         .await
         .unwrap()
         .unwrap();
-        let generation = codeyard_support::token_hash::token_hash("chunk-runtime");
+        let generation = codeyard_security::token_hash::token_hash("chunk-runtime");
         codeyard_db_actions::action_objects::issue_token(
             db.pool(),
             run.id,
@@ -145,7 +145,7 @@ impl Fixture {
     }
 
     async fn capability(&self, secret: &str, job: Option<i64>, step: Option<i32>) -> String {
-        let hash = codeyard_support::token_hash::token_hash(secret);
+        let hash = codeyard_security::token_hash::token_hash(secret);
         assert!(codeyard_db_actions::action_logs::issue(
             self.db.pool(),
             self.owner,
@@ -547,7 +547,7 @@ async fn expiry(pg: bool) {
             job: None,
             step: None
         },
-        &codeyard_support::token_hash::token_hash("expired")
+        &codeyard_security::token_hash::token_hash("expired")
     )
     .await
     .unwrap());

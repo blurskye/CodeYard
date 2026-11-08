@@ -101,7 +101,7 @@ async fn contract(pg: bool) {
         .unwrap();
         token_hashes.insert(
             token.token.id,
-            codeyard_support::token_hash::token_hash(&token.value),
+            codeyard_security::token_hash::token_hash(&token.value),
         );
         credentials.push(format!("Bearer {}", token.value));
     }

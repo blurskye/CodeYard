@@ -2,7 +2,7 @@ use crate::pairing::{normalize_name, parse_declared_nodes, DeclaredNode, JoinTic
 use crate::transport::Relay;
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use codeyard_database::DbPool;
-use codeyard_support::node_identity::parse_public_key;
+use codeyard_security::node_identity::parse_public_key;
 use std::{net::SocketAddr, time::Duration};
 /// How often a running node records that it is alive and where it can be reached.
 pub const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);

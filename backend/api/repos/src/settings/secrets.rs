@@ -298,7 +298,7 @@ mod tests {
                 "private SQL encrypted_value nonce plaintext /filesystem/key"
             )),
             codeyard_database::queries::secrets::SecretsError::Encryption(
-                codeyard_support::secrets::SecretError::EncryptionFailed,
+                codeyard_security::secrets::SecretError::EncryptionFailed,
             ),
         ] {
             let (status, Json(error)) = secret_error(error);

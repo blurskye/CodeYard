@@ -10,7 +10,7 @@ use crate::backend::cli::commands::grant_access_cmd;
 
 use anyhow::bail;
 use anyhow::Result;
-use codeyard_support::fs::private_dir as prepare_state_directory;
+use codeyard_security::fs::private_dir as prepare_state_directory;
 use std::ffi::OsString;
 use std::time::Duration;
 use tracing::info;

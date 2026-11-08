@@ -10,8 +10,8 @@ use codeyard_ci::config::CiConfig;
 use codeyard_db_security::secret_scanning as records;
 use codeyard_git_storage::repositories::lifecycle;
 use codeyard_git_storage::repositories::store::repo_store;
+use codeyard_security::secrets::SecretEncryptor;
 use codeyard_storage::ObjectStore;
-use codeyard_support::secrets::SecretEncryptor;
 use serde_json::{json, Value};
 use std::{path::Path, process::Output, sync::Arc};
 
@@ -185,7 +185,7 @@ async fn contract(pg: bool) {
         fixture.pool(),
         owner,
         repo.id,
-        &codeyard_support::token_hash::token_hash(&secret),
+        &codeyard_security::token_hash::token_hash(&secret),
         "codeyard_personal_access_token",
     )
     .await

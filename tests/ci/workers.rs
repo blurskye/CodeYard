@@ -11,7 +11,7 @@ use codeyard_ci::queue::RunQueue;
 use codeyard_ci::workers::CiWorkers;
 
 use codeyard_git_storage::context::NodeContext;
-use codeyard_support::secrets::SecretEncryptor;
+use codeyard_security::secrets::SecretEncryptor;
 
 use codeyard_git::error::ErrorKind;
 use codeyard_git_storage::repositories::store::RepoStore;
@@ -246,7 +246,7 @@ fn line(text: &str) -> LogLine {
     }
 }
 
-async fn client(key: &codeyard_support::node_identity::NodeKey) -> NodeContext {
+async fn client(key: &codeyard_security::node_identity::NodeKey) -> NodeContext {
     NodeContext {
         pool: None,
         rpc: std::sync::Arc::new(codeyard_repos_rpc::RpcFactory),
@@ -442,7 +442,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
         .await
         .unwrap();
     let root = tempfile::tempdir().unwrap();
-    let core_key = codeyard_support::node_identity::NodeKey::generate();
+    let core_key = codeyard_security::node_identity::NodeKey::generate();
     let core_node = codeyard_db_placement::cluster::register_own_node(
         pool,
         &core_key.public_hex(),
@@ -639,7 +639,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
     let (worker, peers) = codeyard_placement::worker::worker_context(&state_dir, settings)
         .await
         .unwrap();
-    let other_key = codeyard_support::node_identity::NodeKey::generate();
+    let other_key = codeyard_security::node_identity::NodeKey::generate();
     codeyard_db_placement::cluster::upsert_declared_nodes(
         pool,
         &[codeyard_db_placement::cluster::DeclaredMember {
@@ -669,7 +669,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
         peers: vec![
             codeyard_nodes::worker::CorePeer {
                 target: None,
-                public_key: codeyard_support::node_identity::NodeKey::generate().public_hex(),
+                public_key: codeyard_security::node_identity::NodeKey::generate().public_hex(),
                 address: codeyard_nodes::transport::NodeAddress {
                     addrs: vec!["127.0.0.1:9".parse().unwrap()],
                     relays: vec![],
@@ -754,7 +754,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
     stale_claim.storage_node_id = Some(core_node.id + 100_000);
     stale_claim.storage_peer = Some(codeyard_nodes::worker::CorePeer {
         target: None,
-        public_key: codeyard_support::node_identity::NodeKey::generate().public_hex(),
+        public_key: codeyard_security::node_identity::NodeKey::generate().public_hex(),
         address: codeyard_nodes::transport::NodeAddress {
             tcp: vec!["127.0.0.1:1".parse().unwrap()],
             ..Default::default()
@@ -895,7 +895,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
         ErrorKind::Invalid
     );
     // Storage-only callers are refused even the three worker reads.
-    let nonworker_key = codeyard_support::node_identity::NodeKey::generate();
+    let nonworker_key = codeyard_security::node_identity::NodeKey::generate();
     codeyard_db_placement::cluster::upsert_declared_nodes(
         pool,
         &[codeyard_db_placement::cluster::DeclaredMember {
@@ -1298,7 +1298,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
         .await
         .is_err());
     connection.close(0u32.into(), b"test complete");
-    let unknown = client(&codeyard_support::node_identity::NodeKey::generate()).await;
+    let unknown = client(&codeyard_security::node_identity::NodeKey::generate()).await;
     let unknown_queue = RunQueue::Remote {
         preferred: Default::default(),
         context: unknown.clone(),
@@ -1625,13 +1625,13 @@ async fn worker_only_cli_has_no_database_or_listeners_and_stops_on_sigterm() {
     let web = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let ssh = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let udp = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
-    let key = codeyard_support::node_identity::NodeKey::generate();
+    let key = codeyard_security::node_identity::NodeKey::generate();
     let state_dir = root.path().join("state");
     std::fs::create_dir(&state_dir).unwrap();
     std::fs::write(state_dir.join("node.key"), key.secret_hex()).unwrap();
     let peer = codeyard_nodes::worker::CorePeer {
         target: None,
-        public_key: codeyard_support::node_identity::NodeKey::generate().public_hex(),
+        public_key: codeyard_security::node_identity::NodeKey::generate().public_hex(),
         address: codeyard_nodes::transport::NodeAddress {
             addrs: vec!["127.0.0.1:9".parse().unwrap()],
             relays: vec![],
@@ -2903,7 +2903,7 @@ async fn database_workers_recheck_membership_before_consuming_runs() {
     let sqlite = native::NativeDatabase::new().await;
     for pool in [&postgres.pool, &sqlite.pool] {
         let root = tempfile::tempdir().unwrap();
-        let key = codeyard_support::node_identity::NodeKey::generate();
+        let key = codeyard_security::node_identity::NodeKey::generate();
         let node = codeyard_db_placement::cluster::register_own_node(
             pool,
             &key.public_hex(),
@@ -3022,7 +3022,8 @@ async fn database_workers_recheck_membership_before_consuming_runs() {
                 .await
                 .unwrap();
             } else if state == "key-changed" {
-                let replacement = codeyard_support::node_identity::NodeKey::generate().public_hex();
+                let replacement =
+                    codeyard_security::node_identity::NodeKey::generate().public_hex();
                 match pool {
                     codeyard_database::DbPool::Postgres(pg) => {
                         sqlx::query("UPDATE nodes SET public_key = $1 WHERE id = $2")
@@ -4374,7 +4375,7 @@ async fn ci_fixture() -> CiFixture {
     let database = native::PostgresDatabase::new().await;
     let pool = database.pool.clone();
     let root = tempfile::tempdir().unwrap();
-    let core_key = codeyard_support::node_identity::NodeKey::generate();
+    let core_key = codeyard_security::node_identity::NodeKey::generate();
     let core_node = codeyard_db_placement::cluster::register_own_node(
         &pool,
         &core_key.public_hex(),
@@ -4497,7 +4498,7 @@ async fn ci_fixture() -> CiFixture {
         .unwrap()
         .to_string();
 
-    let worker_key = codeyard_support::node_identity::NodeKey::generate();
+    let worker_key = codeyard_security::node_identity::NodeKey::generate();
     codeyard_db_placement::cluster::upsert_declared_nodes(
         &pool,
         &[codeyard_db_placement::cluster::DeclaredMember {
@@ -4553,7 +4554,7 @@ async fn a_hostile_runner_cannot_select_another_runs_credentials_repository_or_l
         .await
         .unwrap();
 
-    let key = codeyard_support::node_identity::NodeKey::generate();
+    let key = codeyard_security::node_identity::NodeKey::generate();
     codeyard_db_placement::cluster::upsert_declared_nodes(
         fixture.pool(),
         &[codeyard_db_placement::cluster::DeclaredMember {
@@ -4902,7 +4903,7 @@ async fn a_busy_core_refuses_a_request_at_once_when_all_slots_are_taken() {
     // One peer may only have four requests waiting for their frames, so four runners hold them.
     let mut runners = Vec::new();
     for index in 0..4 {
-        let key = codeyard_support::node_identity::NodeKey::generate();
+        let key = codeyard_security::node_identity::NodeKey::generate();
         codeyard_db_placement::cluster::upsert_declared_nodes(
             fixture.pool(),
             &[codeyard_db_placement::cluster::DeclaredMember {
@@ -5352,7 +5353,7 @@ async fn successful_core_is_tried_first_for_subsequent_log_batches() {
         peers: vec![
             codeyard_nodes::worker::CorePeer {
                 target: None,
-                public_key: codeyard_support::node_identity::NodeKey::generate().public_hex(),
+                public_key: codeyard_security::node_identity::NodeKey::generate().public_hex(),
                 address: codeyard_nodes::transport::NodeAddress {
                     tcp: vec![address],
                     ..Default::default()

@@ -366,7 +366,7 @@ impl NodeContext {
                 let address: NodeAddress =
                     serde_json::from_str(node.addr_hint.as_deref().ok_or_else(unavailable)?)
                         .map_err(|_| unavailable())?;
-                let peer = codeyard_support::node_identity::parse_public_key(&node.public_key)
+                let peer = codeyard_security::node_identity::parse_public_key(&node.public_key)
                     .map_err(|_| unavailable())?;
                 (peer, address)
             } else {

@@ -46,7 +46,7 @@ pub async fn refuse_blocked_secrets(
     let mut violations = Vec::new();
     let mut bypasses = Vec::new();
     for finding in findings {
-        let hash = codeyard_support::token_hash::token_hash(&finding.detection.secret);
+        let hash = codeyard_security::token_hash::token_hash(&finding.detection.secret);
         if let Some(placeholder) = codeyard_db_security::secret_scanning::protection(
             pool,
             actor,

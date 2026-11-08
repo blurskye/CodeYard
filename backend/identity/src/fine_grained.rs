@@ -2,7 +2,7 @@
 //! organization the user belongs to), a repository selection and named permissions. What it
 //! can do is always the intersection of those grants with the user's own live rights: every
 //! request still runs as the user, and this module only narrows it.
-use codeyard_support::token_hash::token_hash;
+use codeyard_security::token_hash::token_hash;
 
 use chrono::{DateTime, Utc};
 use codeyard_database::models::Repository;
@@ -237,7 +237,7 @@ pub async fn create(
     }
     let value = pool
         .cell_prefix()
-        .token(PREFIX, &codeyard_support::crypto::random_hex())
+        .token(PREFIX, &codeyard_security::crypto::random_hex())
         .map_err(|_| TokenError::Unavailable)?;
     let write = permissions.values().any(|level| level != "read");
     let permissions = Value::Object(permissions).to_string();
@@ -302,7 +302,7 @@ pub async fn regenerate(
     }
     let value = pool
         .cell_prefix()
-        .token(PREFIX, &codeyard_support::crypto::random_hex())
+        .token(PREFIX, &codeyard_security::crypto::random_hex())
         .map_err(|_| TokenError::Unavailable)?;
     if codeyard_db_identity::fine_grained_tokens::regenerate(
         pool,

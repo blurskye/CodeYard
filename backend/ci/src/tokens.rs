@@ -181,7 +181,7 @@ pub async fn issue_selected(
         .map(|(job, permissions)| {
             Ok((
                 job.as_str(),
-                codeyard_support::token_hash::token_hash(&values[job]),
+                codeyard_security::token_hash::token_hash(&values[job]),
                 serde_json::to_string(permissions)?,
                 permissions.0.values().any(|value| *value == 2),
             ))
@@ -265,7 +265,7 @@ pub async fn issue_selected(
         }
         codeyard_db_actions::oidc::bind_job(
             pool,
-            &codeyard_support::token_hash::token_hash(&values[key]),
+            &codeyard_security::token_hash::token_hash(&values[key]),
             path,
             name,
             environment,

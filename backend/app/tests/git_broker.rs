@@ -1416,7 +1416,7 @@ impl PushFixture {
             owner.id,
             &session,
             "push",
-            &codeyard_support::token_hash::token_hash(&token),
+            &codeyard_security::token_hash::token_hash(&token),
             "write",
             None,
         )
@@ -1860,7 +1860,7 @@ async fn remote_repository_authorization(pool: &DbPool) {
     .unwrap();
     let node = codeyard_db_placement::cluster::register_own_node(
         pool,
-        &codeyard_support::node_identity::NodeKey::generate().public_hex(),
+        &codeyard_security::node_identity::NodeKey::generate().public_hex(),
         "remote-storage",
         &["storage".to_owned()],
         "test",

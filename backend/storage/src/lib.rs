@@ -74,7 +74,7 @@ pub struct ObjectStore {
     backend: Backend,
     io: Arc<Semaphore>,
     downloads: Arc<Semaphore>,
-    file_locks: codeyard_support::locks::KeyedMutex<String>,
+    file_locks: codeyard_security::locks::KeyedMutex<String>,
 }
 
 impl ObjectStore {

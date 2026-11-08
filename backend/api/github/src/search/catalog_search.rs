@@ -118,14 +118,9 @@ async fn catalog(
     }
     let deadline = tokio::time::Instant::now() + state.search_time_budget;
     let (search, git_incomplete) = if search.needs_git() {
-        codeyard_repos_pulls::repositories::catalog_search::prepare(
-            &state.pool,
-            state.cluster.as_ref(),
-            viewer,
-            search,
-        )
-        .await
-        .map_err(Error::unavailable)?
+        codeyard_search::catalog::prepare(&state.pool, state.cluster.as_ref(), viewer, search)
+            .await
+            .map_err(Error::unavailable)?
     } else {
         (search, false)
     };

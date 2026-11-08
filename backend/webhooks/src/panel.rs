@@ -10,7 +10,7 @@ use codeyard_database::models::WebhookDelivery;
 use codeyard_database::DbPool;
 use codeyard_db_repos::webhooks as hooks;
 use codeyard_db_repos::webhooks::HookOwner;
-use codeyard_support::secrets::SecretEncryptor;
+use codeyard_security::secrets::SecretEncryptor;
 use codeyard_webui::components::webhooks::DeliveryDetail;
 use codeyard_webui::components::webhooks::DeliveryRow;
 use codeyard_webui::components::webhooks::HookDetail;

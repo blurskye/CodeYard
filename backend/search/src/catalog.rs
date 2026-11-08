@@ -36,7 +36,8 @@ pub async fn git_facts(
     let Some(revision) = refs.get(&format!("refs/heads/{}", repo.default_branch)) else {
         return Ok(facts);
     };
-    let directories = crate::repositories::community::directories(&store, revision).await?;
+    let directories =
+        codeyard_repos_pulls::repositories::community::directories(&store, revision).await?;
     let mut read_readme = false;
     let mut read_license = false;
     for (_, mut entries) in directories {

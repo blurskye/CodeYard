@@ -15,7 +15,7 @@ use anyhow::ensure;
 use anyhow::Context;
 use anyhow::Result;
 use codeyard_git::mirror;
-use codeyard_support::fs::private_dir;
+use codeyard_security::fs::private_dir;
 use std::collections::BTreeSet;
 use std::collections::HashSet;
 use std::io::Write;
@@ -648,9 +648,9 @@ pub async fn backup_with_context(
     }
     // Offline backups also migrate the legacy standalone signer before copying keys.
     if places.repos_path.join(NODE_KEY).is_file() {
-        codeyard_support::node_identity::release_key(places.state_dir, places.repos_path)?;
+        codeyard_security::node_identity::release_key(places.state_dir, places.repos_path)?;
     }
-    if let Some(key) = codeyard_support::node_identity::load_existing(places.state_dir)? {
+    if let Some(key) = codeyard_security::node_identity::load_existing(places.state_dir)? {
         let mut temporary = tempfile::NamedTempFile::new_in(dir)?;
         writeln!(temporary, "{}", key.secret_hex())?;
         temporary.as_file().sync_all()?;
@@ -701,11 +701,11 @@ pub async fn restore(places: &Places<'_>, dir: &Path) -> Result<codeyard_databas
         .unwrap_or_else(|| places.state_dir.join(NODE_KEY));
     let backup_key = dir.join(NODE_KEY);
     if backup_key.is_file() {
-        let saved = codeyard_support::node_identity::NodeKey::parse(&std::fs::read_to_string(
+        let saved = codeyard_security::node_identity::NodeKey::parse(&std::fs::read_to_string(
             &backup_key,
         )?)?;
         let existing = if key.exists() || std::env::var_os("NODE_KEY").is_some() {
-            codeyard_support::node_identity::load_existing(places.state_dir)?
+            codeyard_security::node_identity::load_existing(places.state_dir)?
         } else {
             None
         };
@@ -729,10 +729,10 @@ pub async fn restore(places: &Places<'_>, dir: &Path) -> Result<codeyard_databas
     let saved_signer = dir.join("release.key");
     let current_signer = places.state_dir.join("release.key");
     if saved_signer.exists() && current_signer.exists() {
-        let saved = codeyard_support::node_identity::NodeKey::parse(&std::fs::read_to_string(
+        let saved = codeyard_security::node_identity::NodeKey::parse(&std::fs::read_to_string(
             saved_signer,
         )?)?;
-        let current = codeyard_support::node_identity::NodeKey::parse(&std::fs::read_to_string(
+        let current = codeyard_security::node_identity::NodeKey::parse(&std::fs::read_to_string(
             current_signer,
         )?)?;
         ensure!(
@@ -881,7 +881,7 @@ pub async fn restore(places: &Places<'_>, dir: &Path) -> Result<codeyard_databas
     if clustered {
         repair::rebuild_offline(&pool, Some(&root)).await?;
         cluster::restore_refs(&pool, &root, true).await?;
-        if let Some(key) = codeyard_support::node_identity::load_existing(places.state_dir)? {
+        if let Some(key) = codeyard_security::node_identity::load_existing(places.state_dir)? {
             if let Some(node) =
                 codeyard_db_placement::cluster::get_node_by_public_key(&pool, &key.public_hex())
                     .await?

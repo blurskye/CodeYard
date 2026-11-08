@@ -597,7 +597,7 @@ pub(super) async fn run(
         .unwrap();
         let token = codeyard_db_identity::users::tokens::find_token(
             f.pool(),
-            &codeyard_support::token_hash::token_hash(writer.split_once(' ').unwrap().1),
+            &codeyard_security::token_hash::token_hash(writer.split_once(' ').unwrap().1),
         )
         .await
         .unwrap()

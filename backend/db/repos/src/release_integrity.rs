@@ -1,7 +1,7 @@
 //! A signed release statement binds the tag, commit and asset digests, not editable notes.
 use anyhow::{ensure, Result};
 use base64::{engine::general_purpose::STANDARD, Engine};
-use codeyard_support::node_identity::NodeKey;
+use codeyard_security::node_identity::NodeKey;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, str::FromStr};
 const PAYLOAD_TYPE: &str = "application/vnd.in-toto+json";

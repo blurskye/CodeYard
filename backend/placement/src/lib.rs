@@ -20,7 +20,7 @@ use codeyard_nodes::transport::Listen;
 use codeyard_nodes::transport::NodeAddress;
 use codeyard_nodes::transport::ALPN_EVENTS;
 use codeyard_nodes::transport::ALPN_RPC;
-use codeyard_support::node_identity::{load_existing, load_or_create, NodeKey};
+use codeyard_security::node_identity::{load_existing, load_or_create, NodeKey};
 use codeyard_types::node_roles::NodeRole;
 use codeyard_types::node_roles::NodeRoles;
 use iroh::Endpoint;
@@ -262,7 +262,7 @@ pub async fn start(
         std::path::absolute(repos_path)?
     };
     let repository_lock = if storage {
-        Some(codeyard_support::locks::exclusive_file(
+        Some(codeyard_security::locks::exclusive_file(
             &repos_path.join("storage.lock"),
         )?)
     } else {
@@ -307,7 +307,7 @@ pub async fn start(
     let queue = codeyard_ci::queue::RunQueue::Database {
         pool: pool.clone(),
         config: ci_config,
-        secrets: codeyard_support::secrets::SecretEncryptor::configured_from_env()?
+        secrets: codeyard_security::secrets::SecretEncryptor::configured_from_env()?
             .map(std::sync::Arc::new),
         context: Some(context.clone()),
         notifications: std::sync::Arc::new(
@@ -381,8 +381,8 @@ pub async fn client_context(
         return Ok(None);
     };
     require_postgres(pool)?;
-    codeyard_support::fs::durable_dir(state_dir)?;
-    let identity_lock = codeyard_support::locks::exclusive_file(&state_dir.join("serve.lock"))?;
+    codeyard_security::fs::durable_dir(state_dir)?;
+    let identity_lock = codeyard_security::locks::exclusive_file(&state_dir.join("serve.lock"))?;
     let key = load_existing(state_dir)?
         .ok_or_else(|| anyhow!("this node has not joined the cluster; start serve first"))?;
     let node = codeyard_db_placement::cluster::get_node_by_public_key(pool, &key.public_hex())

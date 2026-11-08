@@ -3,7 +3,7 @@ use crate::support::native_database::PostgresDatabase;
 use codeyard_database::cells::authorization::{self, Home, Proof};
 use codeyard_db_directory::Directory;
 use codeyard_router::{accounts, directory, rpc};
-use codeyard_support::{node_identity::NodeKey, token_hash::token_hash};
+use codeyard_security::{node_identity::NodeKey, token_hash::token_hash};
 use codeyard_types::cell_ids::Prefix;
 use codeyard_types::cells::{Cell, Key, KeyKind, Object, ObjectKind, State};
 use std::sync::Arc;

@@ -1,6 +1,6 @@
 use crate::link::Link;
 use anyhow::{bail, Context, Result};
-use codeyard_support::node_identity::NodeKey;
+use codeyard_security::node_identity::NodeKey;
 use iroh::PublicKey;
 use std::{net::SocketAddr, time::Duration};
 #[cfg(test)]

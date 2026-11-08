@@ -12,7 +12,7 @@ use codeyard_api_http::context::PageContext;
 use codeyard_api_http::render::public_error;
 use codeyard_api_http::shared::user::responses::field;
 use codeyard_app::app::AppState;
-use codeyard_support::token_hash::token_hash;
+use codeyard_security::token_hash::token_hash;
 use codeyard_webui::app::Page;
 use codeyard_webui::pages::account;
 use serde_json::Value;
@@ -70,7 +70,7 @@ pub(super) async fn manifest_start(
     if state_value.len() > 1024 {
         return public_error(StatusCode::UNPROCESSABLE_ENTITY, "State is too long");
     }
-    let code = codeyard_support::crypto::random_hex();
+    let code = codeyard_security::crypto::random_hex();
     if codeyard_db_identity::github_app_manifests::save(
         &state.pool,
         &token_hash(&code),
@@ -157,7 +157,7 @@ pub(super) async fn manifest_approve(ctx: &PageContext, form: &Fields) -> Respon
     let Some(session) = codeyard_api_http::session::extract_session_id(&ctx.headers) else {
         return ctx.error(StatusCode::UNAUTHORIZED, "Sign in again");
     };
-    let code = codeyard_support::crypto::random_hex();
+    let code = codeyard_security::crypto::random_hex();
     match codeyard_db_identity::github_app_manifests::approve(
         &ctx.state.pool,
         &hash,

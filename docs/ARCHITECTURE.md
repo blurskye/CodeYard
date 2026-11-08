@@ -22,7 +22,7 @@ backend/database/                   pools, migrations, records and shared transa
 backend/db/{identity,orgs,repos,actions,security,cluster}/
                                   domain queries, with both native engines
 backend/types/                    shared types, validation and policy
-backend/support/                  pure helpers and native support
+backend/security/                  pure helpers and native support
 backend/git/                      Git reads and hardened child processes
 backend/runner/                native Actions runner
 backend/api/{http,github,repos,graphql,rest}/
@@ -656,7 +656,7 @@ non-storage nodes leave it NULL.
 
 ```
 backend/app/wiring/backend/node/  binary startup and runtime ownership
-backend/support/src/node_identity.rs  node key loading and generation
+backend/security/src/node_identity.rs  node key loading and generation
 backend/nodes/src/
   pairing.rs      invitations, enrollment and revocation
   transport.rs    iroh dialer, addresses and membership checks

@@ -190,14 +190,14 @@ pub fn configure_local_identity(
     state_dir: &std::path::Path,
     repos: &std::path::Path,
 ) -> anyhow::Result<()> {
-    codeyard_support::node_identity::release_key(state_dir, repos)?;
+    codeyard_security::node_identity::release_key(state_dir, repos)?;
     register_local_identity(state_dir, repos);
     Ok(())
 }
 
 async fn local_key(
     path: &std::path::Path,
-) -> anyhow::Result<codeyard_support::node_identity::NodeKey> {
+) -> anyhow::Result<codeyard_security::node_identity::NodeKey> {
     let path = std::path::absolute(path)?;
     let (root, state) = LOCAL_IDENTITIES
         .read()
@@ -207,8 +207,10 @@ async fn local_key(
         .max_by_key(|(root, _)| root.components().count())
         .map(|(root, state)| (root.clone(), state.clone()))
         .ok_or_else(|| anyhow::anyhow!("Release identity not configured"))?;
-    tokio::task::spawn_blocking(move || codeyard_support::node_identity::release_key(&state, &root))
-        .await?
+    tokio::task::spawn_blocking(move || {
+        codeyard_security::node_identity::release_key(&state, &root)
+    })
+    .await?
 }
 
 pub(crate) async fn verify_local(
@@ -223,7 +225,7 @@ pub(crate) async fn verify_local(
 
 fn verify_with_key(
     attestation: &Attestation,
-    key: &codeyard_support::node_identity::NodeKey,
+    key: &codeyard_security::node_identity::NodeKey,
 ) -> Result<codeyard_db_repos::repositories::immutable_releases::Publication, RepoError> {
     codeyard_db_repos::repositories::immutable_releases::Publication::verify(
         attestation,
@@ -301,8 +303,8 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let repos = root.path().join("repos");
         let state = root.path().join("state");
-        let legacy = codeyard_support::node_identity::load_or_create(&repos).unwrap();
-        let key = codeyard_support::node_identity::release_key(&state, &repos).unwrap();
+        let legacy = codeyard_security::node_identity::load_or_create(&repos).unwrap();
+        let key = codeyard_security::node_identity::release_key(&state, &repos).unwrap();
         assert_eq!(legacy.public_hex(), key.public_hex());
         assert!(state.join("release.key").is_file());
         let statement = Statement::new(
@@ -318,7 +320,7 @@ mod tests {
         assert!(verify_with_key(&valid, &key).is_ok());
         let forged = Attestation::sign(
             &statement,
-            &codeyard_support::node_identity::NodeKey::generate(),
+            &codeyard_security::node_identity::NodeKey::generate(),
         )
         .unwrap();
         let error = verify_with_key(&forged, &key)

@@ -3,7 +3,7 @@ use chrono::Utc;
 use codeyard_database::native_operation;
 use codeyard_database::queries::secrets::SecretsError;
 use codeyard_database::DbPool;
-use codeyard_support::secrets::SecretEncryptor;
+use codeyard_security::secrets::SecretEncryptor;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;

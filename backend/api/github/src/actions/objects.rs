@@ -275,7 +275,7 @@ async fn download_artifact(
         actor,
         object.repo_id,
         object.id,
-        &codeyard_support::token_hash::token_hash(&token),
+        &codeyard_security::token_hash::token_hash(&token),
     )
     .await
     .map_err(Error::unavailable)?

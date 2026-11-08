@@ -8,8 +8,8 @@ use axum::{
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
 use codeyard_ci::config::CiConfig;
+use codeyard_security::token_hash::token_hash;
 use codeyard_storage::ObjectStore;
-use codeyard_support::token_hash::token_hash;
 use std::{path::Path, sync::Arc};
 use tower::ServiceExt;
 
@@ -366,7 +366,7 @@ async fn metrics_include_drain_progress_and_quorum_refusals() {
         let root = tempfile::tempdir().unwrap();
         let mut state = state(&database, root.path()).await;
         state.metrics_token_hash = Some(token_hash("drain-scrape"));
-        let key = codeyard_support::node_identity::NodeKey::generate();
+        let key = codeyard_security::node_identity::NodeKey::generate();
         let node = codeyard_db_placement::cluster::register_own_node(
             database.pool(),
             &key.public_hex(),

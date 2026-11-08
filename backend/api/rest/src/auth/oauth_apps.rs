@@ -20,7 +20,7 @@ use codeyard_api_http::shared::user::responses::field;
 use codeyard_app::app::AppState;
 use codeyard_db_identity::oauth_apps::Exchange;
 use codeyard_db_identity::oauth_apps::Grant;
-use codeyard_support::token_hash::token_hash;
+use codeyard_security::token_hash::token_hash;
 use codeyard_types::http_config::link_origin;
 use codeyard_webui::app::Page;
 use codeyard_webui::pages::account;
@@ -165,7 +165,7 @@ async fn device_code(
     let Ok(value) = state
         .pool
         .cell_prefix()
-        .cookie(&codeyard_support::crypto::random_hex())
+        .cookie(&codeyard_security::crypto::random_hex())
     else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
@@ -242,7 +242,7 @@ async fn access_token(
     let Ok(value) = state
         .pool
         .cell_prefix()
-        .token(namespace, &codeyard_support::crypto::random_hex())
+        .token(namespace, &codeyard_security::crypto::random_hex())
     else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
@@ -530,7 +530,7 @@ async fn authorize_post(
         .state
         .pool
         .cell_prefix()
-        .cookie(&codeyard_support::crypto::random_hex())
+        .cookie(&codeyard_security::crypto::random_hex())
     else {
         return ctx.error(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -540,7 +540,7 @@ async fn authorize_post(
     let grant = Grant {
         hash: token_hash(&value),
         client_id: app.client_id,
-        user_code: codeyard_support::crypto::random_hex(),
+        user_code: codeyard_security::crypto::random_hex(),
         scopes,
         expires_at: chrono::Utc::now().timestamp() + 600,
         interval: 5,
@@ -672,14 +672,14 @@ async fn register_post(
         .state
         .pool
         .cell_prefix()
-        .cookie(&codeyard_support::crypto::random_hex())
+        .cookie(&codeyard_security::crypto::random_hex())
     else {
         return ctx.error(
             StatusCode::SERVICE_UNAVAILABLE,
             "Application registration unavailable",
         );
     };
-    let secret = codeyard_support::crypto::random_hex();
+    let secret = codeyard_security::crypto::random_hex();
     match codeyard_db_identity::oauth_apps::register(
         &ctx.state.pool,
         ctx.user.as_ref().unwrap().id,

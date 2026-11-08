@@ -41,7 +41,7 @@ async fn oauth_token(f: &Database, router: &Router, actor: i64, scopes: &str) ->
     let value = token(f, router, actor, "write").await;
     let id = codeyard_db_identity::users::tokens::find_token(
         f.pool(),
-        &codeyard_support::token_hash::token_hash(&value),
+        &codeyard_security::token_hash::token_hash(&value),
     )
     .await
     .unwrap()

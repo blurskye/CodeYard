@@ -3,8 +3,8 @@ use axum::http::header;
 use axum::http::HeaderMap;
 use axum::http::StatusCode;
 use axum::Json;
-use codeyard_support::crypto::is_hex_token;
-use codeyard_support::http_credentials::cookie as named_cookie;
+use codeyard_security::crypto::is_hex_token;
+use codeyard_security::http_credentials::cookie as named_cookie;
 use codeyard_types::cell_ids::{Prefix, Secret};
 
 fn cookie_domain() -> Option<String> {
@@ -199,7 +199,7 @@ mod tests {
     #[test]
     fn cookie_parser_rejects_ambiguous_or_unbounded_identifiers() {
         let mut headers = HeaderMap::new();
-        let id = codeyard_support::crypto::random_hex();
+        let id = codeyard_security::crypto::random_hex();
         assert_eq!(id.len(), 64);
         headers.insert(
             header::COOKIE,

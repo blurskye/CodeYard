@@ -3,8 +3,8 @@ use chrono::Utc;
 use codeyard_database::native_operation;
 use codeyard_database::queries::users::accounts::AccountCredential;
 use codeyard_database::DbPool;
-use codeyard_support::secrets::SecretEncryptor;
-use codeyard_support::secrets::SecretError;
+use codeyard_security::secrets::SecretEncryptor;
+use codeyard_security::secrets::SecretError;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {

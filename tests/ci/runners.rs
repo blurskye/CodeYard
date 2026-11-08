@@ -19,7 +19,7 @@ use codeyard_git_storage::context::NodeContext;
 use codeyard_nodes::transport::Listen;
 use codeyard_nodes::transport::NodeAddress;
 use codeyard_nodes::transport::Relay;
-use codeyard_support::node_identity::NodeKey;
+use codeyard_security::node_identity::NodeKey;
 
 use codeyard_database::models::OrgRole;
 use codeyard_identity::tokens::TokenInput;

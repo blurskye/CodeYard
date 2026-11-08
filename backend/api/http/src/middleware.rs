@@ -75,7 +75,7 @@ fn credential_proofs(
         match codeyard_router::selection::Credential::from_headers(headers, "session_id") {
             Ok(Some(hint)) => Some(Proof::Token {
                 home: hint.prefix,
-                hash: codeyard_support::token_hash::token_hash(hint.value()),
+                hash: codeyard_security::token_hash::token_hash(hint.value()),
             }),
             _ => None,
         }
@@ -120,7 +120,7 @@ pub async fn count_regional_requests(
     let Ok(key) = serde_json::to_string(&proof) else {
         return response;
     };
-    let key = codeyard_support::token_hash::token_hash(&key);
+    let key = codeyard_security::token_hash::token_hash(&key);
     let counts = pool.request_counts();
     let user = match counts.identity(&key) {
         Some(user) => user,

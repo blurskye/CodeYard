@@ -58,7 +58,7 @@ impl SigningKeys {
 }
 
 fn kid(key: &RsaPrivateKey) -> String {
-    codeyard_support::token_hash::token_hash(&URL_SAFE_NO_PAD.encode(key.n().to_bytes_be()))
+    codeyard_security::token_hash::token_hash(&URL_SAFE_NO_PAD.encode(key.n().to_bytes_be()))
 }
 
 pub async fn jwks(keys: &SigningKeys) -> Result<Value> {
@@ -80,7 +80,7 @@ pub async fn issue(
     audience: Option<&str>,
 ) -> Result<Option<String>> {
     let pool = &keys.pool;
-    let hash = codeyard_support::token_hash::token_hash(credential);
+    let hash = codeyard_security::token_hash::token_hash(credential);
     let Some(job) = codeyard_db_actions::oidc::job(pool, &hash).await? else {
         return Ok(None);
     };

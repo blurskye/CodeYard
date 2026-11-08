@@ -704,7 +704,7 @@ async fn stale_fork_placement_contract(mut database: Database) {
     let creator = actor(&database, "placement_forker").await;
     let mut nodes = Vec::new();
     for name in ["old-primary", "new-primary"] {
-        let key = codeyard_support::node_identity::NodeKey::generate().public_hex();
+        let key = codeyard_security::node_identity::NodeKey::generate().public_hex();
         nodes.push(
             codeyard_db_placement::cluster::register_own_node(
                 database.pool(),

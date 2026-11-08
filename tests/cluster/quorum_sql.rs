@@ -3,7 +3,7 @@
 use crate::support::native_database as native;
 use chrono::{DateTime, Utc};
 
-use codeyard_support::node_identity::NodeKey;
+use codeyard_security::node_identity::NodeKey;
 
 use codeyard_database::models::RefChange;
 use codeyard_database::models::RefValue;

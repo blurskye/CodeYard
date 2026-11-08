@@ -40,7 +40,10 @@ pub enum TokenError {
 pub fn installation_token(
     cell: codeyard_types::cell_ids::Prefix,
 ) -> Result<String, codeyard_types::cell_ids::Invalid> {
-    cell.token(INSTALLATION_PREFIX, &codeyard_support::crypto::random_hex())
+    cell.token(
+        INSTALLATION_PREFIX,
+        &codeyard_security::crypto::random_hex(),
+    )
 }
 
 /// A feed credential has only read-only event access and remains bound to this API token's
@@ -61,7 +64,7 @@ pub async fn activity_feed_token(pool: &DbPool, token_id: i64) -> Result<String,
     codeyard_db_repos::events::activity_feed_token(
         pool,
         token_id,
-        &format!("feed_{}", codeyard_support::crypto::random_hex()),
+        &format!("feed_{}", codeyard_security::crypto::random_hex()),
     )
     .await
     .map_err(|_| TokenError::Unavailable)?
@@ -167,7 +170,7 @@ pub async fn create(
     let session_id = session_id.ok_or(TokenError::Denied)?;
     let value = pool
         .cell_prefix()
-        .token(PAT_PREFIX, &codeyard_support::crypto::random_hex())
+        .token(PAT_PREFIX, &codeyard_security::crypto::random_hex())
         .map_err(|_| TokenError::Unavailable)?;
     let token = codeyard_db_identity::users::tokens::create_token(
         pool,
@@ -201,7 +204,7 @@ pub async fn delete(
     }
 }
 
-use codeyard_support::token_hash::token_hash;
+use codeyard_security::token_hash::token_hash;
 
 #[cfg(test)]
 mod tests {

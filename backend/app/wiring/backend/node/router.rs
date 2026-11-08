@@ -4,7 +4,7 @@ use codeyard_router::{
     directory::{Client, Reply, Request},
     routes::Routes,
 };
-use codeyard_support::node_identity::{load_or_create, NodeKey};
+use codeyard_security::node_identity::{load_or_create, NodeKey};
 use std::{
     net::SocketAddr,
     path::{Path, PathBuf},
@@ -23,7 +23,7 @@ impl DirectorySettings {
             (None, None) => Ok(None),
             (Some(address), Some(key)) => Ok(Some(Self {
                 address,
-                key: codeyard_support::node_identity::parse_public_key(key)?,
+                key: codeyard_security::node_identity::parse_public_key(key)?,
             })),
             _ => anyhow::bail!(
                 "DIRECTORY_ADDRESS and DIRECTORY_PUBLIC_KEY must be configured together"
@@ -117,8 +117,8 @@ pub struct Config {
     pub ssh: Option<SocketAddr>,
 }
 pub async fn serve(config: Config) -> Result<()> {
-    codeyard_support::fs::private_dir(&config.state)?;
-    let _state = codeyard_support::fs::lock_state_dir(&config.state)?;
+    codeyard_security::fs::private_dir(&config.state)?;
+    let _state = codeyard_security::fs::lock_state_dir(&config.state)?;
     let key = load_or_create(&config.state)?;
     let directory = Directory::new(&config.directory, &config.state)?;
     ensure!(

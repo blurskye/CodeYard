@@ -3,7 +3,7 @@ use codeyard_database::models::RepoSecret;
 use codeyard_database::models::RepoSecretMeta;
 use codeyard_database::pool::SqlitePool;
 use codeyard_database::queries::secrets::SecretsError;
-use codeyard_support::secrets::SecretEncryptor;
+use codeyard_security::secrets::SecretEncryptor;
 
 pub async fn encryption_samples(pool: &SqlitePool) -> anyhow::Result<Vec<(Vec<u8>, Vec<u8>)>> {
     Ok(sqlx::query_as(crate::secrets::ENCRYPTION_SAMPLES_SQL)

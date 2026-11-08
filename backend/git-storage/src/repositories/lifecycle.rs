@@ -163,7 +163,7 @@ fn unavailable() -> StorageError {
 
 async fn prepare_local_repository_root(path: &Path) -> Result<(), StorageError> {
     let path = path.to_owned();
-    tokio::task::spawn_blocking(move || codeyard_support::fs::private_dir(&path))
+    tokio::task::spawn_blocking(move || codeyard_security::fs::private_dir(&path))
         .await
         .map_err(|_| unavailable())?
         .map_err(|_| unavailable())

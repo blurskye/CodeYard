@@ -5,7 +5,7 @@ use codeyard_database::DbPool;
 /// A newly issued identifier includes its origin prefix in durable storage.
 pub fn fresh_id(pool: &DbPool) -> Result<String, codeyard_types::cell_ids::Invalid> {
     pool.cell_prefix()
-        .cookie(&codeyard_support::crypto::random_hex())
+        .cookie(&codeyard_security::crypto::random_hex())
 }
 
 /// The adapter distinguishes absent from invalid/ambiguous supplied identifiers.

@@ -771,7 +771,7 @@ async fn eviction(pg: bool) {
     assert!(objects::finalize_object(
         f.pool(),
         run.id,
-        &codeyard_support::token_hash::token_hash(&token.token),
+        &codeyard_security::token_hash::token_hash(&token.token),
         b,
         4,
         6
@@ -788,7 +788,7 @@ async fn eviction(pg: bool) {
     assert!(!objects::finalize_object(
         f.pool(),
         run.id,
-        &codeyard_support::token_hash::token_hash(&token.token),
+        &codeyard_security::token_hash::token_hash(&token.token),
         a,
         4,
         3
@@ -816,7 +816,7 @@ async fn pending_uploads_share_the_cache_quota(pg: bool) {
     let (_run, token) = run(&f, repo.id, alice, "main").await;
     let auth = objects::authenticate(
         f.pool(),
-        &codeyard_support::token_hash::token_hash(&token.token),
+        &codeyard_security::token_hash::token_hash(&token.token),
     )
     .await
     .unwrap()

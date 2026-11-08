@@ -84,7 +84,7 @@ async fn contract(pg: bool) {
     .unwrap();
     assert_eq!(dispatch["workflow_run_id"], run.id);
     let workflow = ".github/workflows/ci.yml";
-    let generation = codeyard_support::token_hash::token_hash("private-runtime");
+    let generation = codeyard_security::token_hash::token_hash("private-runtime");
     codeyard_db_actions::action_objects::issue_token(
         f.pool(),
         run.id,

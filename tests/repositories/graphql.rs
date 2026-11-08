@@ -394,7 +394,7 @@ async fn contract(pg: bool) {
         alice,
         &codeyard_database::queries::users::accounts::AccountCredential::Token(
             token_ids[0],
-            &codeyard_support::token_hash::token_hash(token),
+            &codeyard_security::token_hash::token_hash(token),
         ),
         codeyard_db_repos::reactions::Target {
             repo_id: repo.id,

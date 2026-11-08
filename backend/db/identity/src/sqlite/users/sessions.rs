@@ -7,7 +7,7 @@ use codeyard_database::models::OAuthState;
 use codeyard_database::models::Session;
 use codeyard_database::models::User;
 use codeyard_database::pool::SqlitePool;
-use codeyard_support::crypto::is_hex_token;
+use codeyard_security::crypto::is_hex_token;
 use subtle::ConstantTimeEq;
 
 pub async fn create_session(

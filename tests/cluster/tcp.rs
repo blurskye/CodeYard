@@ -16,7 +16,7 @@ use codeyard_nodes::transport::Relay;
 use codeyard_nodes::transport::ALPN_EVENTS;
 use codeyard_nodes::transport::ALPN_PAIR;
 use codeyard_nodes::transport::ALPN_RPC;
-use codeyard_support::node_identity::NodeKey;
+use codeyard_security::node_identity::NodeKey;
 use std::{net::SocketAddr, path::Path, sync::Arc, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},

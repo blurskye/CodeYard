@@ -18,7 +18,7 @@ use codeyard_db_identity::github_apps::App;
 use codeyard_db_identity::github_apps::Installation;
 use codeyard_db_identity::github_apps::InstallationFilter;
 use codeyard_db_identity::github_apps::RepositoryChange;
-use codeyard_support::token_hash::token_hash;
+use codeyard_security::token_hash::token_hash;
 use codeyard_types::github_error::Error;
 use codeyard_types::github_error::Result;
 use codeyard_types::urls::api_url;
@@ -394,7 +394,7 @@ async fn issue(
         state
             .pool
             .cell_prefix()
-            .token("ghu_", &codeyard_support::crypto::random_hex())
+            .token("ghu_", &codeyard_security::crypto::random_hex())
             .map_err(Error::unavailable)?
     } else {
         codeyard_identity::tokens::installation_token(state.pool.cell_prefix())

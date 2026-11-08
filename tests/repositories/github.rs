@@ -1304,7 +1304,7 @@ async fn hooks_contract(pg: bool) {
         f.pool().clone(),
         root.path().to_owned(),
         Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-        Some(Arc::new(codeyard_support::secrets::SecretEncryptor::new(
+        Some(Arc::new(codeyard_security::secrets::SecretEncryptor::new(
             &[7; 32],
         ))),
         CiConfig::default(),
@@ -1768,7 +1768,7 @@ async fn deploy_keys_contract(pg: bool) {
             &actor,
             codeyard_database::queries::users::accounts::OwnedAccountCredential::Token(
                 read_id,
-                codeyard_support::token_hash::token_hash(reader.strip_prefix("Bearer ").unwrap())
+                codeyard_security::token_hash::token_hash(reader.strip_prefix("Bearer ").unwrap())
             ),
             &repo,
             id
@@ -1787,7 +1787,7 @@ async fn deploy_keys_contract(pg: bool) {
             &actor,
             codeyard_database::queries::users::accounts::OwnedAccountCredential::Token(
                 token_id,
-                codeyard_support::token_hash::token_hash(writer.strip_prefix("Bearer ").unwrap())
+                codeyard_security::token_hash::token_hash(writer.strip_prefix("Bearer ").unwrap())
             ),
             &repo,
             id

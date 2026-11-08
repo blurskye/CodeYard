@@ -3090,7 +3090,7 @@ async fn every_ref_change_moves_the_write_version() {
     // Only a repository that a storage node holds has replicas to tell.
     let node = codeyard_db_placement::cluster::register_own_node(
         pool,
-        &codeyard_support::node_identity::NodeKey::generate().public_hex(),
+        &codeyard_security::node_identity::NodeKey::generate().public_hex(),
         "store-node",
         &["storage".to_owned()],
         "test",
@@ -3287,7 +3287,7 @@ async fn every_ref_change_moves_the_write_version() {
 
 /// A storage node registered in the database, to place or copy a repository on.
 async fn storage_node(pool: &codeyard_database::DbPool, name: &str) -> i64 {
-    let key = codeyard_support::node_identity::NodeKey::generate().public_hex();
+    let key = codeyard_security::node_identity::NodeKey::generate().public_hex();
     let id = codeyard_db_placement::cluster::register_own_node(
         pool,
         &key,

@@ -10,10 +10,10 @@ use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::app::AppState;
-use codeyard_repos_pulls::repositories::content_search::Entry;
-use codeyard_repos_pulls::repositories::content_search::KindOfSearch;
-use codeyard_repos_pulls::repositories::content_search::Query as SearchQuery;
-use codeyard_repos_pulls::repositories::content_search::Sort;
+use codeyard_search::content::Entry;
+use codeyard_search::content::KindOfSearch;
+use codeyard_search::content::Query as SearchQuery;
+use codeyard_search::content::Sort;
 use codeyard_types::github_error::Error;
 use codeyard_types::github_error::Result;
 use serde_json::json;
@@ -109,7 +109,7 @@ async fn content(
         }
     }
     let deadline = tokio::time::Instant::now() + state.search_time_budget;
-    let mut results = codeyard_repos_pulls::repositories::content_search::search(
+    let mut results = codeyard_search::content::search(
         &state.pool,
         state.cluster.as_ref(),
         viewer,

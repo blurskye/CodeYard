@@ -1034,7 +1034,7 @@ mod tests {
         tokio_rustls::server::TlsStream<tokio::io::DuplexStream>,
     ) {
         use codeyard_nodes::transport::ALPN_RPC;
-        use codeyard_support::node_identity::NodeKey;
+        use codeyard_security::node_identity::NodeKey;
         let server_key = NodeKey::generate();
         let client_key = NodeKey::generate();
         let (client_io, server_io) = tokio::io::duplex(capacity);

@@ -19,7 +19,7 @@ use codeyard_api_http::context::PageContext;
 use codeyard_api_http::shared::user::responses::field;
 use codeyard_app::app::AppState;
 use codeyard_db_identity::github_apps::App;
-use codeyard_support::token_hash::token_hash;
+use codeyard_security::token_hash::token_hash;
 use codeyard_webui::app::Page;
 use codeyard_webui::pages::account;
 use codeyard_webui::pages::auth::apps::Model;
@@ -287,7 +287,7 @@ async fn regenerate(
             Ok(keys) => keys,
             Err(error) => return key_failure(&ctx, error),
         };
-    let secret = codeyard_support::crypto::random_hex();
+    let secret = codeyard_security::crypto::random_hex();
     match codeyard_db_identity::github_apps::rotate_credentials(
         &ctx.state.pool,
         actor,
@@ -412,8 +412,8 @@ async fn register(
         Err(error) => return key_failure(&ctx, error),
     };
     let permissions = permissions.unwrap();
-    let client = format!("Iv1.{}", &codeyard_support::crypto::random_hex()[..16]);
-    let secret = codeyard_support::crypto::random_hex();
+    let client = format!("Iv1.{}", &codeyard_security::crypto::random_hex()[..16]);
+    let secret = codeyard_security::crypto::random_hex();
     let app = App {
         id: 0,
         owner_id: ctx.user.as_ref().unwrap().id,

@@ -7,8 +7,8 @@ use codeyard_db_actions::environment_values as environments;
 use codeyard_db_actions::environment_values::Save;
 use codeyard_db_orgs::organization_values::Kind;
 use codeyard_git_storage::repositories::lifecycle;
+use codeyard_security::secrets::SecretEncryptor;
 use codeyard_storage::ObjectStore;
-use codeyard_support::secrets::SecretEncryptor;
 use std::{path::Path, sync::Arc, time::Duration};
 
 #[tokio::main]

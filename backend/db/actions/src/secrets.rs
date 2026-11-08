@@ -3,7 +3,7 @@ use codeyard_database::native_operation;
 use codeyard_database::DbPool;
 use codeyard_runner::values::MAX_SCOPE_VALUES as MAX_REPOSITORY_SECRETS;
 use codeyard_runner::values::MAX_SECRET_BYTES as MAX_REPOSITORY_SECRETS_BYTES;
-use codeyard_support::secrets::SecretEncryptor;
+use codeyard_security::secrets::SecretEncryptor;
 
 // One bounded sample per encryption domain, from one database snapshot.
 pub(crate) const ENCRYPTION_SAMPLES_SQL: &str = "
@@ -253,7 +253,7 @@ mod tests {
     use super::*;
     use codeyard_runner::values::MAX_NAME_BYTES as MAX_SECRET_NAME_BYTES;
     use codeyard_runner::values::MAX_VALUE_BYTES as MAX_SECRET_VALUE_BYTES;
-    use codeyard_support::secrets::SecretError;
+    use codeyard_security::secrets::SecretError;
 
     #[test]
     fn repository_secret_validation_has_fixed_typed_boundaries() {

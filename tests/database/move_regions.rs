@@ -7,7 +7,7 @@ use axum::{
 };
 use codeyard::backend::cli::cells::{MoveTarget, UserMover};
 use codeyard_db_placement::regions;
-use codeyard_support::node_identity::{self, NodeKey};
+use codeyard_security::node_identity::{self, NodeKey};
 use codeyard_types::cells::{Cell, Key, KeyKind, Object, ObjectKind, State};
 use codeyard_types::{cell_ids::Prefix, cluster::RegionPolicy};
 use std::{sync::Arc, time::Duration};

@@ -4,7 +4,7 @@ use codeyard_database::models::Repository;
 use codeyard_database::native_operation;
 use codeyard_database::queries::secrets::SecretsError;
 use codeyard_database::DbPool;
-use codeyard_support::secrets::SecretEncryptor;
+use codeyard_security::secrets::SecretEncryptor;
 
 #[derive(sqlx::FromRow, serde::Serialize)]
 pub struct OrganizationSecret {

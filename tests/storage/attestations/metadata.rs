@@ -1,7 +1,7 @@
 use super::*;
 
 use codeyard_app::artifact_metadata;
-use codeyard_support::token_hash::token_hash;
+use codeyard_security::token_hash::token_hash;
 use std::time::Duration;
 
 async fn terminal(router: &Router, path: &str, reader: &str) -> Value {

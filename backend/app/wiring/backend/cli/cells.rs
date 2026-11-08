@@ -151,7 +151,7 @@ pub async fn run(command: &Command, pool: &DbPool, state: &Path, repos_path: &Pa
         println!("{}", serde_json::json!({ "after": next, "count": count }));
         return Ok(());
     }
-    let _state = codeyard_support::fs::lock_state_dir(state)?;
+    let _state = codeyard_security::fs::lock_state_dir(state)?;
     let maintenance = codeyard_db_placement::cluster::maintenance_lock(pool).await?;
     let result = match command {
         Command::Initialize { prefix } => codeyard_database::cells::initialize(pool, *prefix).await,
@@ -164,9 +164,9 @@ pub async fn run(command: &Command, pool: &DbPool, state: &Path, repos_path: &Pa
         } => {
             async {
                 let client = codeyard_router::directory::Client::new(
-                    codeyard_support::node_identity::load_or_create(state)?,
+                    codeyard_security::node_identity::load_or_create(state)?,
                     *directory_address,
-                    codeyard_support::node_identity::parse_public_key(directory_key)?,
+                    codeyard_security::node_identity::parse_public_key(directory_key)?,
                     Default::default(),
                 )?;
                 pool.set_directory(std::sync::Arc::new(client))?;
@@ -194,11 +194,11 @@ pub async fn run(command: &Command, pool: &DbPool, state: &Path, repos_path: &Pa
                     previous.needs_next_prefix(last_id),
                     "no cell sequence has reached 80% use"
                 );
-                let key = codeyard_support::node_identity::load_or_create(state)?;
+                let key = codeyard_security::node_identity::load_or_create(state)?;
                 let directory = codeyard_router::directory::Client::new(
                     key,
                     *directory_address,
-                    codeyard_support::node_identity::parse_public_key(directory_key)?,
+                    codeyard_security::node_identity::parse_public_key(directory_key)?,
                     Default::default(),
                 )?;
                 let reply = directory
@@ -390,9 +390,9 @@ pub async fn run_directory(command: &DirectoryCommand, state: &Path) -> Result<(
                 maximum_bytes,
                 maximum_connections,
             } => {
-                codeyard_support::fs::private_dir(state)?;
-                let _state = codeyard_support::fs::lock_state_dir(state)?;
-                let key = codeyard_support::node_identity::load_or_create(state)?;
+                codeyard_security::fs::private_dir(state)?;
+                let _state = codeyard_security::fs::lock_state_dir(state)?;
+                let key = codeyard_security::node_identity::load_or_create(state)?;
                 let config = codeyard_router::directory::Config {
                     exchange_seconds: *exchange_seconds,
                     maximum_bytes: *maximum_bytes,
@@ -1241,7 +1241,7 @@ async fn publish_credentials(
         id: user,
     };
     for chunk in keys.chunks(500) {
-        let nonce = codeyard_support::crypto::random_hex();
+        let nonce = codeyard_security::crypto::random_hex();
         let reserved = directory
             .request(&Request::Reserve {
                 object,

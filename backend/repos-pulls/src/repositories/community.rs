@@ -83,7 +83,7 @@ fn file(owner: &str, repo: &Repository, reference: &str, entry: &TreeEntry) -> F
 }
 
 /// The same pinned community-file search order is used by profiles and catalog search.
-pub(super) async fn directories(
+pub async fn directories(
     store: &RepoStore,
     reference: &str,
 ) -> Result<Vec<(&'static str, Vec<TreeEntry>)>, RepoError> {

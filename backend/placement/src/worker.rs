@@ -5,14 +5,14 @@ use codeyard_git_storage::context::NodeContext;
 use codeyard_nodes::settings::Settings;
 use codeyard_nodes::transport::NodeAddress;
 use codeyard_nodes::worker::{resolve, CorePeer};
-use codeyard_support::node_identity::load_or_create;
+use codeyard_security::node_identity::load_or_create;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::RwLock;
 
 pub fn save_core(state_dir: &Path, ticket: &codeyard_nodes::pairing::JoinTicket) -> Result<()> {
-    codeyard_support::fs::private_dir(state_dir)?;
+    codeyard_security::fs::private_dir(state_dir)?;
     let peer = CorePeer {
         public_key: ticket.node.to_string(),
         address: ticket.address.clone(),
@@ -146,7 +146,7 @@ mod tests {
     async fn malformed_saved_core_does_not_override_configured_peers() {
         let root = tempfile::tempdir().unwrap();
         std::fs::write(root.path().join("cluster-peer.json"), b"{broken").unwrap();
-        let key = codeyard_support::node_identity::NodeKey::generate().public_hex();
+        let key = codeyard_security::node_identity::NodeKey::generate().public_hex();
         let settings = Settings::from_lookup(&|name| {
             (name == "CLUSTER_PEERS").then(|| format!("{key}@tcp://127.0.0.1:7444"))
         })
@@ -167,7 +167,7 @@ mod tests {
         // A replacement does not truncate a file that another reader has open.
         let held = std::fs::File::open(root.path().join("cluster-peer.json")).unwrap();
         let replacement = codeyard_nodes::pairing::JoinTicket::new(
-            codeyard_support::node_identity::NodeKey::generate().public_key(),
+            codeyard_security::node_identity::NodeKey::generate().public_key(),
             ticket.address.clone(),
         )
         .unwrap();
@@ -186,7 +186,7 @@ mod tests {
     #[tokio::test]
     async fn one_failed_resolution_keeps_usable_configured_and_saved_cores() {
         let root = tempfile::tempdir().unwrap();
-        let key = codeyard_support::node_identity::NodeKey::generate().public_hex();
+        let key = codeyard_security::node_identity::NodeKey::generate().public_hex();
         let settings = Settings::from_lookup(&|name| {
             (name == "CLUSTER_PEERS")
                 .then(|| format!("{key}@missing-port,{key}@tcp://127.0.0.1:7444"))

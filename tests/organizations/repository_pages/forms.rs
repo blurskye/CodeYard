@@ -1,6 +1,6 @@
 use super::fixture::{applied, Actor, Fixture, Reply};
 use axum::http::StatusCode;
-use codeyard_support::node_identity::NodeKey;
+use codeyard_security::node_identity::NodeKey;
 
 use codeyard_database::models::AccessLevel;
 use codeyard_database::models::OrgRole;

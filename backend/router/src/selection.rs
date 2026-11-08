@@ -5,7 +5,7 @@ use crate::{
 };
 use anyhow::{ensure, Result};
 use axum::http::{header, HeaderMap};
-use codeyard_support::{http_credentials, token_hash::token_hash};
+use codeyard_security::{http_credentials, token_hash::token_hash};
 use codeyard_types::{
     cell_ids::{Prefix, Secret},
     tokens,

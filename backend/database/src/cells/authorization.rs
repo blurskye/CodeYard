@@ -8,7 +8,7 @@ pub use scope::{ensure_current, inherit, scope};
 use crate::{models::User, DbPool};
 use anyhow::{ensure, Result};
 use chrono::{DateTime, Utc};
-use codeyard_support::token_hash::token_hash;
+use codeyard_security::token_hash::token_hash;
 use codeyard_types::cell_ids::Prefix;
 use futures_util::future::BoxFuture;
 use serde::{Deserialize, Serialize};

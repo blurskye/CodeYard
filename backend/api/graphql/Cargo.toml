@@ -47,3 +47,6 @@ features = ["test-util"]
 
 [dependencies.codeyard-types]
 workspace = true
+
+[dependencies.codeyard-search]
+workspace = true

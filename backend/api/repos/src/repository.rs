@@ -506,7 +506,7 @@ pub(super) async fn settings_model(
                 .map_err(|_| unavailable(ctx))?;
         settings.secret_scanning = security.enabled;
         settings.push_protection = security.push_protection;
-        use codeyard_support::secret_detection::patterns::Owner;
+        use codeyard_security::secret_detection::patterns::Owner;
         let mut scopes = vec![(Owner::Repository(loaded.repository.id), false)];
         if let Some(org) = loaded.repository.owner_org_id {
             scopes.push((Owner::Organization(org), true));
@@ -1858,7 +1858,7 @@ async fn mutate(
             Ok(settings_section_url(&base, action))
         }
         "secret-pattern-publish" => {
-            use codeyard_support::secret_detection::patterns::Owner;
+            use codeyard_security::secret_detection::patterns::Owner;
             let id = field(form, "pattern_id").parse().map_err(|_| {
                 ApiError::failure(
                     StatusCode::UNPROCESSABLE_ENTITY,

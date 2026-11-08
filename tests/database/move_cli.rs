@@ -6,7 +6,7 @@ use axum::{
     http::{Request, StatusCode},
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
-use codeyard_support::node_identity::{self, NodeKey};
+use codeyard_security::node_identity::{self, NodeKey};
 use codeyard_types::cell_ids::Prefix;
 use codeyard_types::cells::{Cell, Key, KeyKind, Object, ObjectKind, State};
 use sha2::{Digest, Sha512};
@@ -531,7 +531,7 @@ async fn cli_move_rolls_back_a_failed_load_then_preserves_git_and_resource_ids()
     );
     // The token keeps its source prefix. The directory sends it to the new home, the new
     // home holds it natively and the source asks the new home about it.
-    let hash = codeyard_support::token_hash::token_hash(&alice_token);
+    let hash = codeyard_security::token_hash::token_hash(&alice_token);
     let location = directory
         .lookup(&Key::new(KeyKind::Credential, &hash).unwrap())
         .await

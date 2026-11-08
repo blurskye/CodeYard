@@ -635,7 +635,7 @@ async fn run_workflows(
             "::codeyard-progress::{}:",
             claim.github_tokens.completion_secret
         );
-        let generation = codeyard_support::token_hash::token_hash(&claim.runtime.token);
+        let generation = codeyard_security::token_hash::token_hash(&claim.runtime.token);
         let records = Arc::new(Mutex::new(BTreeMap::<(String, u32), i64>::new()));
         let admissions = Arc::new(Mutex::new(BTreeMap::<(String, u32), i64>::new()));
         let remaining = deadline.saturating_duration_since(Instant::now());

@@ -354,7 +354,7 @@ pub async fn catch_up_voter(
     let directory = path.clone();
     codeyard_git::repository::process::blocking_until(
         Instant::now() + Duration::from_secs(5),
-        move || Ok(codeyard_support::fs::durable_dir(&directory)?),
+        move || Ok(codeyard_security::fs::durable_dir(&directory)?),
     )
     .await?;
     codeyard_git_storage::context::literal_directory(&context.repos_path, &path).await?;

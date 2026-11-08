@@ -219,7 +219,7 @@ async fn contract(pg: bool) {
         f.scalar(
             &format!(
                 "SELECT COUNT(*) FROM personal_access_tokens WHERE id=$1 AND token_hash='{}'",
-                codeyard_support::token_hash::token_hash(&first)
+                codeyard_security::token_hash::token_hash(&first)
             ),
             &[token]
         )

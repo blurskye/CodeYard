@@ -9,7 +9,7 @@ use axum::response::Response;
 use axum::Json;
 use codeyard_app::app::AppState;
 use codeyard_identity::github_auth::Authentication;
-use codeyard_support::token_hash::token_hash;
+use codeyard_security::token_hash::token_hash;
 use serde_json::json;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
@@ -163,7 +163,7 @@ pub(super) async fn exchange(
     }
     let write = resources.values().any(|actions| actions.contains("push"));
     let resources = serde_json::to_string(&resources).map_err(|error| Error::db(error.into()))?;
-    let value = format!("cyp_registry_{}", codeyard_support::crypto::random_hex());
+    let value = format!("cyp_registry_{}", codeyard_security::crypto::random_hex());
     codeyard_db_repos::packages::issue_registry_token(
         &state.pool,
         &token_hash(&value),

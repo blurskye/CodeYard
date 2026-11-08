@@ -9,7 +9,7 @@ fn credential(headers: &axum::http::HeaderMap) -> Option<(bool, String)> {
         .map(str::to_owned)
         .or_else(|| crate::credentials::basic(headers).map(|(_, password)| password));
     if let Some(token) = token {
-        return Some((true, codeyard_support::token_hash::token_hash(&token)));
+        return Some((true, codeyard_security::token_hash::token_hash(&token)));
     }
     crate::session::extract_session_id(headers).map(|value| (false, value))
 }

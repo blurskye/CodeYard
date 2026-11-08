@@ -74,7 +74,7 @@ pub fn allow_private() -> bool {
 }
 
 pub fn source_url(text: &str) -> anyhow::Result<url::Url> {
-    let url = codeyard_support::outbound::validate_url(text, allow_private())
+    let url = codeyard_security::outbound::validate_url(text, allow_private())
         .map_err(|_| anyhow::anyhow!("Invalid source URL"))?;
     anyhow::ensure!(
         url.scheme() == "https" || allow_private(),

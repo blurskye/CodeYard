@@ -4,13 +4,13 @@
 //! browser can carry it but cannot read or change it.
 
 use codeyard_db_identity::auth_admission::AdmissionError;
-use codeyard_support::token_hash::token_hash;
+use codeyard_security::token_hash::token_hash;
 
 use crate::passwords::CurrentPasswordError;
 use crate::passwords::PasswordError;
 
 use crate::sessions::AccountAuthorityError;
-use codeyard_support::secrets::SecretEncryptor;
+use codeyard_security::secrets::SecretEncryptor;
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use codeyard_database::models::User;

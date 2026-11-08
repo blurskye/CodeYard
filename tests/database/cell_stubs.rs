@@ -352,7 +352,7 @@ async fn contract(pg: bool) {
         native.id,
         &"b".repeat(64),
         "members",
-        &codeyard_support::token_hash::token_hash(&token),
+        &codeyard_security::token_hash::token_hash(&token),
         "write",
         None,
     )

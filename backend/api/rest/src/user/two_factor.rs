@@ -18,7 +18,7 @@ use codeyard_api_http::shared::user::responses::field;
 use codeyard_api_http::shared::user::responses::Fields;
 use codeyard_app::app::AppState;
 use codeyard_identity::two_factor::TwoFactorError;
-use codeyard_support::secrets::SecretEncryptor;
+use codeyard_security::secrets::SecretEncryptor;
 use codeyard_webui::app::Page;
 use codeyard_webui::pages::account;
 use codeyard_webui::pages::settings::Settings;

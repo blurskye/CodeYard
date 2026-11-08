@@ -126,7 +126,7 @@ pub(crate) fn valid_oauth_enrollment(provider: &str, subject: &str) -> bool {
     (oidc || ["github", "google", "gitlab", "discord", "bitbucket"].contains(&provider))
         && !subject.is_empty()
         && subject.len() <= 255
-        && (!oidc || codeyard_support::crypto::is_hex_token(subject, 64))
+        && (!oidc || codeyard_security::crypto::is_hex_token(subject, 64))
 }
 
 native_operation!(crate::postgres::users::transitions::enroll_oauth_identity,

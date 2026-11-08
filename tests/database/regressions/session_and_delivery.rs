@@ -12,7 +12,7 @@ async fn privileged_node_and_crawler_changes_require_the_original_live_session()
         codeyard_db_placement::node_config::upsert_node_configuration(f.pool(), "public", true)
             .await
             .unwrap();
-        let key = codeyard_support::node_identity::NodeKey::generate().public_hex();
+        let key = codeyard_security::node_identity::NodeKey::generate().public_hex();
         codeyard_db_placement::cluster::register_own_node(
             f.pool(),
             &key,

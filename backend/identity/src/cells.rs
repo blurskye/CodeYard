@@ -438,7 +438,7 @@ impl Local {
                     pool,
                     value,
                     Some(user.id),
-                    &codeyard_support::crypto::random_hex(),
+                    &codeyard_security::crypto::random_hex(),
                     3600,
                 )
                 .await?

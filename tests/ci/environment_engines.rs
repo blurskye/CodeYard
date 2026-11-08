@@ -12,8 +12,8 @@ use codeyard_db_orgs::organization_values::Kind;
 use codeyard_git_storage::receive_ci::CiRunRequest;
 use codeyard_git_storage::repositories::lifecycle;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
+use codeyard_security::secrets::SecretEncryptor;
 use codeyard_storage::ObjectStore;
-use codeyard_support::secrets::SecretEncryptor;
 use codeyard_types::ci::CiPipelineKind;
 use std::{collections::BTreeSet, sync::Arc, time::Duration};
 

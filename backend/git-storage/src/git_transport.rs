@@ -332,7 +332,7 @@ pub fn preparation_path(path: &Path, write: &WriteRecord) -> Result<PathBuf> {
 pub async fn create_preparation(path: &Path, write: &WriteRecord) -> Result<PathBuf> {
     let directory = preparation_path(path, write)?;
     let created = directory.clone();
-    tokio::task::spawn_blocking(move || codeyard_support::fs::private_dir(&created)).await??;
+    tokio::task::spawn_blocking(move || codeyard_security::fs::private_dir(&created)).await??;
     Ok(directory)
 }
 

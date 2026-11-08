@@ -2,7 +2,7 @@
 use crate::support::native_database::PostgresDatabase;
 use codeyard_db_directory::Directory;
 use codeyard_router::directory::{Client, Config, Listener, Reply, Request};
-use codeyard_support::node_identity::NodeKey;
+use codeyard_security::node_identity::NodeKey;
 use codeyard_types::cell_ids::Prefix;
 use codeyard_types::cells::{Cell, Key, KeyKind, Object, ObjectKind, State};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};

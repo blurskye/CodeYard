@@ -8,9 +8,9 @@ use codeyard_database::models::WebhookDelivery;
 use codeyard_database::queries::webhooks::NewDelivery;
 use codeyard_database::DbPool;
 use codeyard_db_repos::webhooks as hooks;
-use codeyard_support::crypto::hmac_sha256;
-use codeyard_support::outbound::Refusal;
-use codeyard_support::secrets::SecretEncryptor;
+use codeyard_security::crypto::hmac_sha256;
+use codeyard_security::outbound::Refusal;
+use codeyard_security::secrets::SecretEncryptor;
 use hmac::Hmac;
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -207,9 +207,9 @@ async fn transmit(
         return Ok(None);
     }
     let secret = open_secret(hook)?;
-    let url = codeyard_support::outbound::validate_url(
+    let url = codeyard_security::outbound::validate_url(
         &hook.payload_url,
-        codeyard_support::outbound::allow_private(),
+        codeyard_security::outbound::allow_private(),
     )
     .map_err(refusal_text)?;
     let mut headers = vec![
@@ -368,18 +368,20 @@ async fn attempt_inner(
     headers: &[(&str, String)],
     body: &str,
 ) -> Result<reqwest::Response, Attempt> {
-    let addresses =
-        match codeyard_support::outbound::resolve(url, codeyard_support::outbound::allow_private())
-            .await
-        {
-            Ok(addresses) => addresses,
-            Err(refusal) => {
-                return Err(Attempt::Failed {
-                    retry: refusal == Refusal::Unreachable,
-                    error: refusal_text(refusal),
-                })
-            }
-        };
+    let addresses = match codeyard_security::outbound::resolve(
+        url,
+        codeyard_security::outbound::allow_private(),
+    )
+    .await
+    {
+        Ok(addresses) => addresses,
+        Err(refusal) => {
+            return Err(Attempt::Failed {
+                retry: refusal == Refusal::Unreachable,
+                error: refusal_text(refusal),
+            })
+        }
+    };
     let client = match client(url, &addresses, ssl_verify) {
         Ok(client) => client,
         Err(_) => {
@@ -429,7 +431,7 @@ fn client(
     addresses: &[SocketAddr],
     ssl_verify: bool,
 ) -> reqwest::Result<reqwest::Client> {
-    codeyard_support::outbound::pinned_client(url, addresses)
+    codeyard_security::outbound::pinned_client(url, addresses)
         .timeout(TIMEOUT)
         .danger_accept_invalid_certs(!ssl_verify)
         .user_agent(user_agent())

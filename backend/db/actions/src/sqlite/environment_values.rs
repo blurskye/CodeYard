@@ -4,8 +4,8 @@ use crate::environment_values::StoredValue;
 use crate::environment_values::ValueError;
 use codeyard_database::pool::SqlitePool as Pool;
 use codeyard_db_orgs::organization_values::Kind;
-use codeyard_support::secrets::SecretEncryptor;
-use codeyard_support::secrets::SecretError;
+use codeyard_security::secrets::SecretEncryptor;
+use codeyard_security::secrets::SecretError;
 use sqlx::SqliteConnection as Connection;
 
 async fn authorize(

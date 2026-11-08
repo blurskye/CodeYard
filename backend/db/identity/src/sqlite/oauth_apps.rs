@@ -9,7 +9,7 @@ use chrono::Utc;
 use codeyard_database::pool::SqlitePool;
 use codeyard_database::queries::credentials::Actor;
 use codeyard_database::queries::oauth_apps::Token;
-use codeyard_support::token_hash::token_hash;
+use codeyard_security::token_hash::token_hash;
 
 #[expect(
     clippy::too_many_arguments,

@@ -44,7 +44,7 @@ async fn access(pg: bool) {
             .unwrap();
             (
                 name,
-                codeyard_support::token_hash::token_hash(&value),
+                codeyard_security::token_hash::token_hash(&value),
                 permissions,
             )
         })

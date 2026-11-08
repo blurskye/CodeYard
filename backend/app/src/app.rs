@@ -3,8 +3,8 @@ use codeyard_ci::config::CiConfig;
 use codeyard_ci::runs::CiRuns;
 use codeyard_database::DbPool;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
+use codeyard_security::secrets::SecretEncryptor;
 use codeyard_storage::ObjectStore;
-use codeyard_support::secrets::SecretEncryptor;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -83,7 +83,7 @@ impl AppState {
             metrics_token_hash: std::env::var("METRICS_TOKEN")
                 .ok()
                 .filter(|token| !token.is_empty() && token.len() <= 4096)
-                .map(|token| codeyard_support::token_hash::token_hash(&token)),
+                .map(|token| codeyard_security::token_hash::token_hash(&token)),
             roles: codeyard_types::node_roles::NodeRoles::default(),
             storage_min_free_bytes: 1024 * 1024 * 1024,
             storage_readiness: Arc::new(tokio::sync::Semaphore::new(1)),
@@ -128,7 +128,7 @@ impl codeyard_git_storage::request_context::RequestContext for AppState {
 impl codeyard_repos_pulls::services::RepositoryServices for AppState {
     fn secret_encryptor(
         &self,
-    ) -> &Option<std::sync::Arc<codeyard_support::secrets::SecretEncryptor>> {
+    ) -> &Option<std::sync::Arc<codeyard_security::secrets::SecretEncryptor>> {
         &self.secret_encryptor
     }
     fn ci_runs(&self) -> &std::sync::Arc<codeyard_ci::runs::CiRuns> {

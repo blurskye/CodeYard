@@ -4,8 +4,8 @@ use anyhow::ensure;
 use anyhow::Context;
 use anyhow::Result;
 use codeyard_git_storage::repositories::store::repo_store;
-use codeyard_support::secret_detection::scan_with_patterns;
-use codeyard_support::secret_detection::MAX_BLOB_BYTES;
+use codeyard_security::secret_detection::scan_with_patterns;
+use codeyard_security::secret_detection::MAX_BLOB_BYTES;
 use serde_json::json;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -186,10 +186,10 @@ async fn scan_job(
         .map(|sha| (sha, false))
         .collect::<Vec<_>>();
     let mut visited = HashSet::new();
-    let cacheable = codeyard_support::secret_detection::scanner::cache_across_commits()?;
+    let cacheable = codeyard_security::secret_detection::scanner::cache_across_commits()?;
     let mut cache = std::collections::HashMap::<
         (String, String),
-        Arc<Vec<codeyard_support::secret_detection::Detection>>,
+        Arc<Vec<codeyard_security::secret_detection::Detection>>,
     >::new();
     let mut cache_bytes = 0usize;
     // The claim lapses after five minutes without a heartbeat, so a long commit or a long run of
@@ -306,7 +306,7 @@ async fn scan_job(
                     start_column: detection.start_column,
                     end_column: detection.end_column,
                 };
-                let hash = codeyard_support::token_hash::token_hash(&detection.secret);
+                let hash = codeyard_security::token_hash::token_hash(&detection.secret);
                 let (ciphertext, nonce) = encryptor.encrypt(detection.secret.as_bytes())?;
                 let stored = codeyard_db_security::secret_scanning::record(
                     state.pool(),

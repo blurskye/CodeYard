@@ -1,6 +1,6 @@
 use crate::transport::NodeAddress;
 use anyhow::{ensure, Context, Result};
-use codeyard_support::node_identity::parse_public_key;
+use codeyard_security::node_identity::parse_public_key;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 #[derive(Debug, Clone, Serialize, Deserialize)]

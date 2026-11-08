@@ -66,7 +66,7 @@ pub(crate) async fn token(database: &PostgresDatabase, user: i64) -> String {
         user,
         &session,
         "moves",
-        &codeyard_support::token_hash::token_hash(&token),
+        &codeyard_security::token_hash::token_hash(&token),
         "write",
         None,
     )

@@ -11,7 +11,7 @@ use base64::Engine as _;
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
 use codeyard_ci::config::CiConfig;
-use codeyard_support::secrets::SecretEncryptor;
+use codeyard_security::secrets::SecretEncryptor;
 
 use codeyard_db_orgs::organizations::profiles::NewOrganization;
 use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
@@ -20,8 +20,8 @@ use codeyard_db_repos::webhooks::HookOwner;
 
 use codeyard_database::models::OrgRole;
 use codeyard_identity::tokens::TokenInput;
+use codeyard_security::crypto::hmac_sha256;
 use codeyard_storage::ObjectStore;
-use codeyard_support::crypto::hmac_sha256;
 use serde_json::{json, Value};
 use std::{sync::Arc, time::Duration};
 

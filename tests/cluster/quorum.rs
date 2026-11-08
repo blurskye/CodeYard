@@ -267,7 +267,7 @@ impl Stores {
     }
 
     async fn rpc_refs(&self, pool: &DbPool) -> std::collections::HashMap<String, String> {
-        let key = codeyard_support::node_identity::NodeKey::generate();
+        let key = codeyard_security::node_identity::NodeKey::generate();
         let web = codeyard_db_placement::cluster::register_own_node(
             pool,
             &key.public_hex(),
@@ -1216,7 +1216,7 @@ async fn three_voter_recovery_refills_a_stale_survivor_while_public_reads_stay_f
     );
     // Even an active storage peer cannot obtain a fenced repository's objects
     // without being one of that term's assigned voters.
-    let outsider_key = codeyard_support::node_identity::NodeKey::generate();
+    let outsider_key = codeyard_security::node_identity::NodeKey::generate();
     let outsider = codeyard_db_placement::cluster::register_own_node(
         pool,
         &outsider_key.public_hex(),

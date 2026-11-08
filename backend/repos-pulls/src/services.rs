@@ -1,7 +1,7 @@
 pub trait RepositoryServices: codeyard_git_storage::request_context::RequestContext {
     fn secret_encryptor(
         &self,
-    ) -> &Option<std::sync::Arc<codeyard_support::secrets::SecretEncryptor>>;
+    ) -> &Option<std::sync::Arc<codeyard_security::secrets::SecretEncryptor>>;
     fn ci_runs(&self) -> &std::sync::Arc<codeyard_ci::runs::CiRuns>;
     fn notification_broadcaster(
         &self,
@@ -15,7 +15,7 @@ pub trait RepositoryServices: codeyard_git_storage::request_context::RequestCont
 impl<T: RepositoryServices> RepositoryServices for std::sync::Arc<T> {
     fn secret_encryptor(
         &self,
-    ) -> &Option<std::sync::Arc<codeyard_support::secrets::SecretEncryptor>> {
+    ) -> &Option<std::sync::Arc<codeyard_security::secrets::SecretEncryptor>> {
         (**self).secret_encryptor()
     }
     fn ci_runs(&self) -> &std::sync::Arc<codeyard_ci::runs::CiRuns> {

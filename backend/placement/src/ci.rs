@@ -52,7 +52,7 @@ mod tests {
     use codeyard_ci::config::CiExecutionMode;
     use codeyard_nodes::transport::IrohDialer;
     use codeyard_nodes::transport::Relay;
-    use codeyard_support::node_identity::NodeKey;
+    use codeyard_security::node_identity::NodeKey;
 
     async fn test_context() -> (tempfile::TempDir, codeyard_database::DbPool, NodeContext) {
         let root = tempfile::tempdir().unwrap();
@@ -164,7 +164,7 @@ mod tests {
         use codeyard_db_actions::environment_values::Save;
         use codeyard_db_orgs::organization_values::Kind;
         use codeyard_notifications::broadcast::NotificationBroadcaster;
-        use codeyard_support::secrets::SecretEncryptor;
+        use codeyard_security::secrets::SecretEncryptor;
 
         let (root, pool, context) = test_context().await;
         let owner = codeyard_db_identity::users::accounts::create_user(&pool, "owner", None)

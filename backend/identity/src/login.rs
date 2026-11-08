@@ -7,7 +7,7 @@ use crate::sessions::SessionIssueError;
 
 use crate::two_factor::TwoFactorError;
 use crate::AuthenticatedAccount;
-use codeyard_support::secrets::SecretEncryptor;
+use codeyard_security::secrets::SecretEncryptor;
 
 use codeyard_database::DbPool;
 

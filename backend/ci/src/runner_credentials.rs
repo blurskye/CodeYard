@@ -56,7 +56,7 @@ pub fn valid_work_folder(folder: &str) -> bool {
 pub fn save_work_folder(state: &std::path::Path, folder: &str) -> Result<()> {
     use std::io::Write;
     anyhow::ensure!(valid_work_folder(folder), "invalid runner work folder");
-    let _state = codeyard_support::fs::lock_state_dir(state)?;
+    let _state = codeyard_security::fs::lock_state_dir(state)?;
     let previous = work_root(state)?;
     if previous != state.join("runner-workspaces").join(folder) {
         match std::fs::read_dir(previous.join("ci-containers")) {
@@ -100,7 +100,7 @@ pub fn work_root(state: &std::path::Path) -> Result<std::path::PathBuf> {
 pub fn new_remove_token() -> String {
     format!(
         "codeyard-remove-v1.{}",
-        codeyard_support::crypto::random_hex()
+        codeyard_security::crypto::random_hex()
     )
 }
 pub fn remove_hash(token: &str) -> String {
@@ -132,7 +132,7 @@ mod tests {
     #[test]
     fn jit_credentials_reuse_pairing_and_validate_local_paths() {
         use base64::Engine;
-        let key = codeyard_support::node_identity::NodeKey::generate();
+        let key = codeyard_security::node_identity::NodeKey::generate();
         let ticket = JoinTicket::new(
             key.public_key(),
             codeyard_nodes::transport::NodeAddress {

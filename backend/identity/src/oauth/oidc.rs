@@ -220,7 +220,7 @@ impl Provider {
         return_to: &str,
     ) -> Result<String> {
         ensure!(
-            codeyard_support::crypto::is_hex_token(verifier, 64),
+            codeyard_security::crypto::is_hex_token(verifier, 64),
             "invalid OIDC verifier"
         );
         codeyard_db_identity::users::sessions::save_bound_oauth_state(
@@ -265,7 +265,7 @@ impl Provider {
         .await
         .map_err(|_| super::OAuthError::StateUnavailable)?
         .ok_or(super::OAuthError::InvalidState)?;
-        if !codeyard_support::crypto::is_hex_token(&stored.pkce_verifier, 64) {
+        if !codeyard_security::crypto::is_hex_token(&stored.pkce_verifier, 64) {
             return Err(super::OAuthError::InvalidPkce);
         }
         let now = pool

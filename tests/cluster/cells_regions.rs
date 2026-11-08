@@ -10,7 +10,7 @@ use codeyard_router::{
     http::Transport,
     routes::{self, Routes},
 };
-use codeyard_support::node_identity::NodeKey;
+use codeyard_security::node_identity::NodeKey;
 use codeyard_types::cell_ids::Prefix;
 use codeyard_types::cells::{Cell, Key, KeyKind, Object, ObjectKind, ReadRegion, State};
 use std::time::Duration;

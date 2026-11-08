@@ -40,7 +40,7 @@ workspace = true
 [dependencies.serde_yaml]
 workspace = true
 
-[dependencies.codeyard-support]
+[dependencies.codeyard-security]
 workspace = true
 
 [dependencies.regex]

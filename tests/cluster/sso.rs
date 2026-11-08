@@ -125,7 +125,7 @@ async fn web(
     name: &str,
     public: Option<&str>,
     configuration: &str,
-    key: Option<&codeyard_support::node_identity::NodeKey>,
+    key: Option<&codeyard_security::node_identity::NodeKey>,
 ) -> (Server, String) {
     crate::support::fake_webui_bundle::install();
     let bundle = std::env::var_os("WEBUI_DIST").expect("owned test bundle");
@@ -293,7 +293,7 @@ async fn organization_oidc_crosses_web_nodes_and_rechecks_membership_and_audit_f
                 .await
                 .unwrap();
             for name in ["first", "second"] {
-                let key = codeyard_support::node_identity::NodeKey::generate();
+                let key = codeyard_security::node_identity::NodeKey::generate();
                 codeyard_db_placement::cluster::register_own_node(
                     db.pool(),
                     &key.public_hex(),

@@ -43,7 +43,7 @@ async fn cell(database: &PostgresDatabase, name: &str) -> Cell {
         user.id,
         &session,
         "advisories",
-        &codeyard_support::token_hash::token_hash(&token),
+        &codeyard_security::token_hash::token_hash(&token),
         "write",
         None,
     )

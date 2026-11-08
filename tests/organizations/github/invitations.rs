@@ -546,7 +546,7 @@ async fn contract(pg: bool) {
             user_id: late,
             purpose: "verify",
             email: "late@example.com",
-            token_hash: &codeyard_support::token_hash::token_hash(code),
+            token_hash: &codeyard_security::token_hash::token_hash(code),
             ttl_seconds: 3600,
             subject: "Verify your email",
             body_text: "Verification code",

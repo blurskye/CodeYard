@@ -1,6 +1,6 @@
 use codeyard_runner::values::MAX_SCOPE_VALUES as MAX_REPOSITORY_SECRETS;
 use codeyard_runner::values::MAX_SECRET_BYTES as MAX_REPOSITORY_SECRETS_BYTES;
-use codeyard_support::secrets::SecretError;
+use codeyard_security::secrets::SecretError;
 #[derive(Debug, thiserror::Error)]
 pub enum SecretsError {
     #[error("Secret database unavailable")]

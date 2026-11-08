@@ -1,7 +1,7 @@
 //! The `cluster` subcommands as the executable runs them: what works without a database,
 //! what must be refused on a SQLite installation, and (the first test) what the repository
 //! commands need on PostgreSQL.
-use codeyard_support::node_identity::NodeKey;
+use codeyard_security::node_identity::NodeKey;
 use std::{
     path::Path,
     process::{Command, Output},

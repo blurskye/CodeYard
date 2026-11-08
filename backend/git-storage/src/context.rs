@@ -3,7 +3,7 @@ use codeyard_database::DbPool;
 use codeyard_git::error::RepoError;
 use codeyard_nodes::transport::IrohDialer;
 use codeyard_nodes::worker::CorePeer;
-use codeyard_support::node_identity::NodeKey;
+use codeyard_security::node_identity::NodeKey;
 use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;

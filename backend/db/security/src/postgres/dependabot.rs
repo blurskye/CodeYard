@@ -5,7 +5,7 @@ use codeyard_database::models::Repository;
 use codeyard_database::pool::PgPool;
 use codeyard_database::queries::credentials::Actor;
 use codeyard_database::queries::secrets::SecretsError;
-use codeyard_support::secrets::SecretEncryptor;
+use codeyard_security::secrets::SecretEncryptor;
 use sqlx::Postgres;
 use sqlx::Transaction;
 

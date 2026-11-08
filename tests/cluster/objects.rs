@@ -12,8 +12,8 @@ use codeyard_nodes::{
     transport::{IrohDialer, NodeAddress, Relay},
 };
 use codeyard_notifications::broadcast::NotificationBroadcaster;
+use codeyard_security::node_identity::NodeKey;
 use codeyard_storage::ObjectStore;
-use codeyard_support::node_identity::NodeKey;
 use serde_json::json;
 use std::{path::Path, sync::Arc};
 

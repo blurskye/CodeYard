@@ -62,11 +62,7 @@ pub(super) async fn search_document(
         Some(license) => license.and_then(codeyard_repos::templates::license),
         None => tokio::time::timeout_at(
             deadline,
-            codeyard_repos_pulls::repositories::catalog_search::git_facts(
-                repo,
-                state.cluster.as_ref(),
-                false,
-            ),
+            codeyard_search::catalog::git_facts(repo, state.cluster.as_ref(), false),
         )
         .await
         .ok()

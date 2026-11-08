@@ -1,7 +1,7 @@
 //! Bounded, short-lived directory routes. No database credentials or user secrets are cached.
 use crate::directory::{Client, Failure, Reply, Request};
 use anyhow::{ensure, Result};
-use codeyard_support::token_hash::token_hash;
+use codeyard_security::token_hash::token_hash;
 use codeyard_types::cell_ids::Prefix;
 use codeyard_types::cells::{Cell, Key, KeyKind, Location, Object, State};
 use std::{

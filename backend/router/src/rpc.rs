@@ -1,7 +1,7 @@
 //! Bounded node-key TLS request/response transport shared by directory and cell RPC.
 use anyhow::{ensure, Result};
 use codeyard_nodes::{link::read_to_end_within, tcp, tls};
-use codeyard_support::node_identity::NodeKey;
+use codeyard_security::node_identity::NodeKey;
 use futures_util::future::BoxFuture;
 use iroh::PublicKey;
 use serde::{de::DeserializeOwned, Serialize};

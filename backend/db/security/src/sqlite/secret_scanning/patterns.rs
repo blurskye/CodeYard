@@ -4,12 +4,12 @@ use anyhow::ensure;
 use anyhow::Result;
 use codeyard_database::pool::SqlitePool;
 use codeyard_database::queries::secret_scanning::Refusal;
-use codeyard_support::secret_detection::patterns::Create;
-use codeyard_support::secret_detection::patterns::Delete;
-use codeyard_support::secret_detection::patterns::Owner;
-use codeyard_support::secret_detection::patterns::Pattern;
-use codeyard_support::secret_detection::patterns::Update;
-use codeyard_support::secret_detection::secret_types;
+use codeyard_security::secret_detection::patterns::Create;
+use codeyard_security::secret_detection::patterns::Delete;
+use codeyard_security::secret_detection::patterns::Owner;
+use codeyard_security::secret_detection::patterns::Pattern;
+use codeyard_security::secret_detection::patterns::Update;
+use codeyard_security::secret_detection::secret_types;
 use serde_json::json;
 use serde_json::Value;
 use sqlx::Sqlite;
@@ -116,7 +116,7 @@ pub async fn create(
         Refusal::Denied
     );
     admission.commit().await?;
-    codeyard_support::secret_detection::patterns::validate_batch(input)
+    codeyard_security::secret_detection::patterns::validate_batch(input)
         .await
         .map_err(|_| Refusal::Invalid)?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;

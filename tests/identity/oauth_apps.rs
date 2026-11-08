@@ -8,7 +8,7 @@ use axum::{
 };
 
 use codeyard_identity::oauth_apps as oauth;
-use codeyard_support::token_hash::token_hash;
+use codeyard_security::token_hash::token_hash;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
@@ -486,7 +486,7 @@ async fn contract(pg: bool) {
         base64::engine::general_purpose::STANDARD.encode(format!("{CLI}:{SECRET}"))
     );
     let path = format!("/api/v3/applications/{CLI}/token");
-    let other_id = codeyard_support::crypto::random_hex();
+    let other_id = codeyard_security::crypto::random_hex();
     let other_app = codeyard_db_identity::oauth_apps::register(
         f.pool(),
         actor,
@@ -749,7 +749,7 @@ async fn contract(pg: bool) {
         .await["error"],
         "access_denied"
     );
-    let owned_id = codeyard_support::crypto::random_hex();
+    let owned_id = codeyard_security::crypto::random_hex();
     codeyard_db_identity::oauth_apps::register(
         f.pool(),
         actor,

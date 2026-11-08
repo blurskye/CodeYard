@@ -15,7 +15,7 @@ use codeyard_router::{
     http::Transport,
     routes::Routes,
 };
-use codeyard_support::node_identity::NodeKey;
+use codeyard_security::node_identity::NodeKey;
 use codeyard_types::cell_ids::Prefix;
 use codeyard_types::{
     cells::{Cell, Key, KeyKind, Object, ObjectKind, State},

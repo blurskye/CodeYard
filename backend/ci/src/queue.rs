@@ -12,7 +12,7 @@ use codeyard_git_storage::context::NodeContext;
 use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_git_storage::repositories::store::RepoStore;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
-use codeyard_support::secrets::SecretEncryptor;
+use codeyard_security::secrets::SecretEncryptor;
 use codeyard_types::ci::LogLine;
 use serde::Deserialize;
 use serde::Serialize;
@@ -653,7 +653,7 @@ impl RunQueue {
                                 pool,
                                 worker,
                                 run.id,
-                                &codeyard_support::token_hash::token_hash(&runtime.token),
+                                &codeyard_security::token_hash::token_hash(&runtime.token),
                                 workflow,
                                 &Default::default(),
                             )

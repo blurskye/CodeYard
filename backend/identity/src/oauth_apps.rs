@@ -2,14 +2,14 @@
 
 use codeyard_database::DbPool;
 use codeyard_db_identity::oauth_apps::Application;
-use codeyard_support::token_hash::token_hash;
+use codeyard_security::token_hash::token_hash;
 use codeyard_types::identity::CLI_CLIENT;
 use subtle::ConstantTimeEq;
 
 const CLI_SECRET: &str = "34ddeff2b558a23d38fba8a6de74f086ede1cc0b";
 
 pub fn user_code(cell: codeyard_types::cell_ids::Prefix) -> String {
-    let value = codeyard_support::crypto::random_hex();
+    let value = codeyard_security::crypto::random_hex();
     format!("{cell}-{}-{}", &value[..4], &value[4..8]).to_uppercase()
 }
 

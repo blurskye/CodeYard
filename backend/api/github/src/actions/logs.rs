@@ -117,7 +117,7 @@ async fn download(
             .ok_or_else(|| Error::unavailable(()))?;
         let snapshot = codeyard_db_actions::action_logs::read(
             &state.pool,
-            &codeyard_support::token_hash::token_hash(&token),
+            &codeyard_security::token_hash::token_hash(&token),
             resource,
         )
         .await
@@ -238,7 +238,7 @@ async fn download(
         repo.id,
         resource,
         target,
-        &codeyard_support::token_hash::token_hash(&token),
+        &codeyard_security::token_hash::token_hash(&token),
     )
     .await
     .map_err(Error::unavailable)?

@@ -613,7 +613,7 @@ async fn oci(pg: bool) {
     );
     let grant = codeyard_db_repos::packages::registry_token(
         f.pool(),
-        &codeyard_support::token_hash::token_hash(writer.trim_start_matches("Bearer ")),
+        &codeyard_security::token_hash::token_hash(writer.trim_start_matches("Bearer ")),
     )
     .await
     .unwrap()

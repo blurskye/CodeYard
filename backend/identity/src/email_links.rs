@@ -7,7 +7,7 @@ use codeyard_types::http_config::public_origin;
 use codeyard_database::models::User;
 use codeyard_database::DbPool;
 use codeyard_db_identity::auth_admission::AdmissionError;
-use codeyard_support::token_hash::token_hash as hash;
+use codeyard_security::token_hash::token_hash as hash;
 use tracing::warn;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -61,7 +61,7 @@ async fn queue_link(
     user: &User,
     email: &str,
 ) -> Result<(), LinkError> {
-    let token = codeyard_support::crypto::random_hex();
+    let token = codeyard_security::crypto::random_hex();
     let origin = public_origin();
     let mail = match purpose {
         Purpose::Verify => {
@@ -136,7 +136,7 @@ pub async fn send_secondary_verifications(
     codeyard_db_identity::auth_admission::admit_mail(pool, None, &format!("user:{}", user.id))
         .await?;
     for email in pending {
-        let token = codeyard_support::crypto::random_hex();
+        let token = codeyard_security::crypto::random_hex();
         let mail =
             codeyard_types::mail_messages::verify_email(&public_origin(), &user.username, &token);
         codeyard_db_identity::users::emails::save_verification(

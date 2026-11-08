@@ -5,7 +5,7 @@ use rand::RngCore;
 use anyhow::Result;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use codeyard_database::DbPool;
-use codeyard_support::token_hash::token_hash;
+use codeyard_security::token_hash::token_hash;
 use serde::Deserialize;
 use serde::Serialize;
 

@@ -1,4 +1,5 @@
-//! Pure helpers shared by the server and browser views.
+//! Cryptography, token hashes, outbound address checks, secret detection, node keys and
+//! private state directories with their exclusive file locks.
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod locks;

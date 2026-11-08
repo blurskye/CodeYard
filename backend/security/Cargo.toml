@@ -1,8 +1,8 @@
 [package]
-name = "codeyard-support"
+name = "codeyard-security"
 version.workspace = true
 edition.workspace = true
-description = "Codeyard pure helpers shared by the server and browser"
+description = "Codeyard cryptography, tokens, outbound address checks and secret detection"
 license = "LGPL-3.0-or-later"
 
 [dependencies]

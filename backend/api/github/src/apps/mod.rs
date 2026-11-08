@@ -13,7 +13,7 @@ use axum::Json;
 use codeyard_app::app::AppState;
 use codeyard_database::models::PersonalAccessToken;
 use codeyard_db_identity::oauth_apps::Application;
-use codeyard_support::token_hash::token_hash;
+use codeyard_security::token_hash::token_hash;
 use codeyard_types::github_error::Error;
 use codeyard_types::github_error::Result;
 use codeyard_types::urls::api_url;
@@ -298,9 +298,9 @@ async fn reset_token(
         .map_err(Error::unavailable)?
         .is_some()
     {
-        format!("ghu_{}", codeyard_support::crypto::random_hex())
+        format!("ghu_{}", codeyard_security::crypto::random_hex())
     } else {
-        codeyard_support::crypto::random_hex()
+        codeyard_security::crypto::random_hex()
     };
     let token = codeyard_db_identity::oauth_apps::reset_token(
         &state.pool,

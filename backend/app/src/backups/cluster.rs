@@ -37,7 +37,7 @@ pub(super) async fn save_objects(
             let parent = target
                 .parent()
                 .context("object backup path has no parent")?;
-            codeyard_support::fs::private_dir(parent)?;
+            codeyard_security::fs::private_dir(parent)?;
             let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
             temporary.write_all(&bytes)?;
             temporary.as_file().sync_all()?;
@@ -248,11 +248,11 @@ pub async fn restore_node(pool: &DbPool, places: &Places<'_>, dir: &Path) -> Res
         codeyard_db_placement::backups::restore_pending(pool).await?,
         "node restore requires a pending cluster restore"
     );
-    codeyard_support::fs::private_dir(places.repos_path)?;
-    codeyard_support::fs::private_dir(places.state_dir)?;
-    let _root = codeyard_support::locks::exclusive_file(&places.repos_path.join("storage.lock"))?;
-    let _identity = codeyard_support::locks::exclusive_file(&places.state_dir.join("serve.lock"))?;
-    let key = codeyard_support::node_identity::load_existing(places.state_dir)?
+    codeyard_security::fs::private_dir(places.repos_path)?;
+    codeyard_security::fs::private_dir(places.state_dir)?;
+    let _root = codeyard_security::locks::exclusive_file(&places.repos_path.join("storage.lock"))?;
+    let _identity = codeyard_security::locks::exclusive_file(&places.state_dir.join("serve.lock"))?;
+    let key = codeyard_security::node_identity::load_existing(places.state_dir)?
         .context("supply this enrolled storage node's original NODE_KEY or NODE_KEY_FILE")?;
     let node = codeyard_db_placement::cluster::get_node_by_public_key(pool, &key.public_hex())
         .await?

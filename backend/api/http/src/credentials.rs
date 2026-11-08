@@ -1,2 +1,2 @@
 //! Shared credential header decoding; each adapter owns credential authority.
-pub use codeyard_support::http_credentials::{basic, bearer};
+pub use codeyard_security::http_credentials::{basic, bearer};

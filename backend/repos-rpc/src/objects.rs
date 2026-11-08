@@ -70,7 +70,7 @@ impl RpcHandler {
         caller: iroh::PublicKey,
     ) -> Result<(serde_json::Value, Vec<u8>), RepoError> {
         static IO: std::sync::OnceLock<Arc<tokio::sync::Semaphore>> = std::sync::OnceLock::new();
-        static LOCKS: std::sync::OnceLock<codeyard_support::locks::KeyedMutex<String>> =
+        static LOCKS: std::sync::OnceLock<codeyard_security::locks::KeyedMutex<String>> =
             std::sync::OnceLock::new();
         let io = Arc::new(
             IO.get_or_init(|| Arc::new(tokio::sync::Semaphore::new(2)))

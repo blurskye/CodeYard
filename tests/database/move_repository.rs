@@ -10,7 +10,7 @@ use axum::{
     Router,
 };
 use codeyard_db_placement::moves::{self, Account};
-use codeyard_support::node_identity::{self, NodeKey};
+use codeyard_security::node_identity::{self, NodeKey};
 use codeyard_types::cell_ids::Prefix;
 use codeyard_types::cells::{Cell, Key, KeyKind, Object, ObjectKind, State};
 use serde_json::{json, Value};

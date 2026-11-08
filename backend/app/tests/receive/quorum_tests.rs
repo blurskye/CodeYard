@@ -14,7 +14,7 @@ use codeyard_nodes::transport::NodeAddress;
 use codeyard_nodes::transport::Relay;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_repos::validation::RefUpdate;
-use codeyard_support::node_identity::NodeKey;
+use codeyard_security::node_identity::NodeKey;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;

@@ -191,11 +191,11 @@ pub async fn fetch(
     let url = crate::imports::source_url(source)?;
     let addresses = tokio::time::timeout(
         Duration::from_secs(15),
-        codeyard_support::outbound::resolve(&url, crate::imports::allow_private()),
+        codeyard_security::outbound::resolve(&url, crate::imports::allow_private()),
     )
     .await?
     .map_err(|_| anyhow::anyhow!("Source address refused"))?;
-    let client = codeyard_support::outbound::pinned_client(&url, &addresses)
+    let client = codeyard_security::outbound::pinned_client(&url, &addresses)
         .connect_timeout(Duration::from_secs(15))
         .timeout(Duration::from_secs(600))
         .user_agent("Codeyard repository importer")

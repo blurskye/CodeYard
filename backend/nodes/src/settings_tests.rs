@@ -6,7 +6,7 @@ use std::net::SocketAddr;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codeyard_support::node_identity::NodeKey;
+    use codeyard_security::node_identity::NodeKey;
 
     fn settings(pairs: &[(&str, &str)]) -> Result<Option<Settings>> {
         Settings::from_lookup(&|name| {

@@ -1,7 +1,7 @@
 use codeyard_database::DbPool;
 use codeyard_db_identity::mail_config as config;
 use codeyard_notifications::email::send;
-use codeyard_support::secrets::SecretEncryptor;
+use codeyard_security::secrets::SecretEncryptor;
 
 #[derive(Debug, thiserror::Error)]
 pub enum TestMailError {

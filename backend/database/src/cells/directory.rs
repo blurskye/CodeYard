@@ -158,7 +158,7 @@ macro_rules! engine {
                     for key in keys {
                         ensure!(free_key(pool, connection, &provider, key, Some(object)).await?, Refusal::Conflict);
                     }
-                    let nonce = codeyard_support::crypto::random_hex();
+                    let nonce = codeyard_security::crypto::random_hex();
                     provider.reserve(object, keys, &nonce).await?;
                     provider.confirm(object, keys, &nonce).await
                 }).await.map_err(|_| Refusal::Unavailable)?;

@@ -78,7 +78,7 @@ mod tests {
 
     #[tokio::test]
     async fn completed_slots_refill_from_the_pending_queue_without_a_database_scan() {
-        let key = codeyard_support::node_identity::NodeKey::generate();
+        let key = codeyard_security::node_identity::NodeKey::generate();
         let context = NodeContext {
             pool: None,
             rpc: std::sync::Arc::new(codeyard_repos_rpc::RpcFactory),
@@ -131,7 +131,7 @@ mod tests {
         let mut nodes = Vec::new();
         const GIB: i64 = 1024 * 1024 * 1024;
         for (name, free) in [("a", 100 * GIB), ("b", 12 * GIB), ("c", 11 * GIB)] {
-            let key = codeyard_support::node_identity::NodeKey::generate();
+            let key = codeyard_security::node_identity::NodeKey::generate();
             let node = codeyard_db_placement::cluster::register_own_node(
                 &pool,
                 &key.public_hex(),

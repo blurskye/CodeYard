@@ -7,7 +7,7 @@ use crate::support::http_client::Client;
 use codeyard_db_actions::deployment_protection::Refusal;
 use codeyard_db_actions::deployment_protection::Review;
 use codeyard_db_identity::github_apps::App;
-use codeyard_support::token_hash::token_hash;
+use codeyard_security::token_hash::token_hash;
 
 use codeyard_database::models::CiRun;
 use serde_json::{json, Value};

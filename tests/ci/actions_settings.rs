@@ -217,7 +217,7 @@ async fn contract(pg: bool) {
     assert_eq!(
         codeyard_db_actions::action_objects::authenticate(
             f.pool(),
-            &codeyard_support::token_hash::token_hash(&claimed.runtime.token)
+            &codeyard_security::token_hash::token_hash(&claimed.runtime.token)
         )
         .await
         .unwrap()
@@ -748,7 +748,7 @@ async fn rest_settings(pg: bool) {
         let token = &claim.github_tokens.workflows[".github/workflows/ci.yml"]["test"];
         let pat = codeyard_db_identity::users::tokens::find_token(
             f.pool(),
-            &codeyard_support::token_hash::token_hash(token),
+            &codeyard_security::token_hash::token_hash(token),
         )
         .await
         .unwrap()

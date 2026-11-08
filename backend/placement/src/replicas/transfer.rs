@@ -185,7 +185,7 @@ mod tests {
     use codeyard_nodes::transport::IrohDialer;
     use codeyard_nodes::transport::NodeAddress;
     use codeyard_nodes::transport::Relay;
-    use codeyard_support::node_identity::NodeKey;
+    use codeyard_security::node_identity::NodeKey;
 
     use std::sync::{
         atomic::{AtomicUsize, Ordering},

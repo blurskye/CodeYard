@@ -86,7 +86,7 @@ fn shared_identity_inputs_keep_key_profile_token_and_oauth_bounds() {
         Err(tokens::TokenError::Invalid)
     );
     assert_eq!(
-        codeyard_support::token_hash::token_hash("abc"),
+        codeyard_security::token_hash::token_hash("abc"),
         "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
     );
 

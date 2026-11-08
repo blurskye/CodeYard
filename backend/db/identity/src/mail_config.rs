@@ -1,5 +1,5 @@
 //! The mail server settings: read from the database row or from CODEYARD_SMTP_* variables.
-use codeyard_support::secrets::SecretEncryptor;
+use codeyard_security::secrets::SecretEncryptor;
 
 use codeyard_database::models::EmailSettings;
 use codeyard_database::DbPool;

@@ -9,7 +9,7 @@ use codeyard_database::{
     cells::authorization::{Answer, Home, Proof},
     models::User,
 };
-use codeyard_support::node_identity::NodeKey;
+use codeyard_security::node_identity::NodeKey;
 use codeyard_types::cells::{Key, KeyKind, Object, ObjectKind};
 use futures_util::future::BoxFuture;
 use iroh::PublicKey;
@@ -126,7 +126,7 @@ impl Remote {
             .ok_or_else(|| anyhow::anyhow!("Source has no RPC listener"))?
             .parse()?;
         for public in &cell.node_keys {
-            let Ok(public) = codeyard_support::node_identity::parse_public_key(public) else {
+            let Ok(public) = codeyard_security::node_identity::parse_public_key(public) else {
                 continue;
             };
             let candidate = rpc::Client::new(
@@ -274,7 +274,7 @@ impl Remote {
         );
         let address: SocketAddr = cell.rpc_addresses[0].parse()?;
         for public in &cell.node_keys {
-            let Ok(public) = codeyard_support::node_identity::parse_public_key(public) else {
+            let Ok(public) = codeyard_security::node_identity::parse_public_key(public) else {
                 continue;
             };
             let client = rpc::Client::new(

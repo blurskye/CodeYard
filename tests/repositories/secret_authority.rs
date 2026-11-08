@@ -6,7 +6,7 @@ use crate::support::database;
 use crate::support::organizations::applied;
 mod fixture;
 
-use codeyard_support::secrets::SecretEncryptor;
+use codeyard_security::secrets::SecretEncryptor;
 
 use codeyard_database::models::AccessLevel;
 use codeyard_database::models::OrgRole;

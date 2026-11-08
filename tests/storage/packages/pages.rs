@@ -173,7 +173,7 @@ async fn pages(pg: bool) {
         .await;
     f.execute("UPDATE package_blob_grants SET expires_at=0", &[])
         .await;
-    let auth = codeyard_support::token_hash::token_hash(writer.trim_start_matches("Bearer "));
+    let auth = codeyard_security::token_hash::token_hash(writer.trim_start_matches("Bearer "));
     let token = codeyard_db_identity::users::tokens::find_token(f.pool(), &auth)
         .await
         .unwrap()

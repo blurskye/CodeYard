@@ -9,8 +9,8 @@ use codeyard_git_storage::repositories::lifecycle;
 use codeyard_identity::tokens;
 use codeyard_identity::tokens::TokenInput;
 use codeyard_repos_pulls::repositories::secret_scanning::jobs;
+use codeyard_security::secrets::SecretEncryptor;
 use codeyard_storage::ObjectStore;
-use codeyard_support::secrets::SecretEncryptor;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
@@ -395,7 +395,7 @@ async fn contract(pg: bool) {
     .await;
     assert_eq!(scans["backfill_scans"][0]["status"], "completed");
     assert_eq!(scans["incremental_scans"][0]["status"], "completed");
-    let hash = codeyard_support::token_hash::token_hash(&secret);
+    let hash = codeyard_security::token_hash::token_hash(&secret);
     let placeholder = records::protection(
         fixture.pool(),
         owner,

@@ -1,5 +1,5 @@
 //! Operator commands restore only disposable databases and directories owned by this fixture.
-use codeyard_support::node_identity::NodeKey;
+use codeyard_security::node_identity::NodeKey;
 use std::path::Path;
 
 pub(super) fn command(

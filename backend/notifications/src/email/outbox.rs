@@ -1,7 +1,7 @@
 //! Mail waits in the `email_outbox` table until a node sends it. Several nodes may run the
 //! sender at once: each claims its own rows. A failed send is tried again later, a few times.
 
-use codeyard_support::secrets::SecretEncryptor;
+use codeyard_security::secrets::SecretEncryptor;
 
 use codeyard_database::DbPool;
 use std::time::Duration;

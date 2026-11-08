@@ -19,7 +19,7 @@ use codeyard_nodes::link::read_frame;
 use codeyard_nodes::link::write_frame;
 use codeyard_nodes::transport::IrohDialer;
 use codeyard_nodes::transport::Relay;
-use codeyard_support::node_identity::NodeKey;
+use codeyard_security::node_identity::NodeKey;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;

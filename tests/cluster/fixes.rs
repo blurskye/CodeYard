@@ -4,7 +4,7 @@ use crate::support::native_database::PostgresDatabase;
 use codeyard_nodes::pairing::InviteOptions;
 use codeyard_nodes::settings::Settings;
 use codeyard_nodes::transport::NodeAddress;
-use codeyard_support::node_identity::NodeKey;
+use codeyard_security::node_identity::NodeKey;
 
 use codeyard_database::DbPool;
 use std::time::Duration;
@@ -49,7 +49,7 @@ async fn service_startup_refuses_roles_outside_existing_enrollment() {
         .await
         .unwrap();
     let root = tempfile::tempdir().unwrap();
-    let key = codeyard_support::node_identity::load_or_create(root.path()).unwrap();
+    let key = codeyard_security::node_identity::load_or_create(root.path()).unwrap();
     codeyard_db_placement::cluster::register_own_node(
         &db.pool,
         &key.public_hex(),

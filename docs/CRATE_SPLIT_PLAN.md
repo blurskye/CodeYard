@@ -2,7 +2,7 @@
 
 Goal: edit one area and rebuild only that area. Before the split, `codeyard` was one
 crate of about 401,000 lines (server 340k, views 58k), so any edit recompiled all of it.
-The views now live in `webui/` and their pure shared helpers in `backend/support/`.
+The views now live in `webui/` and their pure shared helpers in `backend/security/`.
 Behaviour does not change; this remains one application and one binary.
 
 ## Layout
@@ -104,7 +104,7 @@ and results stay the same. A stage can be the last one.
 1. **Layout.** Complete: the runner is in `backend/runner` and generated
    GraphQL types are in `backend/api/github-graphql`; build and generation paths follow them.
 2. **`webui`.** Native and `wasm32-unknown-unknown` with the `web` feature check.
-3. **`support` and `git`.** Moved to `backend/support/` and `backend/git/`; server
+3. **`support` and `git`.** Moved to `backend/security/` and `backend/git/`; server
    dependencies cut. All workspace targets check; runtime tests are pending.
 4. **`model` and `db/core`.** Shared permissions, bounded YAML parsing and glob
    matching, advisory records and validation, snapshots, credential policies, mail

@@ -5,7 +5,7 @@ use axum::http::HeaderMap;
 use axum::http::StatusCode;
 use codeyard_database::models::PersonalAccessToken;
 use codeyard_database::models::User;
-use codeyard_support::token_hash::token_hash;
+use codeyard_security::token_hash::token_hash;
 use codeyard_types::github_error::Error;
 use codeyard_types::github_error::Result;
 #[derive(Clone)]
@@ -322,7 +322,7 @@ pub fn required() -> Error {
     Error::new(StatusCode::UNAUTHORIZED, "Requires authentication")
 }
 
-pub use codeyard_support::http_credentials::token as credential;
+pub use codeyard_security::http_credentials::token as credential;
 
 pub async fn authenticate(
     state: &dyn DatabaseContext,

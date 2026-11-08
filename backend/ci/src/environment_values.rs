@@ -5,7 +5,7 @@ use anyhow::Result;
 use codeyard_database::models::CiRun;
 use codeyard_database::DbPool;
 use codeyard_db_actions::environment_values::WorkflowValues;
-use codeyard_support::secrets::SecretEncryptor;
+use codeyard_security::secrets::SecretEncryptor;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::BTreeMap;

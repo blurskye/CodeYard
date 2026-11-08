@@ -163,7 +163,7 @@ pub fn profile_from_user_info(provider: &str, data: &Value) -> Option<OAuthProfi
 pub fn supports_pkce(provider: &str) -> bool {
     matches!(provider, "github" | "google" | "gitlab") || provider.starts_with("oidc-")
 }
-pub(crate) use codeyard_support::token_hash::token_hash as browser_binding;
+pub(crate) use codeyard_security::token_hash::token_hash as browser_binding;
 
 pub(crate) fn authorization_with_pkce(
     meta: &ProviderMeta,

@@ -2,7 +2,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 use crate::support::native_database as support;
 use chrono::{DateTime, Duration, NaiveDate, SecondsFormat, Utc};
-use codeyard_support::secrets::SecretEncryptor;
+use codeyard_security::secrets::SecretEncryptor;
 
 use codeyard_db_repos::discussions::DiscussionEdit;
 use codeyard_db_repos::discussions::ListFilter;

@@ -9,8 +9,8 @@ use codeyard_ci::workers::CiWorkers;
 use codeyard_db_actions::ci_admission::AdmissionError;
 use codeyard_git_storage::receive_ci::CiRunRequest;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
+use codeyard_security::secrets::SecretEncryptor;
 use codeyard_storage::ObjectStore;
-use codeyard_support::secrets::SecretEncryptor;
 use codeyard_types::ci::CiPipelineKind;
 use std::{collections::BTreeSet, sync::Arc, time::Duration};
 

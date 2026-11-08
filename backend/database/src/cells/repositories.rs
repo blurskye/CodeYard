@@ -218,7 +218,7 @@ impl Admission {
     }
     /// Filled by the native RPC listener, never accepted from its JSON body.
     pub fn bind_native_peer(&mut self, peer: &str) -> Result<()> {
-        codeyard_support::node_identity::parse_public_key(peer)?;
+        codeyard_security::node_identity::parse_public_key(peer)?;
         self.native_peer = Some(peer.to_owned());
         Ok(())
     }
@@ -338,7 +338,7 @@ pub fn retained_proof(
     ensure!(
         match &proof {
             super::authorization::Proof::Token { hash, .. } =>
-                codeyard_support::token_hash::token_hash(credential) == *hash,
+                codeyard_security::token_hash::token_hash(credential) == *hash,
             super::authorization::Proof::Session { value, .. } => value == credential,
             super::authorization::Proof::Ssh { .. } => false,
         },

@@ -49,14 +49,14 @@ async fn contract(pg: bool) {
     let write_token = &credentials.workflows[".github/workflows/ci.yml"]["writer"];
     let read_pat = codeyard_db_identity::users::tokens::find_token(
         f.pool(),
-        &codeyard_support::token_hash::token_hash(read_token),
+        &codeyard_security::token_hash::token_hash(read_token),
     )
     .await
     .unwrap()
     .unwrap();
     let write_pat = codeyard_db_identity::users::tokens::find_token(
         f.pool(),
-        &codeyard_support::token_hash::token_hash(write_token),
+        &codeyard_security::token_hash::token_hash(write_token),
     )
     .await
     .unwrap()
@@ -93,7 +93,7 @@ async fn contract(pg: bool) {
         alice,
         &codeyard_database::queries::ci::CiCredential::Token {
             id: read_pat.id,
-            hash: codeyard_support::token_hash::token_hash(read_token),
+            hash: codeyard_security::token_hash::token_hash(read_token),
             permission: "actions",
         },
     )
@@ -148,7 +148,7 @@ async fn contract(pg: bool) {
         alice,
         &codeyard_database::queries::ci::CiCredential::Token {
             id: write_pat.id,
-            hash: codeyard_support::token_hash::token_hash(write_token),
+            hash: codeyard_security::token_hash::token_hash(write_token),
             permission: "actions",
         },
     )
@@ -169,7 +169,7 @@ async fn contract(pg: bool) {
     let target_credentials = codeyard_ci::tokens::issue(f.pool(), &target, &definitions, false)
         .await
         .unwrap();
-    let target_hash = codeyard_support::token_hash::token_hash(
+    let target_hash = codeyard_security::token_hash::token_hash(
         &target_credentials.workflows[".github/workflows/ci.yml"]["reader"],
     );
     assert!(codeyard_db_actions::ci::append_ci_logs(

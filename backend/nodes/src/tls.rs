@@ -8,7 +8,7 @@ use crate::transport::ALPN_EVENTS;
 use crate::transport::ALPN_PAIR;
 use crate::transport::ALPN_RPC;
 use anyhow::Result;
-use codeyard_support::node_identity::NodeKey;
+use codeyard_security::node_identity::NodeKey;
 use iroh::PublicKey;
 use std::sync::Arc;
 use tokio_rustls::rustls::client::danger::HandshakeSignatureValid;

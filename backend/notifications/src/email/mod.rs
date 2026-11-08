@@ -48,7 +48,7 @@ pub async fn notify_user(pool: &DbPool, notification: &codeyard_database::models
 mod tests {
     use super::*;
     use codeyard_db_identity::email::NewEmailSettings;
-    use codeyard_support::secrets::SecretEncryptor;
+    use codeyard_security::secrets::SecretEncryptor;
 
     struct Fixture {
         _directory: tempfile::TempDir,

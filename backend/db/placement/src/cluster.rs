@@ -39,7 +39,7 @@ pub async fn serving_lock(pool: &DbPool, identity: &str) -> Result<ServingLock> 
             path.push(".serve.lock");
             Ok(ServingLock {
                 postgres: None,
-                _file: Some(codeyard_support::locks::exclusive_file(
+                _file: Some(codeyard_security::locks::exclusive_file(
                     std::path::Path::new(&path),
                 )?),
             })

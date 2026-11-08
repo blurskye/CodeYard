@@ -642,7 +642,7 @@ pub async fn admit_oauth_account(
     // After the numbered names, a few random ones, so taken numbers cannot block the sign-in.
     for suffix in 0..36 {
         if suffix >= 32 {
-            name = format!("{base}_{}", &codeyard_support::crypto::random_hex()[..8]);
+            name = format!("{base}_{}", &codeyard_security::crypto::random_hex()[..8]);
         } else if suffix > 0 {
             name = format!("{base}_{suffix}");
         }

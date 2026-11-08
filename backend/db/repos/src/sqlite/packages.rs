@@ -45,7 +45,7 @@ async fn actor<'a>(
                 "strftime('%Y-%m-%dT%H:%M:%f000Z','now')",
             ))
             .bind(session)
-            .bind(codeyard_support::token_hash::token_hash(session))
+            .bind(codeyard_security::token_hash::token_hash(session))
             .fetch_all(&mut **tx)
             .await?;
             ensure!(accounts.len() == 1, Refusal::Unauthorized);

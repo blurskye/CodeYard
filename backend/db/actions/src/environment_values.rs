@@ -4,8 +4,8 @@ use codeyard_database::native_operation;
 use codeyard_database::DbPool;
 use codeyard_db_orgs::organization_values::Kind;
 use codeyard_runner::values::MAX_SCOPE_VALUES;
-use codeyard_support::secrets::SecretEncryptor;
-use codeyard_support::secrets::SecretError;
+use codeyard_security::secrets::SecretEncryptor;
+use codeyard_security::secrets::SecretError;
 
 #[derive(Clone, Debug, sqlx::FromRow)]
 pub struct EnvironmentValue {

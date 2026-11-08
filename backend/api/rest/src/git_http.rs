@@ -24,7 +24,7 @@ use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_git_storage::store_types::GitService;
 use codeyard_git_storage::store_types::GitSession;
 use codeyard_git_storage::store_types::GitStreams;
-use codeyard_support::token_hash::token_hash;
+use codeyard_security::token_hash::token_hash;
 use serde::Deserialize;
 use std::sync::Arc;
 use tokio::sync::oneshot;

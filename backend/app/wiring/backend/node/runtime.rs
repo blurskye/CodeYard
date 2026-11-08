@@ -6,10 +6,10 @@ use anyhow::Result;
 use codeyard_app::app::AppState;
 use codeyard_ci::config::CiConfig;
 use codeyard_database::DbPool;
+use codeyard_security::fs::lock_state_dir;
+use codeyard_security::secrets::SecretEncryptor;
 use codeyard_storage::s3::S3Config;
 use codeyard_storage::ObjectStore;
-use codeyard_support::fs::lock_state_dir;
-use codeyard_support::secrets::SecretEncryptor;
 use codeyard_types::node_roles::NodeRole;
 use std::path::Path;
 use std::path::PathBuf;
@@ -47,7 +47,7 @@ async fn drain_worker<T>(task: Option<tokio::task::JoinHandle<T>>, deadline: tok
 }
 
 fn prepare_repository_root(path: &Path) -> Result<PathBuf> {
-    codeyard_support::fs::private_dir(path)?;
+    codeyard_security::fs::private_dir(path)?;
     Ok(path.canonicalize()?)
 }
 
@@ -482,7 +482,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
         );
     }
     let _repository_lock = if member.is_none() && config.roles.contains(NodeRole::Storage) {
-        Some(codeyard_support::locks::exclusive_file(
+        Some(codeyard_security::locks::exclusive_file(
             &repos_path.join("storage.lock"),
         )?)
     } else {
@@ -531,7 +531,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
                     "Cells behind a router use builtin SSH or disabled SSH"
                 );
                 let directory = super::router::Directory::new(settings, &config.state_dir)?;
-                let key = codeyard_support::node_identity::load_or_create(&config.state_dir)?;
+                let key = codeyard_security::node_identity::load_or_create(&config.state_dir)?;
                 let listener = codeyard_router::accounts::listen(
                     directory.client.clone(),
                     Arc::new(codeyard_app::cells::Native {

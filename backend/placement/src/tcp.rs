@@ -11,7 +11,7 @@ use codeyard_nodes::transport::active_member;
 use codeyard_nodes::transport::ALPN_PAIR;
 use codeyard_nodes::transport::ALPN_RPC;
 use codeyard_repos_rpc::RpcHandler;
-use codeyard_support::node_identity::NodeKey;
+use codeyard_security::node_identity::NodeKey;
 use iroh::PublicKey;
 use std::net::SocketAddr;
 use std::sync::Arc;

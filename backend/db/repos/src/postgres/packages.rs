@@ -77,7 +77,7 @@ async fn actor<'a>(
             let accounts: Vec<i64> =
                 sqlx::query_scalar(&crate::packages::session_account_query("clock_timestamp()"))
                     .bind(session)
-                    .bind(codeyard_support::token_hash::token_hash(session))
+                    .bind(codeyard_security::token_hash::token_hash(session))
                     .fetch_all(&mut **tx)
                     .await?;
             ensure!(accounts.len() == 1, Refusal::Unauthorized);

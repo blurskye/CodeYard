@@ -193,7 +193,7 @@ async fn contract(pg: bool) {
     );
     let credentials = objects::authenticate(
         f.pool(),
-        &codeyard_support::token_hash::token_hash(&runtime.token),
+        &codeyard_security::token_hash::token_hash(&runtime.token),
     )
     .await
     .unwrap()

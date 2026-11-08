@@ -12,7 +12,7 @@ use codeyard_database::queries::webhooks::WebhookFields;
 use codeyard_database::DbPool;
 use codeyard_db_repos::webhooks as hooks;
 use codeyard_db_repos::webhooks::HookOwner;
-use codeyard_support::secrets::SecretEncryptor;
+use codeyard_security::secrets::SecretEncryptor;
 use serde_json::json;
 use serde_json::Value;
 
@@ -113,12 +113,12 @@ pub async fn authorize(pool: &DbPool, actor: &User, owner: HookOwner) -> Result<
 
 fn validate_url(text: &str) -> Result<String, HookError> {
     let payload_url = text.trim();
-    codeyard_support::outbound::validate_url(
+    codeyard_security::outbound::validate_url(
         payload_url,
-        codeyard_support::outbound::allow_private(),
+        codeyard_security::outbound::allow_private(),
     )
     .map_err(|refusal| match refusal {
-        codeyard_support::outbound::Refusal::Invalid(text) => HookError::Invalid(text),
+        codeyard_security::outbound::Refusal::Invalid(text) => HookError::Invalid(text),
         _ => HookError::Invalid("Payload URL is not allowed"),
     })?;
     Ok(payload_url.to_owned())

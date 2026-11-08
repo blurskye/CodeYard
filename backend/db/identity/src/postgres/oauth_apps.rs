@@ -8,7 +8,7 @@ use anyhow::Result;
 use chrono::Utc;
 use codeyard_database::pool::PgPool;
 use codeyard_database::queries::credentials::Actor;
-use codeyard_support::token_hash::token_hash;
+use codeyard_security::token_hash::token_hash;
 use sqlx::PgConnection;
 
 async fn lock_client_accounts(

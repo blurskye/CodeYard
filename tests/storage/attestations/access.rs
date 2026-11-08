@@ -53,7 +53,7 @@ async fn contract(pg: bool) {
     let policies: Vec<_> = [("writer", 2), ("reader", 1), ("none", 0)]
         .into_iter()
         .map(|(name, level)| {
-            let hash = codeyard_support::token_hash::token_hash(&format!("ghs_provenance_{name}"));
+            let hash = codeyard_security::token_hash::token_hash(&format!("ghs_provenance_{name}"));
             let permissions = serde_json::to_string(&Permissions(BTreeMap::from([
                 ("attestations".into(), level),
                 ("artifact-metadata".into(), level),
@@ -77,7 +77,7 @@ async fn contract(pg: bool) {
     codeyard_db_actions::ci_tokens::issue(f.pool(), run, "provenance-worker", &credentials)
         .await
         .unwrap();
-    let other_hash = codeyard_support::token_hash::token_hash("ghs_provenance_other");
+    let other_hash = codeyard_security::token_hash::token_hash("ghs_provenance_other");
     codeyard_db_actions::ci_tokens::issue(
         f.pool(),
         other_run,

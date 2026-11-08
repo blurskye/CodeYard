@@ -3,7 +3,7 @@ use crate::private_registries::Registry;
 use crate::private_registries::RegistryError;
 use codeyard_database::pool::SqlitePool;
 use codeyard_database::queries::secrets::SecretsError;
-use codeyard_support::secrets::SecretEncryptor;
+use codeyard_security::secrets::SecretEncryptor;
 use serde_json::Value;
 
 async fn prune(

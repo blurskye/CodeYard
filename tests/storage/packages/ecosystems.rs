@@ -1015,7 +1015,7 @@ async fn ecosystems(pg: bool) {
         .scalar("SELECT id FROM ci_runs WHERE repo_id=$1", &[repo])
         .await;
     let job = "ghs_ecosystems";
-    let hash = codeyard_support::token_hash::token_hash(job);
+    let hash = codeyard_security::token_hash::token_hash(job);
     let permissions = serde_json::to_string(&Permissions(BTreeMap::from([
         ("packages".into(), 2),
         ("contents".into(), 2),

@@ -18,7 +18,7 @@ use codeyard_placement::replicas::Retry;
 use codeyard_git_storage::wire::Failure;
 use codeyard_git_storage::wire::Operation;
 use codeyard_git_storage::wire::Request;
-use codeyard_support::node_identity::NodeKey;
+use codeyard_security::node_identity::NodeKey;
 
 use codeyard_database::models::NodeReplicaCounts;
 use codeyard_database::models::ReplicaSetting;
@@ -1905,7 +1905,7 @@ async fn database_free_ci_checkout_uses_claimed_replica_targets() {
     let blob = git2::Oid::hash_object(git2::ObjectType::Blob, yaml)
         .unwrap()
         .to_string();
-    let key = codeyard_support::node_identity::NodeKey::generate();
+    let key = codeyard_security::node_identity::NodeKey::generate();
     codeyard_db_placement::cluster::register_own_node(
         pool,
         &key.public_hex(),

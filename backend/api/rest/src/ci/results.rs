@@ -78,7 +78,7 @@ fn valid_name(name: &str) -> bool {
 
 fn credential_hash(headers: &HeaderMap) -> Result<String, Error> {
     let token = codeyard_api_http::credentials::bearer(headers).ok_or_else(denied)?;
-    Ok(codeyard_support::token_hash::token_hash(token))
+    Ok(codeyard_security::token_hash::token_hash(token))
 }
 
 async fn authenticate(state: &AppState, headers: &HeaderMap) -> Result<RuntimeRun, Error> {
@@ -98,7 +98,7 @@ async fn signed_url(
         &state.pool,
         object.id,
         run,
-        &codeyard_support::token_hash::token_hash(&token),
+        &codeyard_security::token_hash::token_hash(&token),
         write,
     )
     .await?
@@ -314,7 +314,7 @@ async fn capability(
     objects::blob_grant(
         &state.pool,
         id,
-        &codeyard_support::token_hash::token_hash(sig),
+        &codeyard_security::token_hash::token_hash(sig),
         write,
     )
     .await?
@@ -363,7 +363,8 @@ async fn put_blob(
     request: axum::extract::Request,
 ) -> Result<Response, Error> {
     let object = capability(&state, id, &query, true).await?;
-    let grant_hash = codeyard_support::token_hash::token_hash(query.get("sig").ok_or_else(denied)?);
+    let grant_hash =
+        codeyard_security::token_hash::token_hash(query.get("sig").ok_or_else(denied)?);
     let io = Arc::new(state.storage.try_acquire_io()?);
     let _memory = state
         .upload_reads

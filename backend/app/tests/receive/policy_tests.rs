@@ -1531,7 +1531,7 @@ mod fixture {
 
         // Only a repository that a storage node holds has replicas to tell, and a node
         // keeps its repositories at `<uuid>.git`.
-        let key = codeyard_support::node_identity::NodeKey::generate();
+        let key = codeyard_security::node_identity::NodeKey::generate();
         let node = codeyard_db_placement::cluster::register_own_node(
             &fixture.pool,
             &key.public_hex(),

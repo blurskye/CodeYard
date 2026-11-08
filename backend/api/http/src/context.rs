@@ -11,7 +11,7 @@ use axum::http::Uri;
 use axum::response::Response;
 use codeyard_app::app::AppState;
 use codeyard_database::models::User;
-use codeyard_support::crypto::is_hex_token;
+use codeyard_security::crypto::is_hex_token;
 use codeyard_webui::document::Chrome;
 use codeyard_webui::document::Theme;
 use std::collections::HashMap;
@@ -41,7 +41,7 @@ async fn csrf_token_for_session(
     state: &AppState,
     browser_session: &codeyard_database::models::BrowserSession,
 ) -> anyhow::Result<Option<String>> {
-    let candidate = codeyard_support::crypto::random_hex();
+    let candidate = codeyard_security::crypto::random_hex();
     let ttl = CSRF_TTL_SECONDS
         .min((browser_session.expires_at - chrono::Utc::now()).num_seconds())
         .max(1);

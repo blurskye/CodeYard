@@ -7,7 +7,7 @@ use anyhow::bail;
 use anyhow::Context;
 use anyhow::Result;
 use codeyard_database::DbPool;
-use codeyard_support::node_identity::NodeKey;
+use codeyard_security::node_identity::NodeKey;
 use futures_util::stream::FuturesUnordered;
 use futures_util::StreamExt;
 use iroh::endpoint::presets;

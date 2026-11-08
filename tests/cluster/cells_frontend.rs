@@ -2,7 +2,7 @@
 use crate::support::native_database::PostgresDatabase;
 use codeyard_db_directory::Directory;
 use codeyard_router::{directory, frontend, http::Transport, routes::Routes};
-use codeyard_support::node_identity::NodeKey;
+use codeyard_security::node_identity::NodeKey;
 use codeyard_types::cell_ids::Prefix;
 use codeyard_types::cells::{Cell, Key, KeyKind, Object, ObjectKind, State};
 use serde_json::{json, Value};
@@ -79,7 +79,7 @@ pub(super) async fn native(database: &PostgresDatabase, name: &str) -> (Server, 
         user.id,
         &session,
         "frontend",
-        &codeyard_support::token_hash::token_hash(&token),
+        &codeyard_security::token_hash::token_hash(&token),
         "write",
         None,
     )

@@ -4,7 +4,7 @@ use axum::{
     http::{header, Request, StatusCode},
     Router,
 };
-use codeyard_support::{node_identity::NodeKey, token_hash::token_hash};
+use codeyard_security::{node_identity::NodeKey, token_hash::token_hash};
 use tower::ServiceExt;
 
 pub(super) async fn node(db: &Database, name: &str, free: i64) -> i64 {

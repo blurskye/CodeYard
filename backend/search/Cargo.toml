@@ -1,0 +1,41 @@
+[package]
+name = "codeyard-search"
+version.workspace = true
+edition.workspace = true
+description = "Codeyard repository catalog and content search"
+license = "LGPL-3.0-or-later"
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies.codeyard-database]
+workspace = true
+
+[dependencies.codeyard-db-repos]
+workspace = true
+
+[dependencies.codeyard-git]
+workspace = true
+
+[dependencies.codeyard-git-storage]
+workspace = true
+
+[dependencies.codeyard-identity]
+workspace = true
+
+[dependencies.codeyard-repos]
+workspace = true
+
+[dependencies.codeyard-repos-pulls]
+workspace = true
+
+[dependencies.codeyard-storage]
+workspace = true

@@ -69,7 +69,7 @@ async fn start(
     .await
     .unwrap()
     .unwrap();
-    let generation = codeyard_support::token_hash::token_hash(&format!("runtime-{worker}"));
+    let generation = codeyard_security::token_hash::token_hash(&format!("runtime-{worker}"));
     codeyard_db_actions::action_objects::issue_token(
         f.pool(),
         run.id,

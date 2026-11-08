@@ -5,7 +5,7 @@ use crate::support::native_database::PostgresDatabase;
 use codeyard_db_directory::Directory;
 use codeyard_db_placement::moves::{self, Account};
 use codeyard_router::{directory, frontend, http::Transport, routes::Routes};
-use codeyard_support::node_identity::NodeKey;
+use codeyard_security::node_identity::NodeKey;
 use codeyard_types::cell_ids::Prefix;
 use codeyard_types::cells::{Cell, Key, KeyKind, Object, ObjectKind, State};
 use serde_json::{json, Value};
@@ -393,7 +393,7 @@ async fn a_repository_on_a_storage_node_moves_from_its_primary() {
     std::fs::create_dir_all(&source_root).unwrap();
     std::fs::create_dir_all(&target_root).unwrap();
     let state = root.path().join("state");
-    let source_key = codeyard_support::node_identity::load_or_create(&state).unwrap();
+    let source_key = codeyard_security::node_identity::load_or_create(&state).unwrap();
     // The command copies with this cell's web node identity.
     codeyard_db_placement::cluster::register_own_node(
         &source.pool,

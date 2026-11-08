@@ -17,7 +17,7 @@ pub(crate) async fn interaction_actor(
     let credential = codeyard_identity::github_auth::credential(headers)?;
     let token = codeyard_db_identity::users::tokens::find_token(
         &state.pool,
-        &codeyard_support::token_hash::token_hash(credential),
+        &codeyard_security::token_hash::token_hash(credential),
     )
     .await
     .ok()??;

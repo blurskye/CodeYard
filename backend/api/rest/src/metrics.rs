@@ -20,7 +20,7 @@ async fn allowed(state: &AppState, headers: &HeaderMap) -> bool {
         bool::from(
             expected
                 .as_bytes()
-                .ct_eq(codeyard_support::token_hash::token_hash(bearer).as_bytes()),
+                .ct_eq(codeyard_security::token_hash::token_hash(bearer).as_bytes()),
         )
     }) {
         return true;
