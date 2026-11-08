@@ -774,9 +774,10 @@ public URL redirects. Stage 4's shared search and discovery acceptance passes.
 Stage 5 placement, presence policy, directory shard moves and rollout waves pass their
 local fixtures; real regional replicas, Git copies and disaster recovery remain pending.
 Stage 6's manual move and failure/retry tests cover stable resource IDs, organization
-access and frozen writes, and a moved user's tokens follow the user through the directory;
-file bytes between regions, moves of cluster-placed repositories and automatic moves
-remain incomplete. Range renewal is a deferred owner follow-up.
+access and frozen writes, and a moved user's tokens follow the user through the directory.
+Moves also copy stored files between regions, move repositories placed on storage nodes,
+and move users automatically by the "Regions" policy. Range renewal is a deferred owner
+follow-up.
 [Cluster readiness](CLUSTER_PLAN.md) records exact jobs and gaps.
 The owner authorized cells on 2026-11-05 without waiting for A16. Capacity numbers remain
 assumptions until stage 1 measures a real cell.
@@ -1138,15 +1139,16 @@ for a very large org. Splitting an account by repository is rejected, since its 
 permissions would span cells; a single repository transferred to another cell uses the
 same rules (stage 3).
 
-Automatic region moves apply only to individual user accounts. Routers count requests
-per authenticated account, source region and day, including its API and CI tokens and SSH
-keys. Anonymous requests and outside readers of public repositories never count. Defaults
-in site settings: a seven-day window, at least 1,000 counted requests, at least 70% from
-one other region, held on three consecutive days. The hourly evaluator moves the account
-to the least full open cell in that region using the move above. It reuses scaling-policy
-database leases, dry run and pause: one leader, a 30-day account cooldown, one move per
-cell, a daily cap per region pair, no moves for pinned accounts, and no evaluation with
-only one region. Every move is audited; dry run only logs and audits "would move". All
+Automatic region moves apply only to individual user accounts. Web nodes count requests
+per authenticated account, source region (from the router's header) and day, including
+API and CI tokens; SSH requests are not counted. Anonymous requests and outside readers
+of public repositories never count. Defaults in site settings: a seven-day window, at
+least 1,000 counted requests, at least 70% from one other region, held on three
+consecutive days. The hourly evaluator moves the account to the least full open cell in
+that region using the move above. It reuses scaling-policy database leases, dry run and
+pause: one leader, a 30-day account cooldown, one move per cell, a daily cap on this
+cell's moves to each region, no moves for pinned accounts, and no evaluation with only
+one region. Every move is audited; dry run only logs and audits "would move". All
 thresholds and controls are editable in site settings.
 
 Organizations never move automatically. They gain presence regions where at least 15% of

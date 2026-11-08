@@ -520,9 +520,29 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     quorum 20 (9b813575), cells 5 (8f11fc48). Cluster (9bbbc657): 48 passed, 7 skipped
     because the builder has no delegated cgroup v2 for CI runs, and 1 failed: a `gh api` ref
     create got 503 right after a restarted primary rejoined (fixed in the stage 7 merge).
-    Not written: the bounded, resumable object copy between regions (a move between
-    regions copies no package or artifact bytes yet), moves of repositories placed on
-    cluster storage nodes (refused before the freeze), and the automatic region move.
+    - Repositories on cluster storage nodes. The command copies each from its placement
+      primary at the current write term; a quorum repository must have no write in
+      progress and the copy must hold exactly its committed refs. A target in cluster mode
+      receives them on one of its storage nodes through `--target-state`. Release deletes
+      the source's write journal, voter and replica rows.
+    - Stored files between regions (one S3 store per region). Before the switch the
+      command copies avatars, release assets, Actions artifacts, CI logs, CodeQL databases
+      and package blobs a page at a time, reads each back and checks size and SHA-256; a
+      rerun skips what the target holds. After the switch the source copies are queued
+      for deletion after the restore window. Limits: objects over 100 MiB fail the copy,
+      Markdown attachments and repository exports are not copied, and a cancelled move
+      leaves the copied bytes in the target store.
+    - Automatic user moves by the "Regions" policy. Only requests the user authenticated
+      count; anonymous reads never move anyone. Pinned users (`codeyard cell pin`) and
+      users in the cooldown never move; dry run only audits; the account-move lease keeps
+      one move per cell; pause and the daily limit hold. An unfinished move continues at
+      the next check. Limits: the daily limit counts this cell's moves to a region, not a
+      global region pair; SQLite installations never move; the admin form for the move
+      settings has no HTTP test.
+    Job 7944965896f34ffb83da9f93d5500b49 passes the 14 move and foreign-authorization
+    database tests, the library tests (13, 31, 11 and 22) and two rounds of the 90 cells
+    and quorum cluster tests. A move now refuses to start while the directory cannot be
+    asked for the target's region.
 
     Stage 7 side lane:
     - Notice withdrawal and live source checks pass runtime
