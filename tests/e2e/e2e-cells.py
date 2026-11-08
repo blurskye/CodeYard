@@ -539,11 +539,10 @@ def global_search(deployment, client, tokens, http_get):
     assert code["total_count"] == 1 and code["items"][0]["path"] == "beacon.txt", code
     assert "glowmarker" in code["items"][0]["text_matches"][0]["fragment"], code
 
-    discovery_across_cells(deployment, client)
-
     # An index rebuilt from nothing returns the same results.
     deployment.command("directory", "cell", "directory", "search-reset")
-    assert searched("alice")[0] == set()
+    after_reset = searched("alice")[0]
+    assert after_reset == set(), f"search-reset did not leave an empty index: {after_reset}"
     for name in ("zero", "one"):
         scratch = deployment.root / name / "reindex-state"
         scratch.mkdir(mode=0o700, exist_ok=True)
@@ -566,6 +565,9 @@ def global_search(deployment, client, tokens, http_get):
     for who in expected:
         expected[who][1].add("Beacon issue late")
     converge(90)
+
+    # Discovery writes new manifests; run it after the reset and rebuild checks.
+    discovery_across_cells(deployment, client)
 
 
 def presence_and_rollout(deployment, client):
