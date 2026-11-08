@@ -19,7 +19,7 @@ use codeyard_api_http::error::ApiError;
 use codeyard_api_http::shared::repos::discussion::page;
 use codeyard_api_http::shared::repos::forms::with_status;
 use codeyard_app::app::AppState;
-use codeyard_ci_engine::code_owners::load_rules;
+use codeyard_ci::code_owners::load_rules;
 use codeyard_git::DiffFileInfo;
 use codeyard_git::DiffInfo;
 use codeyard_git_storage::repositories::store::repo_store;

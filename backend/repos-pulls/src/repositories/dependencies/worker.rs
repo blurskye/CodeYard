@@ -4,7 +4,7 @@ use anyhow::Context;
 use crate::repositories::dependencies::registry::Client;
 use anyhow::ensure;
 use anyhow::Result;
-use codeyard_ci_engine::runs::CiRuns;
+use codeyard_ci::runs::CiRuns;
 use codeyard_database::models::Repository;
 use codeyard_db_repos::repositories::dependencies::Feature;
 use codeyard_db_repos::repositories::dependencies::Job;

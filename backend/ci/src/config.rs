@@ -3,6 +3,7 @@ use anyhow::bail;
 use anyhow::ensure;
 use anyhow::Context;
 use anyhow::Result;
+use codeyard_types::ci::CiPipelineKind;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -23,33 +24,6 @@ impl CiExecutionMode {
             Self::Local => "local",
             Self::Podman => "podman",
         }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum CiPipelineKind {
-    Ci,
-    Cd,
-    Full,
-}
-impl CiPipelineKind {
-    pub fn from_value(value: &str) -> Self {
-        match value.to_ascii_lowercase().as_str() {
-            "cd" => Self::Cd,
-            "full" => Self::Full,
-            _ => Self::Ci,
-        }
-    }
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Ci => "ci",
-            Self::Cd => "cd",
-            Self::Full => "full",
-        }
-    }
-    pub fn includes_cd(&self) -> bool {
-        matches!(self, Self::Cd | Self::Full)
     }
 }
 

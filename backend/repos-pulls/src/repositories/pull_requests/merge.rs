@@ -1,4 +1,4 @@
-use codeyard_ci_engine::runs::CiRuns;
+use codeyard_ci::runs::CiRuns;
 use codeyard_database::cells::authorization::inherit;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
@@ -240,7 +240,7 @@ pub async fn review_decision(
                 })
                 .map(|d| d.author_id)
                 .collect::<Vec<_>>();
-            if !codeyard_ci_engine::pull_requests::code_owners::missing_owner_approvals(
+            if !codeyard_ci::pull_requests::code_owners::missing_owner_approvals(
                 pool, ci, repository, &target.1, pull, &approvers,
             )
             .await?
@@ -467,7 +467,7 @@ async fn merge_blockers(
                 })
                 .map(|decision| decision.author_id)
                 .collect();
-            let missing = codeyard_ci_engine::pull_requests::code_owners::missing_owner_approvals(
+            let missing = codeyard_ci::pull_requests::code_owners::missing_owner_approvals(
                 pool,
                 ci,
                 repository,
@@ -837,7 +837,7 @@ async fn refresh_chain(
             layers.push(layer);
             continue;
         }
-        codeyard_ci_engine::pull_requests::branches::refresh_open_pull_request(
+        codeyard_ci::pull_requests::branches::refresh_open_pull_request(
             pool,
             repository,
             ci,
@@ -1121,7 +1121,7 @@ async fn prepare_pull_request_merge_checked(
     }
     // A merge uses this pull request's branches as they are now. An unrelated
     // broken fork must not deny a healthy pull request.
-    codeyard_ci_engine::pull_requests::branches::refresh_open_pull_request(
+    codeyard_ci::pull_requests::branches::refresh_open_pull_request(
         pool,
         &repository,
         ci,
@@ -1553,7 +1553,7 @@ async fn publish_prepared_merge_owned(
     }
     // A moved layer may have workflows that run on its new base. They are queued after the
     // retarget's own transaction, as a head move is.
-    codeyard_ci_engine::pull_requests::workflows::queue_moved_pull_requests_ci(
+    codeyard_ci::pull_requests::workflows::queue_moved_pull_requests_ci(
         pool,
         ci,
         &repository,
@@ -1561,7 +1561,7 @@ async fn publish_prepared_merge_owned(
         user.id,
     )
     .await;
-    if let Err(error) = codeyard_ci_engine::pull_requests::branches::refresh_open_pull_requests(
+    if let Err(error) = codeyard_ci::pull_requests::branches::refresh_open_pull_requests(
         pool,
         &repository,
         Some(&[&merge.base_branch]),
@@ -1624,7 +1624,7 @@ async fn publish_prepared_merge_owned(
                 base_sha: merge.base.clone(),
                 ..merged
             };
-            codeyard_ci_engine::pull_requests::workflows::queue_pull_request_event_ci(
+            codeyard_ci::pull_requests::workflows::queue_pull_request_event_ci(
                 pool,
                 ci,
                 &repository,

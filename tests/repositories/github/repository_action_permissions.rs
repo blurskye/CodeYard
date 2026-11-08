@@ -1,6 +1,6 @@
 use super::*;
 use codeyard_ci::config::CiExecutionMode;
-use codeyard_ci_engine::queue::RunQueue;
+use codeyard_ci::queue::RunQueue;
 use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
 use codeyard_git_storage::repositories::lifecycle;
 use codeyard_notifications::broadcast::NotificationBroadcaster;

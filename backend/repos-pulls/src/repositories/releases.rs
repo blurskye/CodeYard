@@ -3,7 +3,7 @@
 //! A tag that does not exist yet is created when the release is published, so a draft never
 //! publishes its tag.
 use anyhow::Error;
-use codeyard_ci_engine::runs::CiRuns;
+use codeyard_ci::runs::CiRuns;
 use codeyard_database::models::Release;
 use codeyard_database::models::ReleaseAsset;
 use codeyard_database::models::ReleaseRow;
@@ -381,7 +381,7 @@ pub async fn create(
                     AccessError::WriteDenied,
                 )));
             }
-            codeyard_ci_engine::refs::create_tag(
+            codeyard_ci::refs::create_tag(
                 pool,
                 cluster,
                 ci,
@@ -563,7 +563,7 @@ pub async fn update(
                         AccessError::WriteDenied,
                     )));
                 }
-                codeyard_ci_engine::refs::create_tag(
+                codeyard_ci::refs::create_tag(
                     pool,
                     cluster,
                     ci,

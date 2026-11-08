@@ -8,7 +8,7 @@ use crate::repositories::pull_requests::mutations::create_pull_request;
 use crate::repositories::pull_requests::mutations::CreatePullRequestRequest;
 use anyhow::ensure;
 use anyhow::Result;
-use codeyard_ci_engine::runs::CiRuns;
+use codeyard_ci::runs::CiRuns;
 use codeyard_db_repos::repositories::dependencies as records;
 use codeyard_db_repos::repositories::dependencies::AlertState;
 use codeyard_db_repos::repositories::dependencies::Feature;

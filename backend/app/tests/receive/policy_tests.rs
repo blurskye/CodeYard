@@ -5,7 +5,7 @@ mod fixture {
     use anyhow::ensure;
     use anyhow::Result;
     use base64::Engine;
-    use codeyard_ci_engine::runs::CiRuns;
+    use codeyard_ci::runs::CiRuns;
     use codeyard_database::DbPool;
     use codeyard_git_storage::repositories::git_sessions::receive_session;
     use codeyard_git_storage::repositories::git_sessions::ReceiveCredential;

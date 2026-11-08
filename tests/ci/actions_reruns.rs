@@ -8,14 +8,14 @@ use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
 use codeyard_ci::config::CiConfig;
 use codeyard_ci::config::CiExecutionMode;
-use codeyard_ci::config::CiPipelineKind;
-use codeyard_ci_engine::queue::RunQueue;
-use codeyard_ci_engine::workers::CiWorkers;
+use codeyard_ci::queue::RunQueue;
+use codeyard_ci::workers::CiWorkers;
 use codeyard_git_storage::receive_ci::CiRunRequest;
 use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_repos::editor::FileWrite;
 use codeyard_storage::ObjectStore;
+use codeyard_types::ci::CiPipelineKind;
 use serde_json::{json, Value};
 use std::{collections::BTreeSet, sync::Arc, time::Duration};
 

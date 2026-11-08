@@ -19,7 +19,7 @@ use codeyard_api_http::session::get_current_user;
 use codeyard_api_http::shared::repos::forms::authorize_post;
 use codeyard_api_http::shared::repos::forms::field;
 use codeyard_app::app::AppState;
-use codeyard_ci_engine::pull_requests::workflows::RunWorkflowsRequest;
+use codeyard_ci::pull_requests::workflows::RunWorkflowsRequest;
 use codeyard_webui::pages::repos::issues::DetailDraft;
 use codeyard_webui::pages::repos::issues::Kind;
 use std::collections::HashMap;
@@ -34,7 +34,7 @@ pub async fn run_pull_request_workflows(
     let current_actor = get_current_user(&state.pool, &headers).await?;
     let repository =
         crate::access::readable_repository(&state.pool, &owner, &repo, &headers).await?;
-    let pull = codeyard_ci_engine::pull_requests::workflows::run_pull_request_workflows(
+    let pull = codeyard_ci::pull_requests::workflows::run_pull_request_workflows(
         &state.pool,
         &state.ci_runs,
         current_actor.id,
@@ -57,13 +57,13 @@ pub(crate) async fn native_run_workflows(
     let ctx = PageContext::load(state, headers, &uri).await?;
     authorize_post(&ctx, &form)?;
     let repo = repository(&ctx, &owner, &name).await?;
-    match codeyard_ci_engine::pull_requests::workflows::run_pull_request_workflows(
+    match codeyard_ci::pull_requests::workflows::run_pull_request_workflows(
         &ctx.state.pool,
         &ctx.state.ci_runs,
         ctx.require_user()?.id,
         &repo.record,
         number,
-        codeyard_ci_engine::pull_requests::workflows::RunWorkflowsRequest {
+        codeyard_ci::pull_requests::workflows::RunWorkflowsRequest {
             expected_head: field(&form, "expected_head"),
         },
     )

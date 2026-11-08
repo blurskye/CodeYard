@@ -3,7 +3,7 @@ use anyhow::ensure;
 use anyhow::Context;
 use anyhow::Result;
 use codeyard_ci::config::CiConfig;
-use codeyard_ci_engine::runs::CiRuns;
+use codeyard_ci::runs::CiRuns;
 use codeyard_database::limits::MAX_JSON;
 use codeyard_git::error::RepoError;
 use codeyard_git::repository::process as git_process;

@@ -2,6 +2,33 @@ use serde::{Deserialize, Serialize};
 
 pub const MAX_CI_WORKFLOW_BYTES: usize = 256 * 1024;
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CiPipelineKind {
+    Ci,
+    Cd,
+    Full,
+}
+impl CiPipelineKind {
+    pub fn from_value(value: &str) -> Self {
+        match value.to_ascii_lowercase().as_str() {
+            "cd" => Self::Cd,
+            "full" => Self::Full,
+            _ => Self::Ci,
+        }
+    }
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Ci => "ci",
+            Self::Cd => "cd",
+            Self::Full => "full",
+        }
+    }
+    pub fn includes_cd(&self) -> bool {
+        matches!(self, Self::Cd | Self::Full)
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct LogLine {
     pub stage: String,

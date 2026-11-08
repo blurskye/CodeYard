@@ -9,7 +9,7 @@ use axum::response::Response;
 use axum::Form;
 use axum::Json;
 use codeyard_app::app::AppState;
-use codeyard_ci_engine::runs::DispatchRequest;
+use codeyard_ci::runs::DispatchRequest;
 use codeyard_webui::pages::ci as view;
 use codeyard_webui::pages::repos::actions as view_actions;
 use std::collections::BTreeMap;

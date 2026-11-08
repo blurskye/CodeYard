@@ -3,10 +3,10 @@
 //! same fork still follows it. A pull ref that got ahead of its row, because an earlier refresh
 //! lost the row update, is recorded before a newer head is published.
 use codeyard_ci::config::CiConfig;
-use codeyard_ci_engine::pull_requests::branches::refresh_one;
-use codeyard_ci_engine::pull_requests::branches::revisions;
-use codeyard_ci_engine::pull_requests::branches::ListedRefs;
-use codeyard_ci_engine::runs::CiRuns;
+use codeyard_ci::pull_requests::branches::refresh_one;
+use codeyard_ci::pull_requests::branches::revisions;
+use codeyard_ci::pull_requests::branches::ListedRefs;
+use codeyard_ci::runs::CiRuns;
 use codeyard_database::models::PullRequest;
 use codeyard_database::models::Repository;
 use codeyard_git_storage::repositories::store::repo_store;
@@ -392,7 +392,7 @@ async fn existing_owner_requests_do_not_take_a_write_lock() {
     let lock = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
     tokio::time::timeout(
         std::time::Duration::from_secs(1),
-        codeyard_ci_engine::pull_requests::code_owners::request_code_owner_reviews(
+        codeyard_ci::pull_requests::code_owners::request_code_owner_reviews(
             &forks.pool,
             &forks.ci,
             &forks.base,

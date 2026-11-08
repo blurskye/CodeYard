@@ -1,4 +1,4 @@
-use codeyard_ci::config::CiPipelineKind;
+use codeyard_types::ci::CiPipelineKind;
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone)]
@@ -35,7 +35,8 @@ pub enum RefreshError {
 
 pub trait ReceiveCi: Send + Sync {
     fn cluster(&self) -> Option<&crate::context::NodeContext>;
-    fn config(&self) -> &codeyard_ci::config::CiConfig;
+    /// Whether pushes by this actor may start workflow runs.
+    fn trusts_actor(&self, actor_id: i64) -> bool;
     fn trigger_event_run<'a>(
         &'a self,
         request: CiRunRequest,

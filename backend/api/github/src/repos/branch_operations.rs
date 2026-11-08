@@ -38,7 +38,7 @@ async fn rename(
         .rename_branch_as(&state.pool, repo.id, authority, &branch, &input.new_name)
         .await
         .map_err(store_error)?;
-    codeyard_ci_engine::pull_requests::branches::refresh_open_pull_requests(
+    codeyard_ci::pull_requests::branches::refresh_open_pull_requests(
         &state.pool,
         &repo,
         Some(&[&branch, &input.new_name]),
@@ -161,7 +161,7 @@ async fn complete_upstream(
             )
             .await;
     }
-    codeyard_ci_engine::pull_requests::branches::refresh_open_pull_requests(
+    codeyard_ci::pull_requests::branches::refresh_open_pull_requests(
         &state.pool,
         &repo,
         Some(&[&input.branch]),

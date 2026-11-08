@@ -10,9 +10,9 @@ use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
 use codeyard_ci::config::CiConfig;
 use codeyard_ci::config::CiExecutionMode;
-use codeyard_ci_engine::queue::RunQueue;
-use codeyard_ci_engine::runs::CiRuns;
-use codeyard_ci_engine::workers::CiWorkers;
+use codeyard_ci::queue::RunQueue;
+use codeyard_ci::runs::CiRuns;
+use codeyard_ci::workers::CiWorkers;
 use codeyard_git_storage::repositories::lifecycle::provision;
 use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_repos::editor::FileWrite;
@@ -328,7 +328,7 @@ async fn contract(pg: bool) {
         )
         .await
         .unwrap();
-    codeyard_ci_engine::pull_requests::branches::refresh_open_pull_requests(
+    codeyard_ci::pull_requests::branches::refresh_open_pull_requests(
         f.pool(),
         &fork,
         None,
@@ -1177,7 +1177,7 @@ async fn private_fork_revocation_contract(pg: bool) {
         .await
         .unwrap();
     assert!(
-        codeyard_ci_engine::pull_requests::branches::refresh_open_pull_requests(
+        codeyard_ci::pull_requests::branches::refresh_open_pull_requests(
             f.pool(),
             &base,
             Some(&["main", "later"][..]),

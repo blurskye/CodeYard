@@ -4,8 +4,8 @@ impl ReceiveCi for CiRuns {
     fn cluster(&self) -> Option<&codeyard_git_storage::context::NodeContext> {
         self.cluster.as_ref()
     }
-    fn config(&self) -> &codeyard_ci::config::CiConfig {
-        self.config()
+    fn trusts_actor(&self, actor_id: i64) -> bool {
+        self.config().trusted_actor_ids.contains(&actor_id)
     }
     fn trigger_event_run<'a>(
         &'a self,

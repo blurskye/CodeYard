@@ -77,7 +77,7 @@ async fn merge_pull(
         .ok_or_else(|| Error::invalid("Invalid merge method"))?;
     let (_, mut pull) = target(&state, &headers, &owner, &name, number).await?;
     if pull.state == "open" {
-        codeyard_ci_engine::pull_requests::branches::refresh_open_pull_request(
+        codeyard_ci::pull_requests::branches::refresh_open_pull_request(
             &state.pool,
             &repo,
             &state.ci_runs,

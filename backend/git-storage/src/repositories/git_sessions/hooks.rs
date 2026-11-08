@@ -1043,13 +1043,7 @@ impl Gateway {
             self.bare_path(&current_repo).await? == operation.path,
             "repository location changed"
         );
-        if !current_identity.is_admin
-            && !self
-                .ci
-                .config()
-                .trusted_actor_ids
-                .contains(&current_identity.id)
-        {
+        if !current_identity.is_admin && !self.ci.trusts_actor(current_identity.id) {
             ensure!(
                 !failed,
                 crate::repositories::git_sessions::PostReceiveFailed

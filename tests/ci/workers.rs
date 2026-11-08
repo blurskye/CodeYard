@@ -7,8 +7,8 @@ use crate::support::rpc_operations;
 
 use codeyard_ci::config::CiConfig;
 use codeyard_ci::config::CiExecutionMode;
-use codeyard_ci_engine::queue::RunQueue;
-use codeyard_ci_engine::workers::CiWorkers;
+use codeyard_ci::queue::RunQueue;
+use codeyard_ci::workers::CiWorkers;
 
 use codeyard_git_storage::context::NodeContext;
 use codeyard_support::secrets::SecretEncryptor;
@@ -2014,7 +2014,7 @@ async fn full_pipeline_tests_gate_deployment_and_report_the_workers_mode() {
                 event: "workflow_dispatch".into(),
                 pull_request_id: None,
                 inputs: None,
-                pipeline: codeyard_ci::config::CiPipelineKind::Full,
+                pipeline: codeyard_types::ci::CiPipelineKind::Full,
                 workflow_paths: vec![
                     ".github/workflows/tests.yml".into(),
                     ".github/workflows/deploy.yml".into(),
@@ -2090,7 +2090,7 @@ async fn automatic_deployments_use_yaml_environments_and_explicit_targets_still_
         )
         .await
         .unwrap();
-        codeyard_ci_engine::pull_requests::workflows::queue_pull_request_ci(
+        codeyard_ci::pull_requests::workflows::queue_pull_request_ci(
             pool,
             &ci,
             &repo,
@@ -5139,7 +5139,7 @@ async fn a_remote_pull_request_run_keeps_its_enqueued_event_after_the_base_moves
     )
     .await
     .unwrap();
-    let ci = codeyard_ci_engine::runs::CiRuns::new(
+    let ci = codeyard_ci::runs::CiRuns::new(
         pool.clone(),
         Arc::new(CiConfig {
             trusted_actor_ids: BTreeSet::from([fixture.owner]),
@@ -5149,7 +5149,7 @@ async fn a_remote_pull_request_run_keeps_its_enqueued_event_after_the_base_moves
         None,
         Arc::new(NotificationBroadcaster::new(pool)),
     );
-    codeyard_ci_engine::pull_requests::workflows::queue_pull_request_ci(
+    codeyard_ci::pull_requests::workflows::queue_pull_request_ci(
         pool,
         &ci,
         &repo,
@@ -5200,8 +5200,7 @@ async fn a_remote_pull_request_run_keeps_its_enqueued_event_after_the_base_moves
         )
         .await
         .unwrap();
-    codeyard_ci_engine::pull_requests::branches::branches_moved(pool, &repo, &ci, fixture.owner)
-        .await;
+    codeyard_ci::pull_requests::branches::branches_moved(pool, &repo, &ci, fixture.owner).await;
     let current = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(pool, pull.id)
         .await
         .unwrap()

@@ -398,14 +398,14 @@ async fn blob_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
         codeowners_errors: None,
         codeowners_notice: None,
     };
-    if codeyard_ci_engine::code_owners::is_codeowners_file(&page.path) {
+    if codeyard_ci::code_owners::is_codeowners_file(&page.path) {
         if page.truncated || page.binary {
             page.codeowners_notice = Some(
                 "CODEOWNERS diagnostics are unavailable for binary files or partial previews."
                     .to_owned(),
             );
         } else {
-            match codeyard_ci_engine::code_owners::diagnostics::diagnose(&ctx.state.pool,&loaded.repository,&page.path,&page.content).await {
+            match codeyard_ci::code_owners::diagnostics::diagnose(&ctx.state.pool,&loaded.repository,&page.path,&page.content).await {
             Ok(errors)=>page.codeowners_errors=Some(errors.into_iter().map(|error|view::blob::CodeOwnerError {line:error.line,kind:error.kind}).collect()),
             Err(_)=>page.codeowners_notice=Some("CODEOWNERS diagnostics are unavailable; the file may exceed its analysis limits.".to_owned()),
         }

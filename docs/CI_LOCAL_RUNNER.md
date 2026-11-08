@@ -40,7 +40,7 @@ On a Linux host with Podman, curl and a systemd user session:
 scripts/start-ci-runner.sh
 ```
 
-This starts the transient user service `codeyard-ci-engine` with a private socket at
+This starts the transient user service `codeyard-ci` with a private socket at
 `$XDG_RUNTIME_DIR/codeyard-ci/podman.sock`, using its own image storage under
 `~/.cache/codeyard-ci/storage`. The script is safe to run again while the service
 is active. Run it again after a reboot.

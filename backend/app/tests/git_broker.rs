@@ -2,9 +2,9 @@
 //! Gateway tests on throwaway databases and real Git repositories.
 //! GITSERV_TEST_OPENSSH_HELPER must point at the built codeyard binary.
 use base64::Engine;
-use codeyard_ci_engine::queue::RunQueue;
-use codeyard_ci_engine::runs::CiRuns;
-use codeyard_ci_engine::workers::CiWorkers;
+use codeyard_ci::queue::RunQueue;
+use codeyard_ci::runs::CiRuns;
+use codeyard_ci::workers::CiWorkers;
 use codeyard_database::models::AccessLevel;
 use codeyard_git_storage::repositories::git_sessions::private_files;
 use codeyard_git_storage::repositories::git_sessions::protocol;

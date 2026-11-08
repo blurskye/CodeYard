@@ -4,7 +4,7 @@ use crate::rate_limit::client_key;
 use crate::rate_limit::RateLimiter;
 use anyhow::Context;
 use anyhow::Result;
-use codeyard_ci_engine::runs::CiRuns;
+use codeyard_ci::runs::CiRuns;
 use codeyard_database::DbPool;
 use rand::rngs::OsRng;
 use rand::RngCore;

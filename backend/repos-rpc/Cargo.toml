@@ -6,7 +6,6 @@ license = "LGPL-3.0-or-later"
 
 [dependencies]
 codeyard-storage.workspace = true
-codeyard-ci-engine.workspace = true
 codeyard-git-storage.workspace = true
 codeyard-nodes.workspace = true
 codeyard-ci.workspace = true

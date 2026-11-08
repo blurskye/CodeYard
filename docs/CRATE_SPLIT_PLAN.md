@@ -125,7 +125,7 @@ and results stay the same. A stage can be the last one.
    helpers have one lower owner.
    `backend/git-storage/` owns the concrete store, Git sessions, publication checks
    and workflow readers. `backend/repos-rpc/` owns repository RPC handlers.
-   `backend/ci-engine/` owns admission, queues, workers and pull-request refresh.
+   `backend/ci/` owns admission, queues, workers and pull-request refresh.
    Receive hooks use a lower resource trait. Local RPC fallback uses an injected factory.
    Code-owner resolution lives in the CI engine. Store fixtures are an integration target.
    Receive fixtures share the composed broker integration target. Cluster startup,

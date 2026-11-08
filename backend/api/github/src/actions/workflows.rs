@@ -20,7 +20,7 @@ use axum::Router;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_ci_engine::runs::DispatchRequest;
+use codeyard_ci::runs::DispatchRequest;
 use codeyard_db_actions::action_workflows as workflows;
 use codeyard_db_actions::action_workflows::Workflow;
 use codeyard_db_actions::ci_admission::AdmissionError;

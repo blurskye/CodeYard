@@ -5,7 +5,7 @@
 use crate::support::native_database as native;
 
 use codeyard_ci::config::CiExecutionMode;
-use codeyard_ci_engine::queue::RunQueue;
+use codeyard_ci::queue::RunQueue;
 use codeyard_nodes::link::Link;
 use codeyard_nodes::pairing::InviteOptions;
 use codeyard_nodes::pairing::JoinTicket;

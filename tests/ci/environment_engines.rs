@@ -4,9 +4,8 @@ use crate::support::database::Database;
 use codeyard_app::app::AppState;
 use codeyard_ci::config::CiConfig;
 use codeyard_ci::config::CiExecutionMode;
-use codeyard_ci::config::CiPipelineKind;
-use codeyard_ci_engine::queue::RunQueue;
-use codeyard_ci_engine::workers::CiWorkers;
+use codeyard_ci::queue::RunQueue;
+use codeyard_ci::workers::CiWorkers;
 use codeyard_db_actions::environment_values as values;
 use codeyard_db_actions::environment_values::Save;
 use codeyard_db_orgs::organization_values::Kind;
@@ -15,6 +14,7 @@ use codeyard_git_storage::repositories::lifecycle;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_storage::ObjectStore;
 use codeyard_support::secrets::SecretEncryptor;
+use codeyard_types::ci::CiPipelineKind;
 use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
 fn scoped_workflow() -> String {

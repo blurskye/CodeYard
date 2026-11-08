@@ -1,5 +1,5 @@
 use base64::Engine;
-use codeyard_ci_engine::runs::CiRuns;
+use codeyard_ci::runs::CiRuns;
 use codeyard_database::models::RefValue;
 use codeyard_database::DbPool;
 use codeyard_git::error::RepoError;

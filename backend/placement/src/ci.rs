@@ -1,11 +1,11 @@
 //! CI queue RPCs. The authenticated node key owns every worker id it supplies.
 use anyhow::ensure;
 use anyhow::Result;
-use codeyard_ci_engine::queue::Operation;
-use codeyard_ci_engine::queue::Reply;
-use codeyard_ci_engine::queue::Request;
-use codeyard_ci_engine::queue::RunQueue;
-use codeyard_ci_engine::queue::CORE_UNAVAILABLE;
+use codeyard_ci::queue::Operation;
+use codeyard_ci::queue::Reply;
+use codeyard_ci::queue::Request;
+use codeyard_ci::queue::RunQueue;
+use codeyard_ci::queue::CORE_UNAVAILABLE;
 use codeyard_git_storage::context::NodeContext;
 use codeyard_nodes::link::Link;
 use iroh::endpoint::Connection;

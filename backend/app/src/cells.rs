@@ -110,7 +110,7 @@ impl codeyard_database::cells::outbox::Consumer for Refreshes {
             else {
                 return Ok(true);
             };
-            codeyard_ci_engine::pull_requests::branches::follow_foreign_head(
+            codeyard_ci::pull_requests::branches::follow_foreign_head(
                 &self.state.pool,
                 &self.state.ci_runs,
                 &pull,

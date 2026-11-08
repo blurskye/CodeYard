@@ -1887,8 +1887,8 @@ async fn delete_names_the_promoted_primary_on_postgres() {
 async fn database_free_ci_checkout_uses_claimed_replica_targets() {
     use codeyard_ci::config::CiConfig;
     use codeyard_ci::config::CiExecutionMode;
-    use codeyard_ci_engine::queue::ClaimedRun;
-    use codeyard_ci_engine::queue::RunQueue;
+    use codeyard_ci::queue::ClaimedRun;
+    use codeyard_ci::queue::RunQueue;
     use codeyard_notifications::broadcast::NotificationBroadcaster;
     let database = native::PostgresDatabase::new().await;
     crate::support::native_database::enable_cluster(&database.pool)
@@ -3747,7 +3747,7 @@ async fn a_pull_request_refresh_does_not_read_heads_from_a_lagging_copy() {
     .unwrap();
     primary.shutdown().await;
 
-    let ci = codeyard_ci_engine::runs::CiRuns::new(
+    let ci = codeyard_ci::runs::CiRuns::new(
         pool.clone(),
         Arc::new(CiConfig::default()),
         Arc::new(tokio::sync::Notify::new()),
@@ -3755,7 +3755,7 @@ async fn a_pull_request_refresh_does_not_read_heads_from_a_lagging_copy() {
         Arc::new(codeyard_notifications::broadcast::NotificationBroadcaster::new(pool)),
     );
     // The refs must come from the primary, which is down. The refresh fails and writes nothing.
-    let refreshed = codeyard_ci_engine::pull_requests::branches::refresh_open_pull_request(
+    let refreshed = codeyard_ci::pull_requests::branches::refresh_open_pull_request(
         pool,
         &repo.repository,
         &ci,

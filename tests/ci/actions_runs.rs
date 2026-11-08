@@ -336,7 +336,7 @@ async fn contract(pg: bool) {
             head_sha: Some(head.sha.clone()),
             event: "workflow_dispatch".into(),
             pull_request_id: None,
-            pipeline: codeyard_ci::config::CiPipelineKind::Ci,
+            pipeline: codeyard_types::ci::CiPipelineKind::Ci,
             workflow_paths: vec![
                 ".github/workflows/ci.yml".into(),
                 ".github/workflows/other.yml".into(),

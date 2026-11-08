@@ -1,6 +1,6 @@
 //! Direct branch merges use normal ref-admission policy, not pull-request approval authority.
 
-use codeyard_ci_engine::runs::CiRuns;
+use codeyard_ci::runs::CiRuns;
 use codeyard_database::cells::authorization::inherit;
 use codeyard_git as git;
 use codeyard_git::error::ErrorKind;
@@ -157,7 +157,7 @@ pub async fn merge_branch(
             Err(RefError::AppliedFollowupFailed) => true,
             Err(error) => return Err(error),
         };
-        let refreshed = codeyard_ci_engine::pull_requests::branches::refresh_open_pull_requests(
+        let refreshed = codeyard_ci::pull_requests::branches::refresh_open_pull_requests(
             &pool,
             &repository,
             Some(&[base_name.as_str()]),

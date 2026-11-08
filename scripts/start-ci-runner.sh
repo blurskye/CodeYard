@@ -20,8 +20,8 @@ mkdir -p "$root" "$runtime"
 exec 9<"$runtime"
 flock 9
 
-if ! systemctl --user is-active --quiet codeyard-ci-engine.service; then
-  systemd-run --user --unit=codeyard-ci-engine --collect \
+if ! systemctl --user is-active --quiet codeyard-ci.service; then
+  systemd-run --user --unit=codeyard-ci --collect \
     --property=Restart=on-failure --property=UMask=0077 \
     --setenv="PATH=$PATH" \
     "$(command -v podman)" --root "$root" --runroot "$runtime/run" \
@@ -35,10 +35,10 @@ while ((SECONDS < deadline)); do
     printf '  -v %q:%q:ro\n' "$socket" "$socket"
     printf '  -e CI_EXECUTION_MODE=podman\n'
     printf '  -e CI_PODMAN_SOCKET=%q\n' "$socket"
-    printf '\nStop: systemctl --user stop codeyard-ci-engine.service\n'
+    printf '\nStop: systemctl --user stop codeyard-ci.service\n'
     exit 0
   fi
   sleep 1
 done
-journalctl --user -u codeyard-ci-engine.service -n 30 --no-pager >&2
+journalctl --user -u codeyard-ci.service -n 30 --no-pager >&2
 exit 1

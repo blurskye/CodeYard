@@ -1,7 +1,7 @@
 use crate::rate_limit::RateLimiter;
 use anyhow::Result;
 use bytes::Bytes;
-use codeyard_ci_engine::runs::CiRuns;
+use codeyard_ci::runs::CiRuns;
 use codeyard_database::models::AccessLevel;
 use codeyard_database::models::Repository;
 use codeyard_database::models::User;

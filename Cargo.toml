@@ -37,7 +37,6 @@ unicode-normalization.workspace = true
 # No SQLx, SSH, Git, AWS, credentials or server crypto in the browser graph.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 codeyard-repos-rpc.workspace = true
-codeyard-ci-engine.workspace = true
 codeyard-placement.workspace = true
 codeyard-repos-pulls.workspace = true
 codeyard-git-storage.workspace = true
@@ -156,7 +155,7 @@ debug = false
 
 [workspace]
 resolver = "2"
-members = ["backend/cache", "backend/router", "backend/repos-rpc", "backend/ci-engine", "backend/webhooks", "backend/placement", "backend/nodes", "backend/ci", "backend/repos", "backend/storage", "backend/ssh", "backend/testing", "backend/api/rest", "backend/api/graphql", "backend/api/repos", "backend/api/github", "backend/api/http", "backend/app",
+members = ["backend/cache", "backend/router", "backend/repos-rpc", "backend/webhooks", "backend/placement", "backend/nodes", "backend/ci", "backend/repos", "backend/storage", "backend/ssh", "backend/testing", "backend/api/rest", "backend/api/graphql", "backend/api/repos", "backend/api/github", "backend/api/http", "backend/app",
     "backend/git-storage", "backend/repos-pulls", "backend/notifications", "backend/identity", "backend/api/github-graphql", "backend/runner", "backend/db/actions", "backend/db/placement", "backend/db/directory", "backend/database", "backend/db/identity", "backend/db/orgs", "backend/db/repos", "backend/db/security", "backend/git", "backend/support", "backend/types", "webui"]
 default-members = [".", "backend/router", "backend/api/github-graphql", "backend/runner", "backend/db/actions", "backend/db/placement", "backend/db/directory", "backend/database", "backend/db/identity", "backend/db/orgs", "backend/db/repos", "backend/db/security", "backend/git", "backend/support", "backend/types", "webui"]
 
@@ -172,7 +171,6 @@ allow_attributes_without_reason = "deny"
 
 [workspace.dependencies]
 codeyard-repos-pulls = { path = "backend/repos-pulls" }
-codeyard-ci-engine = { path = "backend/ci-engine" }
 codeyard-repos-rpc = { path = "backend/repos-rpc" }
 codeyard-git-storage = { path = "backend/git-storage" }
 codeyard-webhooks = { path = "backend/webhooks" }

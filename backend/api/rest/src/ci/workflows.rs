@@ -7,7 +7,7 @@ use axum::Json;
 use codeyard_api_http::error::ApiError;
 use codeyard_api_http::session::get_current_user;
 use codeyard_app::app::AppState;
-use codeyard_ci_engine::admission::is_safe_owner;
+use codeyard_ci::admission::is_safe_owner;
 use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_git_storage::workflows::list_workflows_for_ref;
 use serde::Deserialize;

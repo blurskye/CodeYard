@@ -797,7 +797,7 @@ async fn downloads(
     ))
 }
 async fn ticket(state: &AppState) -> Result<JoinTicket> {
-    codeyard_ci_engine::runner_credentials::ticket(&state.pool, state.cluster.as_ref())
+    codeyard_ci::runner_credentials::ticket(&state.pool, state.cluster.as_ref())
         .await
         .map_err(Error::unavailable)
 }
@@ -838,13 +838,13 @@ async fn remove_token(
     Path(p): Path<Params>,
 ) -> Result<Response> {
     let (actor, scope) = scope(&s, &headers, &p, true).await?;
-    let token = codeyard_ci_engine::runner_credentials::new_remove_token();
+    let token = codeyard_ci::runner_credentials::new_remove_token();
     let expires = chrono::Utc::now() + chrono::Duration::hours(1);
     native::remove_token(
         &s.pool,
         actor,
         scope,
-        &codeyard_ci_engine::runner_credentials::remove_hash(&token),
+        &codeyard_ci::runner_credentials::remove_hash(&token),
         expires,
     )
     .await
@@ -879,7 +879,7 @@ async fn jit(
     if input.labels.is_empty() {
         return Err(Error::invalid_simple("Invalid runner labels"));
     }
-    if !codeyard_ci_engine::runner_credentials::valid_work_folder(&input.work_folder) {
+    if !codeyard_ci::runner_credentials::valid_work_folder(&input.work_folder) {
         return Err(Error::invalid_simple("Invalid runner work_folder"));
     }
     let ticket = ticket(&s).await?;
@@ -899,7 +899,7 @@ async fn jit(
     .await
     .map_err(runner_error)?
     .ok_or_else(|| Error::unavailable(()))?;
-    let config = codeyard_ci_engine::runner_credentials::JitConfig {
+    let config = codeyard_ci::runner_credentials::JitConfig {
         ticket: ticket.encode(),
         node_name: native::jit_node_name(row.id, &ticket.secret_hash()),
         work_folder: input.work_folder,

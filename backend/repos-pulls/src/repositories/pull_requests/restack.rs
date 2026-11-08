@@ -5,8 +5,8 @@
 
 use crate::repositories::pull_requests::merge::open_chain;
 use crate::repositories::pull_requests::merge::prepare_error;
-use codeyard_ci_engine::pull_requests::branches::branches_moved;
-use codeyard_ci_engine::runs::CiRuns;
+use codeyard_ci::pull_requests::branches::branches_moved;
+use codeyard_ci::runs::CiRuns;
 use codeyard_database::models::PullRequest;
 use codeyard_db_repos::pull_requests::records::MAX_STACK_LAYERS;
 use codeyard_git::error::ErrorKind;

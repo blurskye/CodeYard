@@ -2,7 +2,7 @@
 use crate::support::{database::Database, http_client::Client};
 use axum::http::StatusCode;
 use codeyard_ci::config::CiConfig;
-use codeyard_ci_engine::queue::RunQueue;
+use codeyard_ci::queue::RunQueue;
 use codeyard_git_storage::{
     context::NodeContext,
     wire::{Operation, Request},

@@ -1,6 +1,5 @@
+use crate::config::CiConfig;
 use anyhow::Result;
-use codeyard_ci::config::CiConfig;
-use codeyard_ci::config::CiPipelineKind;
 use codeyard_db_actions::ci_admission::AdmissionError;
 use codeyard_git::error::ErrorKind;
 use codeyard_git_storage::receive_ci::CiRunRequest;
@@ -9,6 +8,7 @@ use codeyard_git_storage::workflows::infer_pipeline_from_workflow_path;
 use codeyard_git_storage::workflows::workflow_definition_from_yaml;
 use codeyard_git_storage::workflows::{is_safe_ref, is_safe_workflow_path};
 use codeyard_runner::workflow::dispatch_inputs;
+use codeyard_types::ci::CiPipelineKind;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
@@ -634,7 +634,7 @@ pub(super) async fn parse_admission_workflow(
         }
         let definition = workflow_definition_from_yaml(&path, &yaml)
             .map_err(|_| AdmissionError::Invalid("CI workflow YAML is invalid"))?;
-        let scheduling = codeyard_ci::runner_labels::scheduling_from_value(&yaml, false)
+        let scheduling = crate::runner_labels::scheduling_from_value(&yaml, false)
             .map_err(|_| AdmissionError::Invalid("CI runner selection is invalid"))?;
         Ok(ParsedWorkflow {
             definition,

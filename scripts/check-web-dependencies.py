@@ -13,7 +13,7 @@ FORBIDDEN = {
     'sqlx', 'sqlx-core', 'sqlx-postgres', 'sqlx-macros', 'sqlx-macros-core',
     'redis', 'deadpool-redis', 'git2', 'libgit2-sys', 'russh',
     'aws-sdk-s3', 'aws-config', 'axum', 'tower-http',
-    'codeyard-placement', 'codeyard-nodes', 'codeyard-ci-engine',
+    'codeyard-placement', 'codeyard-nodes', 'codeyard-ci',
     'codeyard-git-storage', 'codeyard-repos-rpc', 'codeyard-repos-pulls',
     'codeyard-storage', 'codeyard-webhooks', 'codeyard-ci', 'codeyard-repos',
 }

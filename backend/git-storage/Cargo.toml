@@ -10,7 +10,6 @@ test-hooks = []
 [dependencies]
 codeyard-webhooks.workspace = true
 codeyard-nodes.workspace = true
-codeyard-ci.workspace = true
 codeyard-repos.workspace = true
 codeyard-storage.workspace = true
 anyhow.workspace = true
@@ -51,8 +50,8 @@ tracing.workspace = true
 uuid = { workspace = true, features = ["v4"] }
 
 [dev-dependencies]
+codeyard-ci.workspace = true
 codeyard-repos-rpc.workspace = true
-codeyard-ci-engine.workspace = true
 codeyard-repos-pulls.workspace = true
 
 [lints]

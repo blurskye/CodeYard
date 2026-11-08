@@ -144,7 +144,7 @@ async fn create(
         return Err(Error::invalid("sha must be a full object ID"));
     }
     let sha = if let Some(branch) = input.reference.strip_prefix("refs/heads/") {
-        codeyard_ci_engine::refs::create_branch(
+        codeyard_ci::refs::create_branch(
             &state.pool,
             state.cluster.as_ref(),
             &state.ci_runs,
@@ -157,7 +157,7 @@ async fn create(
         .await
         .map_err(ref_error)?
     } else if let Some(tag) = input.reference.strip_prefix("refs/tags/") {
-        codeyard_ci_engine::refs::create_tag(
+        codeyard_ci::refs::create_tag(
             &state.pool,
             state.cluster.as_ref(),
             &state.ci_runs,
@@ -212,7 +212,7 @@ async fn remove(
         return Err(Error::invalid("Reference does not exist"));
     }
     if let Some(branch) = reference.strip_prefix("heads/") {
-        codeyard_ci_engine::refs::delete_branch(
+        codeyard_ci::refs::delete_branch(
             &state.pool,
             state.cluster.as_ref(),
             &state.ci_runs,
@@ -223,15 +223,9 @@ async fn remove(
         .await
         .map_err(ref_error)?;
     } else if let Some(tag) = reference.strip_prefix("tags/") {
-        codeyard_ci_engine::refs::delete_tag(
-            &state.pool,
-            state.cluster.as_ref(),
-            actor,
-            repo.id,
-            tag,
-        )
-        .await
-        .map_err(ref_error)?;
+        codeyard_ci::refs::delete_tag(&state.pool, state.cluster.as_ref(), actor, repo.id, tag)
+            .await
+            .map_err(ref_error)?;
     } else {
         return Err(Error::invalid("Only heads and tags may be deleted"));
     }
@@ -255,7 +249,7 @@ async fn update(
     let auth = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     let actor = auth.database_actor();
     let full = format!("refs/{reference}");
-    let sha = codeyard_ci_engine::refs::update_reference(
+    let sha = codeyard_ci::refs::update_reference(
         &state.pool,
         state.cluster.as_ref(),
         &state.ci_runs,

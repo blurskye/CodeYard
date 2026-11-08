@@ -432,7 +432,7 @@ async fn web_publication_updates_storage_and_keeps_deleted_branch_runs_admissibl
     )
     .await
     .unwrap());
-    let ci = codeyard_ci_engine::runs::CiRuns::new(
+    let ci = codeyard_ci::runs::CiRuns::new(
         a.pool.clone(),
         std::sync::Arc::new(codeyard_ci::config::CiConfig {
             trusted_actor_ids: [a.actor].into(),
@@ -453,7 +453,7 @@ async fn web_publication_updates_storage_and_keeps_deleted_branch_runs_admissibl
             head_sha: Some(saved.sha.clone()),
             event: "push".into(),
             pull_request_id: None,
-            pipeline: codeyard_ci::config::CiPipelineKind::Ci,
+            pipeline: codeyard_types::ci::CiPipelineKind::Ci,
             workflow_paths: vec![".github/workflows/ci.yml".into()],
             environment: None,
             inputs: None,
@@ -3748,8 +3748,8 @@ async fn a_repository_past_the_ref_limit_stays_readable_and_repairable() {
     assert_eq!(error.message, FULL);
 
     // The API path checks the default branch before it deletes, so it runs here too.
-    use codeyard_ci_engine::refs::delete_branch;
-    use codeyard_ci_engine::runs::CiRuns;
+    use codeyard_ci::refs::delete_branch;
+    use codeyard_ci::runs::CiRuns;
     use codeyard_git_storage::ref_errors::RefError;
     use codeyard_notifications::broadcast::NotificationBroadcaster;
     use std::sync::Arc;

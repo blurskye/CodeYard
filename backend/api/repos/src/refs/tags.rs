@@ -62,7 +62,7 @@ pub async fn create_tag(
     Json(req): Json<CreateTagRequest>,
 ) -> Result<Json<TagResponse>, (StatusCode, Json<ApiError>)> {
     let actor = codeyard_api_http::session::get_current_user(&state.pool, &headers).await?;
-    let tag = codeyard_ci_engine::refs::create_tag(
+    let tag = codeyard_ci::refs::create_tag(
         &state.pool,
         state.cluster.as_ref(),
         &state.ci_runs,
@@ -91,7 +91,7 @@ pub async fn delete_tag(
     Path((owner, repo, name)): Path<(String, String, String)>,
 ) -> Result<StatusCode, (StatusCode, Json<ApiError>)> {
     let actor = codeyard_api_http::session::get_current_user(&state.pool, &headers).await?;
-    codeyard_ci_engine::refs::delete_tag(
+    codeyard_ci::refs::delete_tag(
         &state.pool,
         state.cluster.as_ref(),
         codeyard_database::queries::credentials::Actor::from((

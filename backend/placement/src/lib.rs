@@ -304,7 +304,7 @@ pub async fn start(
         .then(|| codeyard_repos_rpc::RpcHandler::new(context.clone()));
     let sessions = rpc.as_ref().map(codeyard_repos_rpc::RpcHandler::sessions);
     let ci_config = std::sync::Arc::new(codeyard_ci::config::CiConfig::from_env()?);
-    let queue = codeyard_ci_engine::queue::RunQueue::Database {
+    let queue = codeyard_ci::queue::RunQueue::Database {
         pool: pool.clone(),
         config: ci_config,
         secrets: codeyard_support::secrets::SecretEncryptor::configured_from_env()?

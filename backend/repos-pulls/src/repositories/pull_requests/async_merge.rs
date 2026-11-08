@@ -1,6 +1,6 @@
 //! Durable asynchronous requests, executed by the server's bounded, shutdown-drained Git tasks.
 use crate::services::RepositoryServices;
-use codeyard_ci_engine::runs::CiRuns;
+use codeyard_ci::runs::CiRuns;
 use codeyard_git_storage::repositories::pull_requests::database_error;
 use codeyard_git_storage::repositories::pull_requests::OperationError;
 use codeyard_notifications::broadcast::NotificationBroadcaster;

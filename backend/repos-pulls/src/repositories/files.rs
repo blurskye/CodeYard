@@ -1,6 +1,6 @@
 //! Web editor and API file writes: check who may write where, then have the store
 //! commit the file and move the branch, failing if it changed since the editor loaded.
-use codeyard_ci_engine::runs::CiRuns;
+use codeyard_ci::runs::CiRuns;
 use codeyard_database::cells::authorization::inherit;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
@@ -694,7 +694,7 @@ async fn publish_commit(
     // The branch moved: pull requests that use it follow, and push workflows run.
     let current = codeyard_identity::repository_access::current_repository_with_owner(pool, repository.id).await;
     let followup_repository = current.as_ref().map(|(repo, _)| repo).unwrap_or(repository);
-    let refreshed = codeyard_ci_engine::pull_requests::branches::refresh_open_pull_requests(
+    let refreshed = codeyard_ci::pull_requests::branches::refresh_open_pull_requests(
         pool,
         followup_repository,
         Some(&[branch][..]),

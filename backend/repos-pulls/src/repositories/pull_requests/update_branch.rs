@@ -1,5 +1,5 @@
 //! Bring a pull head up to date without merging or closing the pull request.
-use codeyard_ci_engine::runs::CiRuns;
+use codeyard_ci::runs::CiRuns;
 use codeyard_database::DbPool;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
@@ -70,7 +70,7 @@ pub async fn update_branch(
             "Only open pull requests can update their head branch",
         ));
     }
-    let head = codeyard_ci_engine::pull_requests::branches::head_repository(
+    let head = codeyard_ci::pull_requests::branches::head_repository(
         pool,
         &base,
         pull.head_repo_id
@@ -78,7 +78,7 @@ pub async fn update_branch(
     )
     .await
     .map_err(|error| match error {
-        codeyard_ci_engine::pull_requests::branches::HeadError::Unavailable => database_error(()),
+        codeyard_ci::pull_requests::branches::HeadError::Unavailable => database_error(()),
         _ => invalid("Head branch is unavailable"),
     })?;
     if !codeyard_repos::maintainer_edit::can_update_head(pool, &actor, &base, &head, &pull)
@@ -140,17 +140,16 @@ pub async fn update_branch(
         Err(error) => return Err(storage(error)),
     };
     // A head writer's own update is published with their authority; the wider refresh follows.
-    if let Err(error) = codeyard_ci_engine::pull_requests::branches::refresh_updated_head(
+    if let Err(error) = codeyard_ci::pull_requests::branches::refresh_updated_head(
         pool, &base, &head, ci, actor.id, pull.id,
     )
     .await
     {
         tracing::warn!(pull_request_id = pull.id, %error, "could not refresh the updated pull request");
     }
-    codeyard_ci_engine::pull_requests::branches::branches_moved(pool, &base, ci, actor.id).await;
+    codeyard_ci::pull_requests::branches::branches_moved(pool, &base, ci, actor.id).await;
     if head.id != base.id {
-        codeyard_ci_engine::pull_requests::branches::branches_moved(pool, &head, ci, actor.id)
-            .await;
+        codeyard_ci::pull_requests::branches::branches_moved(pool, &head, ci, actor.id).await;
     }
     let finish = |sha: String| {
         if followup_failed {

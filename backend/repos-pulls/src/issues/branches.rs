@@ -59,7 +59,7 @@ pub async fn create(
                 code: "not_found",
                 message: "Repository not found".into(),
             })?;
-    let created = codeyard_ci_engine::refs::create_branch(
+    let created = codeyard_ci::refs::create_branch(
         state.pool(),
         state.cluster(),
         state.ci_runs(),

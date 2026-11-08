@@ -20,7 +20,7 @@ use codeyard_api_http::session::get_current_user;
 use codeyard_api_http::shared::repos::forms::authorize_post;
 use codeyard_api_http::shared::repos::forms::field;
 use codeyard_app::app::AppState;
-use codeyard_ci_engine::pull_requests::branches::refresh_open_pull_request;
+use codeyard_ci::pull_requests::branches::refresh_open_pull_request;
 use codeyard_git_storage::store_types::MergeMethod;
 use codeyard_repos_pulls::repositories::pull_requests::merge::MergeRequest;
 use codeyard_repos_pulls::repositories::pull_requests::merge::MergeResponse;

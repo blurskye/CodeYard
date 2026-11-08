@@ -1,5 +1,5 @@
 //! Revert through the normal branch publication and pull request creation paths.
-use codeyard_ci_engine::runs::CiRuns;
+use codeyard_ci::runs::CiRuns;
 use codeyard_git_storage::repositories::pull_requests::database_error;
 use codeyard_git_storage::repositories::pull_requests::OperationError;
 use codeyard_git_storage::repositories::store::repo_store;
@@ -102,7 +102,7 @@ pub async fn revert_pull_request(
         .await
         .map_err(crate::repositories::pull_requests::merge::prepare_error)?;
     let branch = format!("revert-{number}-{}", uuid::Uuid::new_v4().simple());
-    codeyard_ci_engine::refs::create_branch(
+    codeyard_ci::refs::create_branch(
         pool,
         ci.cluster.as_ref(),
         ci,

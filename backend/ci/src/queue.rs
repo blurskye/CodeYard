@@ -1,10 +1,10 @@
 //! One CI queue, reached through the database or a paired core node.
+use crate::config::CiConfig;
+use crate::config::CiExecutionMode;
+use crate::config::RunLimits;
 use anyhow::ensure;
 use anyhow::Context;
 use anyhow::Result;
-use codeyard_ci::config::CiConfig;
-use codeyard_ci::config::CiExecutionMode;
-use codeyard_ci::config::RunLimits;
 use codeyard_database::ci_logs::prepare_logs;
 use codeyard_database::models::CiRun;
 use codeyard_database::DbPool;
@@ -91,7 +91,7 @@ pub struct ClaimedRun {
     #[serde(default)]
     pub variables: Vec<(String, String)>,
     #[serde(default)]
-    pub environment_values: codeyard_ci::environment_values::EnvironmentValues,
+    pub environment_values: crate::environment_values::EnvironmentValues,
     #[serde(default)]
     pub pull_request: Option<PullRequestEvent>,
     pub storage_peer: Option<codeyard_nodes::worker::CorePeer>,
@@ -100,9 +100,9 @@ pub struct ClaimedRun {
     #[serde(default)]
     pub limits: RunLimits,
     #[serde(default)]
-    pub runtime: codeyard_ci::runtime::RuntimeCredentials,
+    pub runtime: crate::runtime::RuntimeCredentials,
     #[serde(default)]
-    pub github_tokens: codeyard_ci::tokens::GithubTokens,
+    pub github_tokens: crate::tokens::GithubTokens,
     // Used only by a database worker; never sent to a remote worker.
     #[serde(skip)]
     pub store: Option<RepoStore>,
@@ -615,7 +615,7 @@ impl RunQueue {
                         };
                         definitions.insert(path.clone(), bytes);
                     }
-                    let environment_values = codeyard_ci::environment_values::load(
+                    let environment_values = crate::environment_values::load(
                         pool,
                         secrets_encryptor,
                         &run,
@@ -634,7 +634,7 @@ impl RunQueue {
                     );
                     let (repo_policy, org_policy) =
                         codeyard_db_actions::action_settings::effective(pool, run.repo_id).await?;
-                    let github_tokens = codeyard_ci::tokens::issue_selected(
+                    let github_tokens = crate::tokens::issue_selected(
                         pool,
                         &run,
                         &definitions,
@@ -646,7 +646,7 @@ impl RunQueue {
                         options.replay.as_ref().map(|replay| &replay.0),
                     )
                     .await?;
-                    let runtime = codeyard_ci::runtime::issue(pool, &run, &site).await?;
+                    let runtime = crate::runtime::issue(pool, &run, &site).await?;
                     if run.engine.as_deref() == Some("codeyard-actions") {
                         for workflow in run.workflow_path.split(',') {
                             codeyard_db_actions::action_jobs::save_state(

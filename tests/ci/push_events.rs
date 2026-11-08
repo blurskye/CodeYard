@@ -2,14 +2,14 @@
 use crate::support::database::Database;
 
 use codeyard_ci::config::CiConfig;
-use codeyard_ci::config::CiPipelineKind;
-use codeyard_ci_engine::runs::CiRuns;
-use codeyard_ci_engine::runs::DispatchRequest;
+use codeyard_ci::runs::CiRuns;
+use codeyard_ci::runs::DispatchRequest;
 use codeyard_git_storage::push_workflows::RefUpdate;
 use codeyard_git_storage::receive_ci::CiRunRequest;
 use codeyard_git_storage::repositories::lifecycle;
 use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
+use codeyard_types::ci::CiPipelineKind;
 use std::{collections::BTreeSet, sync::Arc};
 use tokio::sync::Notify;
 

@@ -1,6 +1,6 @@
 //! Shared application state: database, storage, CI and notification services.
 use codeyard_ci::config::CiConfig;
-use codeyard_ci_engine::runs::CiRuns;
+use codeyard_ci::runs::CiRuns;
 use codeyard_database::DbPool;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_storage::ObjectStore;
@@ -131,7 +131,7 @@ impl codeyard_repos_pulls::services::RepositoryServices for AppState {
     ) -> &Option<std::sync::Arc<codeyard_support::secrets::SecretEncryptor>> {
         &self.secret_encryptor
     }
-    fn ci_runs(&self) -> &std::sync::Arc<codeyard_ci_engine::runs::CiRuns> {
+    fn ci_runs(&self) -> &std::sync::Arc<codeyard_ci::runs::CiRuns> {
         &self.ci_runs
     }
     fn notification_broadcaster(
