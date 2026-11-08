@@ -80,13 +80,17 @@ printf bundle >"$out/index.html"
         self.env["CARGO_TARGET_DIR"] = str(self.work / "target")
         public = self.work / "target/dx/codeyard/release/web/public"
         public.parent.mkdir(parents=True)
-        # Canonical equality must also work through an existing parent symlink.
+        # The Dioxus output is its build cache, never the published bundle, also when it is
+        # reached through an existing parent symlink.
         (self.work / "alias").symlink_to(self.work / "target", target_is_directory=True)
-        for out in [public, self.work / "alias/dx/codeyard/release/web/public",
-                    self.work / "dist/webui"]:
+        for out in [public, self.work / "alias/dx/codeyard/release/web/public"]:
             self.env["WEBUI_DIST"] = str(out)
-            self.shell("bash scripts/build-webui.sh release")
-            self.assertEqual((out / "index.html").read_text(), "bundle")
+            result = self.shell("bash scripts/build-webui.sh release", success=False)
+            self.assertIn("must not overlap the Dioxus build cache", result.stderr)
+        out = self.work / "dist/webui"
+        self.env["WEBUI_DIST"] = str(out)
+        self.shell("bash scripts/build-webui.sh release")
+        self.assertEqual((out / "index.html").read_text(), "bundle")
         # A published bundle can be rebuilt and replaced.
         self.shell("bash scripts/build-webui.sh release")
         for out in [public.parent, public / "nested", self.work / "target", self.work / "alias"]:
@@ -132,11 +136,16 @@ printf bundle >"$out/index.html"
         with sqlite3.connect(destination) as database:
             self.assertEqual(database.execute("SELECT token FROM fixture_secrets").fetchone(), ("session-secret",))
         self.shell(command)  # An already private destination remains usable.
+        # A new private snapshot replaces a readable copy instead of writing into it.
         destination.chmod(0o644)
-        self.shell(command, success=False)
+        self.shell(command)
+        self.assertEqual(stat.S_IMODE(destination.stat().st_mode), 0o600)
         destination.unlink()
         destination.symlink_to(source)
         self.shell(command, success=False)
+        self.assertTrue(destination.is_symlink())
+        with sqlite3.connect(source) as database:
+            self.assertEqual(database.execute("SELECT token FROM fixture_secrets").fetchone(), ("session-secret",))
 
     def test_workflow_uses_container_dns_and_dynamic_host_ports(self):
         workflow = (ROOT / ".github/workflows/ci.yml").read_text()
@@ -183,7 +192,7 @@ esac
         (self.work / ".env").write_text("DATABASE_URL=sqlite://" + str(unrelated) + "?mode=rwc\n")
         self.env["TEST_BINARY"] = str(binary)
         self.shell('''RUN=$PWD/fixture; mkdir -p "$RUN"
-DATABASE_URL=; BASE=http://localhost; WEBUI_DIST=unused; ACT=unused; ACTIONS_BIN=unused
+DATABASE_URL=; BASE=http://localhost; SSH_URL=ssh://unused; WEBUI_DIST=unused; ACT=unused; ACTIONS_BIN=unused
 declare -A HTTP_PORTS=() SSH_PORTS=() IROH_PORTS=([ci1]=12345)
 get() { echo unused; }
 server_dir()''' + functions + '''
@@ -229,25 +238,29 @@ exec {sys.executable} "$@"
         source = (ROOT / "scripts/e2e.sh").read_text()
         functions = "drop_pg()" + source.split("drop_pg()", 1)[1].split("trap cleanup EXIT", 1)[0]
         result = self.shell(functions + '''
-PG_DB=fixture
+PG_DB=fixture PG_OWNED=(fixture)
 pg_tool() { echo dropdb; }
 pg_command() { echo 'dropdb diagnostic' >&2; return 1; }
 GITSERV_TEST_DATABASE_URL=unused
 if drop_pg; then exit 1; fi
-[[ $PG_DB == fixture ]]
+[[ $PG_DB == fixture && ${PG_OWNED[*]} == fixture ]]
 pg_command() { return 0; }
 drop_pg
-[[ -z $PG_DB ]]
-PG_DB=fixture
+[[ -z $PG_DB && ${#PG_OWNED[@]} == 0 ]]
+PG_DB=fixture PG_OWNED=(fixture)
 pg_command() { echo 'retry failed' >&2; return 1; }
+terminate_operators() { :; }
 terminate_servers() { :; }
+stop_pgbouncer() { :; }
+stop_read_replica() { :; }
 WORK=$PWD/disposable; mkdir "$WORK"; E2E_KEEP=0
 trap cleanup EXIT
 ''', success=False)
         self.assertIn("dropdb diagnostic", result.stderr)
         self.assertIn("retry failed", result.stderr)
-        # Both ordinary rounds record drop_pg as an inline result before the summary.
-        self.assertEqual(source.count("step -i 'disposable database removed' drop_pg"), 2)
+        # Every ordinary round, including the actions-only and GitHub-only ones, records
+        # drop_pg as an inline result before the summary.
+        self.assertEqual(source.count("step -i 'disposable database removed' drop_pg"), 5)
         self.assertIn("prepare_database() {\n    drop_pg || return 1", source)
 
     def test_refusals_require_diagnostics_and_reject_timeouts_and_signals(self):
@@ -267,7 +280,8 @@ if must_fail key 'Permission denied' wrong_error; then exit 1; fi
 
     def test_readiness_log_consumers_drain_verbose_output(self):
         source = (ROOT / "scripts/e2e.sh").read_text()
-        for message in ["starting codeyard", "database-free runner ready", "CI worker could not claim a run"]:
+        # Web nodes answer /health; runners and the claim wait still read the server log.
+        for message in ["database-free runner ready", "CI worker could not claim a run"]:
             line = next(line.strip() for line in source.splitlines() if "tail -n" in line and message in line)
             consumer = line.rsplit("|", 1)[1].split(" &&", 1)[0].removesuffix("; do")
             log = self.work / "server.log"
@@ -277,7 +291,8 @@ if must_fail key 'Permission denied' wrong_error; then exit 1; fi
 
     def test_openssh_helper_build_and_tests_share_each_vps_invocation(self):
         (self.work / "scripts").mkdir()
-        shutil.copy(ROOT / "scripts/ci-local.sh", self.work / "scripts/ci-local.sh")
+        for name in ["ci-local.sh", "cargo-executable.py"]:
+            shutil.copy(ROOT / "scripts" / name, self.work / "scripts" / name)
         self.executable(self.work / "scripts/vps", '''#!/usr/bin/env bash
 set -euo pipefail
 [[ $1 != --pg ]] || shift
@@ -287,7 +302,16 @@ rm -f "$CARGO_TARGET_DIR/debug/codeyard"
         self.executable(self.work / "bin/cargo", '''#!/usr/bin/env bash
 set -euo pipefail
 case $1 in
-    build) mkdir -p "$CARGO_TARGET_DIR/debug"; touch "$CARGO_TARGET_DIR/debug/codeyard" ;;
+    build)
+        mkdir -p "$CARGO_TARGET_DIR/debug"
+        while (($#)); do
+            if [[ $1 == --bin ]]; then
+                touch "$CARGO_TARGET_DIR/debug/$2"
+                printf '{"reason":"compiler-artifact","target":{"name":"%s","kind":["bin"]},"executable":"%s"}\n' \
+                    "$2" "$CARGO_TARGET_DIR/debug/$2"
+            fi
+            shift
+        done ;;
     test) [[ -f $GITSERV_TEST_OPENSSH_HELPER ]] ;;
 esac
 ''')
