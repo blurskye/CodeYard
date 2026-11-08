@@ -1,6 +1,17 @@
 use anyhow::{ensure, Context, Result};
 use chrono::{TimeZone, Utc};
+use croner::parser::CronParser;
 use croner::Cron;
+
+/// Croner 4 rejects a step from a single start such as `5/15` unless sloppy ranges are on.
+/// Workflows written for croner 3 used that form, so keep accepting it; a step with no start
+/// at all, such as `/15`, stays refused by `parse`.
+fn cron(expression: &str) -> Result<Cron> {
+    Ok(CronParser::builder()
+        .sloppy_ranges(true)
+        .build()
+        .parse(expression)?)
+}
 
 pub fn parse(expression: &str) -> Result<Cron> {
     ensure!(expression.len() <= 256, "cron expression is too long");
@@ -9,7 +20,9 @@ pub fn parse(expression: &str) -> Result<Cron> {
     let mut normalized = Vec::new();
     for (index, field) in fields.iter().enumerate() {
         ensure!(
-            field.split(',').all(|term| !term.is_empty()),
+            field
+                .split(',')
+                .all(|term| !term.is_empty() && !term.starts_with('/')),
             "empty cron term"
         );
         let mut field = field.to_ascii_uppercase();
@@ -31,8 +44,8 @@ pub fn parse(expression: &str) -> Result<Cron> {
         );
         normalized.push(field);
     }
-    let cron: Cron = normalized.join(" ").parse()?;
-    let minutes: Cron = format!("{} * * * *", fields[0]).parse()?;
+    let cron = cron(&normalized.join(" "))?;
+    let minutes = self::cron(&format!("{} * * * *", fields[0]))?;
     let start = Utc
         .with_ymd_and_hms(2026, 1, 1, 0, 0, 0)
         .single()
@@ -51,7 +64,7 @@ pub fn parse(expression: &str) -> Result<Cron> {
     }
     if let (Some(first), Some(last)) = (first, previous) {
         if 60 + first - last < 5 {
-            let hours: Cron = format!("0 {} * * *", fields[1]).parse()?;
+            let hours = self::cron(&format!("0 {} * * *", fields[1]))?;
             let selected: Vec<_> = (0..24)
                 .map(|hour| hours.is_time_matching(&(start + chrono::Duration::hours(hour))))
                 .collect::<std::result::Result<_, _>>()?;
@@ -60,8 +73,10 @@ pub fn parse(expression: &str) -> Result<Cron> {
                 "cron interval is less than five minutes"
             );
             if selected[23] && selected[0] {
-                let days: Cron =
-                    format!("0 0 {} {} {}", normalized[2], normalized[3], normalized[4]).parse()?;
+                let days = self::cron(&format!(
+                    "0 0 {} {} {}",
+                    normalized[2], normalized[3], normalized[4]
+                ))?;
                 let mut previous_day = false;
                 for day in 0..=146097 {
                     let matches = days.is_time_matching(&(start + chrono::Duration::days(day)))?;
@@ -87,6 +102,7 @@ mod tests {
             "0 4 * * MON-FRI",
             "0,30 4 1 JAN MON",
             "0 0 * * 7",
+            "5/15 * * * *",
         ] {
             assert!(parse(expression).is_ok(), "{expression}");
         }
@@ -98,6 +114,8 @@ mod tests {
             "@daily",
             "0 0 L * *",
             "0 0 * * MON#2",
+            "/15 * * * *",
+            "0,/15 * * * *",
         ] {
             assert!(parse(expression).is_err(), "{expression}");
         }
@@ -109,5 +127,15 @@ mod tests {
         assert!(cron
             .is_time_matching(&Utc.with_ymd_and_hms(2026, 1, 5, 4, 0, 0).unwrap())
             .unwrap());
+        // A single start steps to the end of the field, as croner 3 did.
+        let cron = parse("5/15 * * * *").unwrap();
+        for (minute, matches) in [(5, true), (20, true), (50, true), (0, false), (55, false)] {
+            assert_eq!(
+                cron.is_time_matching(&Utc.with_ymd_and_hms(2026, 1, 1, 4, minute, 0).unwrap())
+                    .unwrap(),
+                matches,
+                "minute {minute}"
+            );
+        }
     }
 }

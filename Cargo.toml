@@ -261,7 +261,7 @@ lettre = { version = "0.11", default-features = false, features = ["builder", "s
 serde_yaml = "0.9"
 toml = "0.9"
 semver = "1"
-croner = "3"
+croner = "4"
 iroh = { version = "=1.4.1", default-features = false, features = ["tls-aws-lc-rs"] }
 rsa = { version = "=0.9.10", features = ["sha2", "pem"] }
 tower = { version = "0.5", features = ["util"] }
