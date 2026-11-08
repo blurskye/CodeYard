@@ -12,11 +12,11 @@ class WebDependencyTests(unittest.TestCase):
                               input=graph, text=True, capture_output=True)
 
     def test_isolated_browser_graph(self):
-        result = self.check('codeyard v0.1.0\ndioxus-web v0.7.10\nweb-sys v0.3.81\n')
+        result = self.check('codeyard-webui v0.1.0\ndioxus-web v0.7.10\nweb-sys v0.3.81\n')
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_native_authority_in_browser_fails(self):
-        result = self.check('codeyard v0.1.0\ndioxus-web v0.7.10\nsqlx-postgres v0.8.6\nredis v0.27.6\n')
+        result = self.check('codeyard-webui v0.1.0\ndioxus-web v0.7.10\nsqlx-postgres v0.8.6\nredis v0.27.6\n')
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('sqlx-postgres', result.stderr)
         self.assertIn('redis', result.stderr)

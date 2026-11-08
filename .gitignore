@@ -42,3 +42,6 @@ container_data/
 # Web UI build output
 webui/dist/
 /dist
+
+# Python bytecode
+__pycache__/

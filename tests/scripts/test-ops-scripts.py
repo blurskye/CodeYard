@@ -144,11 +144,18 @@ printf bundle >"$out/index.html"
         self.assertNotIn("5432:5432", workflow)
         step = workflow.split("      - name: Configure PostgreSQL\n", 1)[1].split("      - name:", 1)[0]
         source = "\n".join(line[10:] for line in step.splitlines()[1:])
-        source = source.replace("${{ job.services.postgres.ports[5432] }}", "55432")
+        # The host port is read from Docker; a fixture answers for the service container.
+        self.executable(self.work / "bin/docker", '''#!/bin/sh
+case $1 in
+    ps) echo fixture-id ;;
+    port) [ "$2 $3" = "fixture-id 5432/tcp" ] && echo 0.0.0.0:55432 ;;
+    *) exit 1 ;;
+esac
+''')
         for container, address in [(True, "postgres:5432"), (False, "127.0.0.1:55432")]:
             output = self.work / "github-env"
             output.write_text("")
-            env = dict(self.env, GITHUB_ENV=str(output))
+            env = dict(self.env, GITHUB_ENV=str(output), PATH=str(self.work / "bin") + ":" + self.env["PATH"])
             # Substitute the two runtime marker paths with disposable fixtures.
             marker = self.work / "container-marker"
             if container:
@@ -353,7 +360,7 @@ bash -c "$inner" inner bash -euc '
         echo "passwordless superuser connection succeeded" >&2; exit 1
     fi
 '
-''')
+''', cwd=ROOT)  # inner runs scripts/builder-test.sh from the checkout.
 
 
 if __name__ == "__main__":
