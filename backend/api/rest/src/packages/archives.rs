@@ -55,19 +55,14 @@ pub(super) fn xml(bytes: &[u8]) -> Result<Xml> {
                     return Err(Error::invalid());
                 }
                 let mut node = Xml {
-                    name: String::from_utf8(tag.local_name().as_ref().to_vec())
-                        .map_err(|_| Error::invalid())?,
+                    name: tag.local_name().as_ref().to_owned(),
                     ..Default::default()
                 };
                 for attr in tag.attributes() {
                     let attr = attr.map_err(|_| Error::invalid())?;
-                    let key = String::from_utf8(attr.key.local_name().as_ref().to_vec())
-                        .map_err(|_| Error::invalid())?;
+                    let key = attr.key.local_name().as_ref().to_owned();
                     let value = attr
-                        .decoded_and_normalized_value(
-                            quick_xml::XmlVersion::Implicit1_0,
-                            reader.decoder(),
-                        )
+                        .normalized_value(quick_xml::XmlVersion::Implicit1_0)
                         .map_err(|_| Error::invalid())?
                         .into_owned();
                     node.attrs.insert(key, value);
@@ -97,15 +92,14 @@ pub(super) fn xml(bytes: &[u8]) -> Result<Xml> {
                 .last_mut()
                 .ok_or_else(Error::invalid)?
                 .text
-                .push_str(&text.decode().map_err(|_| Error::invalid())?),
+                .push_str(&text),
             Event::CData(text) => stack
                 .last_mut()
                 .ok_or_else(Error::invalid)?
                 .text
-                .push_str(&text.decode().map_err(|_| Error::invalid())?),
+                .push_str(&text),
             Event::GeneralRef(reference) => {
-                let reference = reference.decode().map_err(|_| Error::invalid())?;
-                let escaped = format!("&{reference};");
+                let escaped = format!("&{};", &*reference);
                 let value = quick_xml::escape::unescape(&escaped).map_err(|_| Error::invalid())?;
                 stack
                     .last_mut()
@@ -334,6 +328,17 @@ mod tests {
         )
         .unwrap();
         assert_eq!(xml.child("metadata").unwrap().value("id"), "A&B");
+        // Attribute and text references resolve the predefined and character entities only.
+        let xml = crate::packages::archives::xml(
+            b"<package a=\"x&lt;&#65;\"><id>&#x42;&gt;</id><cdata><![CDATA[&amp;]]></cdata></package>",
+        )
+        .unwrap();
+        assert_eq!(xml.attrs["a"], "x<A");
+        assert_eq!(xml.value("id"), "B>");
+        assert_eq!(xml.value("cdata"), "&amp;");
+        assert!(crate::packages::archives::xml(b"<x>&custom;</x>").is_err());
+        assert!(crate::packages::archives::xml(b"<x a=\"&custom;\"/>").is_err());
+        assert!(crate::packages::archives::xml(b"<x>\xff</x>").is_err());
         assert!(
             crate::packages::archives::xml(b"<!DOCTYPE x SYSTEM 'file:///etc/passwd'><x/>")
                 .is_err()

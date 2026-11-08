@@ -29,7 +29,7 @@ pub fn metadata_semver2(name: &str, metadata: &Value) -> Result<bool> {
     };
     ensure!(xml.len() <= 1024 * 1024, "NuGet metadata exceeds its bound");
     let mut reader = Reader::from_str(xml);
-    let mut stack: Vec<Vec<u8>> = Vec::new();
+    let mut stack: Vec<String> = Vec::new();
     let mut version = String::new();
     let mut nodes = 0;
     loop {
@@ -40,33 +40,33 @@ pub fn metadata_semver2(name: &str, metadata: &Value) -> Result<bool> {
                     nodes <= 16000 && stack.len() <= 32,
                     "NuGet XML exceeds its bound"
                 );
-                if tag.local_name().as_ref() == b"version"
-                    && stack.last().is_some_and(|name| name == b"metadata")
+                let name = tag.local_name();
+                if name.as_ref() == "version" && stack.last().is_some_and(|name| name == "metadata")
                 {
                     version.clear();
                 }
-                stack.push(tag.local_name().as_ref().to_vec());
+                stack.push(name.as_ref().to_owned());
             }
             Event::End(_) => {
-                if stack.last().is_some_and(|name| name == b"version")
+                if stack.last().is_some_and(|name| name == "version")
                     && stack
                         .iter()
                         .rev()
                         .nth(1)
-                        .is_some_and(|name| name == b"metadata")
+                        .is_some_and(|name| name == "metadata")
                 {
                     return Ok(semver2(version.trim()));
                 }
                 stack.pop();
             }
-            Event::Text(text) if stack.last().is_some_and(|name| name == b"version") => {
-                version.push_str(&text.decode()?)
+            Event::Text(text) if stack.last().is_some_and(|name| name == "version") => {
+                version.push_str(&text)
             }
-            Event::CData(text) if stack.last().is_some_and(|name| name == b"version") => {
-                version.push_str(&text.decode()?)
+            Event::CData(text) if stack.last().is_some_and(|name| name == "version") => {
+                version.push_str(&text)
             }
-            Event::GeneralRef(reference) if stack.last().is_some_and(|name| name == b"version") => {
-                let escaped = format!("&{};", reference.decode()?);
+            Event::GeneralRef(reference) if stack.last().is_some_and(|name| name == "version") => {
+                let escaped = format!("&{};", &*reference);
                 version.push_str(&quick_xml::escape::unescape(&escaped)?);
             }
             Event::DocType(_) => anyhow::bail!("NuGet XML document types are unsupported"),

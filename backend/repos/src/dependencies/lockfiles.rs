@@ -285,7 +285,7 @@ fn maven(path: &str, text: &str, out: &mut Vec<Package>) -> Result<()> {
     loop {
         match reader.read_event()? {
             Event::Start(tag) => {
-                let name = String::from_utf8(tag.local_name().as_ref().to_vec())?;
+                let name = tag.local_name().as_ref().to_owned();
                 if stack.is_empty() {
                     ensure!(
                         !completed && name == "project",
@@ -304,18 +304,18 @@ fn maven(path: &str, text: &str, out: &mut Vec<Package>) -> Result<()> {
             }
             Event::Text(value) => {
                 if let Some(scalar) = scalars.last_mut() {
-                    scalar.push_str(&value.decode()?);
+                    scalar.push_str(&value);
                 }
             }
             Event::CData(value) => {
                 if let Some(scalar) = scalars.last_mut() {
-                    scalar.push_str(&value.decode()?);
+                    scalar.push_str(&value);
                 }
             }
             Event::GeneralRef(value) => {
                 let text = match value.resolve_char_ref()? {
                     Some(character) => character.to_string(),
-                    None => quick_xml::escape::resolve_xml_entity(&value.decode()?)
+                    None => quick_xml::escape::resolve_xml_entity(&value)
                         .context("Unsupported XML entity")?
                         .to_owned(),
                 };
@@ -324,7 +324,7 @@ fn maven(path: &str, text: &str, out: &mut Vec<Package>) -> Result<()> {
                 }
             }
             Event::Empty(tag) => {
-                let name = String::from_utf8(tag.local_name().as_ref().to_vec())?;
+                let name = tag.local_name().as_ref().to_owned();
                 if stack.is_empty() {
                     ensure!(
                         !completed && name == "project",
