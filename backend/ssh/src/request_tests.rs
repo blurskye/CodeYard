@@ -451,7 +451,7 @@ impl codeyard_db_core::cells::authorization::Home for ForeignHome {
                 && matches!(proof,Proof::Ssh {fingerprint} if fingerprint==&self.fingerprint))
             .then(|| Answer {
                 heartbeat: std::time::SystemTime::now().into(),
-                home: codeyard_support::cells::Prefix::new(1),
+                home: codeyard_types::cells::Prefix::new(1),
                 user: self.user.clone(),
                 credential_id: Some(self.user.id + 7),
                 write: true,
@@ -494,7 +494,7 @@ async fn foreign_collaborator_pushes_and_clones_through_public_ssh_then_loses_ac
         .await
         .unwrap()
         .unwrap();
-    remote.id = *codeyard_support::cells::Prefix::new(1).ids().start();
+    remote.id = *codeyard_types::cells::Prefix::new(1).ids().start();
     remote.home_cell = 1;
     remote.email = None;
     remote.password_hash = None;

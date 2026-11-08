@@ -170,7 +170,7 @@ pub async fn issue_selected(
             Ok((
                 key.clone(),
                 pool.cell_prefix().token(
-                    codeyard_support::tokens::ACTIONS_PREFIX,
+                    codeyard_types::tokens::ACTIONS_PREFIX,
                     &crate::runtime::secret(),
                 )?,
             ))

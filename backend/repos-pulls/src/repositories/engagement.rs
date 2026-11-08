@@ -14,7 +14,7 @@ pub enum EngagementError {
 
 fn mutation_error(error: anyhow::Error) -> EngagementError {
     if error.is::<codeyard_db_identity::users::blocks::InteractionBlocked>()
-        || error.is::<codeyard_support::credentials::AccountRestricted>()
+        || error.is::<codeyard_types::credentials::AccountRestricted>()
     {
         EngagementError::Access(codeyard_identity::repository_access::AccessError::WriteDenied)
     } else {
@@ -193,7 +193,7 @@ pub async fn change(
                     json!({"repo_owner": owner, "repo_name": updated.name, "watchers_count": count, "subject": format!("{owner}/{}", updated.name)})
                 }
             };
-            let link = codeyard_webui::repository_path(&owner, &updated.name);
+            let link = codeyard_types::paths::repository_path(&owner, &updated.name);
             let notice = NotificationRequest {
                 user_id: recipient,
                 actor_id: Some(actor),

@@ -259,7 +259,7 @@ async fn notify(
     let title = format!(
         "{} commented on commit {}",
         user.username,
-        codeyard_webui::components::short_sha(&comment.sha)
+        codeyard_types::git_ids::short_sha(&comment.sha)
     );
     let mut notified = Vec::new();
     let mut subscriber_notice = None;
@@ -387,7 +387,7 @@ pub async fn create(
                     "The commit does not change this file",
                 ))?;
         if input.position.is_some() || input.line.is_some() {
-            let rows = codeyard_webui::components::patch_rows(&file.patch);
+            let rows = codeyard_types::patch::patch_rows(&file.patch);
             let start = rows
                 .iter()
                 .position(|row| row.text.starts_with("@@"))

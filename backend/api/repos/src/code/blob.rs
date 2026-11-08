@@ -307,7 +307,7 @@ async fn blob_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
         Ok(value) => value,
         Err(error) => {
             if store.tree_metadata(&head.sha, &resolved.path).await.is_ok() {
-                return Ok(ctx.redirect(&view::ref_path::file_url(
+                return Ok(ctx.redirect(&codeyard_types::ref_path::file_url(
                     &loaded.chrome.base(),
                     "tree",
                     &resolved.reference,
@@ -503,7 +503,7 @@ pub(super) async fn file_context(
     let permalink = format!(
         "{}{}",
         codeyard_model::http_config::public_origin(),
-        view::ref_path::file_url(&loaded.chrome.base(), "blob", commit, path)
+        codeyard_types::ref_path::file_url(&loaded.chrome.base(), "blob", commit, path)
     );
     Ok((folders, latest_commit, permalink))
 }

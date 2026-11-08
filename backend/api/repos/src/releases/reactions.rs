@@ -77,8 +77,8 @@ pub(crate) async fn react(
     })?;
     Ok(ctx.redirect(&format!(
         "/{}/{}/releases/tag/{}",
-        codeyard_webui::encode_component(&owner),
-        codeyard_webui::encode_component(&name),
-        codeyard_webui::encode_component(&detail.release.release.tag_name)
+        codeyard_types::paths::encode_component(&owner),
+        codeyard_types::paths::encode_component(&name),
+        codeyard_types::paths::encode_component(&detail.release.release.tag_name)
     )))
 }

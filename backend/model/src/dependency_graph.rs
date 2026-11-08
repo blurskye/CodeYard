@@ -138,7 +138,7 @@ pub struct Package {
 }
 
 fn decode(value: &str) -> Option<String> {
-    Some(codeyard_webui::decode_component(value))
+    Some(codeyard_types::paths::decode_component(value))
 }
 
 pub fn package(purl: &str) -> Option<(String, String, String)> {

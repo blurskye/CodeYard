@@ -18,7 +18,7 @@ use std::path::Path;
 struct ArchiveBytes(Vec<u8>);
 impl Write for ArchiveBytes {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        if bytes.len() > codeyard_support::object_limits::MAX_OBJECT_BYTES as usize - self.0.len() {
+        if bytes.len() > codeyard_types::object_limits::MAX_OBJECT_BYTES as usize - self.0.len() {
             return Err(io::Error::other("Migration archive exceeds its size limit"));
         }
         self.0.extend_from_slice(bytes);

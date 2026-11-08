@@ -5,7 +5,7 @@ use crate::{
 };
 use anyhow::{ensure, Result};
 use codeyard_model::cells::{Key, KeyKind, ObjectKind};
-use codeyard_support::cells::Prefix;
+use codeyard_types::cells::Prefix;
 
 fn home(pool: &DbPool, source: Prefix, id: i64) -> Result<()> {
     Prefix::for_id(id)?;
@@ -28,7 +28,7 @@ fn website(value: Option<&str>) -> Result<()> {
     text(value, 255)?;
     ensure!(
         value.is_none_or(
-            |value| value.is_empty() || codeyard_support::website::parse(value).is_some()
+            |value| value.is_empty() || codeyard_types::website::parse(value).is_some()
         ),
         "Invalid stub website"
     );
@@ -163,7 +163,7 @@ pub async fn repository(pool: &DbPool, source: Prefix, value: &Repository) -> Re
         "Stub source is not authoritative"
     );
     ensure!(
-        codeyard_support::repository_names::valid(&value.name),
+        codeyard_types::repository_names::valid(&value.name),
         "Invalid stub repository name"
     );
     text(value.description.as_deref(), 4096)?;

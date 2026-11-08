@@ -35,8 +35,6 @@ workspace = true
 [dependencies.codeyard-git]
 workspace = true
 
-[dependencies.codeyard-webui]
-workspace = true
 
 [dependencies.thiserror]
 workspace = true
@@ -57,4 +55,7 @@ workspace = true
 workspace = true
 
 [dependencies.tracing-subscriber]
+workspace = true
+
+[dependencies.codeyard-types]
 workspace = true

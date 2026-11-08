@@ -505,7 +505,7 @@ pub async fn add_issue_comment(
             &mut tx, author_id, credential, true
         )
         .await?,
-        codeyard_support::credentials::AccountRestricted
+        codeyard_types::credentials::AccountRestricted
     );
     let revision: String = sqlx::query_scalar("SELECT updated_at FROM issues WHERE id=?1")
         .bind(issue_id)
@@ -726,7 +726,7 @@ pub async fn edit_issue_comment(
             &mut tx, actor_id, credential, true
         )
         .await?,
-        codeyard_support::credentials::AccountRestricted
+        codeyard_types::credentials::AccountRestricted
     );
     let writer = codeyard_db_core::queries::sqlite::discussions::lock_write_authority(
         &mut tx, actor_id, repo_id,
@@ -789,7 +789,7 @@ pub async fn delete_issue_comment(
             &mut tx, actor_id, credential, true
         )
         .await?,
-        codeyard_support::credentials::AccountRestricted
+        codeyard_types::credentials::AccountRestricted
     );
     let writer = codeyard_db_core::queries::sqlite::discussions::lock_write_authority(
         &mut tx, actor_id, repo_id,

@@ -189,7 +189,7 @@ fn bounded(text: &str, limit: usize) -> bool {
     text.len() <= limit && !text.contains('\0')
 }
 pub fn sha(sha: &str) -> bool {
-    codeyard_support::git_ids::is_full_commit_id(sha)
+    codeyard_types::git_ids::is_full_commit_id(sha)
         && !sha.bytes().any(|byte| byte.is_ascii_uppercase())
 }
 impl InstalledPackage {

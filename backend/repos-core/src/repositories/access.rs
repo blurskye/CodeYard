@@ -14,7 +14,7 @@ pub async fn check_publication_actor(
     let repository =
         codeyard_db_repos::repositories::records::get_repository_by_id(pool, repository.id)
             .await?
-            .ok_or_else(|| anyhow::anyhow!(codeyard_support::credentials::AccountRestricted))?;
+            .ok_or_else(|| anyhow::anyhow!(codeyard_types::credentials::AccountRestricted))?;
     let user = match &actor.credential {
         None => codeyard_db_identity::users::accounts::get_user_by_id(pool, actor.user_id).await?,
         Some(OwnedAccountCredential::Session(session)) => {
@@ -31,7 +31,7 @@ pub async fn check_publication_actor(
                 },
             )
             .await?
-            .ok_or_else(|| anyhow::anyhow!(codeyard_support::credentials::AccountRestricted))?;
+            .ok_or_else(|| anyhow::anyhow!(codeyard_types::credentials::AccountRestricted))?;
             anyhow::ensure!(
                 credential.answer.authority.repository(
                     credential.user.id,
@@ -39,7 +39,7 @@ pub async fn check_publication_actor(
                     "contents",
                     true
                 )?,
-                codeyard_support::credentials::AccountRestricted
+                codeyard_types::credentials::AccountRestricted
             );
             Some(credential.user)
         }
@@ -50,10 +50,10 @@ pub async fn check_publication_actor(
                 .0,
         ),
     }
-    .ok_or_else(|| anyhow::anyhow!(codeyard_support::credentials::AccountRestricted))?;
+    .ok_or_else(|| anyhow::anyhow!(codeyard_types::credentials::AccountRestricted))?;
     anyhow::ensure!(
         user.id == actor.user_id && can_write(pool, &user, &repository).await?,
-        codeyard_support::credentials::AccountRestricted
+        codeyard_types::credentials::AccountRestricted
     );
     Ok(())
 }

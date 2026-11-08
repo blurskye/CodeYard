@@ -2,10 +2,12 @@
 //! alerts, footnotes in documents) and `Emitter` writes the HTML. Raw HTML in the source is
 //! rendered only for an allow-list of elements and attributes: any other tag is shown as text,
 //! a rejected attribute is removed, and URLs admit only explicitly safe schemes.
+pub(super) use codeyard_types::links::safe_url;
 
 use super::code::themed_highlight;
 use super::markdown_html::{attributes, decode_references, is_void, may_nest, pieces, Piece};
 use super::references::{Candidates, Link, References};
+use codeyard_types::ref_path::{encode_path, file_url, qualified_ref};
 use dioxus::prelude::*;
 use pulldown_cmark::{
     Alignment, BlockQuoteKind, CodeBlockKind, CowStr, Event, HeadingLevel, LinkType, OffsetIter,
@@ -70,28 +72,6 @@ fn code_block(code: &str) -> String {
     format!(
         "<pre class=\"my-4 overflow-x-auto rounded-md border border-border bg-muted/40 p-3\"><code class=\"font-mono text-sm text-foreground\">{code}</code></pre>"
     )
-}
-
-/// Whether a link or image may point at `url`: http(s), relative paths and, for links only,
-/// mailto. The scheme is what precedes a colon that comes before the first `/`, `?` or `#`.
-pub(super) fn safe_url(url: &str, image: bool) -> bool {
-    if url.is_empty()
-        || url.starts_with("//")
-        || url
-            .chars()
-            .any(|c| (c.is_whitespace() && c != ' ') || c.is_control() || c == '\\')
-    {
-        return false;
-    }
-    let boundary = url.find(['/', '?', '#']).unwrap_or(url.len());
-    let Some(colon) = url[..boundary].find(':') else {
-        return true;
-    };
-    let scheme = &url[..colon];
-    if scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https") {
-        return url[colon + 1..].starts_with("//");
-    }
-    !image && scheme.eq_ignore_ascii_case("mailto")
 }
 
 /// The anchor of a heading: the slug of its visible text, as on GitHub. A repeat gets `-1`,
@@ -1956,6 +1936,29 @@ fn heading_text(html: &str) -> String {
         }
     }
     text.trim().to_owned()
+}
+
+// Real bases are a few hundred bytes; a longer one would be copied into every link.
+const MAX_LINK_BASE_BYTES: usize = 4096;
+
+/// Where relative links in a Markdown file under `directory` of `reference` point. A base that
+/// is too long is replaced by the default, and then links stay as written.
+pub fn link_base(base: &str, reference: &str, directory: &str) -> LinkBase {
+    let reference = qualified_ref(reference);
+    let reference = reference.as_str();
+    let blob = file_url(base, "blob", reference, "");
+    let directory = encode_path(directory.trim_matches('/'));
+    // A resolved link copies the directory and one of the blob, tree or raw URLs. The blob URL
+    // is the longest of them, so a longer base is left out before the others are built.
+    if blob.len() + directory.len() > MAX_LINK_BASE_BYTES {
+        return LinkBase::default();
+    }
+    LinkBase {
+        blob,
+        tree: file_url(base, "tree", reference, ""),
+        raw: file_url(base, "raw", reference, ""),
+        directory,
+    }
 }
 
 #[cfg(test)]

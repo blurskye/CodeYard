@@ -105,7 +105,7 @@ async fn load_users(ctx: &PageContext, listing: &Listing<'_>) -> Result<AdminUse
     )
     .await
     .map_err(|error| {
-        if error.is::<codeyard_support::credentials::AccountRestricted>() {
+        if error.is::<codeyard_types::credentials::AccountRestricted>() {
             ctx.error(StatusCode::FORBIDDEN, "Administrator access is required.")
         } else {
             ctx.error(

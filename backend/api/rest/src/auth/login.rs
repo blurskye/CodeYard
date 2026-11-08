@@ -270,7 +270,7 @@ pub(crate) async fn auth_post(
                 let resume = safe_redirect(form.get("redirect").map(String::as_str));
                 format!(
                     "/login?signup=requested&redirect={}",
-                    codeyard_webui::encode_component(&resume)
+                    codeyard_types::paths::encode_component(&resume)
                 )
             } else {
                 safe_redirect(form.get("redirect").map(String::as_str))

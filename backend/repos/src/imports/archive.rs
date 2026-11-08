@@ -15,7 +15,7 @@ use std::path::Component;
 use std::path::Path;
 pub mod git;
 
-const MAX_ARCHIVE_BYTES: usize = codeyard_support::object_limits::MAX_OBJECT_BYTES as usize;
+const MAX_ARCHIVE_BYTES: usize = codeyard_types::object_limits::MAX_OBJECT_BYTES as usize;
 pub const MAX_UNPACKED_BYTES: u64 = 512 * 1024 * 1024;
 // The export writes archives within these limits too, so every archive it reports as complete
 // can be imported.
@@ -162,7 +162,7 @@ fn git_object_path(path: &str) -> bool {
     {
         return directory.len() == 2
             && file.len() == 38
-            && codeyard_support::git_ids::is_full_commit_id(format!("{directory}{file}"));
+            && codeyard_types::git_ids::is_full_commit_id(format!("{directory}{file}"));
     }
     false
 }

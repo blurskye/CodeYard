@@ -11,7 +11,7 @@ license = "LGPL-3.0-or-later"
 web = ["dep:dioxus-web", "dep:gloo-net", "dep:gloo-timers", "dep:wasm-bindgen", "dep:wasm-bindgen-futures", "dep:web-sys", "dep:js-sys"]
 
 [dependencies]
-codeyard-support.workspace = true
+codeyard-types.workspace = true
 chrono.workspace = true
 dioxus.workspace = true
 dioxus-history.workspace = true

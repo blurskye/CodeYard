@@ -87,8 +87,8 @@ async fn fork(
     );
     let path = format!(
         "/api/v3/repos/{}/{}/forks",
-        codeyard_webui::encode_component(&owner),
-        codeyard_webui::encode_component(&name)
+        codeyard_types::paths::encode_component(&owner),
+        codeyard_types::paths::encode_component(&name)
     );
     if let Some(response) = codeyard_app::cells::forward_fork(
         &state,

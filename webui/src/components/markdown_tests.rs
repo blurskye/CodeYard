@@ -1,5 +1,6 @@
 use super::*;
 use crate::components::references;
+use codeyard_types::ref_path::file_url;
 
 /// Markdown for text that names no repository, so nothing links.
 fn parse_markdown(text: &str) -> String {
@@ -102,7 +103,6 @@ fn expanded_repository_urls_are_charged_to_the_output_budget() {
 
 #[test]
 fn over_long_bases_leave_links_images_and_srcsets_as_written() {
-    use crate::pages::repos::ref_path::link_base;
     let long = link_base("/alice/demo", &"b".repeat(5_000), "docs");
     let candidates = ["img/a.png 1x"; 16].join(", ");
     let source = format!(
@@ -1846,4 +1846,19 @@ fn crlf_is_normalised() {
     assert!(html.contains("<h1"));
     assert!(html.contains("<p class=\"my-3 leading-7 text-foreground\">body</p>"));
     assert!(!html.contains('\r'));
+}
+
+#[test]
+fn named_hex_refs_stay_qualified_in_file_and_markdown_links() {
+    assert_eq!(
+        file_url("/u/r", "blob", "abcdef1", "docs/a.md"),
+        "/u/r/blob/refs/heads/abcdef1/docs/a.md"
+    );
+    let base = link_base("/u/r", "refs/heads/abcdef1", "");
+    assert_eq!(base.blob, "/u/r/blob/refs/heads/abcdef1");
+    let sha = "0123456789abcdef0123456789abcdef01234567";
+    assert_eq!(
+        file_url("/u/r", "blob", sha, "a.md"),
+        format!("/u/r/blob/{sha}/a.md")
+    );
 }

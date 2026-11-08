@@ -4,7 +4,7 @@ use crate::discussion::RepositoryData;
 use crate::discussion::ResultPage;
 use codeyard_api_http::context::PageContext;
 use codeyard_db_core::models::PullRequest;
-use codeyard_webui::encode_component;
+use codeyard_types::paths::encode_component;
 use codeyard_webui::excerpt;
 use codeyard_webui::pages::repos::security as view;
 use serde_json::Value;

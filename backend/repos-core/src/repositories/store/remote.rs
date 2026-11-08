@@ -158,7 +158,7 @@ impl RemoteStore {
                 Some(actor),
                 operation,
                 b"",
-                codeyard_support::object_limits::MAX_OBJECT_BYTES as usize,
+                codeyard_types::object_limits::MAX_OBJECT_BYTES as usize,
             )
             .await?;
         match reply.result {

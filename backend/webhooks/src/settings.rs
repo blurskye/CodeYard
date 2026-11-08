@@ -520,7 +520,7 @@ async fn ping_payload(
             payload["organization"] = crate::payloads::organization(&org);
             codeyard_model::urls::api_url(&format!(
                 "/orgs/{}/hooks/{}",
-                codeyard_webui::encode_component(&org.name),
+                codeyard_types::paths::encode_component(&org.name),
                 hook.id
             ))
         }

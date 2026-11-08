@@ -59,8 +59,8 @@ pub async fn refuse_blocked_secrets(
             let link = format!(
                 "{}/{}/{}/security/secret-scanning/unblock-secret/{}",
                 codeyard_model::http_config::link_origin(),
-                codeyard_webui::encode_component(&owner),
-                codeyard_webui::encode_component(&repo.name),
+                codeyard_types::paths::encode_component(&owner),
+                codeyard_types::paths::encode_component(&repo.name),
                 placeholder.id
             );
             let safe_path = finding

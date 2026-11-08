@@ -1,7 +1,8 @@
+use crate::components::link_base;
 use crate::pages::repos::{
     chrome::{chrome, csrf, icon, repository_id, RepoChrome},
     commits::commit_target,
-    ref_path::{branch_url, is_markdown_path, link_base},
+    ref_path::{branch_url, is_markdown_path},
 };
 use crate::{
     components::{

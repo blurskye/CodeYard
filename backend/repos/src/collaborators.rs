@@ -99,7 +99,7 @@ pub async fn add(
     codeyard_identity::repository_access::credential_user(pool, &actor, true)
         .await
         .map_err(|error| {
-            if error.is::<codeyard_support::credentials::AccountRestricted>() {
+            if error.is::<codeyard_types::credentials::AccountRestricted>() {
                 Error::Denied
             } else {
                 Error::Unavailable

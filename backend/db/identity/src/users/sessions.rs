@@ -282,8 +282,7 @@ pub async fn get_or_create_csrf_token(
 }
 
 fn foreign_session(pool: &DbPool, value: &str) -> bool {
-    codeyard_support::cells::Secret::cookie(value)
-        .is_ok_and(|secret| !pool.owns_prefix(secret.cell))
+    codeyard_types::cells::Secret::cookie(value).is_ok_and(|secret| !pool.owns_prefix(secret.cell))
 }
 
 native_operation!(crate::postgres::users::sessions::remove_expired_identity_rows,

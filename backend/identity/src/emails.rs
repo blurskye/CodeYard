@@ -1,7 +1,7 @@
 //! Secondary addresses require their own confirmation and never authorize a password reset.
 
 use codeyard_db_core::queries::users::accounts::AccountCredential;
-use codeyard_support::credentials::AccountRestricted;
+use codeyard_types::credentials::AccountRestricted;
 
 use codeyard_db_identity::users::emails::EmailRefusal;
 

@@ -126,7 +126,7 @@ async fn contract(pg: bool) {
     assert_eq!(code["user_code"].as_str().unwrap().len(), 11);
     assert_eq!(
         codeyard_identity::oauth_apps::user_code_cell(code["user_code"].as_str().unwrap()),
-        Some(codeyard_support::cells::Prefix::ZERO)
+        Some(codeyard_types::cells::Prefix::ZERO)
     );
     assert!(code["verification_uri"]
         .as_str()

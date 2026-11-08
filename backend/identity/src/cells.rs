@@ -22,7 +22,7 @@ impl Home for Local {
         >,
     > {
         Box::pin(async move {
-            codeyard_support::cells::Prefix::for_id(id)?;
+            codeyard_types::cells::Prefix::for_id(id)?;
             proof.validate()?;
             let Some(repo) =
                 codeyard_db_repos::repositories::records::get_repository_by_id(&self.pool, id)
@@ -61,7 +61,7 @@ impl Home for Local {
     > {
         Box::pin(async move {
             codeyard_model::cells::Key::new(codeyard_model::cells::KeyKind::Name, owner)?;
-            codeyard_support::cells::Prefix::for_id(base)?;
+            codeyard_types::cells::Prefix::for_id(base)?;
             proof.validate()?;
             let Some(fork) = codeyard_db_repos::repositories::discovery::named_owner_fork(
                 &self.pool, owner, base,
@@ -87,7 +87,7 @@ impl Home for Local {
     > {
         Box::pin(async move { self.source(owner, name, proof).await })
     }
-    fn cell(&self) -> Option<codeyard_support::cells::Prefix> {
+    fn cell(&self) -> Option<codeyard_types::cells::Prefix> {
         Some(self.pool.cell_id())
     }
     fn receive_pointer<'a>(
@@ -117,7 +117,7 @@ impl Home for Local {
     ) -> Pin<Box<dyn Future<Output = Result<Option<codeyard_db_core::models::User>>> + Send + 'a>>
     {
         Box::pin(async move {
-            codeyard_support::cells::Prefix::for_id(id)?;
+            codeyard_types::cells::Prefix::for_id(id)?;
             Ok(self.public_user(
                 codeyard_db_identity::users::accounts::get_user_by_id(&self.pool, id).await?,
             ))
@@ -203,7 +203,7 @@ impl Local {
         use codeyard_db_core::cells::repositories::Source;
         codeyard_model::cells::Key::new(codeyard_model::cells::KeyKind::Name, owner)?;
         anyhow::ensure!(
-            codeyard_support::repository_names::valid(name),
+            codeyard_types::repository_names::valid(name),
             "Invalid fork source name"
         );
         let Some(actor) = self.fork_actor(proof).await? else {
@@ -544,7 +544,7 @@ async fn retain_user(
     user: codeyard_db_core::models::User,
 ) -> Result<Option<codeyard_db_core::models::User>> {
     codeyard_db_core::cells::authorization::validate_public_user(&user)?;
-    let source = codeyard_support::cells::Prefix::try_from(i64::from(user.home_cell))?;
+    let source = codeyard_types::cells::Prefix::try_from(i64::from(user.home_cell))?;
     codeyard_db_core::cells::stubs::user(pool, source, &user).await?;
     Ok(
         codeyard_db_identity::users::accounts::get_user_by_id(pool, user.id)
@@ -557,7 +557,7 @@ pub async fn resolve_user_id(
     pool: &DbPool,
     id: i64,
 ) -> Result<Option<codeyard_db_core::models::User>> {
-    if codeyard_support::cells::Prefix::for_id(id).is_err() {
+    if codeyard_types::cells::Prefix::for_id(id).is_err() {
         return Ok(None);
     }
     if let Some(user) = codeyard_db_identity::users::accounts::get_user_by_id(pool, id).await? {

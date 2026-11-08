@@ -9,10 +9,9 @@ use codeyard_model::{
     cell_routes::{Route, Rule},
     cells::{Key, KeyKind, Object, ObjectKind},
 };
-use codeyard_support::{
+use codeyard_support::{http_credentials, token_hash::token_hash};
+use codeyard_types::{
     cells::{Prefix, Secret},
-    http_credentials,
-    token_hash::token_hash,
     tokens,
 };
 use std::collections::BTreeMap;

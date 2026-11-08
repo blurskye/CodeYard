@@ -75,7 +75,7 @@ async fn repository_document(
     } else {
         value["owner"]["url"] = json!(codeyard_model::urls::api_url(&format!(
             "/orgs/{}",
-            codeyard_webui::encode_component(owner)
+            codeyard_types::paths::encode_component(owner)
         )));
     }
     documents.insert(repo.id, value.clone());

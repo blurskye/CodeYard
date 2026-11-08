@@ -188,7 +188,7 @@ async fn foreign_publication_contract() {
         cells::authorization, queries::credentials::Actor,
         queries::users::accounts::OwnedAccountCredential,
     };
-    use codeyard_support::cells::Prefix;
+    use codeyard_types::cells::Prefix;
     let f = fixture().await;
     let a = authority(&f).await;
     let home = Prefix::new(1);

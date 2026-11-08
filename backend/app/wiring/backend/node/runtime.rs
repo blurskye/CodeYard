@@ -510,7 +510,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
         let (cell_rpc, capacity_client) = match (&config.directory, config.cell_rpc_address) {
             (None, None) => {
                 anyhow::ensure!(
-                    pool.cell_id() == codeyard_support::cells::Prefix::ZERO,
+                    pool.cell_id() == codeyard_types::cells::Prefix::ZERO,
                     "A nonzero cell requires directory settings and CELL_RPC_ADDRESS"
                 );
                 anyhow::ensure!(

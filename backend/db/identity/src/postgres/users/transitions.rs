@@ -156,7 +156,7 @@ pub(crate) async fn require_account_exclusive(
     require_account_with_mode(tx, actor, credential, true, true).await?;
     anyhow::ensure!(
         native_account(tx, actor).await?,
-        codeyard_support::credentials::AccountRestricted
+        codeyard_types::credentials::AccountRestricted
     );
     Ok(())
 }
@@ -176,7 +176,7 @@ async fn require_account_with_mode(
     write: bool,
     exclusive_actor: bool,
 ) -> Result<()> {
-    use codeyard_support::credentials::AccountRestricted;
+    use codeyard_types::credentials::AccountRestricted;
     // Repository/org authority already holds a shared actor lock. Upgrading it
     // after acquiring resource locks deadlocks concurrent requests by one actor.
     // Shared is sufficient to prevent account restrictions through commit.

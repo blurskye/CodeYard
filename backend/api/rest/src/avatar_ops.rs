@@ -19,7 +19,7 @@ use codeyard_storage::files::uploads::UploadDeclaration;
 use codeyard_storage::files::uploads::UploadError;
 use codeyard_storage::media_signature_matches;
 use codeyard_storage::ObjectStore;
-use codeyard_support::credentials::AccountRestricted;
+use codeyard_types::credentials::AccountRestricted;
 use sha2::Sha256;
 use uuid::Uuid;
 
@@ -47,7 +47,7 @@ pub enum AvatarError {
 /// The type of a picture, read from its first bytes, if it is one avatars may use.
 /// A name or a type sent by the browser proves nothing.
 pub fn picture_type(bytes: &[u8]) -> Option<&'static str> {
-    codeyard_support::media::AVATAR_CONTENT_TYPES
+    codeyard_types::media::AVATAR_CONTENT_TYPES
         .into_iter()
         .find(|kind| media_signature_matches(kind, bytes))
 }

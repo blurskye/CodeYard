@@ -327,7 +327,7 @@ async fn policies(
                 format!(
                     "{}/environments/{}/deployment-branch-policies/{}",
                     repo_url(&params["owner"], &params["repo"]),
-                    codeyard_webui::encode_component(&env.name),
+                    codeyard_types::paths::encode_component(&env.name),
                     branch.id
                 ),
             )],

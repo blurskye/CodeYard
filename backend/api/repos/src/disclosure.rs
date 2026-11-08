@@ -83,7 +83,7 @@ async fn toggle(
     }
 }
 fn failure(error: &anyhow::Error) -> (StatusCode, &str) {
-    if error.is::<codeyard_support::credentials::AccountRestricted>() {
+    if error.is::<codeyard_types::credentials::AccountRestricted>() {
         return (
             StatusCode::FORBIDDEN,
             "A live unrestricted credential is required.",

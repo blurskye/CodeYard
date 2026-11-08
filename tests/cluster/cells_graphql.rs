@@ -19,7 +19,8 @@ use codeyard_model::{
     cells::{Cell, Key, KeyKind, Object, ObjectKind, State},
     node_id,
 };
-use codeyard_support::{cells::Prefix, node_identity::NodeKey};
+use codeyard_support::node_identity::NodeKey;
+use codeyard_types::cells::Prefix;
 use serde_json::{json, Map, Value};
 use std::sync::{
     atomic::{AtomicBool, Ordering},

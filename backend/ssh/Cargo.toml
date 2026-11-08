@@ -43,3 +43,6 @@ codeyard-repos-core = { workspace = true, features = ["test-hooks"] }
 [dev-dependencies.tokio]
 workspace = true
 features = ["test-util"]
+
+[dependencies.codeyard-types]
+workspace = true

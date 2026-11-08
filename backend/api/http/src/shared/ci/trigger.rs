@@ -190,8 +190,8 @@ pub async fn dispatch(
         .map(|(owner, repo)| {
             format!(
                 "/{}/{}/actions",
-                codeyard_webui::encode_component(owner),
-                codeyard_webui::encode_component(repo)
+                codeyard_types::paths::encode_component(owner),
+                codeyard_types::paths::encode_component(repo)
             )
         })
         .unwrap_or_else(|| "/ci".into());

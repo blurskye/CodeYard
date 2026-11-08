@@ -5,7 +5,7 @@ use axum::{
     http::{Request, StatusCode},
 };
 use codeyard_db_core::{cells::stubs, models::Organization, DbPool};
-use codeyard_support::cells::Prefix;
+use codeyard_types::cells::Prefix;
 use serde_json::Value;
 use tower::ServiceExt;
 
@@ -344,8 +344,8 @@ async fn contract(pg: bool) {
             .await,
         2
     );
-    let token = codeyard_support::cells::Prefix::ZERO
-        .token(codeyard_support::tokens::PAT_PREFIX, &"d".repeat(64))
+    let token = codeyard_types::cells::Prefix::ZERO
+        .token(codeyard_types::tokens::PAT_PREFIX, &"d".repeat(64))
         .unwrap();
     codeyard_db_identity::users::tokens::create_token(
         pool,

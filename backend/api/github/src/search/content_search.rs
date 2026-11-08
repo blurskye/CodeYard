@@ -207,7 +207,7 @@ fn code_document<'a>(
     fragments: impl Iterator<Item = (i64, &'a str)>,
 ) -> Value {
     let repo_api = codeyard_model::urls::repo_url(owner, name);
-    let encoded = codeyard_webui::pages::repos::ref_path::encode_path(path);
+    let encoded = codeyard_types::ref_path::encode_path(path);
     let url = format!("{repo_api}/contents/{encoded}?ref={revision}");
     let (lines, matches): (Vec<_>, Vec<_>) = fragments
         .map(|(line, text)| {
@@ -220,10 +220,10 @@ fn code_document<'a>(
     let html = format!(
         "{}/{}/{}",
         codeyard_model::http_config::link_origin(),
-        codeyard_webui::encode_component(owner),
-        codeyard_webui::encode_component(name)
+        codeyard_types::paths::encode_component(owner),
+        codeyard_types::paths::encode_component(name)
     );
-    json!({"name":path.rsplit('/').next().unwrap_or(path),"path":path,"sha":sha,"url":url,"git_url":format!("{repo_api}/git/blobs/{sha}"),"html_url":codeyard_webui::pages::repos::ref_path::file_url(&html,"blob",revision,path),"file_size":size,"language":language,"line_numbers":lines,"text_matches":matches})
+    json!({"name":path.rsplit('/').next().unwrap_or(path),"path":path,"sha":sha,"url":url,"git_url":format!("{repo_api}/git/blobs/{sha}"),"html_url":codeyard_types::ref_path::file_url(&html,"blob",revision,path),"file_size":size,"language":language,"line_numbers":lines,"text_matches":matches})
 }
 pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![

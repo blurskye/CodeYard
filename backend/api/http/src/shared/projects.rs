@@ -97,7 +97,7 @@ pub async fn sidebar(
             } else {
                 "users"
             },
-            codeyard_webui::encode_component(&name),
+            codeyard_types::paths::encode_component(&name),
             project.number
         );
         result.push(view::Assignment {
@@ -120,7 +120,7 @@ pub async fn owner(ctx: &PageContext, params: &Params) -> anyhow::Result<(Owner,
         .ok_or(codeyard_model::project_query::Refusal::Missing)?;
         let base = format!(
             "/orgs/{}/projects",
-            codeyard_webui::encode_component(&org.name)
+            codeyard_types::paths::encode_component(&org.name)
         );
         Ok((Owner::Organization(org.id), org.name, base))
     } else {
@@ -133,7 +133,7 @@ pub async fn owner(ctx: &PageContext, params: &Params) -> anyhow::Result<(Owner,
                 .ok_or(codeyard_model::project_query::Refusal::Missing)?;
         let base = format!(
             "/users/{}/projects",
-            codeyard_webui::encode_component(&user.username)
+            codeyard_types::paths::encode_component(&user.username)
         );
         Ok((Owner::User(user.id), user.username, base))
     }

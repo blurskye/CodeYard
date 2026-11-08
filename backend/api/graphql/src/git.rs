@@ -71,7 +71,7 @@ pub(super) fn commit(
     }
     Ok(
         json!({"__typename":"Commit","_repo":repo,"_scope":scope,"_parents":row.parents,
-        "id":node_id::git_object("C",repo,&row.sha),"oid":row.sha,"abbreviatedOid":codeyard_webui::components::short_sha(&row.sha),
+        "id":node_id::git_object("C",repo,&row.sha),"oid":row.sha,"abbreviatedOid":codeyard_types::git_ids::short_sha(&row.sha),
         "message":row.message,"messageHeadline":row.message.lines().next().unwrap_or(""),"messageBody":row.message.split_once('\n').map(|(_,s)|s.trim_start_matches('\n')).unwrap_or(""),
         "authoredDate":authored,"committedDate":committed,
         "author":author,"_authors":authors,

@@ -8,7 +8,8 @@ pub use scope::{ensure_current, inherit, scope};
 use crate::{models::User, DbPool};
 use anyhow::{ensure, Result};
 use chrono::{DateTime, Utc};
-use codeyard_support::{cells::Prefix, token_hash::token_hash};
+use codeyard_support::token_hash::token_hash;
+use codeyard_types::cells::Prefix;
 use futures_util::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -27,12 +28,12 @@ impl Proof {
     pub fn validate(&self) -> Result<()> {
         match self {
             Self::Token { hash, .. } => ensure!(
-                codeyard_support::tokens::is_hex_token(hash, 64),
+                codeyard_types::tokens::is_hex_token(hash, 64),
                 "Invalid credential hash"
             ),
             Self::Session { home, value } => {
                 ensure!(
-                    codeyard_support::cells::Secret::cookie(value)?.cell == *home,
+                    codeyard_types::cells::Secret::cookie(value)?.cell == *home,
                     "Invalid session home"
                 );
             }
@@ -133,7 +134,7 @@ impl Authority {
                 "Invalid job permissions"
             ),
             Self::Session { csrf } => ensure!(
-                codeyard_support::tokens::is_hex_token(csrf, 64),
+                codeyard_types::tokens::is_hex_token(csrf, 64),
                 "Invalid CSRF token"
             ),
             Self::Classic | Self::Ssh => {}
@@ -627,7 +628,7 @@ pub async fn lookup(pool: &DbPool, query: &Query<'_>) -> Result<Option<Credentia
 
 /// A session read uses the same exact credential hash as its transaction-time check.
 pub async fn session(pool: &DbPool, value: &str) -> Result<Option<Credential>> {
-    codeyard_support::cells::Secret::cookie(value)?;
+    codeyard_types::cells::Secret::cookie(value)?;
     lookup(
         pool,
         &Query {

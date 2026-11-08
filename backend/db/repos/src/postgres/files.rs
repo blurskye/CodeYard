@@ -228,7 +228,7 @@ async fn require_file_actor(
         .await
         {
             Ok(()) => return Ok(true),
-            Err(error) if error.is::<codeyard_support::credentials::AccountRestricted>() => {
+            Err(error) if error.is::<codeyard_types::credentials::AccountRestricted>() => {
                 return Ok(false)
             }
             Err(error) => return Err(file_authority_error(error)),

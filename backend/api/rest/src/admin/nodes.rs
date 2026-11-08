@@ -67,7 +67,7 @@ async fn render_invite(
             .await
         {
             Ok(nodes) => nodes,
-            Err(error) if error.is::<codeyard_support::credentials::AccountRestricted>() => {
+            Err(error) if error.is::<codeyard_types::credentials::AccountRestricted>() => {
                 return ctx.error(StatusCode::FORBIDDEN, "Administrator access is required.");
             }
             Err(_) => {

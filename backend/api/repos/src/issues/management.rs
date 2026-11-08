@@ -257,7 +257,7 @@ pub(crate) async fn load(
             target.id,
             (
                 branch.name.clone(),
-                codeyard_webui::pages::repos::ref_path::file_url(
+                codeyard_types::ref_path::file_url(
                     &format!("/{owner}/{}", target.name),
                     "tree",
                     &branch.name,

@@ -24,7 +24,6 @@ codeyard-api-rest.workspace = true
 codeyard-db-repos.workspace = true
 codeyard-git.workspace = true
 codeyard-notifications.workspace = true
-codeyard-support.workspace = true
 git2.workspace = true
 rand.workspace = true
 sha2.workspace = true

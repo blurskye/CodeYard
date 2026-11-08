@@ -99,7 +99,7 @@ pub(crate) async fn require_account_exclusive(
     require_account(tx, actor, credential).await?;
     anyhow::ensure!(
         native_account(tx, actor).await?,
-        codeyard_support::credentials::AccountRestricted
+        codeyard_types::credentials::AccountRestricted
     );
     Ok(())
 }
@@ -118,7 +118,7 @@ async fn require_account_with_mode(
     credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
     write: bool,
 ) -> Result<()> {
-    use codeyard_support::credentials::AccountRestricted;
+    use codeyard_types::credentials::AccountRestricted;
     anyhow::ensure!(active_account(tx, actor).await?, AccountRestricted);
     anyhow::ensure!(
         credential_live(tx, actor, credential, write).await?,

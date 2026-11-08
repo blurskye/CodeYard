@@ -6,15 +6,15 @@ pub fn api_url(path: &str) -> String {
 pub fn repo_url(owner: &str, repo: &str) -> String {
     api_url(&format!(
         "/repos/{}/{}",
-        codeyard_webui::encode_component(owner),
-        codeyard_webui::encode_component(repo),
+        codeyard_types::paths::encode_component(owner),
+        codeyard_types::paths::encode_component(repo),
     ))
 }
 pub fn namespace_url(owner: &str, name: &str) -> String {
     format!(
         "{}/{}/{}",
         link_origin(),
-        codeyard_webui::encode_component(owner),
-        codeyard_webui::encode_component(name)
+        codeyard_types::paths::encode_component(owner),
+        codeyard_types::paths::encode_component(name)
     )
 }

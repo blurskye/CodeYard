@@ -395,8 +395,8 @@ pub(crate) async fn native_change(
     };
     Ok(ctx.redirect(&format!(
         "/{}/{}/issues/{number}{suffix}",
-        codeyard_webui::encode_component(&owner),
-        codeyard_webui::encode_component(&name)
+        codeyard_types::paths::encode_component(&owner),
+        codeyard_types::paths::encode_component(&name)
     )))
 }
 #[derive(Deserialize)]

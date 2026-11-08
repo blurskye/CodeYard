@@ -36,7 +36,7 @@ pub(crate) struct SessionListing {
 }
 
 fn session_failure(error: anyhow::Error) -> ApiFailure {
-    if error.is::<codeyard_support::credentials::AccountRestricted>() {
+    if error.is::<codeyard_types::credentials::AccountRestricted>() {
         (
             StatusCode::FORBIDDEN,
             Json(ApiError::new(

@@ -177,7 +177,7 @@ async fn model(
             // The code view with the line query reaches lines past the first preview.
             alert.code_url = format!(
                 "{}?view=code&line={line}#L{line}",
-                codeyard_webui::pages::repos::ref_path::file_url(
+                codeyard_types::ref_path::file_url(
                     &loaded.chrome.base(),
                     "blob",
                     &instance.commit_sha,
@@ -332,7 +332,12 @@ async fn dismiss(
             let suffix = values
                 .get("branch")
                 .filter(|branch| branch.len() <= 4096)
-                .map(|branch| format!("?branch={}", codeyard_webui::encode_component(branch)))
+                .map(|branch| {
+                    format!(
+                        "?branch={}",
+                        codeyard_types::paths::encode_component(branch)
+                    )
+                })
                 .unwrap_or_default();
             redirect_response(&format!(
                 "{}/security/code-scanning/{number}{suffix}",

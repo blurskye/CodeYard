@@ -25,7 +25,7 @@ use codeyard_app::app::AppState;
 use codeyard_db_repos::packages::Package;
 use codeyard_db_repos::packages::Publish;
 use codeyard_db_repos::packages::Version;
-use codeyard_support::object_limits::MAX_OBJECT_BYTES;
+use codeyard_types::object_limits::MAX_OBJECT_BYTES;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -62,7 +62,7 @@ fn root(owner: &str) -> String {
     format!(
         "{}/api/packages/{}/nuget",
         codeyard_model::http_config::link_origin(),
-        codeyard_webui::encode_component(owner)
+        codeyard_types::paths::encode_component(owner)
     )
 }
 fn normalize(version: &str) -> Result<String> {

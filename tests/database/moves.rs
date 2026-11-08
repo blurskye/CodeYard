@@ -3,7 +3,7 @@
 use crate::support::native_database::PostgresDatabase;
 use codeyard_db_cluster::moves::{self, Account, State};
 use codeyard_model::cells::ObjectKind;
-use codeyard_support::cells::Prefix;
+use codeyard_types::cells::Prefix;
 use sqlx::PgPool;
 use std::collections::BTreeMap;
 use std::time::Duration;

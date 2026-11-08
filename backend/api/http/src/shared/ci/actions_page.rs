@@ -225,8 +225,8 @@ pub async fn actions(
             };
             let path = format!(
                 "/{}/{}/actions",
-                codeyard_webui::encode_component(&owner),
-                codeyard_webui::encode_component(&repo.name)
+                codeyard_types::paths::encode_component(&owner),
+                codeyard_types::paths::encode_component(&repo.name)
             );
             return ctx.redirect(&view_actions::query_url(&path, &query, &[]));
         }
@@ -237,8 +237,8 @@ pub async fn actions(
             (
                 format!(
                     "/{}/{}/actions",
-                    codeyard_webui::encode_component(owner),
-                    codeyard_webui::encode_component(repo)
+                    codeyard_types::paths::encode_component(owner),
+                    codeyard_types::paths::encode_component(repo)
                 ),
                 format!("{owner}/{repo} · Actions"),
             )
@@ -552,8 +552,8 @@ pub async fn actions(
                 pull.map(|pull| {
                     format!(
                         "/{}/{}/pulls/{}",
-                        codeyard_webui::encode_component(&owner),
-                        codeyard_webui::encode_component(&run_repository.name),
+                        codeyard_types::paths::encode_component(&owner),
+                        codeyard_types::paths::encode_component(&run_repository.name),
                         pull.number
                     )
                 })

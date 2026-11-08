@@ -261,7 +261,7 @@ impl From<anyhow::Error> for RepoError {
         if let Some(error) = error.downcast_ref::<RepoError>() {
             return error.clone();
         }
-        if error.is::<codeyard_support::credentials::AccountRestricted>() {
+        if error.is::<codeyard_types::credentials::AccountRestricted>() {
             return Self::write_denied();
         }
         if error.is::<crate::repository::process::SessionsBusy>() {

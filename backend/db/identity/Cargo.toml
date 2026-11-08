@@ -30,3 +30,6 @@ workspace = true
 
 [dependencies.tokio]
 workspace = true
+
+[dependencies.codeyard-types]
+workspace = true

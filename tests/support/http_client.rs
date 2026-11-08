@@ -382,7 +382,7 @@ impl Client {
             let (_, page) = self
                 .page(&format!(
                     "{path}?template={}",
-                    codeyard_webui::encode_component(template)
+                    codeyard_types::paths::encode_component(template)
                 ))
                 .await;
             for name in ["repository_id", "template_revision"] {

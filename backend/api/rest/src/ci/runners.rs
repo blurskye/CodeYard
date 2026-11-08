@@ -224,8 +224,8 @@ async fn render(
                 format!("{owner}/{} runners", repo.name),
                 format!(
                     "/{}/{}/settings",
-                    codeyard_webui::encode_component(&owner),
-                    codeyard_webui::encode_component(&repo.name)
+                    codeyard_types::paths::encode_component(&owner),
+                    codeyard_types::paths::encode_component(&repo.name)
                 ),
                 native::Listing {
                     total: 0,

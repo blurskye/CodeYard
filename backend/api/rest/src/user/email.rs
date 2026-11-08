@@ -265,7 +265,7 @@ pub(crate) async fn notifications_post(
     .await
     {
         Ok(()) => ctx.redirect("/settings?tab=email&saved=email-notifications"),
-        Err(error) if error.is::<codeyard_support::credentials::AccountRestricted>() => ctx.error(
+        Err(error) if error.is::<codeyard_types::credentials::AccountRestricted>() => ctx.error(
             StatusCode::FORBIDDEN,
             "A live unrestricted account session is required.",
         ),

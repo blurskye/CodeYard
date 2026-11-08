@@ -42,7 +42,7 @@ impl std::fmt::Display for StorageError {
 impl std::error::Error for StorageError {}
 
 pub fn storage_error(error: anyhow::Error) -> StorageError {
-    if error.is::<codeyard_support::credentials::AccountRestricted>() {
+    if error.is::<codeyard_types::credentials::AccountRestricted>() {
         return StorageError {
             kind: LifecycleFailure::Denied,
             message: "A live unrestricted account credential is required.",
@@ -873,7 +873,7 @@ pub async fn visibility_locked(
 }
 
 pub fn validate_name(name: &str) -> Result<(), StorageError> {
-    if !codeyard_support::repository_names::valid(name) {
+    if !codeyard_types::repository_names::valid(name) {
         return Err(StorageError { kind: LifecycleFailure::Invalid, message: "Repository name must be 1-100 bytes and contain only letters, numbers, hyphens, underscores and dots; not . or .. and not ending in .git" });
     }
     Ok(())
@@ -1269,7 +1269,7 @@ async fn live_creation_actor(
     if let Some(authority) = authority {
         if authority.user_id != actor {
             return Err(storage_error(
-                codeyard_support::credentials::AccountRestricted.into(),
+                codeyard_types::credentials::AccountRestricted.into(),
             ));
         }
         codeyard_identity::repository_access::credential_user(pool, authority, true)

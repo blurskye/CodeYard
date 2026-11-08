@@ -175,7 +175,7 @@ pub(crate) fn store_error(error: anyhow::Error) -> codeyard_git::error::RepoErro
     use codeyard_db_repos::repositories::dependencies::Refusal;
     use codeyard_git::error::ErrorKind;
     use codeyard_git::error::RepoError;
-    if error.is::<codeyard_support::credentials::AccountRestricted>() {
+    if error.is::<codeyard_types::credentials::AccountRestricted>() {
         return RepoError::write_denied();
     }
     match error.downcast_ref::<Refusal>() {

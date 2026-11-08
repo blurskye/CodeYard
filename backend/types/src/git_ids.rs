@@ -4,3 +4,8 @@ pub fn is_full_commit_id(value: impl AsRef<[u8]>) -> bool {
     let bytes = value.as_ref();
     bytes.len() == 40 && bytes.iter().all(u8::is_ascii_hexdigit)
 }
+
+/// The first seven characters of a commit ID, or all of it when it is shorter.
+pub fn short_sha(sha: &str) -> &str {
+    sha.get(..7).unwrap_or(sha)
+}

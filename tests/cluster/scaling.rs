@@ -1,7 +1,7 @@
 use crate::support::{database::Database, http_client::Client};
 use axum::http::StatusCode;
-use codeyard_support::cluster::ScalingPolicy;
 use codeyard_support::node_identity::NodeKey;
+use codeyard_types::cluster::ScalingPolicy;
 
 async fn reset_minute(db: &Database) {
     db.execute(

@@ -710,7 +710,7 @@ pub(crate) async fn check_foreign_head(
     let Some(foreign) = foreign else {
         anyhow::ensure!(
             !head.is_stub,
-            codeyard_support::credentials::AccountRestricted
+            codeyard_types::credentials::AccountRestricted
         );
         return Ok(());
     };
@@ -718,7 +718,7 @@ pub(crate) async fn check_foreign_head(
         head.is_stub
             && foreign.actor.user_id == input.author_id
             && foreign.source.repository.id == head.id,
-        codeyard_support::credentials::AccountRestricted
+        codeyard_types::credentials::AccountRestricted
     );
     let current = foreign.read(pool).await?;
     anyhow::ensure!(
@@ -726,7 +726,7 @@ pub(crate) async fn check_foreign_head(
             && current.repository.home_cell == head.home_cell
             && current.repository.owner_id() == head.owner_id()
             && current.repository.forked_from_id == Some(input.repo_id),
-        codeyard_support::credentials::AccountRestricted
+        codeyard_types::credentials::AccountRestricted
     );
     Ok(())
 }

@@ -1117,7 +1117,7 @@ pub fn new_repository(
 
 // Browser feedback never replaces server validation or authorization.
 pub fn valid_repository_name(name: &str) -> bool {
-    codeyard_support::repository_names::valid(name)
+    codeyard_types::repository_names::valid(name)
 }
 
 /// The options of a template select: an empty choice for none, then each listed name.

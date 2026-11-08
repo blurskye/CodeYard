@@ -3,7 +3,7 @@ use codeyard_db_core::models::User;
 use codeyard_db_core::DbPool;
 
 /// A newly issued identifier includes its origin prefix in durable storage.
-pub fn fresh_id(pool: &DbPool) -> Result<String, codeyard_support::cells::Invalid> {
+pub fn fresh_id(pool: &DbPool) -> Result<String, codeyard_types::cells::Invalid> {
     pool.cell_prefix()
         .cookie(&codeyard_support::crypto::random_hex())
 }

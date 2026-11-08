@@ -22,7 +22,7 @@ pub struct Pool<DB: Database> {
     inner: sqlx::Pool<DB>,
     waiting: Arc<AtomicUsize>,
     cell_identity: Arc<AtomicU32>,
-    cell_prefixes: Arc<std::sync::RwLock<Vec<codeyard_support::cells::Prefix>>>,
+    cell_prefixes: Arc<std::sync::RwLock<Vec<codeyard_types::cells::Prefix>>>,
     pub(crate) read_replica: Arc<std::sync::RwLock<Option<PgPool>>>,
     directory: Arc<std::sync::RwLock<Option<crate::cells::directory::Provider>>>,
     search: Arc<std::sync::RwLock<Option<crate::cells::search::Provider>>>,
@@ -60,7 +60,7 @@ impl<DB: Database> From<sqlx::Pool<DB>> for Pool<DB> {
             waiting: Arc::new(AtomicUsize::new(0)),
             cell_identity: Arc::default(),
             cell_prefixes: Arc::new(std::sync::RwLock::new(vec![
-                codeyard_support::cells::Prefix::ZERO,
+                codeyard_types::cells::Prefix::ZERO,
             ])),
             read_replica: Arc::default(),
             log_objects: Arc::default(),
@@ -92,9 +92,9 @@ impl Drop for Waiter {
 impl<DB: Database> Pool<DB> {
     pub(crate) fn set_cell_identity(
         &self,
-        cell: codeyard_support::cells::Prefix,
-        prefix: codeyard_support::cells::Prefix,
-        prefixes: Vec<codeyard_support::cells::Prefix>,
+        cell: codeyard_types::cells::Prefix,
+        prefix: codeyard_types::cells::Prefix,
+        prefixes: Vec<codeyard_types::cells::Prefix>,
     ) {
         *self
             .cell_prefixes
@@ -105,20 +105,20 @@ impl<DB: Database> Pool<DB> {
             Ordering::Release,
         );
     }
-    pub fn owns_prefix(&self, prefix: codeyard_support::cells::Prefix) -> bool {
+    pub fn owns_prefix(&self, prefix: codeyard_types::cells::Prefix) -> bool {
         self.cell_prefixes
             .read()
             .unwrap_or_else(|error| error.into_inner())
             .binary_search(&prefix)
             .is_ok()
     }
-    pub fn cell_id(&self) -> codeyard_support::cells::Prefix {
-        codeyard_support::cells::Prefix::new(
+    pub fn cell_id(&self) -> codeyard_types::cells::Prefix {
+        codeyard_types::cells::Prefix::new(
             (self.cell_identity.load(Ordering::Acquire) >> 16) as u16,
         )
     }
-    pub fn cell_prefix(&self) -> codeyard_support::cells::Prefix {
-        codeyard_support::cells::Prefix::new(self.cell_identity.load(Ordering::Acquire) as u16)
+    pub fn cell_prefix(&self) -> codeyard_types::cells::Prefix {
+        codeyard_types::cells::Prefix::new(self.cell_identity.load(Ordering::Acquire) as u16)
     }
     pub(crate) fn same_pool(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.waiting, &other.waiting)

@@ -22,7 +22,7 @@ pub fn resolve_repo_ref_path(
     }
     // A full object ID is an immutable address, never a prefix of a named ref.
     let tail = parts.join("/");
-    let commit = codeyard_support::git_ids::is_full_commit_id(&parts[0]);
+    let commit = crate::git_ids::is_full_commit_id(&parts[0]);
     let reference = if commit {
         parts[0].as_str()
     } else {
@@ -55,13 +55,13 @@ pub fn split_path(path: &str) -> Vec<String> {
 
 /// Encode each filename/ref segment, keeping only actual path separators.
 pub fn encode_path(path: &str) -> String {
-    codeyard_support::git_paths::url(path)
+    crate::git_paths::url(path)
 }
 
 /// Whether a file's path names Markdown. The blob view shows such a file as a document, and the
 /// file editor previews it that way too, so both use this rule.
 pub fn is_markdown_path(path: &str) -> bool {
-    let path = codeyard_support::git_paths::display(path).to_lowercase();
+    let path = crate::git_paths::display(path).to_lowercase();
     [".md", ".markdown", ".mdx"]
         .iter()
         .any(|extension| path.ends_with(*extension))
@@ -95,8 +95,8 @@ pub fn branch_url(base: &str, kind: &str, branch: &str, path: &str) -> String {
     file_url(base, kind, &format!("refs/heads/{branch}"), path)
 }
 
-fn qualified_ref(reference: &str) -> String {
-    if reference.starts_with("refs/") || codeyard_support::git_ids::is_full_commit_id(reference) {
+pub fn qualified_ref(reference: &str) -> String {
+    if reference.starts_with("refs/") || crate::git_ids::is_full_commit_id(reference) {
         reference.to_owned()
     } else {
         format!("refs/heads/{reference}")
@@ -122,29 +122,6 @@ pub fn compare_url(repo_url: &str, base: &str, head: &str) -> String {
         encode_path(base),
         encode_path(head)
     )
-}
-
-// Real bases are a few hundred bytes; a longer one would be copied into every link.
-const MAX_LINK_BASE_BYTES: usize = 4096;
-
-/// Where relative links in a Markdown file under `directory` of `reference` point. A base that
-/// is too long is replaced by the default, and then links stay as written.
-pub fn link_base(base: &str, reference: &str, directory: &str) -> crate::components::LinkBase {
-    let reference = qualified_ref(reference);
-    let reference = reference.as_str();
-    let blob = file_url(base, "blob", reference, "");
-    let directory = encode_path(directory.trim_matches('/'));
-    // A resolved link copies the directory and one of the blob, tree or raw URLs. The blob URL
-    // is the longest of them, so a longer base is left out before the others are built.
-    if blob.len() + directory.len() > MAX_LINK_BASE_BYTES {
-        return crate::components::LinkBase::default();
-    }
-    crate::components::LinkBase {
-        blob,
-        tree: file_url(base, "tree", reference, ""),
-        raw: file_url(base, "raw", reference, ""),
-        directory,
-    }
 }
 
 #[cfg(test)]
@@ -180,21 +157,6 @@ mod tests {
             false
         )
         .is_none());
-    }
-
-    #[test]
-    fn named_hex_refs_stay_qualified_in_file_and_markdown_links() {
-        assert_eq!(
-            file_url("/u/r", "blob", "abcdef1", "docs/a.md"),
-            "/u/r/blob/refs/heads/abcdef1/docs/a.md"
-        );
-        let base = link_base("/u/r", "refs/heads/abcdef1", "");
-        assert_eq!(base.blob, "/u/r/blob/refs/heads/abcdef1");
-        let sha = "0123456789abcdef0123456789abcdef01234567";
-        assert_eq!(
-            file_url("/u/r", "blob", sha, "a.md"),
-            format!("/u/r/blob/{sha}/a.md")
-        );
     }
 
     #[test]

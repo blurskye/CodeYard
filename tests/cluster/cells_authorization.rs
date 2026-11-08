@@ -4,7 +4,8 @@ use codeyard_cells_router::{accounts, directory, rpc};
 use codeyard_db_core::cells::authorization::{self, Home, Proof};
 use codeyard_db_directory::Directory;
 use codeyard_model::cells::{Cell, Key, KeyKind, Object, ObjectKind, State};
-use codeyard_support::{cells::Prefix, node_identity::NodeKey, token_hash::token_hash};
+use codeyard_support::{node_identity::NodeKey, token_hash::token_hash};
+use codeyard_types::cells::Prefix;
 use std::sync::Arc;
 
 struct InterruptedCopy {
@@ -102,7 +103,7 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
     .await
     .unwrap();
     let value = Prefix::new(1)
-        .token(codeyard_support::tokens::PAT_PREFIX, &"a".repeat(64))
+        .token(codeyard_types::tokens::PAT_PREFIX, &"a".repeat(64))
         .unwrap();
     let token = codeyard_db_identity::users::tokens::create_token(
         &one.pool,
@@ -228,7 +229,7 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
     .await
     .unwrap();
     let alice_token = Prefix::ZERO
-        .token(codeyard_support::tokens::PAT_PREFIX, &"b".repeat(64))
+        .token(codeyard_types::tokens::PAT_PREFIX, &"b".repeat(64))
         .unwrap();
     let alice_pat = codeyard_db_identity::users::tokens::create_token(
         &zero.pool,

@@ -1,7 +1,8 @@
+use crate::components::link_base;
 use crate::pages::repos::{
     chrome::{chrome, icon, RepoChrome},
     commits::{latest_commit_bar, Commit},
-    ref_path::{file_url, is_markdown_path, link_base},
+    ref_path::{file_url, is_markdown_path},
     ref_switcher::{RefLinks, RefSwitcher},
     tree::{breadcrumbs, sort_entries, TreeEntry},
 };
@@ -105,7 +106,7 @@ pub fn blob(repo: &RepoChrome, page: &BlobPage) -> Element {
     let edit = file_url(&base, "edit", &page.reference, &page.path);
     let delete = file_url(&base, "delete", &page.reference, &page.path);
     let display_name =
-        codeyard_support::git_paths::display(page.path.rsplit('/').next().unwrap_or_default());
+        codeyard_types::git_paths::display(page.path.rsplit('/').next().unwrap_or_default());
     let name = display_name.as_str();
     let language = language_of_path(&page.path);
     let display = display_text(&page.content);

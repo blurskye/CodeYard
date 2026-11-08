@@ -9,7 +9,7 @@ pub fn random_hex() -> String {
     hex::encode(bytes)
 }
 
-pub use crate::tokens::is_hex_token;
+pub use codeyard_types::tokens::is_hex_token;
 
 /// HMAC-SHA256 bytes; callers own key encoding and wire prefixes.
 pub fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {

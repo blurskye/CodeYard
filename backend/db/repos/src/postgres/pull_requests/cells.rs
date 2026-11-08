@@ -32,23 +32,23 @@ pub async fn subscribe(
         .ok_or_else(|| anyhow::anyhow!("Base cell is unavailable"))?
         .pull_grant(binding, None)
         .await?
-        .ok_or(codeyard_support::credentials::AccountRestricted)?;
+        .ok_or(codeyard_types::credentials::AccountRestricted)?;
     grant.validate(binding)?;
     ensure!(
         grant.publisher_id == actor.user_id,
-        codeyard_support::credentials::AccountRestricted
+        codeyard_types::credentials::AccountRestricted
     );
     let mut tx = pool.begin().await?;
     ensure!(
         readable(&mut tx, actor, binding.head_repo_id).await?,
-        codeyard_support::credentials::AccountRestricted
+        codeyard_types::credentials::AccountRestricted
     );
     let head: Option<i64> = sqlx::query_scalar("SELECT id FROM repositories WHERE id=$1 AND NOT is_stub AND NOT is_gist AND home_cell=$2 AND forked_from_id=$3 FOR SHARE")
         .bind(binding.head_repo_id).bind(i32::from(pool.cell_id().get())).bind(binding.base_repo_id).fetch_optional(&mut *tx).await?;
     ensure!(head.is_some(), "Pull head has another home or source");
     ensure!(
         readable(&mut tx, actor, binding.head_repo_id).await?,
-        codeyard_support::credentials::AccountRestricted
+        codeyard_types::credentials::AccountRestricted
     );
     sqlx::query("INSERT INTO remote_pull_requests(base_repo_id,number,head_repo_id,head_branch,publisher_id) VALUES($1,$2,$3,$4,$5) ON CONFLICT(base_repo_id,number) DO UPDATE SET head_repo_id=excluded.head_repo_id,head_branch=excluded.head_branch,publisher_id=excluded.publisher_id")
         .bind(binding.base_repo_id).bind(binding.number).bind(binding.head_repo_id).bind(&binding.head_branch).bind(actor.user_id).execute(&mut *tx).await?;
@@ -61,7 +61,7 @@ pub async fn subscribe(
     );
     ensure!(
         readable(&mut tx, actor, binding.head_repo_id).await?,
-        codeyard_support::credentials::AccountRestricted
+        codeyard_types::credentials::AccountRestricted
     );
     tx.commit().await?;
     Ok(())
@@ -98,7 +98,7 @@ pub async fn receive_push(pool: &PgPool, event: &Event, admission: &dyn Admissio
 }
 /// Runs after the branch moved, so the base never fetches a head older than the event.
 pub async fn queue_push(pool: &PgPool, head: i64) -> Result<bool> {
-    codeyard_support::cells::Prefix::for_id(head)?;
+    codeyard_types::cells::Prefix::for_id(head)?;
     let queued = sqlx::query("INSERT INTO cell_outbox(root_kind,root_id,topic,payload) SELECT 'repository',r.id,'repository.push',jsonb_build_object('base_repo_id',r.forked_from_id,'head_repo_id',r.id,'version',r.contribution_version)::TEXT FROM repositories r JOIN repositories p ON p.id=r.forked_from_id AND p.is_stub AND p.home_cell<>r.home_cell WHERE r.id=$1 AND NOT r.is_stub AND NOT r.is_gist AND r.home_cell=COALESCE((SELECT cell_id FROM node_configuration WHERE id=1),0) AND EXISTS(SELECT 1 FROM remote_pull_requests c WHERE c.head_repo_id=r.id AND c.base_repo_id=r.forked_from_id)")
         .bind(head).execute(pool).await?;
     Ok(queued.rows_affected() > 0)
@@ -118,7 +118,7 @@ pub async fn open(pool: &PgPool, refresh: &Refresh, limit: i64) -> Result<Vec<Pu
         .bind(refresh.push.base_repo_id).bind(refresh.push.head_repo_id).bind(refresh.after).bind(limit).fetch_all(pool).await?)
 }
 pub async fn bindings(pool: &PgPool, head: i64, after: i32, limit: i64) -> Result<Vec<Binding>> {
-    codeyard_support::cells::Prefix::for_id(head)?;
+    codeyard_types::cells::Prefix::for_id(head)?;
     ensure!(
         after >= 0 && (1..=100).contains(&limit),
         "Pull permission batch exceeds its limit"

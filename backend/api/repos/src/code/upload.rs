@@ -19,9 +19,9 @@ use codeyard_repos::editor::UploadWrite;
 use codeyard_repos::editor::MAX_UPLOAD_FILES;
 use codeyard_repos::editor::MAX_UPLOAD_FILE_BYTES;
 use codeyard_repos::editor::MAX_UPLOAD_TOTAL_BYTES;
+use codeyard_types::ref_path::branch_url;
+use codeyard_types::ref_path::compare_url;
 use codeyard_webui::pages::repos as view;
-use codeyard_webui::pages::repos::ref_path::branch_url;
-use codeyard_webui::pages::repos::ref_path::compare_url;
 use std::collections::HashMap;
 use std::sync::Arc;
 

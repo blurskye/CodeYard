@@ -13,7 +13,6 @@ mod markdown_preview;
 mod markdown_toolbar;
 #[cfg(target_arch = "wasm32")]
 pub mod menu;
-mod patch;
 pub mod references;
 pub mod repository_properties;
 mod shell;
@@ -23,6 +22,8 @@ mod time;
 pub mod webhooks;
 
 pub use avatar::Avatar;
+pub(crate) use codeyard_types::git_ids::short_sha;
+pub(crate) use codeyard_types::patch::{patch_badges, patch_gutter_digits, patch_rows, PatchRow};
 pub use confirm::confirm_dialog;
 pub use copy::CopyButton;
 pub use forms::{
@@ -31,13 +32,11 @@ pub use forms::{
 #[cfg(not(target_arch = "wasm32"))]
 pub use markdown::EMOJI;
 pub use markdown::{
-    document_html, escape_html, markdown_tab_class, markdown_text, outline_of_html, parse_markdown,
-    LinkBase, Markdown, OutlineEntry, RepoMarkdown,
+    document_html, escape_html, link_base, markdown_tab_class, markdown_text, outline_of_html,
+    parse_markdown, LinkBase, Markdown, OutlineEntry, RepoMarkdown,
 };
 pub use markdown_preview::body_preview;
 pub use markdown_toolbar::MarkdownToolbar;
-pub(crate) use patch::patch_gutter_digits;
-pub use patch::{patch_badges, patch_rows, PatchRow};
 pub use shell::{shell, shell_at, SiteSearch};
 pub use theme::{ThemeForm, ThemeSaved};
 pub use time::{exact_time, LiveTime};
@@ -110,11 +109,6 @@ pub fn relative_time(value: i64) -> String {
     chrono::DateTime::from_timestamp(value, 0)
         .map(|then| relative_age(then, current_time()))
         .unwrap_or_else(|| "Unknown time".to_string())
-}
-
-/// The first seven characters of a commit ID, or all of it when it is shorter.
-pub fn short_sha(sha: &str) -> &str {
-    sha.get(..7).unwrap_or(sha)
 }
 
 /// A byte count in binary units: "512 B", "148.5 KiB", "3.2 GiB".

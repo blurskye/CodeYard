@@ -173,7 +173,7 @@ fn document(org: &str, kind: Kind, row: &OrganizationValue) -> Value {
         value["selected_repositories_url"] = json!(codeyard_model::urls::api_url(&format!(
             "/orgs/{org}/actions/{}/{}/repositories",
             plural(kind),
-            codeyard_webui::encode_component(&row.name)
+            codeyard_types::paths::encode_component(&row.name)
         )));
     }
     value
@@ -209,7 +209,7 @@ async fn list(
         &uri,
         plural(kind),
         rows.iter()
-            .map(|row| document(&codeyard_webui::encode_component(&org), kind, row))
+            .map(|row| document(&codeyard_types::paths::encode_component(&org), kind, row))
             .collect(),
     )
 }
@@ -246,7 +246,7 @@ async fn value(
         .find(|row| row.name == name)
         .ok_or_else(Error::missing)?;
     Ok(Json(document(
-        &codeyard_webui::encode_component(&params["org"]),
+        &codeyard_types::paths::encode_component(&params["org"]),
         kind,
         &row,
     )))

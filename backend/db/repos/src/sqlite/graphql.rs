@@ -82,10 +82,10 @@ pub async fn admit_query(
 ) -> Result<Option<RateLimit>> {
     let credential = actor
         .credential()
-        .ok_or(codeyard_support::credentials::AccountRestricted)?;
+        .ok_or(codeyard_types::credentials::AccountRestricted)?;
     let token = actor
         .token_id()
-        .ok_or(codeyard_support::credentials::AccountRestricted)?;
+        .ok_or(codeyard_types::credentials::AccountRestricted)?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     codeyard_db_identity::sqlite::users::transitions::require_read_account(
         &mut tx,

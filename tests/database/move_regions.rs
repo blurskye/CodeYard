@@ -8,11 +8,8 @@ use axum::{
 use codeyard::backend::cli::cells::{MoveTarget, UserMover};
 use codeyard_db_cluster::regions;
 use codeyard_model::cells::{Cell, Key, KeyKind, Object, ObjectKind, State};
-use codeyard_support::{
-    cells::Prefix,
-    cluster::RegionPolicy,
-    node_identity::{self, NodeKey},
-};
+use codeyard_support::node_identity::{self, NodeKey};
+use codeyard_types::{cells::Prefix, cluster::RegionPolicy};
 use std::{sync::Arc, time::Duration};
 use tower::ServiceExt;
 

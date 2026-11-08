@@ -237,7 +237,7 @@ async fn dispatch(
         .await
         .map_err(admission_error)?;
     if input.return_run_details {
-        return Ok(Json(json!({"workflow_run_id":run.id,"run_url":format!("{}/actions/runs/{}",repo_url(&owner,&name),run.id),"html_url":format!("{}/{}/{}/actions?job={}",codeyard_model::http_config::link_origin(),codeyard_webui::encode_component(&owner),codeyard_webui::encode_component(&name),run.run_id)})).into_response());
+        return Ok(Json(json!({"workflow_run_id":run.id,"run_url":format!("{}/actions/runs/{}",repo_url(&owner,&name),run.id),"html_url":format!("{}/{}/{}/actions?job={}",codeyard_model::http_config::link_origin(),codeyard_types::paths::encode_component(&owner),codeyard_types::paths::encode_component(&name),run.run_id)})).into_response());
     }
     Ok(StatusCode::NO_CONTENT.into_response())
 }

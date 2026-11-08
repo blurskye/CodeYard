@@ -7,7 +7,8 @@ use codeyard_db_core::cells::search::{
 };
 use codeyard_db_directory::Directory;
 use codeyard_model::cells::{Cell, State};
-use codeyard_support::{cells::Prefix, node_identity::NodeKey};
+use codeyard_support::node_identity::NodeKey;
+use codeyard_types::cells::Prefix;
 use serde_json::json;
 
 fn cell(prefix: Prefix, key: &NodeKey) -> Cell {

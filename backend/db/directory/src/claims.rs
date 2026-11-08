@@ -11,7 +11,8 @@ use super::{shards, Directory, Refusal, MAIN_CLUSTER};
 use anyhow::{ensure, Result};
 use chrono::{DateTime, Utc};
 use codeyard_model::cells::{Key, KeyKind, Location, Object, ObjectKind};
-use codeyard_support::{cells::Prefix, token_hash::token_hash};
+use codeyard_support::token_hash::token_hash;
+use codeyard_types::cells::Prefix;
 use sqlx::{Postgres, Transaction};
 
 type Tx = Transaction<'static, Postgres>;
@@ -67,7 +68,7 @@ fn checked_keys(object: Object, keys: &[Key]) -> Result<Vec<Key>> {
 }
 fn checked(object: Object, keys: &[Key], nonce: &str) -> Result<(Vec<Key>, String)> {
     ensure!(
-        codeyard_support::tokens::is_hex_token(nonce, 64),
+        codeyard_types::tokens::is_hex_token(nonce, 64),
         Refusal::Invalid
     );
     Ok((checked_keys(object, keys)?, token_hash(nonce)))

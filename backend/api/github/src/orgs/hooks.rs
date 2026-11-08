@@ -105,7 +105,7 @@ async fn snapshot(
 fn url(org: &str, id: i64) -> String {
     api_url(&format!(
         "/orgs/{}/hooks/{id}",
-        codeyard_webui::encode_component(org)
+        codeyard_types::paths::encode_component(org)
     ))
 }
 fn document(org: &str, hook: &Webhook) -> Value {

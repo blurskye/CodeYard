@@ -47,7 +47,7 @@ impl NewAutolink {
         if url.len() > 4096
             || !url.contains("<num>")
             || url.chars().any(char::is_control)
-            || !codeyard_webui::components::references::valid_autolink_template(url)
+            || !codeyard_types::links::valid_autolink_template(url)
         {
             return Err(Refusal::Invalid(
                 "The URL template must contain <num> and be at most 4096 bytes",

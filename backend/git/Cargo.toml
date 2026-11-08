@@ -33,3 +33,6 @@ sha1.workspace = true
 
 [lints]
 workspace = true
+
+[dependencies.codeyard-types]
+workspace = true

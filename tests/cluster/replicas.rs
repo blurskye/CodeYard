@@ -4730,7 +4730,7 @@ async fn fork_packs_use_original_credentials_on_remote_storage() {
             .unwrap()
             .unwrap();
     codeyard_db_core::cells::authorization::redact_user(&mut owner);
-    owner.id = *codeyard_support::cells::Prefix::new(1).ids().start();
+    owner.id = *codeyard_types::cells::Prefix::new(1).ids().start();
     owner.home_cell = 1;
     owner.username = "foreign-fork-owner".into();
     let mut foreign = repo.repository.clone();

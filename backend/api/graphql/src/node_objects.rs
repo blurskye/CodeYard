@@ -87,7 +87,7 @@ pub(super) async fn release(
         json!({"__typename":"Release","_repo":repo.id,"_release":row.id,"id":node_id::scoped("RE",repo.id,row.id),"databaseId":row.id,
         "name":row.name,"tagName":row.tag_name,"description":row.body,"immutable":row.is_immutable,"isDraft":row.is_draft,"isPrerelease":row.is_prerelease,"isLatest":row.is_latest,
         "createdAt":row.created_at,"publishedAt":row.published_at,"author":crate::user::retained_author(row.author_id,request).await?,
-        "url":url(&format!("/{}/{}/releases/tag/{}",crate::repository::owner(&repo,request).await?,repo.name,codeyard_webui::encode_component(&row.tag_name)))}),
+        "url":url(&format!("/{}/{}/releases/tag/{}",crate::repository::owner(&repo,request).await?,repo.name,codeyard_types::paths::encode_component(&row.tag_name)))}),
     )
 }
 

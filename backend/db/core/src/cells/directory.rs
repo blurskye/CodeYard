@@ -62,7 +62,7 @@ pub trait Directory: Send + Sync {
     ) -> BoxFuture<'a, Result<()>>;
     fn release<'a>(&'a self, object: Object, keys: &'a [Key]) -> BoxFuture<'a, Result<()>>;
     fn forget(&self, object: Object) -> BoxFuture<'_, Result<()>>;
-    fn cell(&self, prefix: codeyard_support::cells::Prefix) -> BoxFuture<'_, Result<Option<Cell>>>;
+    fn cell(&self, prefix: codeyard_types::cells::Prefix) -> BoxFuture<'_, Result<Option<Cell>>>;
     /// Automatic presence of one of this cell's organizations; hand-set presence stays.
     fn set_presence<'a>(
         &'a self,

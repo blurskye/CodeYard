@@ -87,11 +87,6 @@ pub struct Label {
     pub description: String,
 }
 
-/// The refusal for a merge commit into a branch that requires a linear history. The merge form
-/// disables the merge commit method with this text, and the merge gives it as a blocker.
-pub const MERGE_COMMIT_REFUSED: &str =
-    "Merge commits are not allowed on this branch. Use squash or rebase.";
-
 /// Whether the merge form can offer `method`. Only a merge commit is offered while the pull request
 /// is stacked, and a branch that requires a linear history refuses a merge commit.
 pub fn merge_method_available(compare: &Comparison, method: &str) -> bool {

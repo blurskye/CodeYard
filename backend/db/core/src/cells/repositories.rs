@@ -2,7 +2,7 @@
 use crate::models::{Organization, Repository, User};
 use anyhow::{ensure, Result};
 use codeyard_model::cells::{Object, ObjectKind};
-use codeyard_support::cells::Prefix;
+use codeyard_types::cells::Prefix;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -126,7 +126,7 @@ pub fn validate_public(repo: &Repository, owner: &Owner, home: Prefix) -> Result
         "Invalid foreign repository source"
     );
     ensure!(
-        codeyard_support::repository_names::valid(&repo.name)
+        codeyard_types::repository_names::valid(&repo.name)
             && codeyard_git::branch_ref(&repo.default_branch).is_some(),
         "Invalid foreign repository coordinates"
     );
@@ -273,7 +273,7 @@ impl Admission {
         let source = self.read(pool).await?;
         ensure!(
             !source.repository.is_private || source.allow_forking,
-            codeyard_support::credentials::AccountRestricted
+            codeyard_types::credentials::AccountRestricted
         );
         Ok(source)
     }
@@ -292,14 +292,14 @@ impl Admission {
                 &proof,
             )
             .await?
-            .ok_or(codeyard_support::credentials::AccountRestricted)?;
+            .ok_or(codeyard_types::credentials::AccountRestricted)?;
         source.validate(home)?;
         ensure!(
             source.repository.id == self.source.repository.id
                 && source.reader_id == self.actor.user_id
                 && source.credential_id == self.actor.token_id()
                 && source.owner.object() == self.source.owner.object(),
-            codeyard_support::credentials::AccountRestricted
+            codeyard_types::credentials::AccountRestricted
         );
         Ok(source)
     }
@@ -318,7 +318,7 @@ pub fn actor_proof(
             }
         }
         Some(AccountCredential::Session(session)) => Proof::Session {
-            home: codeyard_support::cells::Secret::cookie(session)?.cell,
+            home: codeyard_types::cells::Secret::cookie(session)?.cell,
             value: session.to_owned(),
         },
         None => anyhow::bail!("Fork requires its original account credential"),
@@ -378,7 +378,7 @@ impl SnapshotRequest {
         Prefix::for_id(self.reader_id)?;
         codeyard_model::cells::Key::new(codeyard_model::cells::KeyKind::Name, &self.owner)?;
         ensure!(
-            codeyard_support::repository_names::valid(&self.name),
+            codeyard_types::repository_names::valid(&self.name),
             "Invalid fork source name"
         );
         self.proof.validate()

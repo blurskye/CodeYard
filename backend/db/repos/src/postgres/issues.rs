@@ -514,7 +514,7 @@ pub async fn add_issue_comment(
             &mut tx, author_id, credential, true
         )
         .await?,
-        codeyard_support::credentials::AccountRestricted
+        codeyard_types::credentials::AccountRestricted
     );
     let comment = sqlx::query_as::<_, IssueComment>(
         r#"
@@ -731,7 +731,7 @@ pub async fn edit_issue_comment(
             &mut tx, actor_id, credential, true
         )
         .await?,
-        codeyard_support::credentials::AccountRestricted
+        codeyard_types::credentials::AccountRestricted
     );
     let writer = codeyard_db_core::queries::postgres::discussions::lock_write_authority(
         &mut tx, actor_id, repo_id,
@@ -788,7 +788,7 @@ pub async fn delete_issue_comment(
             &mut tx, actor_id, credential, true
         )
         .await?,
-        codeyard_support::credentials::AccountRestricted
+        codeyard_types::credentials::AccountRestricted
     );
     let writer = codeyard_db_core::queries::postgres::discussions::lock_write_authority(
         &mut tx, actor_id, repo_id,

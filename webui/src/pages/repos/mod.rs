@@ -23,7 +23,7 @@ mod milestones;
 pub mod page;
 pub mod pages;
 pub mod pulls;
-pub mod ref_path;
+pub(crate) use codeyard_types::ref_path;
 pub mod ref_switcher;
 pub mod releases;
 pub mod secret_scanning;

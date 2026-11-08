@@ -64,7 +64,7 @@ pub fn profile_page(
                         if !profile.twitter_username.is_empty() { p { class: "identity-profile-bio", "Twitter: @{profile.twitter_username}" } }
                         for (provider, url) in &profile.social_accounts {
                             p { class: "identity-profile-bio",
-                                if codeyard_support::website::parse(url).is_some() {
+                                if codeyard_types::website::parse(url).is_some() {
                                     a { href: url.clone(), rel: "nofollow me", "{provider}: {url}" }
                                 } else { "{provider}: {url}" }
                             }
@@ -608,5 +608,5 @@ pub struct ProfileStars {
 /// Whitelist public website link schemes. Unsafe stored values remain editable text.
 pub(super) fn safe_website(raw: &str) -> Option<&str> {
     let value = raw.trim();
-    codeyard_support::website::parse(value).map(|_| value)
+    codeyard_types::website::parse(value).map(|_| value)
 }

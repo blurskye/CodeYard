@@ -335,7 +335,7 @@ pub async fn admin_node_page(
             administrator
         )
         .await?,
-        codeyard_support::credentials::AccountRestricted
+        codeyard_types::credentials::AccountRestricted
     );
     let rows = sqlx::query_as(&format!(
         "SELECT *,{NOW} AS observed_at FROM nodes WHERE name>?1 ORDER BY name LIMIT 101"

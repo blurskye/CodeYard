@@ -5,7 +5,8 @@ use codeyard_cells_router::directory::{Client, Listener};
 use codeyard_db_core::{cells::directory as publication, DbPool};
 use codeyard_db_directory::Directory;
 use codeyard_model::cells::{Cell, Key, KeyKind, Location, Object, ObjectKind, State};
-use codeyard_support::{cells::Prefix, node_identity::NodeKey};
+use codeyard_support::node_identity::NodeKey;
+use codeyard_types::cells::Prefix;
 use futures_util::future::BoxFuture;
 use serde_json::{json, Value};
 use std::sync::{

@@ -24,7 +24,7 @@ fn admission_redirect(page: &str, location: &str) -> String {
     if crate::origin::safe_redirect_path(location) {
         format!(
             "{page}?redirect={}",
-            codeyard_webui::encode_component(location)
+            codeyard_types::paths::encode_component(location)
         )
     } else {
         page.to_owned()

@@ -122,7 +122,7 @@ where
                 else {
                     continue;
                 };
-                let base = codeyard_webui::repository_path(&owner, &name);
+                let base = codeyard_types::paths::repository_path(&owner, &name);
                 let href = if let Some(number) = token.strip_prefix('#') {
                     let Ok(number) = number.parse::<i32>() else {
                         continue;

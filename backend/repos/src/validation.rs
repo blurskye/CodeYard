@@ -208,7 +208,7 @@ fn parse_update_lines(input: &[u8]) -> Result<Vec<RefUpdate>> {
 }
 
 fn sha(value: &str) -> bool {
-    codeyard_support::git_ids::is_full_commit_id(value)
+    codeyard_types::git_ids::is_full_commit_id(value)
         && !value.bytes().any(|byte| byte.is_ascii_uppercase())
 }
 

@@ -19,7 +19,7 @@ use codeyard_model::urls::repo_url;
 use codeyard_storage::attachment_disposition;
 use codeyard_storage::Download;
 use codeyard_storage::Upload;
-use codeyard_support::object_limits::MAX_OBJECT_BYTES;
+use codeyard_types::object_limits::MAX_OBJECT_BYTES;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -200,7 +200,7 @@ pub(crate) async fn upload(
     let filename = query
         .name
         .ok_or_else(|| Error::validation("CodeqlDatabase", "name", "missing_field"))?;
-    if !codeyard_support::file_names::valid_basename(&filename, 255) {
+    if !codeyard_types::file_names::valid_basename(&filename, 255) {
         return Err(Error::validation("CodeqlDatabase", "name", "invalid"));
     }
     if headers

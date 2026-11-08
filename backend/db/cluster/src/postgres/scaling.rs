@@ -2,7 +2,7 @@ use crate::scaling::Action;
 use anyhow::{ensure, Result};
 use codeyard_db_core::pool::PgPool;
 use codeyard_db_core::queries::credentials::Actor;
-use codeyard_support::cluster::ScalingPolicy;
+use codeyard_types::cluster::ScalingPolicy;
 use sqlx::PgConnection;
 
 pub async fn policies(pool: &PgPool) -> Result<Vec<ScalingPolicy>> {

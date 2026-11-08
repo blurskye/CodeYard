@@ -230,15 +230,12 @@ pub(super) fn annotation(line: &str) -> Option<Annotation> {
     if !matches!(severity.as_str(), "error" | "warning" | "notice") {
         return None;
     }
-    let decode = codeyard_support::command_codec::unescape_data;
+    let decode = codeyard_types::command_codec::unescape_data;
     let properties: std::collections::BTreeMap<_, _> = properties
         .split(',')
         .filter_map(|part| {
             let (key, value) = part.split_once('=')?;
-            Some((
-                key,
-                codeyard_support::command_codec::unescape_property(value),
-            ))
+            Some((key, codeyard_types::command_codec::unescape_property(value)))
         })
         .collect();
     let get = |key| properties.get(key).cloned().unwrap_or_default();
@@ -650,7 +647,7 @@ fn group_start(line: &str) -> Option<String> {
     let text = command_payload(line)?.trim_start_matches('❓').trim_start();
     text.strip_prefix("::group::")
         .or_else(|| text.strip_prefix("##[group]"))
-        .map(codeyard_support::command_codec::unescape_data)
+        .map(codeyard_types::command_codec::unescape_data)
 }
 
 fn group_end(line: &str) -> bool {

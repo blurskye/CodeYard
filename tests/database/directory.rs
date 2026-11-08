@@ -2,7 +2,7 @@
 use crate::support::native_database::PostgresDatabase;
 use codeyard_db_directory::{Config, Directory};
 use codeyard_model::cells::{Cell, Key, KeyKind, Object, ObjectKind, State};
-use codeyard_support::cells::Prefix;
+use codeyard_types::cells::Prefix;
 use std::{path::Path, process::Output, time::Duration};
 
 fn cell(prefix: u16, key: char) -> Cell {
@@ -328,7 +328,7 @@ async fn successor_prefixes_are_atomic_owned_and_retry_the_same_reservation() {
         .next_prefix(&b, first, *first.ids().end())
         .await
         .is_err());
-    let capacity = codeyard_support::cells::IDS_PER_PREFIX - 1;
+    let capacity = codeyard_types::cells::IDS_PER_PREFIX - 1;
     let threshold = *first.ids().start() + capacity - capacity / 5 - 1;
     assert!(directory
         .next_prefix(&a, first, threshold - 1)

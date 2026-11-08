@@ -810,7 +810,7 @@ pub fn operation_body_limit(operation: &Operation) -> usize {
     match operation {
         Operation::ObjectPut { declaration } => declaration
             .bytes
-            .clamp(0, codeyard_support::object_limits::MAX_OBJECT_BYTES)
+            .clamp(0, codeyard_types::object_limits::MAX_OBJECT_BYTES)
             as usize,
         Operation::PrepareFile { .. } | Operation::SaveFile { .. } => MAX_EDITOR_BYTES,
         Operation::WriteGitObject {

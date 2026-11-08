@@ -67,7 +67,7 @@ async fn archive(
         .ok_or_else(|| Error::unavailable(()))?;
     let prefix = codeyard_api_http::shared::repos::code::archive::archive_prefix(
         &format!("{owner}-{name}"),
-        codeyard_webui::components::short_sha(&commit.sha),
+        codeyard_types::git_ids::short_sha(&commit.sha),
     );
     let bytes = store
         .archive(&commit.sha, &prefix, format)

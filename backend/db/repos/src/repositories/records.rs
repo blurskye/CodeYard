@@ -188,7 +188,7 @@ pub enum RepositorySettingsRefusal {
 
 pub(crate) fn validate_repository_alias(name: &str) -> Result<()> {
     anyhow::ensure!(
-        codeyard_support::repository_names::valid(name),
+        codeyard_types::repository_names::valid(name),
         RepositorySettingsRefusal::InvalidName
     );
     Ok(())

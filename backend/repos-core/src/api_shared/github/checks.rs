@@ -63,8 +63,8 @@ pub async fn actions_app(
     let url = format!(
         "{}/{}/{}/actions",
         codeyard_model::http_config::link_origin(),
-        codeyard_webui::encode_component(owner),
-        codeyard_webui::encode_component(&repo.name)
+        codeyard_types::paths::encode_component(owner),
+        codeyard_types::paths::encode_component(&repo.name)
     );
     Ok(
         json!({"id":ACTIONS_APP_ID,"slug":"github-actions","node_id":codeyard_model::node_id::scoped("A",bot.id,ACTIONS_APP_ID),"name":"GitHub Actions","description":"Workflow runs","owner":payloads::user(&bot),"external_url":url,"html_url":url,"created_at":bot.created_at,"updated_at":bot.created_at,"permissions":{"actions":"write","checks":"write","contents":"write","metadata":"read","statuses":"write"},"events":["check_run","check_suite","push","pull_request","workflow_dispatch"]}),

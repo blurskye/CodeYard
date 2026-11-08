@@ -30,8 +30,6 @@ codeyard-cells-router.workspace = true
 codeyard-identity.workspace = true
 codeyard-model.workspace = true
 codeyard-notifications.workspace = true
-codeyard-support.workspace = true
-codeyard-webui.workspace = true
 futures-util.workspace = true
 git2.workspace = true
 reqwest.workspace = true
@@ -47,3 +45,6 @@ workspace = true
 [dev-dependencies.tokio]
 workspace = true
 features = ["test-util"]
+
+[dependencies.codeyard-types]
+workspace = true

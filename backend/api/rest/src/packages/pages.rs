@@ -50,10 +50,10 @@ pub(crate) fn router() -> Router<Arc<AppState>> {
 }
 
 fn owner_view(owner: &Owner) -> view::Owner {
-    let name = codeyard_webui::encode_component(&owner.name);
+    let name = codeyard_types::paths::encode_component(&owner.name);
     view::Owner {
         name: owner.name.clone(),
-        profile: codeyard_webui::profile_path(&owner.name),
+        profile: codeyard_types::paths::profile_path(&owner.name),
         packages: format!(
             "/{}/{name}/packages",
             if owner.kind == "org" { "orgs" } else { "users" }
@@ -366,7 +366,7 @@ async fn model(
                 .map_or("latest", |version| version.name.as_str());
             let registry_url = format!(
                 "{origin}/api/packages/{}/npm/",
-                codeyard_webui::encode_component(&owner.name)
+                codeyard_types::paths::encode_component(&owner.name)
             );
             if name.starts_with('@') {
                 (
@@ -404,8 +404,8 @@ async fn model(
                     |r| {
                         format!(
                             "{origin}/{}/{}",
-                            codeyard_webui::encode_component(&owner.name),
-                            codeyard_webui::encode_component(&r.name)
+                            codeyard_types::paths::encode_component(&owner.name),
+                            codeyard_types::paths::encode_component(&r.name)
                         )
                     },
                 );
@@ -415,7 +415,7 @@ async fn model(
                 let version = selected.as_ref().map_or("VERSION", |v| v.name.as_str());
                 let endpoint = format!(
                     "{origin}/api/packages/{}/nuget/index.json",
-                    codeyard_webui::encode_component(&owner.name)
+                    codeyard_types::paths::encode_component(&owner.name)
                 );
                 (
                     format!(
@@ -442,7 +442,7 @@ async fn model(
                     .unwrap_or("VERSION");
                 let endpoint = format!(
                     "{origin}/api/packages/{}/rubygems/",
-                    codeyard_webui::encode_component(&owner.name)
+                    codeyard_types::paths::encode_component(&owner.name)
                 );
                 (format!("source \"{endpoint}\" do\n  gem \"{}\", \"{version}\"\nend\n# bundle install", package.name), Some(endpoint))
             }
@@ -462,8 +462,8 @@ async fn model(
             repository_href: repository.map(|repo| {
                 format!(
                     "/{}/{}",
-                    codeyard_webui::encode_component(&owner.name),
-                    codeyard_webui::encode_component(&repo.name)
+                    codeyard_types::paths::encode_component(&owner.name),
+                    codeyard_types::paths::encode_component(&repo.name)
                 )
             }),
             package: card,

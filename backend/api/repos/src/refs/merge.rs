@@ -94,7 +94,7 @@ fn model(loaded: &Loaded, values: &HashMap<String, String>, submitted: bool) -> 
         .map(|(name, sha)| {
             SelectOption::new(
                 format!("{sha} {name}"),
-                format!("{name} ({})", codeyard_webui::components::short_sha(sha)),
+                format!("{name} ({})", codeyard_types::git_ids::short_sha(sha)),
             )
         })
         .collect();

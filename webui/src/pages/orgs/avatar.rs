@@ -31,7 +31,7 @@ pub(super) fn panel(page: &Page, org: &Organization) -> Element {
                     form { id: "organization-picture-upload", method: "post", action: base.clone(), enctype: "multipart/form-data", class: "org-form",
                         {csrf(&page.csrf_token)}
                         label { span { "Upload a new picture" }
-                            input { r#type: "file", name: "picture", accept: codeyard_support::media::AVATAR_CONTENT_TYPES.join(","), required: true }
+                            input { r#type: "file", name: "picture", accept: codeyard_types::media::AVATAR_CONTENT_TYPES.join(","), required: true }
                         }
                         p { "PNG, JPEG, GIF, or WebP. Maximum 2 MB." }
                     }

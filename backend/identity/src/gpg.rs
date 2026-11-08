@@ -1,7 +1,7 @@
 //! OpenPGP enrollment verifies self-certifications and signing-subkey back signatures.
 
 use codeyard_db_core::queries::users::accounts::AccountCredential;
-use codeyard_support::credentials::AccountRestricted;
+use codeyard_types::credentials::AccountRestricted;
 
 use base64::Engine;
 use chrono::{DateTime, Utc};

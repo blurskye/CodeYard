@@ -115,8 +115,8 @@ fn asset_response(origin: &str, base: &str, tag: &str, asset: &ReleaseAsset) -> 
         download_count: asset.download_count,
         browser_download_url: format!(
             "{origin}{base}/releases/download/{}/{}",
-            codeyard_webui::encode_component(tag),
-            codeyard_webui::encode_component(&asset.name)
+            codeyard_types::paths::encode_component(tag),
+            codeyard_types::paths::encode_component(&asset.name)
         ),
         created_at: asset.created_at.to_rfc3339(),
         updated_at: asset.updated_at.to_rfc3339(),
@@ -143,11 +143,11 @@ fn release_response(
     let release = &row.release;
     let base = format!(
         "/{}/{}",
-        codeyard_webui::encode_component(owner),
-        codeyard_webui::encode_component(name)
+        codeyard_types::paths::encode_component(owner),
+        codeyard_types::paths::encode_component(name)
     );
-    let tag = codeyard_webui::encode_component(&release.tag_name);
-    let revision = codeyard_webui::encode_component(&archive_revision(release));
+    let tag = codeyard_types::paths::encode_component(&release.tag_name);
+    let revision = codeyard_types::paths::encode_component(&archive_revision(release));
     ReleaseResponse {
         id: release.id,
         tag_name: release.tag_name.clone(),

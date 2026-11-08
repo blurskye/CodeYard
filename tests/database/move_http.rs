@@ -57,7 +57,7 @@ pub(crate) async fn token(database: &PostgresDatabase, user: i64) -> String {
         .pool
         .cell_prefix()
         .token(
-            codeyard_support::tokens::PAT_PREFIX,
+            codeyard_types::tokens::PAT_PREFIX,
             &uuid::Uuid::new_v4().simple().to_string().repeat(2),
         )
         .unwrap();
@@ -164,7 +164,7 @@ async fn an_organization_with_a_thousand_members_moves_without_restoring_a_revok
     for (database, prefix) in [(&source, 1), (&target, 2)] {
         codeyard_db_core::cells::initialize(
             &database.pool,
-            codeyard_support::cells::Prefix::new(prefix),
+            codeyard_types::cells::Prefix::new(prefix),
         )
         .await
         .unwrap();

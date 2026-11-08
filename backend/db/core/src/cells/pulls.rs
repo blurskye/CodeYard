@@ -1,7 +1,7 @@
 //! A base owns its pull request; the head cell retains explicit publication consent.
 use anyhow::{ensure, Result};
 use codeyard_model::cells::{Object, ObjectKind};
-use codeyard_support::cells::Prefix;
+use codeyard_types::cells::Prefix;
 use futures_util::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 

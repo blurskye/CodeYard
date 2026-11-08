@@ -2,7 +2,7 @@
 //! repositories, so a new advisory raises Dependabot alerts in both cells.
 use super::cells_frontend::Server;
 use crate::support::native_database::PostgresDatabase;
-use codeyard_support::cells::Prefix;
+use codeyard_types::cells::Prefix;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
@@ -36,7 +36,7 @@ async fn cell(database: &PostgresDatabase, name: &str) -> Cell {
     let token = database
         .pool
         .cell_prefix()
-        .token(codeyard_support::tokens::PAT_PREFIX, &"d".repeat(64))
+        .token(codeyard_types::tokens::PAT_PREFIX, &"d".repeat(64))
         .unwrap();
     codeyard_db_identity::users::tokens::create_token(
         &database.pool,

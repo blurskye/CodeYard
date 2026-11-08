@@ -292,8 +292,8 @@ async fn model(ctx: &PageContext, params: &Params) -> anyhow::Result<view::Page>
                     id,
                     format!(
                         "/{}/{}/{kind}/{number}",
-                        codeyard_webui::encode_component(&owner),
-                        codeyard_webui::encode_component(&name)
+                        codeyard_types::paths::encode_component(&owner),
+                        codeyard_types::paths::encode_component(&name)
                     ),
                 )
             })

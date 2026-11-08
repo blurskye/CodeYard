@@ -89,7 +89,7 @@ impl LocalStore {
             }
             let bytes = archive.into_inner()?.finish()?;
             anyhow::ensure!(
-                bytes.len() <= codeyard_support::object_limits::MAX_OBJECT_BYTES as usize,
+                bytes.len() <= codeyard_types::object_limits::MAX_OBJECT_BYTES as usize,
                 "Migration archive too large"
             );
             drop(temporary);

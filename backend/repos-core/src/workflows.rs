@@ -262,7 +262,7 @@ pub fn infer_pipeline_from_workflow_path(path: &str) -> CiPipelineKind {
 }
 
 pub fn workflow_name_from_path(path: &str) -> String {
-    codeyard_webui::workflow_filename(path)
+    codeyard_types::paths::workflow_filename(path)
 }
 
 const MAX_WORKFLOW_NAME_BYTES: usize = 1024;

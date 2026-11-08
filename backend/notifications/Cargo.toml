@@ -28,3 +28,6 @@ uuid = { workspace = true, features = ["v4"] }
 
 [lints]
 workspace = true
+
+[dependencies.codeyard-types]
+workspace = true

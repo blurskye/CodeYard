@@ -110,7 +110,7 @@ async fn tree_entries(
 
 async fn tree_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Response, Response> {
     let resolved = if tail.is_empty() {
-        view::ref_path::ResolvedRefPath {
+        codeyard_types::ref_path::ResolvedRefPath {
             reference: default_ref(loaded),
             path: String::new(),
         }
@@ -229,7 +229,12 @@ async fn tree_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
         page.permalink = format!(
             "{}{}",
             codeyard_model::http_config::public_origin(),
-            view::ref_path::file_url(&loaded.chrome.base(), "tree", &last.sha, &resolved.path)
+            codeyard_types::ref_path::file_url(
+                &loaded.chrome.base(),
+                "tree",
+                &last.sha,
+                &resolved.path
+            )
         );
         page.latest_commit = folder_commit.map(commit);
         if resolved.path.is_empty() {

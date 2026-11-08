@@ -219,7 +219,7 @@ async fn by_username(
     }
     let url = api_url(&format!(
         "/users/{}",
-        codeyard_webui::encode_component(&org.name)
+        codeyard_types::paths::encode_component(&org.name)
     ));
     value["url"] = json!(url);
     for (field, suffix) in [

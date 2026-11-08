@@ -1376,7 +1376,7 @@ fn editor_return<'a>(from: &'a str, base: &str) -> Option<&'a str> {
     }
     // The browser resolves `%2e%2e` as dot segments, so it is decoded once. `%252e` is a file
     // named `%2e` and stays allowed.
-    let decoded = codeyard_webui::decode_component(from);
+    let decoded = codeyard_types::paths::decode_component(from);
     let unsafe_text = decoded.contains("//")
         || decoded.chars().any(|c| c == '\\' || c.is_control())
         || decoded
@@ -1392,7 +1392,7 @@ pub(super) async fn get_form(
     Path(params): Path<HashMap<String, String>>,
     Query(query): Query<HashMap<String, String>>,
 ) -> Response {
-    let base = codeyard_webui::repository_path(&params["owner"], &params["repo"]);
+    let base = codeyard_types::paths::repository_path(&params["owner"], &params["repo"]);
     let editor = query
         .get("from")
         .and_then(|from| editor_return(from, &base));
@@ -1423,7 +1423,7 @@ pub(super) async fn post_form(
     // the repository page instead. Set it before the checks that can fail.
     ctx.return_to = Some(format!(
         "{}{}",
-        codeyard_webui::repository_path(owner, name),
+        codeyard_types::paths::repository_path(owner, name),
         form_page_suffix(action)
     ));
     if let Err(response) = ctx.check_csrf(&form) {
@@ -1589,7 +1589,7 @@ async fn fork_form(
     };
     let path = format!(
         "{}/_forms/fork",
-        codeyard_webui::repository_path(owner, name)
+        codeyard_types::paths::repository_path(owner, name)
     );
     match codeyard_app::cells::forward_fork(&ctx.state, actor, None, &ctx.headers, &path, body)
         .await
@@ -1618,7 +1618,7 @@ async fn fork_form(
     )
     .await
     {
-        Ok(fork) => ctx.redirect(&codeyard_webui::repository_path(
+        Ok(fork) => ctx.redirect(&codeyard_types::paths::repository_path(
             &actor.username,
             &fork.name,
         )),
@@ -1677,7 +1677,7 @@ async fn mutate(
             )),
         )
     })?;
-    let base = codeyard_webui::repository_path(owner, name);
+    let base = codeyard_types::paths::repository_path(owner, name);
     let cluster = ctx.state.cluster.as_ref();
     let ci = &ctx.state.ci_runs;
     let authority = || ctx.database_actor(actor.id);
@@ -1881,7 +1881,7 @@ async fn mutate(
             .map_err(|error| match error
                 .downcast_ref::<codeyard_db_core::queries::secret_scanning::Refusal>(
             ) {
-                _ if error.is::<codeyard_support::credentials::AccountRestricted>() => {
+                _ if error.is::<codeyard_types::credentials::AccountRestricted>() => {
                     ApiError::failure(
                         StatusCode::FORBIDDEN,
                         "forbidden",
@@ -2088,7 +2088,7 @@ async fn mutate(
             )
             .await
             .map_err(repository_settings_error)?;
-            Ok(codeyard_webui::repository_path(owner, &updated.name))
+            Ok(codeyard_types::paths::repository_path(owner, &updated.name))
         }
         "transfer" => {
             let updated = codeyard_repos_core::repositories::lifecycle::transfer(
@@ -2101,7 +2101,10 @@ async fn mutate(
             .await
             .map_err(lifecycle_error)?;
             let new_owner = repository_owner(pool, &updated).await?;
-            Ok(codeyard_webui::repository_path(&new_owner, &updated.name))
+            Ok(codeyard_types::paths::repository_path(
+                &new_owner,
+                &updated.name,
+            ))
         }
         "archive" | "unarchive" => {
             codeyard_identity::repository_access::check_admin(pool, repository.id, actor.id)
@@ -2127,7 +2130,7 @@ async fn mutate(
             )
             .await
             .map_err(lifecycle_error)?;
-            Ok(codeyard_webui::profile_path(owner))
+            Ok(codeyard_types::paths::profile_path(owner))
         }
         "template" => {
             codeyard_db_repos::repositories::records::patch_repository(

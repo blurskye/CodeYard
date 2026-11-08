@@ -1,7 +1,7 @@
 use super::{Directory, Refusal};
 use anyhow::{ensure, Result};
 use codeyard_model::cells::{Cell, State};
-use codeyard_support::cells::Prefix;
+use codeyard_types::cells::Prefix;
 
 const COLUMNS: &str = "c.id,c.name,c.region,c.state,c.web_urls::text,c.ssh_addresses::text,c.rpc_addresses::text,c.database_bytes,c.write_rate,c.maximum_database_bytes,c.maximum_write_rate,c.read_regions::text,(SELECT COALESCE(json_agg(public_key)::text,'[]') FROM (SELECT public_key FROM directory_node_keys WHERE cell_id=c.id ORDER BY public_key LIMIT 1001) keys) AS node_keys";
 
@@ -104,7 +104,7 @@ impl Directory {
     /// Local operator only, with a transport-authenticated key at use time.
     pub async fn set_router_key(&self, key: &str, enabled: bool) -> Result<()> {
         self.run(async {
-            ensure!(codeyard_support::tokens::is_hex_token(key, 64), Refusal::Invalid);
+            ensure!(codeyard_types::tokens::is_hex_token(key, 64), Refusal::Invalid);
             let key = key.to_ascii_lowercase();
             let mut tx = self.begin().await?;
             if enabled {
@@ -132,7 +132,7 @@ impl Directory {
     pub async fn router_key_for(&self, peer: &str, key: &str) -> Result<bool> {
         self.run(async {
             ensure!(
-                codeyard_support::tokens::is_hex_token(key, 64),
+                codeyard_types::tokens::is_hex_token(key, 64),
                 Refusal::Invalid
             );
             let mut tx = self.begin().await?;
@@ -153,7 +153,7 @@ impl Directory {
     pub async fn authorize_read(&self, peer: &str) -> Result<()> {
         self.run(async {
             ensure!(
-                codeyard_support::tokens::is_hex_token(peer, 64),
+                codeyard_types::tokens::is_hex_token(peer, 64),
                 Refusal::Denied
             );
             let mut tx = self.begin().await?;

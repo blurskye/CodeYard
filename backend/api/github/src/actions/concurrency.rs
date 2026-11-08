@@ -111,7 +111,7 @@ fn group_url(owner: &str, repo: &str, group: &str) -> String {
     format!(
         "{}/actions/concurrency_groups/{}",
         repo_url(owner, repo),
-        codeyard_webui::encode_component(group)
+        codeyard_types::paths::encode_component(group)
     )
 }
 fn member(
@@ -121,7 +121,7 @@ fn member(
 ) -> Value {
     let run = &member.run;
     let id = run.workflow_run_id.unwrap_or(run.id);
-    let mut value = json!({"run_id":id,"run_name":run.pipeline,"run_url":format!("{}/actions/runs/{id}",repo_url(owner,repo)),"run_html_url":format!("{}/{}/{}/actions?job={}",codeyard_model::http_config::link_origin(),codeyard_webui::encode_component(owner),codeyard_webui::encode_component(repo),run.run_id),"status":if member.holding{"in_progress"}else{"pending"}});
+    let mut value = json!({"run_id":id,"run_name":run.pipeline,"run_url":format!("{}/actions/runs/{id}",repo_url(owner,repo)),"run_html_url":format!("{}/{}/{}/actions?job={}",codeyard_model::http_config::link_origin(),codeyard_types::paths::encode_component(owner),codeyard_types::paths::encode_component(repo),run.run_id),"status":if member.holding{"in_progress"}else{"pending"}});
     if let Some(job) = member.job_id {
         value["job_id"] = json!(job);
         value["job_name"] = json!(member.job_name);

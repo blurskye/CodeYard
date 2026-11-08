@@ -172,7 +172,7 @@ fn pull_redirect(
     uri: &axum::http::Uri,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    use codeyard_webui::encode_component;
+    use codeyard_types::paths::encode_component;
     let tab = rest
         .split('/')
         .filter(|part| !part.is_empty())

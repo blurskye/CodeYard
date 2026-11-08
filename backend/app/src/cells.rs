@@ -131,7 +131,7 @@ impl codeyard_db_core::cells::outbox::Consumer for Refreshes {
     }
 }
 impl Home for Native {
-    fn cell(&self) -> Option<codeyard_support::cells::Prefix> {
+    fn cell(&self) -> Option<codeyard_types::cells::Prefix> {
         Some(self.state.pool.cell_id())
     }
     fn authorize<'a>(&'a self, proof: &'a Proof) -> BoxFuture<'a, Result<Option<Answer>>> {
@@ -196,7 +196,7 @@ impl Home for Native {
                 .identity()
                 .fork_actor(proof)
                 .await?
-                .ok_or(codeyard_support::credentials::AccountRestricted)?;
+                .ok_or(codeyard_types::credentials::AccountRestricted)?;
             codeyard_db_repos::pull_requests::cells::subscribe(
                 &self.state.pool,
                 binding,
@@ -575,7 +575,7 @@ pub async fn fork_source(
     use codeyard_model::github_error::Error;
     codeyard_model::cells::Key::new(codeyard_model::cells::KeyKind::Name, owner)
         .map_err(|_| Error::invalid("Invalid fork source"))?;
-    if !codeyard_support::repository_names::valid(name) {
+    if !codeyard_types::repository_names::valid(name) {
         return Err(Error::invalid("Invalid fork source"));
     }
     let proof =
@@ -698,7 +698,7 @@ pub async fn pull_head_id(
     id: i64,
 ) -> codeyard_model::github_error::Result<ForkSource> {
     use codeyard_model::github_error::Error;
-    codeyard_support::cells::Prefix::for_id(id).map_err(|_| Error::missing())?;
+    codeyard_types::cells::Prefix::for_id(id).map_err(|_| Error::missing())?;
     if let Some(repo) =
         codeyard_db_repos::repositories::records::get_repository_by_id(&state.pool, id)
             .await

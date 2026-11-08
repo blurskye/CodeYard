@@ -36,3 +36,6 @@ thiserror.workspace = true
 
 [lints]
 workspace = true
+
+[dependencies.codeyard-types]
+workspace = true

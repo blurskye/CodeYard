@@ -17,7 +17,7 @@ use codeyard_db_identity::interactions::NewRestriction;
 use codeyard_db_repos::pull_caps::CapUpdate;
 use codeyard_db_repos::pull_caps::PullCapRefusal;
 use codeyard_db_repos::pull_caps::PullCapScope;
-use codeyard_support::credentials::AccountRestricted;
+use codeyard_types::credentials::AccountRestricted;
 use std::sync::Arc;
 
 pub(crate) async fn post(
@@ -114,8 +114,8 @@ async fn scope_target(ctx: &PageContext, scope: InteractionScope) -> String {
             ) {
                 (Ok(Some(repo)), Ok(Some(owner))) => format!(
                     "/{}/{}/settings",
-                    codeyard_webui::encode_component(&owner),
-                    codeyard_webui::encode_component(&repo.name)
+                    codeyard_types::paths::encode_component(&owner),
+                    codeyard_types::paths::encode_component(&repo.name)
                 ),
                 _ => "/".into(),
             }

@@ -161,7 +161,7 @@ async fn list(
         format!(
             "{}/security/secret-scanning?state={state}&secret_type={}&page={}",
             loaded.chrome.base(),
-            codeyard_webui::encode_component(&secret_type),
+            codeyard_types::paths::encode_component(&secret_type),
             page + 1
         )
     });

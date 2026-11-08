@@ -309,7 +309,7 @@ pub async fn dismiss(
     codeyard_db_identity::sqlite::credentials::require_account(&mut tx, &credential)
         .await
         .map_err(|error| {
-            if error.is::<codeyard_support::credentials::AccountRestricted>() {
+            if error.is::<codeyard_types::credentials::AccountRestricted>() {
                 anyhow::Error::new(Refusal::Denied)
             } else {
                 error

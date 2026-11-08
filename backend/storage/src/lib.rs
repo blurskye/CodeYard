@@ -1,7 +1,7 @@
 //! Where uploaded files live: a directory under the state directory, or an
 //! S3-compatible bucket when the S3_* environment variables are set.
 use anyhow::Result;
-use codeyard_support::object_limits::MAX_OBJECT_BYTES;
+use codeyard_types::object_limits::MAX_OBJECT_BYTES;
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;

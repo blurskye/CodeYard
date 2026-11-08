@@ -96,7 +96,7 @@ fn settings_read_failure<'a>(
     message: &'static str,
 ) -> impl Fn(anyhow::Error) -> Response + 'a {
     move |error| {
-        if error.is::<codeyard_support::credentials::AccountRestricted>() {
+        if error.is::<codeyard_types::credentials::AccountRestricted>() {
             ctx.error(
                 StatusCode::FORBIDDEN,
                 "A live unrestricted account session is required.",
@@ -517,7 +517,7 @@ pub(crate) async fn social_accounts_post(
             )
             .await
         }
-        Err(error) if error.is::<codeyard_support::credentials::AccountRestricted>() => {
+        Err(error) if error.is::<codeyard_types::credentials::AccountRestricted>() => {
             ctx.error(StatusCode::FORBIDDEN, "Account is restricted.")
         }
         Err(_) => ctx.error(

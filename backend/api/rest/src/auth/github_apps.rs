@@ -81,7 +81,7 @@ fn login(ctx: &PageContext) -> Option<Response> {
     ctx.user.is_none().then(|| {
         Redirect::to(&format!(
             "/enter?redirect={}",
-            codeyard_webui::encode_component(&ctx.location)
+            codeyard_types::paths::encode_component(&ctx.location)
         ))
         .into_response()
     })
@@ -304,7 +304,7 @@ async fn regenerate(
             page(&ctx, model)
         }
         Ok(None) => ctx.error(StatusCode::NOT_FOUND, "App not found"),
-        Err(error) if error.is::<codeyard_support::credentials::AccountRestricted>() => {
+        Err(error) if error.is::<codeyard_types::credentials::AccountRestricted>() => {
             ctx.error(StatusCode::FORBIDDEN, "Account unavailable")
         }
         Err(_) => ctx.error(

@@ -16,7 +16,7 @@ pub struct RuntimeCredentials {
 }
 
 pub fn secret() -> String {
-    let mut bytes = [0; codeyard_support::tokens::TOKEN_BYTES];
+    let mut bytes = [0; codeyard_types::tokens::TOKEN_BYTES];
     rand::rngs::OsRng.fill_bytes(&mut bytes);
     URL_SAFE_NO_PAD.encode(bytes)
 }

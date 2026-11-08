@@ -55,7 +55,7 @@ fn failure(error: &anyhow::Error) -> (StatusCode, String) {
     {
         return (StatusCode::UNPROCESSABLE_ENTITY, graph.to_string());
     }
-    if error.is::<codeyard_support::credentials::AccountRestricted>() {
+    if error.is::<codeyard_types::credentials::AccountRestricted>() {
         return (
             StatusCode::FORBIDDEN,
             "A live unrestricted credential is required".into(),

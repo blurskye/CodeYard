@@ -149,9 +149,9 @@ pub enum CredentialRefusal {
 
 impl ReceiveCredential {
     fn foreign_token(id: i64, hash: &str) -> Result<Self> {
-        codeyard_support::cells::Prefix::for_id(id)?;
+        codeyard_types::cells::Prefix::for_id(id)?;
         anyhow::ensure!(
-            codeyard_support::tokens::is_hex_token(hash, 64),
+            codeyard_types::tokens::is_hex_token(hash, 64),
             CredentialRefusal::Credential
         );
         let hash = hex::decode(hash)?
@@ -203,7 +203,7 @@ impl ReceiveCredential {
             Self::ForeignToken { id, hash } => (
                 id,
                 Proof::Token {
-                    home: codeyard_support::cells::Prefix::for_id(id)?,
+                    home: codeyard_types::cells::Prefix::for_id(id)?,
                     hash: hex::encode(hash),
                 },
             ),

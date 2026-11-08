@@ -8,7 +8,7 @@ use codeyard_db_repos::packages::Refusal;
 use codeyard_model::package_input::valid_name;
 use codeyard_storage::ObjectStore;
 use codeyard_storage::Upload;
-use codeyard_support::object_limits::MAX_OBJECT_BYTES;
+use codeyard_types::object_limits::MAX_OBJECT_BYTES;
 use sha2::Sha256;
 
 pub fn digest(bytes: &[u8]) -> String {

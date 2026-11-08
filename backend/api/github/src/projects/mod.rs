@@ -76,7 +76,7 @@ pub(super) fn project_url(project: &Project, name: &str) -> String {
         } else {
             "users"
         },
-        codeyard_webui::encode_component(name),
+        codeyard_types::paths::encode_component(name),
         project.number
     ))
 }
@@ -96,12 +96,12 @@ pub(super) async fn document(state: &AppState, project: &Project, name: &str) ->
         owner["type"] = serde_json::json!("Organization");
         owner["url"] = serde_json::json!(api_url(&format!(
             "/orgs/{}",
-            codeyard_webui::encode_component(name)
+            codeyard_types::paths::encode_component(name)
         )));
         owner["html_url"] = serde_json::json!(format!(
             "{}{}",
             codeyard_model::http_config::link_origin(),
-            codeyard_webui::profile_path(name)
+            codeyard_types::paths::profile_path(name)
         ));
         owner["node_id"] =
             serde_json::json!(codeyard_model::node_id::encode("O", project.owner_id));

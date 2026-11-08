@@ -6,7 +6,7 @@ use crate::models::{Repository, User};
 use crate::DbPool;
 use anyhow::{ensure, Result};
 use codeyard_model::cells::{Key, KeyKind, Object, ObjectKind};
-use codeyard_support::cells::Prefix;
+use codeyard_types::cells::Prefix;
 use serde::{Deserialize, Serialize};
 
 pub const TOPIC: &str = "notice";

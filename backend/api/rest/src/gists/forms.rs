@@ -84,7 +84,7 @@ fn submitted(
     }
     let expected = field(form, "expected").to_owned();
     anyhow::ensure!(
-        id.is_none() || codeyard_support::git_ids::is_full_commit_id(&expected),
+        id.is_none() || codeyard_types::git_ids::is_full_commit_id(&expected),
         InvalidInput("Reload the gist before editing; its revision is missing.")
     );
     let too_large = bytes > 2 * EDITOR_BYTES

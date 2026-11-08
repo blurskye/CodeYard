@@ -12,7 +12,7 @@ pub struct ApiError {
 pub fn protection_write_error(
     error: anyhow::Error,
 ) -> (axum::http::StatusCode, axum::Json<ApiError>) {
-    if error.is::<codeyard_support::credentials::AccountRestricted>() {
+    if error.is::<codeyard_types::credentials::AccountRestricted>() {
         return ApiError::failure(
             StatusCode::FORBIDDEN,
             "forbidden",
@@ -65,7 +65,7 @@ pub fn repository_settings_error(
 ) -> (axum::http::StatusCode, axum::Json<ApiError>) {
     use axum::{http::StatusCode, Json};
     use codeyard_db_repos::repositories::records::RepositorySettingsRefusal as Refusal;
-    if error.is::<codeyard_support::credentials::AccountRestricted>() {
+    if error.is::<codeyard_types::credentials::AccountRestricted>() {
         return ApiError::failure(
             StatusCode::FORBIDDEN,
             "forbidden",

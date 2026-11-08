@@ -122,7 +122,7 @@ async fn render(
                             id,
                         )
                         .await?
-                        .map(|owner| codeyard_webui::repository_path(&owner, &fork.name))
+                        .map(|owner| codeyard_types::paths::repository_path(&owner, &fork.name))
                     } else {
                         None
                     }
@@ -331,7 +331,7 @@ async fn submit(
         ))
         .into_response(),
         Err(error) => {
-            let status = if error.is::<codeyard_support::credentials::AccountRestricted>() {
+            let status = if error.is::<codeyard_types::credentials::AccountRestricted>() {
                 StatusCode::FORBIDDEN
             } else {
                 match error.downcast_ref::<codeyard_model::advisories::Refusal>() {

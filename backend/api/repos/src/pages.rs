@@ -195,7 +195,7 @@ async fn submit(
                 Some(codeyard_db_repos::pages::Refusal::Denied) => StatusCode::FORBIDDEN,
                 Some(codeyard_db_repos::pages::Refusal::Missing) => StatusCode::NOT_FOUND,
                 Some(_) => StatusCode::UNPROCESSABLE_ENTITY,
-                None if error.is::<codeyard_support::credentials::AccountRestricted>() => {
+                None if error.is::<codeyard_types::credentials::AccountRestricted>() => {
                     StatusCode::FORBIDDEN
                 }
                 None => match error.downcast_ref::<codeyard_git::error::RepoError>() {

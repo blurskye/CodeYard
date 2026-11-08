@@ -196,7 +196,7 @@ async fn compare(
                 "severity":a.severity(),
                 "advisory_ghsa_id":a.catalogue_id(),
                 "advisory_summary":a.summary,
-                "advisory_url":format!("https://osv.dev/vulnerability/{}",codeyard_webui::encode_component(&a.id)),
+                "advisory_url":format!("https://osv.dev/vulnerability/{}",codeyard_types::paths::encode_component(&a.id)),
             })).collect::<Vec<_>>();
         if let Some(ecosystem) = codeyard_model::vulnerabilities::ecosystem(&package.ecosystem) {
             for advisory in &local {
@@ -358,7 +358,7 @@ async fn fetch(
             format!(
                 "{}/dependency-graph/sbom?report={}",
                 repo_url(&owner, &name),
-                codeyard_webui::encode_component(&id)
+                codeyard_types::paths::encode_component(&id)
             ),
         )],
     )

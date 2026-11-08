@@ -478,8 +478,8 @@ async fn check(
                     header::LOCATION,
                     api_url(&format!(
                         "/orgs/{}/public_members/{}",
-                        codeyard_webui::encode_component(name),
-                        codeyard_webui::encode_component(username)
+                        codeyard_types::paths::encode_component(name),
+                        codeyard_types::paths::encode_component(username)
                     )),
                 )],
             )
@@ -565,7 +565,7 @@ async fn conceal(
 
 fn membership_document(org: &Organization, user: &User, role: &str, state: &str) -> Value {
     let organization = codeyard_webhooks::payloads::organization(org);
-    json!({"url": api_url(&format!("/orgs/{}/memberships/{}", codeyard_webui::encode_component(&org.name), codeyard_webui::encode_component(&user.username))),
+    json!({"url": api_url(&format!("/orgs/{}/memberships/{}", codeyard_types::paths::encode_component(&org.name), codeyard_types::paths::encode_component(&user.username))),
         "organization_url": organization["url"], "organization": organization, "user": codeyard_webhooks::payloads::user(user),
         "role": if role == "owner" { "admin" } else { "member" }, "state": state, "direct_membership": true})
 }

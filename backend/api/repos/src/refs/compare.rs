@@ -16,10 +16,10 @@ use codeyard_app::app::AppState;
 use codeyard_git::error::ErrorKind;
 use codeyard_repos_core::repositories::reads::same_fork_network;
 use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_types::ref_path::compare_url;
 use codeyard_webui::pages::repos::issues as view;
 use codeyard_webui::pages::repos::issues::NewDraft;
 use codeyard_webui::pages::repos::pulls;
-use codeyard_webui::pages::repos::ref_path::compare_url;
 use std::collections::HashMap;
 use std::sync::Arc;
 

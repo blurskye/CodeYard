@@ -202,8 +202,8 @@ pub(crate) async fn profile_response(
     let repository_href = |page: usize| {
         format!(
             "{}?repo_page={page}&q={}",
-            codeyard_webui::profile_path(&target.username),
-            codeyard_webui::encode_component(repository_query)
+            codeyard_types::paths::profile_path(&target.username),
+            codeyard_types::paths::encode_component(repository_query)
         )
     };
     let repositories_newer =

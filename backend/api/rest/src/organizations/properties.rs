@@ -359,7 +359,7 @@ async fn mutate(
             } else {
                 format!(
                     "&property={}",
-                    codeyard_webui::encode_component(
+                    codeyard_types::paths::encode_component(
                         codeyard_api_http::shared::user::responses::field(&form, "property_name")
                     )
                 )

@@ -12,8 +12,8 @@ use codeyard_api_http::context::PageContext;
 use codeyard_app::app::AppState;
 use codeyard_db_repos::artifact_metadata::Record;
 use codeyard_db_repos::artifact_metadata::Refusal;
+use codeyard_types::paths::encode_component;
 use codeyard_webui::app::Page as AppPage;
-use codeyard_webui::encode_component;
 use codeyard_webui::pages::artifact_metadata as view;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -222,7 +222,7 @@ async fn show(
     ctx.page_model(
         "Artifact inventory",
         AppPage::ArtifactMetadata(view::Page {
-            organization_href: codeyard_webui::profile_path(&organization.name),
+            organization_href: codeyard_types::paths::profile_path(&organization.name),
             organization: organization.name,
             base,
             digest,

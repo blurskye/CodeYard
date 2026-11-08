@@ -142,7 +142,7 @@ pub(crate) async fn settings_post(
     if form.contains_key("scaling_role") {
         let number = |name| field(&form, name).parse::<i64>().ok();
         let policy = (|| {
-            Some(codeyard_support::cluster::ScalingPolicy {
+            Some(codeyard_types::cluster::ScalingPolicy {
                 role: field(&form, "scaling_role").into(),
                 minimum: i32::try_from(number("scaling_minimum")?).ok()?,
                 maximum: i32::try_from(number("scaling_maximum")?).ok()?,
@@ -204,7 +204,7 @@ pub(crate) async fn settings_post(
         }
         let number = |name| field(&form, name).parse::<i64>().ok();
         let policy = (|| {
-            Some(codeyard_support::cluster::RegionPolicy {
+            Some(codeyard_types::cluster::RegionPolicy {
                 window_days: i32::try_from(number("presence_window")?).ok()?,
                 share_percent: i32::try_from(number("presence_share")?).ok()?,
                 minimum_requests: number("presence_minimum")?,

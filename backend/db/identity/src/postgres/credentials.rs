@@ -3,7 +3,7 @@ use codeyard_db_core::queries::ci::CiCredential;
 use codeyard_db_core::queries::credentials::Actor;
 use codeyard_db_core::queries::postgres::credentials::repository;
 use codeyard_db_core::queries::users::accounts::OwnedAccountCredential;
-use codeyard_support::credentials::AccountRestricted;
+use codeyard_types::credentials::AccountRestricted;
 use sqlx::Postgres;
 use sqlx::Transaction;
 

@@ -37,11 +37,11 @@ pub enum OAuthError {
 pub fn validate_callback(
     code: &str,
     token: &str,
-) -> Result<codeyard_support::cells::Prefix, OAuthError> {
+) -> Result<codeyard_types::cells::Prefix, OAuthError> {
     if code.is_empty() || code.len() > 4096 {
         return Err(OAuthError::InvalidCode);
     }
-    codeyard_support::cells::Secret::cookie(token)
+    codeyard_types::cells::Secret::cookie(token)
         .map(|token| token.cell)
         .map_err(|_| OAuthError::InvalidCode)
 }
@@ -65,7 +65,7 @@ pub async fn begin(
     verifier: &str,
     return_to: &str,
 ) -> Result<String, OAuthError> {
-    if codeyard_support::cells::Secret::cookie(state_token)
+    if codeyard_types::cells::Secret::cookie(state_token)
         .ok()
         .is_none_or(|token| !pool.owns_prefix(token.cell))
     {

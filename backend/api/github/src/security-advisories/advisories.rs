@@ -48,7 +48,7 @@ pub(crate) fn failure(error: anyhow::Error) -> Error {
     {
         return Error::new(StatusCode::UNPROCESSABLE_ENTITY, graph.to_string());
     }
-    if error.is::<codeyard_support::credentials::AccountRestricted>() {
+    if error.is::<codeyard_types::credentials::AccountRestricted>() {
         return Error::new(
             StatusCode::FORBIDDEN,
             "A live unrestricted credential is required",
@@ -171,7 +171,7 @@ async fn document(
         Value::Null
     };
     Ok(
-        json!({"ghsa_id":row.ghsa_id,"cve_id":data.cve_id,"url":format!("{}/security-advisories/{}",repo_url(&owner,&repo.name),row.ghsa_id),"html_url":format!("{}/{}/{}/security/advisories/{}",codeyard_model::http_config::link_origin(),codeyard_webui::encode_component(&owner),codeyard_webui::encode_component(&repo.name),row.ghsa_id),"summary":data.summary,"description":data.description,"severity":data.severity,"author":author,"publisher":person(state,row.publisher_id).await?,"identifiers":identifiers,"state":row.state,"created_at":row.created_at,"updated_at":row.updated_at,"published_at":row.published_at,"closed_at":row.closed_at,"withdrawn_at":null,"submission":row.report_id.map(|_|json!({"accepted":row.report_accepted})),"vulnerabilities":data.vulnerabilities,"cvss":cvss,"cwes":null,"cwe_ids":data.cwe_ids,"credits":data.credits,"credits_detailed":null,"collaborating_users":[],"collaborating_teams":[],"private_fork":fork}),
+        json!({"ghsa_id":row.ghsa_id,"cve_id":data.cve_id,"url":format!("{}/security-advisories/{}",repo_url(&owner,&repo.name),row.ghsa_id),"html_url":format!("{}/{}/{}/security/advisories/{}",codeyard_model::http_config::link_origin(),codeyard_types::paths::encode_component(&owner),codeyard_types::paths::encode_component(&repo.name),row.ghsa_id),"summary":data.summary,"description":data.description,"severity":data.severity,"author":author,"publisher":person(state,row.publisher_id).await?,"identifiers":identifiers,"state":row.state,"created_at":row.created_at,"updated_at":row.updated_at,"published_at":row.published_at,"closed_at":row.closed_at,"withdrawn_at":null,"submission":row.report_id.map(|_|json!({"accepted":row.report_accepted})),"vulnerabilities":data.vulnerabilities,"cvss":cvss,"cwes":null,"cwe_ids":data.cwe_ids,"credits":data.credits,"credits_detailed":null,"collaborating_users":[],"collaborating_teams":[],"private_fork":fork}),
     )
 }
 #[derive(Default, Deserialize)]

@@ -30,3 +30,6 @@ workspace = true
 
 [dependencies.codeyard-db-identity]
 workspace = true
+
+[dependencies.codeyard-types]
+workspace = true

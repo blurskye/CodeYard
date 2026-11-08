@@ -67,7 +67,7 @@ async fn begin_write<'a>(
         )
         .await
         .map_err(|error| {
-            if error.is::<codeyard_support::credentials::AccountRestricted>() {
+            if error.is::<codeyard_types::credentials::AccountRestricted>() {
                 AssignmentRefusal::Denied.into()
             } else {
                 error

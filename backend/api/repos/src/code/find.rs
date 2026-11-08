@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 async fn find_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Response, Response> {
     let resolved = if tail.is_empty() {
-        view::ref_path::ResolvedRefPath {
+        codeyard_types::ref_path::ResolvedRefPath {
             reference: default_ref(loaded),
             path: String::new(),
         }

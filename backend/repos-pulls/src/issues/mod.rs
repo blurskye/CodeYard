@@ -169,7 +169,7 @@ pub(super) async fn require_write(
 
 pub(super) fn write_error(error: anyhow::Error) -> OperationError {
     use codeyard_db_core::queries::discussions::DiscussionWriteRefusal;
-    if error.is::<codeyard_support::credentials::AccountRestricted>() {
+    if error.is::<codeyard_types::credentials::AccountRestricted>() {
         return OperationError::Denied {
             code: "forbidden",
             message: "A live unrestricted credential is required.".into(),

@@ -33,8 +33,8 @@ pub async fn resolve(
         let issue = &outcome.issue;
         let link = format!(
             "/{}/{}/issues/{}",
-            codeyard_webui::encode_component(owner),
-            codeyard_webui::encode_component(&repo.name),
+            codeyard_types::paths::encode_component(owner),
+            codeyard_types::paths::encode_component(&repo.name),
             issue.number
         );
         codeyard_notifications::assignments::notify_assignees(

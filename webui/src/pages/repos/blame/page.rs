@@ -67,7 +67,7 @@ pub fn blame(repo: &RepoChrome, page: &BlamePage) -> Element {
     let raw = file_url(&base, "raw", &page.reference, &page.path);
     let blame_url = file_url(&base, "blame", &page.reference, &page.path);
     let display_name =
-        codeyard_support::git_paths::display(page.path.rsplit('/').next().unwrap_or_default());
+        codeyard_types::git_paths::display(page.path.rsplit('/').next().unwrap_or_default());
     let name = display_name.as_str();
     let language = language_of_path(&page.path);
     // Git counts lines by newline alone, so a carriage return is dropped rather than shown as

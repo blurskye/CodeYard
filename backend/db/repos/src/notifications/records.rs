@@ -36,8 +36,8 @@ pub(crate) fn refresh_link(notification: &mut Notification, owner: &str, name: &
         {
             notification.link = Some(format!(
                 "/{}/{}/actions?job={run_id}",
-                codeyard_webui::encode_component(owner),
-                codeyard_webui::encode_component(name),
+                codeyard_types::paths::encode_component(owner),
+                codeyard_types::paths::encode_component(name),
             ));
         }
         return;
@@ -51,8 +51,8 @@ pub(crate) fn refresh_link(notification: &mut Notification, owner: &str, name: &
                 .unwrap_or_default();
             *link = format!(
                 "/{}/{}{suffix}",
-                codeyard_webui::encode_component(owner),
-                codeyard_webui::encode_component(name)
+                codeyard_types::paths::encode_component(owner),
+                codeyard_types::paths::encode_component(name)
             );
         }
     }

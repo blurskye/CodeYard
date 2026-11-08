@@ -195,12 +195,12 @@ impl Scanner {
         let mut config: Config =
             toml::from_str(include_str!("../../../../spec/gitleaks/gitleaks.toml"))?;
         // The same token rule recognizes explicit cell prefixes and cell-zero values.
-        use crate::tokens::ACTIONS_PREFIX;
-        use crate::tokens::FGPAT_PREFIX;
-        use crate::tokens::HEX_TOKEN_CHARS;
-        use crate::tokens::INSTALLATION_PREFIX;
-        use crate::tokens::PAT_PREFIX;
-        use crate::tokens::URL_TOKEN_CHARS;
+        use codeyard_types::tokens::ACTIONS_PREFIX;
+        use codeyard_types::tokens::FGPAT_PREFIX;
+        use codeyard_types::tokens::HEX_TOKEN_CHARS;
+        use codeyard_types::tokens::INSTALLATION_PREFIX;
+        use codeyard_types::tokens::PAT_PREFIX;
+        use codeyard_types::tokens::URL_TOKEN_CHARS;
         for (id, prefix, alphabet, length) in [
             ("codeyard-pat", PAT_PREFIX, "a-f0-9", HEX_TOKEN_CHARS),
             (

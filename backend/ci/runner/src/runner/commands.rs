@@ -2,7 +2,7 @@
 use crate::progress::{Event, Update};
 use anyhow::{bail, Result};
 use base64::Engine;
-use codeyard_support::command_codec::{unescape_data as unescape, unescape_property};
+use codeyard_types::command_codec::{unescape_data as unescape, unescape_property};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{
     atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},

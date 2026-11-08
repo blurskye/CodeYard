@@ -9,13 +9,13 @@ fn html_url(owner: &str, repo: &str, number: i64, instance: Option<&Instance>) -
     let mut url = format!(
         "{}{}/security/code-scanning/{number}",
         link_origin(),
-        codeyard_webui::repository_path(owner, repo)
+        codeyard_types::paths::repository_path(owner, repo)
     );
     if let Some(instance) = instance {
         url.push_str(&format!(
             "?branch={}&category={}",
-            codeyard_webui::encode_component(&instance.ref_name),
-            codeyard_webui::encode_component(&instance.category)
+            codeyard_types::paths::encode_component(&instance.ref_name),
+            codeyard_types::paths::encode_component(&instance.category)
         ));
     }
     url

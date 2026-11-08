@@ -81,8 +81,8 @@ fn asset_item(repo_base: &str, tag: &str, asset: &ReleaseAsset) -> AssetItem {
         downloads: asset.download_count,
         href: format!(
             "{repo_base}/releases/download/{}/{}",
-            codeyard_webui::encode_component(tag),
-            codeyard_webui::encode_component(&asset.name)
+            codeyard_types::paths::encode_component(tag),
+            codeyard_types::paths::encode_component(&asset.name)
         ),
     }
 }
@@ -567,7 +567,7 @@ pub(crate) async fn create(
         Ok(release) => ctx.redirect(&format!(
             "{}/releases/tag/{}",
             repo.base(),
-            codeyard_webui::encode_component(&release.tag_name)
+            codeyard_types::paths::encode_component(&release.tag_name)
         )),
         Err(error) => {
             let (status, message) = refused(&error);
@@ -638,7 +638,7 @@ pub(crate) async fn update(
         Ok(release) => ctx.redirect(&format!(
             "{}/releases/tag/{}",
             repo.base(),
-            codeyard_webui::encode_component(&release.tag_name)
+            codeyard_types::paths::encode_component(&release.tag_name)
         )),
         Err(error) => {
             let (status, _) = refused(&error);

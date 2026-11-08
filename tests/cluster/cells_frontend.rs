@@ -3,7 +3,8 @@ use crate::support::native_database::PostgresDatabase;
 use codeyard_cells_router::{directory, frontend, http::Transport, routes::Routes};
 use codeyard_db_directory::Directory;
 use codeyard_model::cells::{Cell, Key, KeyKind, Object, ObjectKind, State};
-use codeyard_support::{cells::Prefix, node_identity::NodeKey};
+use codeyard_support::node_identity::NodeKey;
+use codeyard_types::cells::Prefix;
 use serde_json::{json, Value};
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
@@ -71,7 +72,7 @@ pub(super) async fn native(database: &PostgresDatabase, name: &str) -> (Server, 
     let token = database
         .pool
         .cell_prefix()
-        .token(codeyard_support::tokens::PAT_PREFIX, &"c".repeat(64))
+        .token(codeyard_types::tokens::PAT_PREFIX, &"c".repeat(64))
         .unwrap();
     codeyard_db_identity::users::tokens::create_token(
         &database.pool,

@@ -51,8 +51,8 @@ impl GistEdit {
     }
 }
 pub fn valid_gist_filename(name: &str) -> bool {
-    codeyard_support::file_names::valid_basename(name, MAX_GIST_FILENAME_BYTES)
-        && !codeyard_support::git_paths::is_git_dir_name(name)
+    codeyard_types::file_names::valid_basename(name, MAX_GIST_FILENAME_BYTES)
+        && !codeyard_types::git_paths::is_git_dir_name(name)
 }
 fn invalid() -> RepoError {
     RepoError::new(ErrorKind::Invalid, "Invalid gist files or description")

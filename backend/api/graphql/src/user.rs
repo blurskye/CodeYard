@@ -12,14 +12,14 @@ use serde_json::Value;
 pub(super) fn object(user: &codeyard_db_core::models::User, viewer: i64) -> Value {
     json!({"__typename":"User","id":node_id::encode("U",user.id),"databaseId":user.id,
         "login":user.username,"name":user.display_name,
-        "url":url(&codeyard_webui::profile_path(&user.username)),"avatarUrl":url(&format!("/avatars/{}",user.username)),"createdAt":user.created_at,
+        "url":url(&codeyard_types::paths::profile_path(&user.username)),"avatarUrl":url(&format!("/avatars/{}",user.username)),"createdAt":user.created_at,
         "bio":user.bio,"location":user.location,"websiteUrl":user.website,
         "isViewer":viewer==user.id})
 }
 
 pub(super) fn organization(org: &codeyard_db_core::models::Organization) -> Value {
     json!({"__typename":"Organization","id":node_id::encode("O",org.id),"databaseId":org.id,
-        "login":org.name,"name":org.display_name,"email":null,"url":url(&codeyard_webui::profile_path(&org.name)),
+        "login":org.name,"name":org.display_name,"email":null,"url":url(&codeyard_types::paths::profile_path(&org.name)),
         "avatarUrl":url(&format!("/avatars/{}",org.name)),"createdAt":org.created_at,
         "description":org.description,"websiteUrl":null})
 }

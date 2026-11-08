@@ -175,17 +175,17 @@ impl Remote {
                 let (owner, name, base, id) = match &request {
                     Request::RepositorySource { owner, name, .. } => {
                         ensure!(
-                            codeyard_support::repository_names::valid(name),
+                            codeyard_types::repository_names::valid(name),
                             "Invalid fork source name"
                         );
                         (Some(owner.as_str()), Some(name.as_str()), None, None)
                     }
                     Request::RepositoryFork { owner, base, .. } => {
-                        codeyard_support::cells::Prefix::for_id(*base)?;
+                        codeyard_types::cells::Prefix::for_id(*base)?;
                         (Some(owner.as_str()), None, Some(*base), None)
                     }
                     Request::RepositoryId { id, .. } => {
-                        codeyard_support::cells::Prefix::for_id(*id)?;
+                        codeyard_types::cells::Prefix::for_id(*id)?;
                         (None, None, None, Some(*id))
                     }
                     _ => anyhow::bail!("Invalid repository metadata request"),
@@ -314,7 +314,7 @@ impl Home for Remote {
             };
             let issuer = self
                 .routes
-                .cell(codeyard_support::cells::Prefix::for_id(event.id)?)
+                .cell(codeyard_types::cells::Prefix::for_id(event.id)?)
                 .await?;
             if issuer.is_none_or(|issuer| issuer.id != source.id) {
                 return Ok(());
@@ -607,7 +607,7 @@ impl Home for Remote {
     }
     fn user_id<'a>(&'a self, id: i64) -> BoxFuture<'a, Result<Option<User>>> {
         Box::pin(async move {
-            codeyard_support::cells::Prefix::for_id(id)?;
+            codeyard_types::cells::Prefix::for_id(id)?;
             let _slot = self.slots.clone().try_acquire_owned()?;
             let Some(cell) = self
                 .routes
@@ -624,7 +624,7 @@ impl Home for Remote {
     }
     fn resource_page<'a>(
         &'a self,
-        cell: codeyard_support::cells::Prefix,
+        cell: codeyard_types::cells::Prefix,
         page: &'a codeyard_db_core::cells::pointers::Page,
         credential: Option<&'a str>,
     ) -> BoxFuture<'a, Result<codeyard_db_core::cells::pointers::PageResult>> {
@@ -699,7 +699,7 @@ impl Home for Remote {
                     .header(axum::http::header::ACCEPT_ENCODING, "identity");
                 if let Some(credential) = credential {
                     if browser {
-                        codeyard_support::cells::Secret::cookie(credential)?;
+                        codeyard_types::cells::Secret::cookie(credential)?;
                         request = request.header(
                             axum::http::header::COOKIE,
                             format!("session_id={credential}"),
@@ -948,10 +948,7 @@ impl Home for Remote {
         })
     }
 }
-async fn enrolled(
-    directory: &Directory,
-    peer: PublicKey,
-) -> Result<codeyard_support::cells::Prefix> {
+async fn enrolled(directory: &Directory, peer: PublicKey) -> Result<codeyard_types::cells::Prefix> {
     match directory
         .request(&DirectoryRequest::NodeCell {
             public_key: peer.to_string(),
@@ -965,13 +962,13 @@ async fn enrolled(
 struct NoticeAdmission {
     directory: Directory,
     peer: PublicKey,
-    recipient: codeyard_support::cells::Prefix,
+    recipient: codeyard_types::cells::Prefix,
 }
 impl codeyard_db_core::cells::notices::Admission for NoticeAdmission {
     fn check<'a>(
         &'a self,
         event: &'a codeyard_db_core::cells::notices::Event,
-    ) -> BoxFuture<'a, Result<codeyard_support::cells::Prefix>> {
+    ) -> BoxFuture<'a, Result<codeyard_types::cells::Prefix>> {
         Box::pin(async move {
             if event.withdrawn {
                 // A deleted source has no directory home. Withdrawal can only narrow an
@@ -1001,13 +998,13 @@ impl codeyard_db_core::cells::notices::Admission for NoticeAdmission {
 struct PointerAdmission {
     directory: Directory,
     peer: PublicKey,
-    recipient: codeyard_support::cells::Prefix,
+    recipient: codeyard_types::cells::Prefix,
 }
 impl codeyard_db_core::cells::pointers::Admission for PointerAdmission {
     fn check<'a>(
         &'a self,
         event: &'a codeyard_db_core::cells::pointers::Event,
-    ) -> BoxFuture<'a, Result<codeyard_support::cells::Prefix>> {
+    ) -> BoxFuture<'a, Result<codeyard_types::cells::Prefix>> {
         Box::pin(async move {
             event.validate()?;
             roots(
@@ -1028,11 +1025,11 @@ impl codeyard_db_core::cells::pointers::Admission for PointerAdmission {
 async fn roots(
     directory: &Directory,
     peer: PublicKey,
-    recipient: codeyard_support::cells::Prefix,
+    recipient: codeyard_types::cells::Prefix,
     source: Object,
     target: Object,
     event: Option<i64>,
-) -> Result<codeyard_support::cells::Prefix> {
+) -> Result<codeyard_types::cells::Prefix> {
     source.validate()?;
     target.validate()?;
     let resource_request = DirectoryRequest::Home { object: source };
@@ -1049,7 +1046,7 @@ async fn roots(
     );
     if let Some(id) = event {
         ensure!(
-            matches!(directory.request(&DirectoryRequest::Cell {prefix:codeyard_support::cells::Prefix::for_id(id)?}).await?,DirectoryReply::Cell(Some(cell)) if cell.id==caller),
+            matches!(directory.request(&DirectoryRequest::Cell {prefix:codeyard_types::cells::Prefix::for_id(id)?}).await?,DirectoryReply::Cell(Some(cell)) if cell.id==caller),
             "Event issuer has another home"
         );
     }
@@ -1058,7 +1055,7 @@ async fn roots(
 struct PullAdmission {
     directory: Directory,
     peer: PublicKey,
-    recipient: codeyard_support::cells::Prefix,
+    recipient: codeyard_types::cells::Prefix,
 }
 impl codeyard_db_core::cells::pulls::Admission for PullAdmission {
     fn check<'a>(
@@ -1066,7 +1063,7 @@ impl codeyard_db_core::cells::pulls::Admission for PullAdmission {
         source: Object,
         target: Object,
         event: Option<i64>,
-    ) -> BoxFuture<'a, Result<codeyard_support::cells::Prefix>> {
+    ) -> BoxFuture<'a, Result<codeyard_types::cells::Prefix>> {
         Box::pin(async move {
             roots(
                 &self.directory,
@@ -1327,7 +1324,7 @@ impl rpc::Service for Accounts {
                     }
                 }
                 Request::UserId(id) => {
-                    codeyard_support::cells::Prefix::for_id(id)?;
+                    codeyard_types::cells::Prefix::for_id(id)?;
                     match self.home.user_id(id).await {
                         Ok(user) => Reply::User(user.map(Box::new)),
                         Err(_) => Reply::Unavailable,

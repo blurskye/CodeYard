@@ -44,7 +44,7 @@ pub fn parse_website(text: &str) -> Result<Option<String>> {
     if website.is_empty() {
         return Ok(None);
     }
-    match codeyard_support::website::parse(website) {
+    match codeyard_types::website::parse(website) {
         Some(url) if url.as_str().len() <= MAX_WEBSITE_LEN => Ok(Some(url.as_str().to_owned())),
         _ => Err(RepositorySettingsRefusal::InvalidWebsite.into()),
     }

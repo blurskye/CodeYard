@@ -4,9 +4,8 @@ use codeyard_api_http::context::PageContext;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
 use codeyard_repos_core::repositories::store::repo_store;
-use codeyard_webui::pages::repos as view;
-use codeyard_webui::pages::repos::ref_path::resolve_repo_ref_path;
-use codeyard_webui::pages::repos::ref_path::split_path;
+use codeyard_types::ref_path::resolve_repo_ref_path;
+use codeyard_types::ref_path::split_path;
 use std::collections::HashMap;
 
 /// The answer for a page or action that needs Git while its storage is unavailable.
@@ -50,7 +49,7 @@ pub(crate) fn ref_names(loaded: &Loaded) -> Vec<String> {
 /// Whether `reference` is a branch. Only a branch takes a commit from the file pages, so only a
 /// branch offers edit and delete there.
 pub(crate) fn is_branch(loaded: &Loaded, reference: &str) -> bool {
-    if codeyard_support::git_ids::is_full_commit_id(reference) {
+    if codeyard_types::git_ids::is_full_commit_id(reference) {
         return false;
     }
     if reference.starts_with("refs/") {
@@ -129,7 +128,7 @@ pub(crate) fn resolve(
     loaded: &Loaded,
     tail: &str,
     require_path: bool,
-) -> Result<view::ref_path::ResolvedRefPath, Response> {
+) -> Result<codeyard_types::ref_path::ResolvedRefPath, Response> {
     if tail.len() > 4096 {
         return Err(ctx.error(StatusCode::URI_TOO_LONG, "Repository path is too long."));
     }
@@ -186,10 +185,12 @@ pub(crate) fn root_if_missing(
     reference: &str,
     error: &RepoError,
 ) -> Option<Response> {
-    let switching = ctx.query.contains_key(view::ref_path::ROOT_IF_MISSING);
+    let switching = ctx
+        .query
+        .contains_key(codeyard_types::ref_path::ROOT_IF_MISSING);
     let missing = matches!(error.kind, ErrorKind::NotFound | ErrorKind::MissingPath);
     (switching && missing).then(|| {
-        let root = view::ref_path::file_url(&loaded.chrome.base(), "tree", reference, "");
+        let root = codeyard_types::ref_path::file_url(&loaded.chrome.base(), "tree", reference, "");
         codeyard_api_http::render::redirect_response(&root)
     })
 }

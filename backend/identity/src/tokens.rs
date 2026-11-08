@@ -4,8 +4,8 @@ use chrono::{DateTime, Utc};
 use codeyard_db_core::models::PersonalAccessToken;
 use codeyard_db_core::DbPool;
 
-use codeyard_support::tokens::INSTALLATION_PREFIX;
-use codeyard_support::tokens::PAT_PREFIX;
+use codeyard_types::tokens::INSTALLATION_PREFIX;
+use codeyard_types::tokens::PAT_PREFIX;
 
 pub struct TokenInput<'a> {
     pub name: &'a str,
@@ -38,8 +38,8 @@ pub enum TokenError {
 /// Installation credentials use the hex format; Actions uses the URL-safe format with
 /// the same public prefix. Scanners must recognize both complete values.
 pub fn installation_token(
-    cell: codeyard_support::cells::Prefix,
-) -> Result<String, codeyard_support::cells::Invalid> {
+    cell: codeyard_types::cells::Prefix,
+) -> Result<String, codeyard_types::cells::Invalid> {
     cell.token(INSTALLATION_PREFIX, &codeyard_support::crypto::random_hex())
 }
 

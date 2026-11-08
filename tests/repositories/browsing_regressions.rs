@@ -278,7 +278,8 @@ async fn contract(pg: bool) {
         panic!("tree")
     };
     assert_eq!(page.reference, "refs/tags/v1");
-    let file = view::ref_path::file_url("/alice/proj", "blob", &page.reference, "file.txt");
+    let file =
+        codeyard_types::ref_path::file_url("/alice/proj", "blob", &page.reference, "file.txt");
     assert_eq!(alice.page(&file).await.0, StatusCode::OK);
     let (_, html) = alice.page("/alice/proj").await;
     assert!(html.contains("/alice/proj/blob/refs/tags/v1/file.txt"));

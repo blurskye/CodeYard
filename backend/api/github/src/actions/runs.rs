@@ -392,7 +392,7 @@ pub(super) async fn list(
         }
         q.check_suite = Some(check);
     }
-    if !q.sha.is_empty() && !codeyard_support::git_ids::is_full_commit_id(&q.sha) {
+    if !q.sha.is_empty() && !codeyard_types::git_ids::is_full_commit_id(&q.sha) {
         return Err(Error::invalid("Invalid head SHA"));
     }
     q.sha.make_ascii_lowercase();

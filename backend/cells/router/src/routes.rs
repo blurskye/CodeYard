@@ -2,7 +2,8 @@
 use crate::directory::{Client, Failure, Reply, Request};
 use anyhow::{ensure, Result};
 use codeyard_model::cells::{Cell, Key, KeyKind, Location, Object, State};
-use codeyard_support::{cells::Prefix, token_hash::token_hash};
+use codeyard_support::token_hash::token_hash;
+use codeyard_types::cells::Prefix;
 use std::{
     collections::HashMap,
     mem::size_of,

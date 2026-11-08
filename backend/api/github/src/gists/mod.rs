@@ -107,7 +107,7 @@ pub(crate) fn failure(error: anyhow::Error) -> Error {
             GistRefusal::Invalid => Error::validation("Gist", "files", "invalid"),
         };
     }
-    if error.is::<codeyard_support::credentials::AccountRestricted>() {
+    if error.is::<codeyard_types::credentials::AccountRestricted>() {
         return Error::new(StatusCode::FORBIDDEN, "Account cannot change gists");
     }
     if let Some(error) = error.downcast_ref::<StorageError>() {

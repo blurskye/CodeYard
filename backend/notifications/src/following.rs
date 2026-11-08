@@ -52,7 +52,7 @@ pub async fn status(
 
 fn mutation_error(error: anyhow::Error) -> FollowError {
     if error.is::<codeyard_db_identity::following::FollowRestricted>()
-        || error.is::<codeyard_support::credentials::AccountRestricted>()
+        || error.is::<codeyard_types::credentials::AccountRestricted>()
     {
         FollowError::Restricted
     } else {
@@ -93,7 +93,7 @@ pub async fn change(
                 .map_err(mutation_error)?;
         if created {
             let title = format!("{} started following you", current.username);
-            let link = codeyard_webui::profile_path(&current.username);
+            let link = codeyard_types::paths::profile_path(&current.username);
             if let Err(error) = create_and_broadcast_notification(
                 pool,
                 broadcaster,

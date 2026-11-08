@@ -3,9 +3,9 @@ use axum::http::header;
 use axum::http::HeaderMap;
 use axum::http::StatusCode;
 use axum::Json;
-use codeyard_support::cells::{Prefix, Secret};
 use codeyard_support::crypto::is_hex_token;
 use codeyard_support::http_credentials::cookie as named_cookie;
+use codeyard_types::cells::{Prefix, Secret};
 
 fn cookie_domain() -> Option<String> {
     std::env::var("COOKIE_DOMAIN")
@@ -47,7 +47,7 @@ pub fn session_duration_days() -> i64 {
 pub fn build_session_cookie(
     session_id: &str,
     max_age_days: i64,
-) -> Result<String, codeyard_support::cells::Invalid> {
+) -> Result<String, codeyard_types::cells::Invalid> {
     build_session_cookie_for(session_id, max_age_days.clamp(0, 365) * 24 * 60 * 60)
 }
 
@@ -55,7 +55,7 @@ pub fn build_session_cookie(
 pub(crate) fn build_session_cookie_for(
     session_id: &str,
     max_age_seconds: i64,
-) -> Result<String, codeyard_support::cells::Invalid> {
+) -> Result<String, codeyard_types::cells::Invalid> {
     Secret::cookie(session_id)?;
     let name = session_cookie_name();
     let mut cookie = format!(

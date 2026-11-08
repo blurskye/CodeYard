@@ -228,7 +228,7 @@ impl Authentication {
             .await
             .map(|_| ())
             .map_err(|error| {
-                if error.is::<codeyard_support::credentials::AccountRestricted>() {
+                if error.is::<codeyard_types::credentials::AccountRestricted>() {
                     Error::new(StatusCode::UNAUTHORIZED, "Bad credentials")
                 } else {
                     Error::unavailable(error)
@@ -262,7 +262,7 @@ pub async fn readable_repositories(
         crate::repository_access::credential_user(state.pool(), &auth.database_actor(), false)
             .await
             .map_err(|error| {
-                if error.is::<codeyard_support::credentials::AccountRestricted>() {
+                if error.is::<codeyard_types::credentials::AccountRestricted>() {
                     required()
                 } else {
                     Error::unavailable(error)

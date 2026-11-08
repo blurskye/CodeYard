@@ -92,7 +92,7 @@ fn document(
     value["target_type"] = json!("organization");
     value["url"] = json!(api_url(&format!(
         "/orgs/{}/code-security/configurations/{}",
-        codeyard_webui::encode_component(org),
+        codeyard_types::paths::encode_component(org),
         row.id
     )));
     value["html_url"] = json!(format!(

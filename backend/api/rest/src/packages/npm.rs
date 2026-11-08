@@ -19,7 +19,7 @@ use base64::Engine;
 use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_app::app::AppState;
 use codeyard_db_repos::packages::Publish;
-use codeyard_support::object_limits::MAX_OBJECT_BYTES;
+use codeyard_types::object_limits::MAX_OBJECT_BYTES;
 use serde_json::json;
 use serde_json::Map;
 use serde_json::Value;
@@ -129,11 +129,11 @@ fn version_metadata(
     metadata["dist"]["tarball"] = json!(format!(
         "{}/api/packages/{}/npm/@{}/{}/-/{}-{}.tgz",
         codeyard_model::http_config::link_origin(),
-        codeyard_webui::encode_component(namespace),
-        codeyard_webui::encode_component(namespace),
-        codeyard_webui::encode_component(slug),
-        codeyard_webui::encode_component(slug),
-        codeyard_webui::encode_component(&version.name),
+        codeyard_types::paths::encode_component(namespace),
+        codeyard_types::paths::encode_component(namespace),
+        codeyard_types::paths::encode_component(slug),
+        codeyard_types::paths::encode_component(slug),
+        codeyard_types::paths::encode_component(&version.name),
     ));
     Ok(metadata)
 }
@@ -362,15 +362,15 @@ async fn dispatch(
     let mut metadata = metadata.clone();
     let base = format!(
         "/api/packages/{}/npm/{}",
-        codeyard_webui::encode_component(namespace),
+        codeyard_types::paths::encode_component(namespace),
         if name.starts_with('@') {
             format!(
                 "@{}/{}",
-                codeyard_webui::encode_component(namespace),
-                codeyard_webui::encode_component(slug)
+                codeyard_types::paths::encode_component(namespace),
+                codeyard_types::paths::encode_component(slug)
             )
         } else {
-            codeyard_webui::encode_component(slug)
+            codeyard_types::paths::encode_component(slug)
         }
     );
     metadata["dist"] = json!({"tarball":format!("{base}/-/{slug}-{version}.tgz"),"shasum":sha1,"integrity":integrity});

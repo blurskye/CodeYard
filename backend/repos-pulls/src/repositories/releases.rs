@@ -134,7 +134,7 @@ async fn can_write(
 
 /// Maps a refusal the database raised inside a write to the error the caller shows.
 fn write_error(error: Error) -> ReleaseError {
-    if error.is::<codeyard_support::credentials::AccountRestricted>() {
+    if error.is::<codeyard_types::credentials::AccountRestricted>() {
         return ReleaseError::Access(AccessError::WriteDenied);
     }
     match error.downcast_ref::<ReleaseRefusal>() {
@@ -805,7 +805,7 @@ pub async fn upload_asset(
 }
 
 fn validate_asset_fields(filename: &str, label: Option<&str>) -> Result<(), ReleaseError> {
-    if !codeyard_support::file_names::valid_basename(filename, 255) {
+    if !codeyard_types::file_names::valid_basename(filename, 255) {
         return Err(ReleaseError::Invalid("Asset file name is not valid"));
     }
     if label.is_some_and(|label| label.contains('\0')) {
@@ -963,9 +963,9 @@ async fn notify_published(
 ) {
     let link = format!(
         "/{}/{}/releases/tag/{}",
-        codeyard_webui::encode_component(owner),
-        codeyard_webui::encode_component(name),
-        codeyard_webui::encode_component(&release.tag_name)
+        codeyard_types::paths::encode_component(owner),
+        codeyard_types::paths::encode_component(name),
+        codeyard_types::paths::encode_component(&release.tag_name)
     );
     notify_watchers(
         pool,

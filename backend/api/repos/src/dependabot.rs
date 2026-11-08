@@ -49,7 +49,7 @@ async fn open(
     Ok((ctx, loaded))
 }
 fn failure(ctx: &PageContext, error: anyhow::Error) -> Response {
-    if error.is::<codeyard_support::credentials::AccountRestricted>() {
+    if error.is::<codeyard_types::credentials::AccountRestricted>() {
         return ctx.error(
             StatusCode::FORBIDDEN,
             "A live unrestricted credential is required.",

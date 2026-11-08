@@ -2,6 +2,7 @@
 //! one hook, and each hook's recent deliveries. Every control is a plain form or link, so the
 //! section works without JavaScript.
 use crate::components::confirm_dialog;
+use codeyard_types::webhook_events::EVENT_OPTIONS;
 use dioxus::prelude::*;
 
 /// What the section shows. The backend builds it after it has checked the viewer may manage
@@ -89,42 +90,6 @@ pub struct DeliveryDetail {
     pub response_headers: String,
     pub response_body: String,
 }
-
-/// Every event a hook can subscribe to, with its label, in display order. Subscriptions are
-/// checked against this list, so the form always shows each stored event.
-pub const EVENT_OPTIONS: [(&str, &str); 25] = [
-    ("repository", "Repository changes"),
-    ("push", "Pushes"),
-    ("create", "Branch or tag created"),
-    ("delete", "Branch or tag deleted"),
-    ("fork", "Forks"),
-    ("star", "Stars"),
-    ("release", "Releases"),
-    ("deployment", "Deployments"),
-    ("deployment_status", "Deployment statuses"),
-    ("deployment_protection_rule", "Deployment protection rules"),
-    ("issues", "Issues"),
-    ("issue_comment", "Issue comments"),
-    ("commit_comment", "Commit comments"),
-    ("code_scanning_alert", "Code scanning alerts"),
-    ("secret_scanning_alert", "Secret scanning alerts"),
-    (
-        "secret_scanning_alert_location",
-        "Secret scanning alert locations",
-    ),
-    ("pull_request", "Pull requests"),
-    ("pull_request_review", "Pull request reviews"),
-    (
-        "pull_request_review_comment",
-        "Pull request review comments",
-    ),
-    ("check_run", "Check runs"),
-    ("check_suite", "Check suites"),
-    ("status", "Commit statuses"),
-    ("repository_dispatch", "Repository dispatches"),
-    ("workflow_run", "Workflow runs"),
-    ("workflow_job", "Workflow jobs"),
-];
 
 impl WebhookPanel {
     /// The form URL for one action, keeping any query the section was given.

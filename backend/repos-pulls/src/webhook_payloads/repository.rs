@@ -5,14 +5,14 @@ pub fn community_file(file: Option<&crate::repositories::community::File>) -> Va
     let Some(file) = file else {
         return Value::Null;
     };
-    let encode = codeyard_webui::encode_component;
-    let path = codeyard_webui::pages::repos::ref_path::encode_path(&file.path);
+    let encode = codeyard_types::paths::encode_component;
+    let path = codeyard_types::ref_path::encode_path(&file.path);
     let base = format!(
         "/repos/{}/{}",
         encode(&file.owner),
         encode(&file.repository)
     );
-    json!({"url":codeyard_model::urls::api_url(&format!("{base}/contents/{path}?ref={}",file.reference)),"html_url":format!("{}{}",link_origin(),codeyard_webui::pages::repos::ref_path::file_url(&format!("/{}/{}",encode(&file.owner),encode(&file.repository)),"blob",&file.reference,&file.path))})
+    json!({"url":codeyard_model::urls::api_url(&format!("{base}/contents/{path}?ref={}",file.reference)),"html_url":format!("{}{}",link_origin(),codeyard_types::ref_path::file_url(&format!("/{}/{}",encode(&file.owner),encode(&file.repository)),"blob",&file.reference,&file.path))})
 }
 
 pub fn community_profile(profile: &crate::repositories::community::Profile) -> Value {

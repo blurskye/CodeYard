@@ -18,7 +18,7 @@ use codeyard_model::{
     cell_routes::{Route, Rule},
     cells::{Key, KeyKind, ObjectKind},
 };
-use codeyard_support::cells::{Prefix, Secret};
+use codeyard_types::cells::{Prefix, Secret};
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, net::SocketAddr, sync::Arc, time::Duration};
 
@@ -194,7 +194,7 @@ impl Frontend {
                     parameters.extend(values);
                 }
                 let prefix = if let Some(code) = parameters.get("user_code") {
-                    codeyard_support::cells::device_code_prefix(code)
+                    codeyard_types::cells::device_code_prefix(code)
                 } else if let Some(state) = parameters.get("state") {
                     Secret::cookie(state).ok().map(|value| value.cell)
                 } else {

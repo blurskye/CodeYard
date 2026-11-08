@@ -247,7 +247,7 @@ pub async fn set_user_avatar(
         )
         .bind(file)
         .bind(user_id)
-        .bind(serde_json::to_string(&codeyard_support::media::AVATAR_CONTENT_TYPES)?)
+        .bind(serde_json::to_string(&codeyard_types::media::AVATAR_CONTENT_TYPES)?)
         .fetch_optional(&mut *tx)
         .await?;
         if usable.is_none() {
@@ -280,7 +280,7 @@ pub async fn update_user_profile(
 ) -> Result<Option<User>> {
     use crate::users::profiles::ProfilePatch;
     use codeyard_db_core::queries::users::accounts::AccountCredential;
-    use codeyard_support::credentials::AccountRestricted;
+    use codeyard_types::credentials::AccountRestricted;
     match crate::sqlite::users::profiles::save_profile(
         pool,
         user_id,
@@ -336,7 +336,7 @@ pub async fn admin_users_page(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
         crate::sqlite::users::transitions::active_admin_session(&mut tx, administrator).await?,
-        codeyard_support::credentials::AccountRestricted
+        codeyard_types::credentials::AccountRestricted
     );
     let counts = count_matching_users(&mut *tx, text).await?;
     let total = match role {

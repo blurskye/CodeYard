@@ -9,8 +9,8 @@
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
 use codeyard_repos_core::repositories::store::RepoStore;
-use codeyard_support::git_limits::MAX_TEMPLATES;
-use codeyard_support::git_limits::MAX_TEMPLATE_BYTES;
+use codeyard_types::git_limits::MAX_TEMPLATES;
+use codeyard_types::git_limits::MAX_TEMPLATE_BYTES;
 
 const ISSUE_TEMPLATE_DIRECTORY: &str = ".github/ISSUE_TEMPLATE";
 const ISSUE_TEMPLATE_FILE: &str = ".github/ISSUE_TEMPLATE.md";

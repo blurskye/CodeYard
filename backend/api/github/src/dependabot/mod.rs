@@ -90,7 +90,7 @@ fn document(org: &str, secret: OrganizationSecret) -> Value {
     if secret.visibility == "selected" {
         value["selected_repositories_url"] = json!(api_url(&format!(
             "/orgs/{}/dependabot/secrets/{}/repositories",
-            codeyard_webui::encode_component(org),
+            codeyard_types::paths::encode_component(org),
             secret.name
         )));
     }

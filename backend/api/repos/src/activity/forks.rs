@@ -58,8 +58,8 @@ pub async fn fork_repo(
         .map_err(public_error)?;
     let path = format!(
         "/api/repos/{}/{}/forks",
-        codeyard_webui::encode_component(&owner),
-        codeyard_webui::encode_component(&repo)
+        codeyard_types::paths::encode_component(&owner),
+        codeyard_types::paths::encode_component(&repo)
     );
     if let Some(response) =
         codeyard_app::cells::forward_fork(&state, &user, None, &headers, &path, Vec::new())

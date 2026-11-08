@@ -81,8 +81,8 @@ pub fn decode(value: &str) -> Option<(&str, i64)> {
     }
     let bytes = URL_SAFE_NO_PAD.decode(value).ok()?;
     if let Some((root, id)) = decode_messagepack(&bytes) {
-        codeyard_support::cells::Prefix::for_id(root).ok()?;
-        codeyard_support::cells::Prefix::for_id(id).ok()?;
+        codeyard_types::cells::Prefix::for_id(root).ok()?;
+        codeyard_types::cells::Prefix::for_id(id).ok()?;
         // Existing resolvers distinguish conversation comments by the low bit.
         // The wire form carries the actual row ID and a separate kind instead.
         return Some((kind, if kind == "IC" { id.checked_mul(2)? } else { id }));
@@ -94,8 +94,8 @@ pub fn decode(value: &str) -> Option<(&str, i64)> {
 
 /// A computed project field has no row; its stable key includes its owning account.
 pub fn project_field(owner: i64, project: i64, field: &str) -> Option<String> {
-    codeyard_support::cells::Prefix::for_id(owner).ok()?;
-    codeyard_support::cells::Prefix::for_id(project).ok()?;
+    codeyard_types::cells::Prefix::for_id(owner).ok()?;
+    codeyard_types::cells::Prefix::for_id(project).ok()?;
     valid_project_field(field).then(|| git("PVTBF", &format!("{owner}/{project}/{field}")))
 }
 fn valid_project_field(field: &str) -> bool {
@@ -122,9 +122,9 @@ pub fn decode_project_field(value: &str) -> Option<(Option<i64>, i64, String)> {
     if parts.next().is_some() || !valid_project_field(field) {
         return None;
     }
-    codeyard_support::cells::Prefix::for_id(project).ok()?;
+    codeyard_types::cells::Prefix::for_id(project).ok()?;
     if let Some(owner) = owner {
-        codeyard_support::cells::Prefix::for_id(owner).ok()?;
+        codeyard_types::cells::Prefix::for_id(owner).ok()?;
     }
     Some((owner, project, field.to_owned()))
 }
@@ -149,8 +149,8 @@ fn messagepack(root: i64, id: i64) -> Vec<u8> {
 /// Issue a [0, root ID, ID] value. A caller supplies its repository or owner root,
 /// never an unrelated row ID or an inferred allocation prefix.
 pub fn scoped(kind: &str, root: i64, id: i64) -> Option<String> {
-    codeyard_support::cells::Prefix::for_id(root).ok()?;
-    codeyard_support::cells::Prefix::for_id(id).ok()?;
+    codeyard_types::cells::Prefix::for_id(root).ok()?;
+    codeyard_types::cells::Prefix::for_id(id).ok()?;
     if kind.is_empty() || kind.len() > 8 || !kind.bytes().all(|byte| byte.is_ascii_uppercase()) {
         return None;
     }
@@ -220,13 +220,13 @@ pub fn routed(value: &str) -> Option<Routed<'_>> {
     }
     let bytes = URL_SAFE_NO_PAD.decode(encoded).ok()?;
     if let Some((root, id)) = decode_messagepack(&bytes) {
-        codeyard_support::cells::Prefix::for_id(root).ok()?;
-        codeyard_support::cells::Prefix::for_id(id).ok()?;
+        codeyard_types::cells::Prefix::for_id(root).ok()?;
+        codeyard_types::cells::Prefix::for_id(id).ok()?;
         return Some(Routed { kind, root, id });
     }
     if kind == "REF" && (9..=1032).contains(&bytes.len()) {
         let root = i64::from_be_bytes(bytes[..8].try_into().ok()?);
-        codeyard_support::cells::Prefix::for_id(root).ok()?;
+        codeyard_types::cells::Prefix::for_id(root).ok()?;
         let name = std::str::from_utf8(&bytes[8..]).ok()?;
         if name
             .bytes()
@@ -242,8 +242,8 @@ pub fn routed(value: &str) -> Option<Routed<'_>> {
     }
     if kind == "RR" {
         if let Some((pull, _, target)) = decode_review_request(value) {
-            codeyard_support::cells::Prefix::for_id(pull).ok()?;
-            codeyard_support::cells::Prefix::for_id(target).ok()?;
+            codeyard_types::cells::Prefix::for_id(pull).ok()?;
+            codeyard_types::cells::Prefix::for_id(target).ok()?;
             return Some(Routed {
                 kind,
                 root: pull,
@@ -260,9 +260,9 @@ pub fn routed(value: &str) -> Option<Routed<'_>> {
                 return None;
             }
             let root = root.parse::<i64>().ok()?;
-            codeyard_support::cells::Prefix::for_id(root).ok()?;
+            codeyard_types::cells::Prefix::for_id(root).ok()?;
             if kind == "RR" {
-                codeyard_support::cells::Prefix::for_id(key.parse::<i64>().ok()?).ok()?;
+                codeyard_types::cells::Prefix::for_id(key.parse::<i64>().ok()?).ok()?;
             } else if !matches!(key.len(), 40 | 64)
                 || !key.bytes().all(|byte| byte.is_ascii_hexdigit())
             {
@@ -285,7 +285,7 @@ pub fn routed(value: &str) -> Option<Routed<'_>> {
             return None;
         }
     }
-    codeyard_support::cells::Prefix::for_id(id).ok()?;
+    codeyard_types::cells::Prefix::for_id(id).ok()?;
     Some(Routed { kind, root: id, id })
 }
 
@@ -312,8 +312,8 @@ pub fn decode_review_request(value: &str) -> Option<(i64, bool, i64)> {
         let (pull, target) = std::str::from_utf8(&bytes).ok()?.split_once('/')?;
         let pull = pull.parse::<i64>().ok()?;
         let target = target.parse::<i64>().ok()?;
-        codeyard_support::cells::Prefix::for_id(pull).ok()?;
-        codeyard_support::cells::Prefix::for_id(target).ok()?;
+        codeyard_types::cells::Prefix::for_id(pull).ok()?;
+        codeyard_types::cells::Prefix::for_id(target).ok()?;
         return Some((pull, false, target));
     }
     if bytes[8] > 1 {
@@ -367,8 +367,8 @@ mod tests {
 
     #[test]
     fn all_numeric_child_families_retain_their_explicit_root() {
-        let root = *codeyard_support::cells::Prefix::new(1).ids().start();
-        let id = *codeyard_support::cells::Prefix::new(2).ids().start();
+        let root = *codeyard_types::cells::Prefix::new(1).ids().start();
+        let id = *codeyard_types::cells::Prefix::new(2).ids().start();
         for kind in [
             "PVT", "PVTF", "PVTSSF", "PVTIF", "PVTI", "PVTV", "DI", "IT", "IF", "IFV", "RRS", "OI",
             "RI", "RAC", "EN", "G", "GBP", "DE", "DES", "DPR", "WF", "WR", "J", "A", "APP", "AIR",
@@ -403,7 +403,7 @@ mod tests {
 
     #[test]
     fn git_and_composite_node_routes_retain_their_existing_repository_or_pull() {
-        let root = *codeyard_support::cells::Prefix::new(1).ids().start();
+        let root = *codeyard_types::cells::Prefix::new(1).ids().start();
         let reference = super::reference(root, &format!("refs/heads/{}", "a".repeat(900)));
         assert_eq!(super::routed(&reference).unwrap().root, root);
         for kind in ["C", "B", "TAG", "T", "SCR", "STAT"] {
@@ -430,8 +430,8 @@ mod tests {
 
     #[test]
     fn computed_project_fields_retain_account_roots_and_bound_untrusted_keys() {
-        let owner = *codeyard_support::cells::Prefix::new(1).ids().start();
-        let project = *codeyard_support::cells::Prefix::new(2).ids().start();
+        let owner = *codeyard_types::cells::Prefix::new(1).ids().start();
+        let project = *codeyard_types::cells::Prefix::new(2).ids().start();
         let value = super::project_field(owner, project, "ASSIGNEES").unwrap();
         assert_eq!(
             super::decode_project_field(&value),
@@ -459,8 +459,8 @@ mod tests {
     #[test]
     fn routed_nodes_keep_the_root_when_object_and_root_origins_differ() {
         use super::{routed, scoped, Routed};
-        let root = *codeyard_support::cells::Prefix::new(1).ids().start();
-        let id = *codeyard_support::cells::Prefix::new(2).ids().start();
+        let root = *codeyard_types::cells::Prefix::new(1).ids().start();
+        let id = *codeyard_types::cells::Prefix::new(2).ids().start();
         let value = scoped("IC", root, id).unwrap();
         assert_eq!(
             routed(&value),
@@ -487,7 +487,7 @@ mod tests {
             assert_eq!(routed(&encoded).unwrap(), Routed { kind, root: id, id });
         }
         assert!(scoped("IC", 0, id).is_none());
-        assert!(scoped("IC", root, codeyard_support::cells::MAX_ID + 1).is_none());
+        assert!(scoped("IC", root, codeyard_types::cells::MAX_ID + 1).is_none());
         for raw in [
             vec![0x93, 0, 1, 2, 3],
             vec![0x93, 1, 1, 2],
@@ -500,7 +500,7 @@ mod tests {
 
     #[test]
     fn numeric_resolvers_accept_rooted_ids_and_keep_comment_kinds_distinct() {
-        let root = *codeyard_support::cells::Prefix::new(2).ids().start();
+        let root = *codeyard_types::cells::Prefix::new(2).ids().start();
         for kind in ["I", "PR", "D", "DIC", "L", "T", "PVT", "PRRC"] {
             let wire = super::scoped(kind, root, 17).unwrap();
             assert_eq!(decode(&wire), Some((kind, 17)));

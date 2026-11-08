@@ -1,4 +1,5 @@
 //! Issue and pull request pages: the list, the detail, and the new and edit forms for both kinds.
+use codeyard_types::git_limits::MERGE_COMMIT_REFUSED;
 mod attributes;
 pub(in crate::pages::repos) mod detail;
 mod dom;
@@ -28,6 +29,6 @@ pub use page::{
     Comment, CommentEdit, CommentPage, Comparison, Event, IssueAttribute, IssueAttributes,
     IssueManagement, IssueSelectOption, IssueSuggestion, IssueSuggestions, Item, Kind, Label,
     ListCounts, ListFilters, Milestone, MilestoneDraft, Page, PinnedComment, Reaction,
-    RelatedIssue, Repository, StackLayer, StackMap, SuggestionDraft, MERGE_COMMIT_REFUSED,
+    RelatedIssue, Repository, StackLayer, StackMap, SuggestionDraft,
 };
 pub use search::{parse_search, MilestoneFilter};

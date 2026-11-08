@@ -8,7 +8,7 @@ use codeyard_db_core::queries::credentials::Actor;
 use codeyard_db_repos::repositories::creation::{
     self, CreationAdmission, NewRepository, RepositoryCreationOwner,
 };
-use codeyard_support::cells::Prefix;
+use codeyard_types::cells::Prefix;
 use futures_util::future::BoxFuture;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},

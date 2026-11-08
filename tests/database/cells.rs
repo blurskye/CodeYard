@@ -1,6 +1,6 @@
 //! The operator CLI reserves ranges atomically and preserves existing cell-zero IDs.
 use crate::support::native_database::{NativeDatabase, PostgresDatabase};
-use codeyard_support::cells::{Prefix, IDS_PER_PREFIX};
+use codeyard_types::cells::{Prefix, IDS_PER_PREFIX};
 use std::{path::Path, process::Output, time::Duration};
 
 fn command(root: &Path, url: &str, prefix: &str) -> tokio::process::Command {

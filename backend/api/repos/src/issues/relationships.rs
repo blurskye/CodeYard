@@ -41,8 +41,8 @@ pub(crate) async fn load(ctx: &PageContext, root: i64) -> ResultPage<Vec<Related
         {
             let href = format!(
                 "/{}/{}/issues/{}",
-                codeyard_webui::encode_component(&link.owner),
-                codeyard_webui::encode_component(&link.repo),
+                codeyard_types::paths::encode_component(&link.owner),
+                codeyard_types::paths::encode_component(&link.repo),
                 link.number
             );
             result.push(RelatedIssue {
@@ -120,7 +120,7 @@ pub(crate) async fn native_change(
     })?;
     Ok(ctx.redirect(&format!(
         "/{}/{}/issues/{number}",
-        codeyard_webui::encode_component(&owner),
-        codeyard_webui::encode_component(&name)
+        codeyard_types::paths::encode_component(&owner),
+        codeyard_types::paths::encode_component(&name)
     )))
 }

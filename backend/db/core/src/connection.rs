@@ -149,28 +149,28 @@ fn secure_sqlite_files(path: &Path, create_main: bool) -> std::io::Result<()> {
 impl DbPool {
     pub(crate) fn set_cell_identity(
         &self,
-        cell: codeyard_support::cells::Prefix,
-        prefix: codeyard_support::cells::Prefix,
-        prefixes: Vec<codeyard_support::cells::Prefix>,
+        cell: codeyard_types::cells::Prefix,
+        prefix: codeyard_types::cells::Prefix,
+        prefixes: Vec<codeyard_types::cells::Prefix>,
     ) {
         match self {
             Self::Postgres(pool) => pool.set_cell_identity(cell, prefix, prefixes),
             Self::Sqlite(pool) => pool.set_cell_identity(cell, prefix, prefixes),
         }
     }
-    pub fn owns_prefix(&self, prefix: codeyard_support::cells::Prefix) -> bool {
+    pub fn owns_prefix(&self, prefix: codeyard_types::cells::Prefix) -> bool {
         match self {
             Self::Postgres(pool) => pool.owns_prefix(prefix),
             Self::Sqlite(pool) => pool.owns_prefix(prefix),
         }
     }
-    pub fn cell_id(&self) -> codeyard_support::cells::Prefix {
+    pub fn cell_id(&self) -> codeyard_types::cells::Prefix {
         match self {
             Self::Postgres(pool) => pool.cell_id(),
             Self::Sqlite(pool) => pool.cell_id(),
         }
     }
-    pub fn cell_prefix(&self) -> codeyard_support::cells::Prefix {
+    pub fn cell_prefix(&self) -> codeyard_types::cells::Prefix {
         match self {
             Self::Postgres(pool) => pool.cell_prefix(),
             Self::Sqlite(pool) => pool.cell_prefix(),

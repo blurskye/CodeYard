@@ -1,7 +1,7 @@
 //! A cookie's routing prefix cannot alias a local session with the same random value.
 use crate::support::{database::Database, http_client::Client};
 use axum::http::StatusCode;
-use codeyard_support::cells::Prefix;
+use codeyard_types::cells::Prefix;
 
 async fn contract(pg: bool) {
     crate::support::fake_webui_bundle::install();
@@ -12,7 +12,7 @@ async fn contract(pg: bool) {
     let router = database.router(root.path()).await;
     let mut client = Client::login(&router, database.pool(), actor).await;
     let stored = client.session.clone();
-    let random = codeyard_support::cells::Secret::cookie(&stored)
+    let random = codeyard_types::cells::Secret::cookie(&stored)
         .unwrap()
         .secret
         .to_owned();

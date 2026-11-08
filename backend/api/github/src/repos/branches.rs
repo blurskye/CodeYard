@@ -109,7 +109,7 @@ async fn read(
                 let url = format!(
                     "{}/branches/{}",
                     repo_url(&owner, &name),
-                    codeyard_webui::encode_component(&target)
+                    codeyard_types::paths::encode_component(&target)
                 );
                 return Ok((
                     StatusCode::MOVED_PERMANENTLY,
@@ -144,7 +144,7 @@ pub(super) async fn document(
     let url = format!(
         "{}/branches/{}",
         repo_url(owner, name),
-        codeyard_webui::encode_component(branch)
+        codeyard_types::paths::encode_component(branch)
     );
     let mut contexts: Vec<_> = rules
         .iter()
@@ -173,7 +173,7 @@ pub(super) async fn document(
             "contexts": contexts,
             "checks": checks,
         }},
-        "_links": {"self": url, "html": format!("{}/{owner}/{name}/tree/{}", codeyard_model::http_config::link_origin(), codeyard_webui::encode_component(branch))},
+        "_links": {"self": url, "html": format!("{}/{owner}/{name}/tree/{}", codeyard_model::http_config::link_origin(), codeyard_types::paths::encode_component(branch))},
     }))
 }
 

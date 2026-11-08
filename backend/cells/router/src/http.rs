@@ -321,7 +321,7 @@ mod tests {
         Router,
     };
     use codeyard_model::cells::{Cell, State};
-    use codeyard_support::cells::Prefix;
+    use codeyard_types::cells::Prefix;
     use http_body_util::BodyExt;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio_util::task::AbortOnDropHandle;

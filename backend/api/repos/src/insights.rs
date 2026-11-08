@@ -305,8 +305,8 @@ async fn community(
     headers: HeaderMap,
     uri: Uri,
 ) -> Response {
+    use codeyard_types::ref_path::file_url;
     use codeyard_webui::pages::repos::insights::CommunityCheck;
-    use codeyard_webui::pages::repos::ref_path::file_url;
     let (ctx, loaded) = match open(state, headers, &uri, &owner, &name).await {
         Ok(opened) => opened,
         Err(response) => return response,

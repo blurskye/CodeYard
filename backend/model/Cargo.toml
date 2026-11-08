@@ -50,8 +50,6 @@ workspace = true
 [dependencies.semver]
 workspace = true
 
-[dependencies.codeyard-webui]
-workspace = true
 
 [dependencies.codeyard-support]
 workspace = true
@@ -76,4 +74,7 @@ workspace = true
 workspace = true
 
 [dependencies.http-body-util]
+workspace = true
+
+[dependencies.codeyard-types]
 workspace = true

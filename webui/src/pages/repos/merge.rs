@@ -121,7 +121,7 @@ fn MergeComposer(repo: RepoChrome, form: MergeForm) -> Element {
                 label { r#for: "merge-head", "Head branch" }
                 DraftSelect { id: "merge-head", name: "head", initial_value: draft.head, options: draft.choices, required: true, disabled: !form.can_merge }
                 label { r#for: "merge-message", "Merge message (optional)" }
-                DraftTextarea { id: "merge-message", name: "message", initial_value: draft.message, readonly: !form.can_merge, maxlength: Some(codeyard_support::git_limits::MAX_MERGE_MESSAGE_BYTES as u32), rows: 5 }
+                DraftTextarea { id: "merge-message", name: "message", initial_value: draft.message, readonly: !form.can_merge, maxlength: Some(codeyard_types::git_limits::MAX_MERGE_MESSAGE_BYTES as u32), rows: 5 }
                 if form.can_merge {
                     button { r#type: "submit", class: "btn btn-primary", "Merge branches" }
                 } else { p { class: "collaboration-muted", "Repository write access and an unarchived repository are required. Your submitted message is preserved." } }

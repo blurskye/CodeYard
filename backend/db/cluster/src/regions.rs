@@ -3,7 +3,7 @@
 //! writes always stay in the home cell, presence only moves reads.
 use anyhow::{ensure, Result};
 use codeyard_db_core::{cells::directory::Refusal, pool::PgPool, queries::credentials::Actor};
-use codeyard_support::cluster::RegionPolicy;
+use codeyard_types::cluster::RegionPolicy;
 
 /// Additions and removals considered in one evaluation.
 pub const MAXIMUM_CHANGES: i64 = 100;

@@ -21,7 +21,7 @@ use codeyard_model::urls::repo_url;
 use codeyard_repos_core::api_shared::github::contents::store_error;
 use codeyard_repos_core::repositories::reads::same_fork_network;
 use codeyard_repos_core::repositories::store::repo_store;
-use codeyard_webui::pages::repos::ref_path::encode_path as path_url;
+use codeyard_types::ref_path::encode_path as path_url;
 use serde_json::json;
 use std::sync::Arc;
 
@@ -153,7 +153,7 @@ async fn compare(
     );
     let html_url = format!("{site}/{}", path_url(&spec));
     let mut value = json!({
-        "url": format!("{}/compare/{}", repo_url(&owner, &name), codeyard_webui::encode_component(&spec)),
+        "url": format!("{}/compare/{}", repo_url(&owner, &name), codeyard_types::paths::encode_component(&spec)),
         "html_url": html_url, "permalink_url": format!("{site}/{}", path_url(&permalink)),
         "diff_url": format!("{html_url}.diff"), "patch_url": format!("{html_url}.patch"),
         "base_commit": read_document(&state, base_repo.id, &comparison.base_commit, &base_owner, &base_repo.name).await?,

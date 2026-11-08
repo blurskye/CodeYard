@@ -106,7 +106,8 @@ pub async fn list_commits(
 /// The `path` filter of the history page, normalised as the file routes read their paths: empty
 /// parts are dropped. A `.` or `..` part names no file, so there is no such path (`None`).
 fn history_path(ctx: &PageContext) -> Option<String> {
-    let parts = view::ref_path::split_path(ctx.query.get("path").map_or("", String::as_str));
+    let parts =
+        codeyard_types::ref_path::split_path(ctx.query.get("path").map_or("", String::as_str));
     if parts
         .iter()
         .any(|part| part == "." || part == ".." || part.contains('\0'))

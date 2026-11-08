@@ -19,7 +19,7 @@ use codeyard_db_repos::pull_caps::PullCapRefusal;
 use codeyard_db_repos::pull_caps::PullCapScope;
 use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
-use codeyard_support::credentials::AccountRestricted;
+use codeyard_types::credentials::AccountRestricted;
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;

@@ -221,7 +221,7 @@ async fn access_token(
         return failure(&headers, "incorrect_client_credentials");
     }
     let code = field(&form, if device { "device_code" } else { "code" });
-    if codeyard_support::cells::Secret::cookie(code)
+    if codeyard_types::cells::Secret::cookie(code)
         .ok()
         .is_none_or(|code| !state.pool.owns_prefix(code.cell))
     {
@@ -236,7 +236,7 @@ async fn access_token(
     }
     let namespace = match codeyard_db_identity::github_apps::app(&state.pool, id).await {
         Ok(Some(_)) => "ghu_",
-        Ok(None) => codeyard_support::tokens::PAT_PREFIX,
+        Ok(None) => codeyard_types::tokens::PAT_PREFIX,
         Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
     };
     let Ok(value) = state
@@ -286,7 +286,7 @@ fn login(ctx: &PageContext) -> Option<Response> {
     ctx.user.is_none().then(|| {
         ctx.redirect(&format!(
             "/login?redirect={}",
-            codeyard_webui::encode_component(&ctx.location)
+            codeyard_types::paths::encode_component(&ctx.location)
         ))
     })
 }

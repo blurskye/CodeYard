@@ -1,0 +1,21 @@
+//! Browser-safe types, syntax rules and limits shared by the server and the web UI.
+pub mod cells;
+pub mod cluster;
+pub mod command_codec;
+pub mod credentials;
+pub mod file_names;
+pub mod file_search;
+pub mod git_ids;
+pub mod git_limits;
+pub mod git_paths;
+pub mod links;
+pub mod media;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod object_limits;
+pub mod patch;
+pub mod paths;
+pub mod ref_path;
+pub mod repository_names;
+pub mod tokens;
+pub mod webhook_events;
+pub mod website;

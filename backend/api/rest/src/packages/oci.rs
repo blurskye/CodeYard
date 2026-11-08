@@ -21,7 +21,7 @@ use codeyard_db_repos::packages::Blob;
 use codeyard_db_repos::packages::Publish;
 use codeyard_db_repos::packages::Upload;
 use codeyard_storage::Download;
-use codeyard_support::object_limits::MAX_OBJECT_BYTES;
+use codeyard_types::object_limits::MAX_OBJECT_BYTES;
 use serde_json::json;
 use serde_json::Value;
 use std::collections::HashMap;

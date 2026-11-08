@@ -1,7 +1,7 @@
 //! The global directory owns a separate PostgreSQL database; cells never use its credentials.
 use anyhow::{ensure, Result};
 use codeyard_db_core::{pool::PgPool, DbPool};
-use codeyard_support::cells::Prefix;
+use codeyard_types::cells::Prefix;
 use sqlx::{Postgres, Transaction};
 use std::{collections::BTreeMap, future::Future, time::Duration};
 
@@ -208,7 +208,7 @@ async fn owner(
     exclusive: bool,
 ) -> Result<Prefix> {
     ensure!(
-        codeyard_support::tokens::is_hex_token(authenticated_key, 64),
+        codeyard_types::tokens::is_hex_token(authenticated_key, 64),
         Refusal::Denied
     );
     let key = authenticated_key.to_ascii_lowercase();
@@ -245,7 +245,7 @@ async fn owner(
 /// Retain read enrollment through the statement that returns private directory keys.
 async fn read_owner(tx: &mut Transaction<'_, Postgres>, peer: &str) -> Result<()> {
     ensure!(
-        codeyard_support::tokens::is_hex_token(peer, 64),
+        codeyard_types::tokens::is_hex_token(peer, 64),
         Refusal::Denied
     );
     let router: Option<String> = sqlx::query_scalar(

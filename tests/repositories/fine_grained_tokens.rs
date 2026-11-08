@@ -203,9 +203,9 @@ async fn contract(pg: bool) {
     )
     .await;
     let framed =
-        codeyard_support::cells::Secret::token(&public, codeyard_support::tokens::FGPAT_PREFIX)
+        codeyard_types::cells::Secret::token(&public, codeyard_types::tokens::FGPAT_PREFIX)
             .unwrap();
-    assert_eq!(framed.cell, codeyard_support::cells::Prefix::ZERO);
+    assert_eq!(framed.cell, codeyard_types::cells::Prefix::ZERO);
     assert_eq!(framed.secret.len(), 64);
 
     // REST: what each selection reaches. Outside the token a private repository is missing.

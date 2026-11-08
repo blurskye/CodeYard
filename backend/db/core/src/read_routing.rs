@@ -101,8 +101,8 @@ pub async fn primary_required(
     write: bool,
 ) -> Result<bool> {
     let valid = match &credential {
-        Credential::Session(value) => codeyard_support::cells::Secret::cookie(value).is_ok(),
-        Credential::Token(value) => codeyard_support::tokens::is_hex_token(value, 64),
+        Credential::Session(value) => codeyard_types::cells::Secret::cookie(value).is_ok(),
+        Credential::Token(value) => codeyard_types::tokens::is_hex_token(value, 64),
     };
     let (table, key, value) = match credential {
         Credential::Session(value) => ("sessions", "id", value),

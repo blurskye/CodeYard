@@ -6,7 +6,7 @@ use codeyard_git::error::RepoError;
 use codeyard_git::objects::Signature;
 use codeyard_git::repository::process;
 use codeyard_git::repository::CommitInfo;
-use codeyard_support::git_paths::is_git_dir_name;
+use codeyard_types::git_paths::is_git_dir_name;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -207,7 +207,7 @@ fn validate_target(branch: &str, expected_revision: &str) -> Result<(), RepoErro
         return Err(invalid("Invalid branch name."));
     }
     if expected_revision != "unborn"
-        && !codeyard_support::git_ids::is_full_commit_id(expected_revision)
+        && !codeyard_types::git_ids::is_full_commit_id(expected_revision)
     {
         return Err(invalid("A complete expected branch revision is required."));
     }

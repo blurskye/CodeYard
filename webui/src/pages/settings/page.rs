@@ -368,7 +368,7 @@ pub fn settings_page(model: Settings, token: &str, message: Option<&str>, error:
                                     form { id: "profile-picture-upload", method: "post", action: "/settings/avatar", enctype: "multipart/form-data", class: "identity-form identity-avatar-form",
                                         {csrf(token)}
                                         label { r#for: "picture", class: "block text-sm font-semibold", "Upload a new picture" }
-                                        input { id: "picture", r#type: "file", name: "picture", accept: codeyard_support::media::AVATAR_CONTENT_TYPES.join(","), required: true, class: FIELD }
+                                        input { id: "picture", r#type: "file", name: "picture", accept: codeyard_types::media::AVATAR_CONTENT_TYPES.join(","), required: true, class: FIELD }
                                         p { class: "identity-form-hint", "PNG, JPEG, GIF, or WebP. Maximum 2 MB." }
                                     }
                                     div { class: "identity-avatar-buttons",

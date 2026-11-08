@@ -7,7 +7,7 @@ use codeyard_git::gist_types::GistEdit;
 use codeyard_git::gist_types::GistRevision;
 use codeyard_git::gist_types::GistSnapshot;
 use codeyard_repos::gists::GistCredential;
-use codeyard_support::credentials::AccountRestricted;
+use codeyard_types::credentials::AccountRestricted;
 
 fn failure(error: anyhow::Error) -> RepoError {
     match error.downcast_ref::<GistRefusal>() {

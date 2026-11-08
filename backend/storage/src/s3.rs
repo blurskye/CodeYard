@@ -23,7 +23,7 @@ use aws_sdk_s3::Client;
 use aws_smithy_types::timeout::TimeoutConfig;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
-use codeyard_support::object_limits::MAX_OBJECT_BYTES;
+use codeyard_types::object_limits::MAX_OBJECT_BYTES;
 use sha2::Digest;
 use sha2::Sha256;
 use std::collections::BTreeMap;
@@ -551,7 +551,7 @@ impl S3Store {
         ensure!(valid_key(key), "invalid object key");
         if let Some(kind) = inline_image {
             ensure!(
-                codeyard_support::media::AVATAR_CONTENT_TYPES.contains(&kind),
+                codeyard_types::media::AVATAR_CONTENT_TYPES.contains(&kind),
                 "unsafe inline object type"
             );
         }

@@ -2,7 +2,7 @@
 use crate::account_input::{validate_email, validate_namespace};
 use anyhow::{ensure, Result};
 use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine};
-use codeyard_support::cells::Prefix;
+use codeyard_types::cells::Prefix;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -131,7 +131,7 @@ impl Key {
             }
             KeyKind::Credential => {
                 ensure!(
-                    codeyard_support::tokens::is_hex_token(value, 64),
+                    codeyard_types::tokens::is_hex_token(value, 64),
                     "Invalid credential hash"
                 );
                 value.to_ascii_lowercase()
@@ -326,7 +326,7 @@ impl Cell {
         }
         for key in &mut self.node_keys {
             ensure!(
-                codeyard_support::tokens::is_hex_token(key, 64),
+                codeyard_types::tokens::is_hex_token(key, 64),
                 "Invalid cell node key"
             );
             *key = key.to_ascii_lowercase();

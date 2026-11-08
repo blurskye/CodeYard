@@ -1,3 +1,4 @@
+use crate::components::link_base;
 use crate::pages::discovery::topic_url;
 use crate::pages::repos::{
     blob::{
@@ -6,7 +7,7 @@ use crate::pages::repos::{
     },
     chrome::{chrome, csrf, icon, repository_id, RepoChrome},
     commits::{commit_date, latest_commit_bar, Commit},
-    ref_path::{file_url, link_base},
+    ref_path::file_url,
     ref_switcher::{RefLinks, RefSwitcher},
 };
 use crate::{
@@ -332,7 +333,7 @@ fn about_column(repo: &RepoChrome, page: &TreePage) -> Element {
     let license = page.entries.iter().find(|entry| {
         entry.kind == "file" && entry.name.to_ascii_lowercase().starts_with("license")
     });
-    let website_is_link = codeyard_support::website::parse(&repo.website).is_some();
+    let website_is_link = codeyard_types::website::parse(&repo.website).is_some();
     rsx! {
         aside { class: "repo-about", "aria-label": "About",
             div { class: "repo-about-header",
@@ -495,8 +496,8 @@ pub(in crate::pages::repos) fn breadcrumbs(
             for (index, part) in parts.iter().enumerate() {
                 span { key: "{index}", class: "repo-breadcrumb-part",
                     span { class: "repo-path-separator", "/" }
-                    if file && index + 1 == parts.len() { span { class: "repo-path-current", {codeyard_support::git_paths::display(part)} } }
-                    else { NavLink { href: file_url(&base, "tree", reference, &parts[..=index].join("/")), {codeyard_support::git_paths::display(part)} } }
+                    if file && index + 1 == parts.len() { span { class: "repo-path-current", {codeyard_types::git_paths::display(part)} } }
+                    else { NavLink { href: file_url(&base, "tree", reference, &parts[..=index].join("/")), {codeyard_types::git_paths::display(part)} } }
                 }
             }
         }

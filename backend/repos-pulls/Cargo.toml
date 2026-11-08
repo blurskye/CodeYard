@@ -34,7 +34,6 @@ codeyard-identity.workspace = true
 codeyard-model.workspace = true
 codeyard-notifications.workspace = true
 codeyard-support.workspace = true
-codeyard-webui.workspace = true
 croner.workspace = true
 flate2.workspace = true
 futures-util.workspace = true
@@ -80,3 +79,6 @@ workspace = true
 [dev-dependencies.tokio]
 workspace = true
 features = ["test-util"]
+
+[dependencies.codeyard-types]
+workspace = true

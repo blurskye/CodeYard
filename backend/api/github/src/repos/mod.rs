@@ -32,7 +32,7 @@ use std::sync::Arc;
 
 pub fn settings_error(error: anyhow::Error) -> Error {
     use codeyard_db_repos::repositories::records::RepositorySettingsRefusal::*;
-    if error.is::<codeyard_support::credentials::AccountRestricted>() {
+    if error.is::<codeyard_types::credentials::AccountRestricted>() {
         return Error::new(
             StatusCode::FORBIDDEN,
             "A live unrestricted credential is required",
@@ -498,7 +498,7 @@ async fn tags(
     let next = tags.len() > offset + limit;
     let base = repo_url(&owner, &name);
     let values = tags.into_iter().skip(offset).take(limit).map(|tag| {
-        let reference = codeyard_webui::pages::repos::ref_path::encode_path(&format!("refs/tags/{}", tag.name));
+        let reference = codeyard_types::ref_path::encode_path(&format!("refs/tags/{}", tag.name));
         json!({"name": tag.name,
             "node_id": codeyard_model::node_id::reference(repo.id, &format!("refs/tags/{}", tag.name)),
             "commit": {"sha": tag.commit, "url": format!("{base}/commits/{}", tag.commit)},

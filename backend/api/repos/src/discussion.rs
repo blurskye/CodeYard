@@ -384,7 +384,7 @@ pub(crate) fn pull_item(
     let (head_label, head_url) = match pull.head_repo_id {
         Some(id) if id == repo.record.id => (
             pull.head_branch.clone(),
-            Some(codeyard_webui::pages::repos::ref_path::branch_url(
+            Some(codeyard_types::ref_path::branch_url(
                 &repo.view.url(),
                 "tree",
                 &pull.head_branch,
@@ -395,7 +395,7 @@ pub(crate) fn pull_item(
             HeadRepository::Readable(head) => {
                 let owner = head.owner_name.ok_or_else(|| Box::new(unavailable(ctx)))?;
                 let label = format!("{owner}/{}:{}", head.name, pull.head_branch);
-                let url = codeyard_webui::pages::repos::ref_path::branch_url(
+                let url = codeyard_types::ref_path::branch_url(
                     &view::repo_url(&owner, &head.name),
                     "tree",
                     &pull.head_branch,
@@ -1371,7 +1371,7 @@ async fn fill_merge_blockers(
     let merge_blockers = blockers(MergeMethod::Merge).await;
     compare.merge_commit_refused = merge_blockers
         .iter()
-        .any(|message| message.ends_with(view::MERGE_COMMIT_REFUSED));
+        .any(|message| message.ends_with(codeyard_types::git_limits::MERGE_COMMIT_REFUSED));
     let allowed = allowed_merge_methods(&repo.record);
     let preselected = view::preselected_merge_method(compare, &draft.merge_method)
         .and_then(|name| allowed.into_iter().find(|method| method.as_str() == name));

@@ -11,7 +11,8 @@ use codeyard_cells_router::{
 };
 use codeyard_db_directory::Directory;
 use codeyard_model::cells::{Cell, Key, KeyKind, Object, ObjectKind, ReadRegion, State};
-use codeyard_support::{cells::Prefix, node_identity::NodeKey};
+use codeyard_support::node_identity::NodeKey;
+use codeyard_types::cells::Prefix;
 use std::time::Duration;
 
 /// A stand-in cell web node that names itself in every response. On `/alice/stamp` it also
@@ -379,7 +380,7 @@ async fn audits(pool: &codeyard_db_core::pool::PgPool, action: &str) -> i64 {
 #[tokio::test]
 async fn counted_member_requests_add_and_remove_organization_presence() {
     use codeyard_db_cluster::regions::{self, Change};
-    use codeyard_support::cluster::RegionPolicy;
+    use codeyard_types::cluster::RegionPolicy;
     crate::support::fake_webui_bundle::install();
     let registry = PostgresDatabase::unmigrated().await;
     let directory = Directory::connect(&registry.connection_url(), Default::default())
@@ -503,7 +504,7 @@ async fn counted_member_requests_add_and_remove_organization_presence() {
     let wrong = zero
         .pool
         .cell_prefix()
-        .token(codeyard_support::tokens::PAT_PREFIX, &"e".repeat(64))
+        .token(codeyard_types::tokens::PAT_PREFIX, &"e".repeat(64))
         .unwrap();
     for token in [None, Some(wrong.as_str()), Some(alice_token.as_str())] {
         assert_eq!(send(token).await.unwrap().status(), 200);

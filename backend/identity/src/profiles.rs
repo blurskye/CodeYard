@@ -7,7 +7,7 @@ use codeyard_db_core::DbPool;
 pub fn social_account(
     input: &str,
 ) -> Result<codeyard_db_identity::users::social_accounts::SocialAccount, ProfileError> {
-    let url = codeyard_support::website::parse(input.trim()).ok_or(ProfileError::Website)?;
+    let url = codeyard_types::website::parse(input.trim()).ok_or(ProfileError::Website)?;
     if url.as_str().len() > 255 || input.contains(['\0', '\r', '\n']) {
         return Err(ProfileError::Website);
     }
@@ -184,7 +184,7 @@ pub async fn save(
     codeyard_db_identity::users::profiles::save_profile(pool, actor, credential, &patch)
         .await
         .map_err(|error| {
-            if error.is::<codeyard_support::credentials::AccountRestricted>() {
+            if error.is::<codeyard_types::credentials::AccountRestricted>() {
                 ProfileError::Denied
             } else if error.is::<codeyard_db_identity::users::profiles::InvalidPublicEmail>() {
                 ProfileError::Email

@@ -18,7 +18,7 @@ use codeyard_db_identity::interactions::InteractionScope;
 use codeyard_db_identity::interactions::NewRestriction;
 use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
-use codeyard_support::credentials::AccountRestricted;
+use codeyard_types::credentials::AccountRestricted;
 use serde_json::json;
 use std::sync::Arc;
 

@@ -1,6 +1,6 @@
 //! Supported provider requests and bounded response parsing. One configured HTTP client.
 
-use codeyard_webui::encode_component;
+use codeyard_types::paths::encode_component;
 use serde_json::Value;
 
 /// The providers that can sign a user in.

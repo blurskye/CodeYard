@@ -39,7 +39,7 @@ fn reference(
     json!({
         "ref": reference,
         "node_id": codeyard_model::node_id::reference(repo_id, reference),
-        "url": format!("{}/git/refs/{}", repo_url(owner, name), codeyard_webui::pages::repos::ref_path::encode_path(reference.strip_prefix("refs/").unwrap_or(reference))),
+        "url": format!("{}/git/refs/{}", repo_url(owner, name), codeyard_types::ref_path::encode_path(reference.strip_prefix("refs/").unwrap_or(reference))),
         "object": {"type": kind, "sha": sha, "url": format!("{}/git/{}s/{sha}", repo_url(owner, name), kind)},
     })
 }

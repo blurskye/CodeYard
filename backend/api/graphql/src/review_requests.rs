@@ -25,7 +25,7 @@ pub(super) async fn team_object(
         "name":team.name,"slug":team.slug,"description":team.description,"createdAt":team.created_at,
         "updatedAt":team.updated_at,"privacy":if team.privacy=="secret" {"SECRET"} else {"VISIBLE"},
         "combinedSlug":format!("{org}/{}",team.slug),"organization":organization,
-        "url":url(&format!("/orgs/{}/teams/{}",codeyard_webui::encode_component(&org),codeyard_webui::encode_component(&team.slug)))}),
+        "url":url(&format!("/orgs/{}/teams/{}",codeyard_types::paths::encode_component(&org),codeyard_types::paths::encode_component(&team.slug)))}),
     )
 }
 

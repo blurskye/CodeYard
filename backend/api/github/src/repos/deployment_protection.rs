@@ -51,7 +51,7 @@ pub(super) fn write_error(error: anyhow::Error) -> Error {
 }
 
 fn integration(id: i64, slug: &str, owner: i64) -> Value {
-    json!({"id":id,"slug":slug,"integration_url":api_url(&format!("/apps/{}", codeyard_webui::encode_component(slug))),"node_id":node_id::scoped("APP", owner, id)})
+    json!({"id":id,"slug":slug,"integration_url":api_url(&format!("/apps/{}", codeyard_types::paths::encode_component(slug))),"node_id":node_id::scoped("APP", owner, id)})
 }
 fn document(rule: &Rule, repo: i64) -> Value {
     json!({"id":rule.id,"node_id":node_id::scoped("DPR",repo,rule.id),"enabled":rule.enabled,"app":integration(rule.app_id,&rule.slug,rule.app_owner_id)})

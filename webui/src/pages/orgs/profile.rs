@@ -112,7 +112,7 @@ pub fn profile_page(page: OrganizationProfile) -> Element {
                         if !contacts.email.is_empty() {p {class:"org-profile-meta break-words",a {href:format!("mailto:{}",contacts.email),"{contacts.email}"}}}
                         if !contacts.twitter_username.is_empty() {p {class:"org-profile-meta break-words",a {href:format!("https://twitter.com/{}",encode_component(&contacts.twitter_username)),rel:"nofollow noopener noreferrer",target:"_blank","@{contacts.twitter_username}"}}}
                         if !contacts.blog.is_empty() {p {class:"org-profile-meta break-words",
-                            if codeyard_support::website::parse(&contacts.blog).is_some() {a {href:contacts.blog.clone(),rel:"nofollow noopener noreferrer",target:"_blank","{contacts.blog}"}} else {"{contacts.blog}"}
+                            if codeyard_types::website::parse(&contacts.blog).is_some() {a {href:contacts.blog.clone(),rel:"nofollow noopener noreferrer",target:"_blank","{contacts.blog}"}} else {"{contacts.blog}"}
                         }}
                     }
                     if manage {

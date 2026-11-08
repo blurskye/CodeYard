@@ -22,8 +22,8 @@ pub struct FindPage {
     pub query: String,
 }
 
-use codeyard_support::file_search::matches_terms;
-pub use codeyard_support::file_search::query_terms;
+use codeyard_types::file_search::matches_terms;
+pub use codeyard_types::file_search::query_terms;
 
 pub fn find(repo: &RepoChrome, page: &FindPage) -> Element {
     let base = repo.base();

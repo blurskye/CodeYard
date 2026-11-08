@@ -87,7 +87,7 @@ pub async fn delete(
 }
 
 fn signing_error(error: anyhow::Error) -> KeyError {
-    if error.is::<codeyard_support::credentials::AccountRestricted>() {
+    if error.is::<codeyard_types::credentials::AccountRestricted>() {
         return KeyError::AccountRestricted;
     }
     match error.downcast_ref::<codeyard_model::identity::SshKeyWriteRefusal>() {

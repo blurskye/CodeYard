@@ -2,7 +2,7 @@
 use anyhow::Result;
 use clap::Subcommand;
 use codeyard_db_core::DbPool;
-use codeyard_support::cells::Prefix;
+use codeyard_types::cells::Prefix;
 use std::path::Path;
 
 #[derive(Debug, Subcommand)]
@@ -1127,7 +1127,7 @@ impl UserMover {
     /// past today's limit and a cell without settings are skipped.
     pub async fn plan(
         &self,
-        policy: &codeyard_support::cluster::RegionPolicy,
+        policy: &codeyard_types::cluster::RegionPolicy,
     ) -> Result<Option<PlannedMove>> {
         use codeyard_cells_router::directory::{Reply, Request};
         use codeyard_db_cluster::regions;

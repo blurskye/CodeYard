@@ -313,8 +313,8 @@ async fn token_raw_page(
             std::iter::once(name.clone()).chain(short.map(str::to_owned))
         })
         .collect::<Vec<_>>();
-    use codeyard_webui::pages::repos::ref_path::resolve_repo_ref_path;
-    use codeyard_webui::pages::repos::ref_path::split_path;
+    use codeyard_types::ref_path::resolve_repo_ref_path;
+    use codeyard_types::ref_path::split_path;
     let Some(resolved) = resolve_repo_ref_path(&split_path(&params["ref_path"]), &names, true)
     else {
         return StatusCode::NOT_FOUND.into_response();

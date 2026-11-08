@@ -413,7 +413,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap_err()
-    .is::<codeyard_support::credentials::AccountRestricted>());
+    .is::<codeyard_types::credentials::AccountRestricted>());
     assert!(codeyard_db_identity::users::emails::list_account_emails(
         f.pool(),
         alice,

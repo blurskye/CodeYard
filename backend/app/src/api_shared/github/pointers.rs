@@ -11,7 +11,7 @@ use serde_json::Value;
 use std::time::Duration;
 
 fn failure(error: anyhow::Error) -> Error {
-    if error.is::<codeyard_support::credentials::AccountRestricted>() {
+    if error.is::<codeyard_types::credentials::AccountRestricted>() {
         github_auth::required()
     } else {
         Error::unavailable(error)
@@ -57,7 +57,7 @@ pub async fn browser(
     {
         return Err(github_auth::required());
     }
-    codeyard_support::cells::Secret::cookie(session).map_err(|_| github_auth::required())?;
+    codeyard_types::cells::Secret::cookie(session).map_err(|_| github_auth::required())?;
     read(
         pool,
         (actor.user_id, stub),
@@ -127,7 +127,7 @@ async fn homes(
     actor: Option<&codeyard_db_core::queries::credentials::Actor>,
     list: List,
     config: Config,
-) -> Result<Vec<codeyard_support::cells::Prefix>> {
+) -> Result<Vec<codeyard_types::cells::Prefix>> {
     if list.stars() {
         pointers::star_homes(pool, owner, actor, config)
             .await

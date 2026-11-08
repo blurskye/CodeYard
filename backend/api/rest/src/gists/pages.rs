@@ -223,7 +223,7 @@ pub(super) async fn detail_model(ctx: &PageContext, id: &str) -> Result<view::De
             raw_url: format!(
                 "/gists/{id}/raw/{}/{}",
                 loaded.snapshot.sha,
-                codeyard_webui::encode_component(&entry.path)
+                codeyard_types::paths::encode_component(&entry.path)
             ),
             image: codeyard_webui::raw_content_type(&entry.path, true).starts_with("image/"),
         });
@@ -394,7 +394,7 @@ async fn legacy_target(
         {
             let mut target = format!(
                 "{}{suffix}",
-                codeyard_webui::repository_path("gists", &repo.name)
+                codeyard_types::paths::repository_path("gists", &repo.name)
             );
             if let Some(query) = uri.query() {
                 target.push('?');
@@ -519,8 +519,8 @@ pub(super) async fn raw(
     };
     let suffix = format!(
         "/raw/{}/{}",
-        codeyard_webui::encode_component(&sha),
-        codeyard_webui::encode_component(&filename)
+        codeyard_types::paths::encode_component(&sha),
+        codeyard_types::paths::encode_component(&filename)
     );
     match legacy_target(&ctx, &id, &uri, &suffix).await {
         Ok(Some(target)) => return ctx.redirect(&target),

@@ -4,7 +4,7 @@ use codeyard_db_core::{
     cells::authorization::{self, Answer, Authority, Home, Proof},
     DbPool,
 };
-use codeyard_support::cells::Prefix;
+use codeyard_types::cells::Prefix;
 use std::sync::{
     atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     Arc,
@@ -833,7 +833,7 @@ async fn contract(pg: bool) {
         let root = tempfile::tempdir().unwrap();
         let app = database.router(root.path()).await;
         let token = Prefix::new(1)
-            .token(codeyard_support::tokens::PAT_PREFIX, &"a".repeat(64))
+            .token(codeyard_types::tokens::PAT_PREFIX, &"a".repeat(64))
             .unwrap();
         let response = app
             .oneshot(

@@ -44,7 +44,7 @@ impl From<(Option<i64>, Option<String>)> for FileAuthority {
     }
 }
 
-pub const MAX_UPLOAD_BYTES: i64 = codeyard_support::object_limits::MAX_OBJECT_BYTES;
+pub const MAX_UPLOAD_BYTES: i64 = codeyard_types::object_limits::MAX_OBJECT_BYTES;
 
 #[derive(Debug, thiserror::Error)]
 pub enum AdmissionError {
@@ -121,7 +121,7 @@ impl ReserveUpload<'_> {
                 .as_ref()
                 .is_none_or(|types| types.iter().any(|t| t == self.content_type))
             && (!matches!(self.reason, FileReason::Avatar | FileReason::OrgAvatar)
-                || codeyard_support::media::AVATAR_CONTENT_TYPES.contains(&self.content_type))
+                || codeyard_types::media::AVATAR_CONTENT_TYPES.contains(&self.content_type))
     }
 }
 

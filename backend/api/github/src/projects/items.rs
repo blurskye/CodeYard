@@ -565,7 +565,7 @@ async fn create_view(
         } else {
             "users"
         },
-        codeyard_webui::encode_component(&name),
+        codeyard_types::paths::encode_component(&name),
         project.number,
         view.number
     );

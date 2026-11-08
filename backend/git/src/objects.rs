@@ -154,7 +154,7 @@ fn invalid(message: &'static str) -> RepoError {
 }
 
 fn oid(value: &str) -> Result<Oid> {
-    if !codeyard_support::git_ids::is_full_commit_id(value) {
+    if !codeyard_types::git_ids::is_full_commit_id(value) {
         return Err(invalid("Expected a full object ID").into());
     }
     Oid::from_str(value).map_err(|_| invalid("Invalid object ID").into())

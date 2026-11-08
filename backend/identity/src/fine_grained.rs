@@ -13,7 +13,7 @@ use codeyard_db_core::DbPool;
 use codeyard_db_identity::fine_grained_tokens::NewToken;
 use serde_json::{Map, Value};
 
-pub const PREFIX: &str = codeyard_support::tokens::FGPAT_PREFIX;
+pub const PREFIX: &str = codeyard_types::tokens::FGPAT_PREFIX;
 /// The longest lifetime any token may have, and the default organization maximum.
 pub const MAX_DAYS: i64 = 366;
 pub const DEFAULT_DAYS: i64 = 30;

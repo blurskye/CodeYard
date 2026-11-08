@@ -4927,7 +4927,7 @@ impl LocalStore {
                 // back when the database already names the requested default.
                 use codeyard_db_repos::repositories::records::RepositorySettingsRefusal;
                 let must_restore = if error.downcast_ref::<RepositorySettingsRefusal>().is_some()
-                    || error.is::<codeyard_support::credentials::AccountRestricted>()
+                    || error.is::<codeyard_types::credentials::AccountRestricted>()
                     || previous.default_branch == name
                 {
                     true
@@ -4962,7 +4962,7 @@ impl LocalStore {
                         return Err(unavailable("Repository update failed and HEAD could not be restored; reconciliation is required"));
                     }
                 }
-                if error.is::<codeyard_support::credentials::AccountRestricted>() {
+                if error.is::<codeyard_types::credentials::AccountRestricted>() {
                     return Err(RepoError::write_denied());
                 }
                 return Err(match error.downcast_ref::<RepositorySettingsRefusal>() {

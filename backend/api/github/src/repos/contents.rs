@@ -25,8 +25,8 @@ use codeyard_model::urls::repo_url;
 use codeyard_repos::editor::FileWrite;
 use codeyard_repos::editor::MAX_EDITOR_BYTES;
 use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_types::ref_path::encode_path as path_url;
 use codeyard_webhooks::payloads::git_commit as commit_json;
-use codeyard_webui::pages::repos::ref_path::encode_path as path_url;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -109,13 +109,13 @@ pub(crate) fn entry(
         "{}/contents/{}?ref={}",
         repo_url(owner, repo),
         path_url(path),
-        codeyard_webui::encode_component(reference)
+        codeyard_types::paths::encode_component(reference)
     );
     let base = format!(
         "{}/{}/{}",
         codeyard_model::http_config::link_origin(),
-        codeyard_webui::encode_component(owner),
-        codeyard_webui::encode_component(repo)
+        codeyard_types::paths::encode_component(owner),
+        codeyard_types::paths::encode_component(repo)
     );
     // GitHub names the ref as the client gave it, so `main` stays `main` here.
     let html = format!(
@@ -136,7 +136,7 @@ pub(crate) fn entry(
             "{}/contents/{}?ref={}&raw=1",
             repo_url(owner, repo),
             path_url(path),
-            codeyard_webui::encode_component(revision)
+            codeyard_types::paths::encode_component(revision)
         )
     });
     json!({

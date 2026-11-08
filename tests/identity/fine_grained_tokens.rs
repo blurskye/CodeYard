@@ -199,9 +199,8 @@ async fn contract(pg: bool) {
     assert_eq!(reply.status, 200, "{}", reply.text());
     let first = value(&reply.text());
     let framed =
-        codeyard_support::cells::Secret::token(&first, codeyard_support::tokens::FGPAT_PREFIX)
-            .unwrap();
-    assert_eq!(framed.cell, codeyard_support::cells::Prefix::ZERO);
+        codeyard_types::cells::Secret::token(&first, codeyard_types::tokens::FGPAT_PREFIX).unwrap();
+    assert_eq!(framed.cell, codeyard_types::cells::Prefix::ZERO);
     assert_eq!(framed.secret.len(), 64);
     let row = codeyard_db_identity::fine_grained_tokens::list_before(f.pool(), alice, None)
         .await

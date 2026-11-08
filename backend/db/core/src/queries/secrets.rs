@@ -35,7 +35,7 @@ pub enum SecretsError {
 
 impl SecretsError {
     pub fn authority(error: anyhow::Error) -> Self {
-        if error.is::<codeyard_support::credentials::AccountRestricted>() {
+        if error.is::<codeyard_types::credentials::AccountRestricted>() {
             return Self::Denied;
         }
         // Anyhow downcasts also recognize contextual errors; retain typed denial
@@ -44,7 +44,7 @@ impl SecretsError {
             Ok(error) => return error,
             Err(error) => error,
         };
-        if error.is::<codeyard_support::credentials::AccountRestricted>() {
+        if error.is::<codeyard_types::credentials::AccountRestricted>() {
             return Self::Denied;
         }
         if matches!(

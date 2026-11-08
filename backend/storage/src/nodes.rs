@@ -22,7 +22,7 @@ impl Declaration {
 
     pub fn valid(&self) -> bool {
         crate::valid_key(&self.key)
-            && (0..=codeyard_support::object_limits::MAX_OBJECT_BYTES).contains(&self.bytes)
+            && (0..=codeyard_types::object_limits::MAX_OBJECT_BYTES).contains(&self.bytes)
             && self.digest.len() == 64
             && self
                 .digest

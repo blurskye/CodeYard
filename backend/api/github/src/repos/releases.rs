@@ -98,8 +98,8 @@ pub(crate) async fn document(
         value["discussion_url"] = Value::String(format!(
             "{}/{}/{}/discussions/{number}",
             codeyard_model::http_config::link_origin(),
-            codeyard_webui::encode_component(owner),
-            codeyard_webui::encode_component(name)
+            codeyard_types::paths::encode_component(owner),
+            codeyard_types::paths::encode_component(name)
         ));
     }
     let counts =

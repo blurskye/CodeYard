@@ -1,7 +1,7 @@
 //! Home-cell membership and star pointers discover remote resources; they never grant access.
 use anyhow::{ensure, Result};
 use codeyard_model::cells::{Object, ObjectKind};
-use codeyard_support::cells::Prefix;
+use codeyard_types::cells::Prefix;
 use futures_util::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 
@@ -284,7 +284,7 @@ impl Page {
                         List::BrowserOrganizations =>
                             key == "after"
                                 && value.parse::<i64>().ok().is_some_and(|id| (0
-                                    ..=codeyard_support::cells::MAX_ID)
+                                    ..=codeyard_types::cells::MAX_ID)
                                     .contains(&id)),
                         List::StarredRepositories | List::BrowserStars => match key.as_str() {
                             "username" =>
@@ -314,17 +314,17 @@ macro_rules! read_engine {
                 $retain(&mut tx,&users).await?;
                 let native: Option<i64> = sqlx::query_scalar(concat!("SELECT id FROM users WHERE id=$1 AND NOT is_stub AND home_cell=$2 AND NOT is_banned AND NOT must_change_password",$lock))
                     .bind(owner).bind(i32::from(pool.cell_id().get())).fetch_optional(&mut *tx).await?;
-                ensure!(native.is_some(),codeyard_support::credentials::AccountRestricted);
+                ensure!(native.is_some(),codeyard_types::credentials::AccountRestricted);
                 if let Some(actor) = actor {
-                    let credential = actor.credential().ok_or(codeyard_support::credentials::AccountRestricted)?;
-                    ensure!(crate::queries::$module::users::transitions::credential_live(&mut tx,actor.user_id,&credential,false).await?, codeyard_support::credentials::AccountRestricted);
+                    let credential = actor.credential().ok_or(codeyard_types::credentials::AccountRestricted)?;
+                    ensure!(crate::queries::$module::users::transitions::credential_live(&mut tx,actor.user_id,&credential,false).await?, codeyard_types::credentials::AccountRestricted);
                 }
                 let cells: Vec<i32> = sqlx::query_scalar("SELECT DISTINCT source_cell FROM remote_pointers WHERE user_id=$1 AND active AND source_cell<>$3 AND kind=$4 ORDER BY source_cell LIMIT $2")
                     .bind(owner).bind(config.maximum_cells as i64 + 1).bind(i32::from(pool.cell_id().get())).bind(kind.as_str()).fetch_all(&mut *tx).await?;
                 ensure!(cells.len() <= config.maximum_cells,"Remote resource fanout exceeds its limit");
                 if let Some(actor) = actor {
-                    let credential = actor.credential().ok_or(codeyard_support::credentials::AccountRestricted)?;
-                    ensure!(crate::queries::$module::users::transitions::credential_live(&mut tx,actor.user_id,&credential,false).await?, codeyard_support::credentials::AccountRestricted);
+                    let credential = actor.credential().ok_or(codeyard_types::credentials::AccountRestricted)?;
+                    ensure!(crate::queries::$module::users::transitions::credential_live(&mut tx,actor.user_id,&credential,false).await?, codeyard_types::credentials::AccountRestricted);
                 }
                 tx.commit().await?;
                 cells.into_iter().map(|cell| Prefix::try_from(i64::from(cell)).map_err(Into::into)).collect()

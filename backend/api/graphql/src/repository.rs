@@ -31,7 +31,9 @@ pub(super) async fn foreign_object(
     let mut value = object(repo);
     let full_name = format!("{owner}/{}", repo.name);
     value["nameWithOwner"] = json!(full_name);
-    value["url"] = json!(url(&codeyard_webui::repository_path(owner, &repo.name)));
+    value["url"] = json!(url(&codeyard_types::paths::repository_path(
+        owner, &repo.name
+    )));
     let ssh = codeyard_model::http_config::ssh_clone_base();
     value["sshUrl"] = json!(if ssh.trim().is_empty() {
         String::new()

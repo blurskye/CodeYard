@@ -6,7 +6,8 @@ use codeyard_cells_router::{directory, frontend, http::Transport, routes::Routes
 use codeyard_db_cluster::moves::{self, Account};
 use codeyard_db_directory::Directory;
 use codeyard_model::cells::{Cell, Key, KeyKind, Object, ObjectKind, State};
-use codeyard_support::{cells::Prefix, node_identity::NodeKey};
+use codeyard_support::node_identity::NodeKey;
+use codeyard_types::cells::Prefix;
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 

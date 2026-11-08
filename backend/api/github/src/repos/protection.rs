@@ -100,7 +100,7 @@ pub(super) async fn protected(
     let url = format!(
         "{}/branches/{}/protection",
         repo_url(owner, name),
-        codeyard_webui::encode_component(branch)
+        codeyard_types::paths::encode_component(branch)
     );
     Ok((rule, auth.database_actor(), url))
 }

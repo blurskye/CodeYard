@@ -8,12 +8,12 @@ use subtle::ConstantTimeEq;
 
 const CLI_SECRET: &str = "34ddeff2b558a23d38fba8a6de74f086ede1cc0b";
 
-pub fn user_code(cell: codeyard_support::cells::Prefix) -> String {
+pub fn user_code(cell: codeyard_types::cells::Prefix) -> String {
     let value = codeyard_support::crypto::random_hex();
     format!("{cell}-{}-{}", &value[..4], &value[4..8]).to_uppercase()
 }
 
-pub use codeyard_support::cells::{
+pub use codeyard_types::cells::{
     device_code_prefix as user_code_cell, normalize_device_code as normalize_code,
 };
 

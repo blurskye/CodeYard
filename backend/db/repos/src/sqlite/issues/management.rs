@@ -6,7 +6,7 @@ use anyhow::Result;
 use codeyard_db_core::models::Issue;
 use codeyard_db_core::pool::SqlitePool;
 use codeyard_db_core::queries::credentials::Actor;
-use codeyard_support::credentials::AccountRestricted;
+use codeyard_types::credentials::AccountRestricted;
 use sqlx::Sqlite;
 use sqlx::Transaction;
 

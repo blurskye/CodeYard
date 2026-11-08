@@ -194,7 +194,7 @@ pub(super) async fn form(
             return ctx.redirect(&format!(
                 "{}/settings?tab=properties&property={}",
                 loaded.chrome.base(),
-                codeyard_webui::encode_component(name)
+                codeyard_types::paths::encode_component(name)
             ))
         }
         Err(error) => {

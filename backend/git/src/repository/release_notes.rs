@@ -77,7 +77,7 @@ pub async fn release_history(
     ensure!(
         commits
             .iter()
-            .all(codeyard_support::git_ids::is_full_commit_id),
+            .all(codeyard_types::git_ids::is_full_commit_id),
         "Git returned invalid commit IDs"
     );
     Ok(ReleaseHistory {

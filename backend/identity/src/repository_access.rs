@@ -9,7 +9,7 @@ pub async fn credential_user(
     write: bool,
 ) -> Result<User> {
     use codeyard_db_core::queries::users::accounts::OwnedAccountCredential;
-    use codeyard_support::credentials::AccountRestricted;
+    use codeyard_types::credentials::AccountRestricted;
     let user = match &actor.credential {
         None => codeyard_db_identity::users::accounts::get_user_by_id(pool, actor.user_id).await?,
         Some(OwnedAccountCredential::Session(session)) => {
@@ -382,7 +382,7 @@ pub async fn change_collaborator(
     )
     .await
     .map_err(|error| {
-        if error.is::<codeyard_support::credentials::AccountRestricted>() {
+        if error.is::<codeyard_types::credentials::AccountRestricted>() {
             AccessError::NotFound
         } else {
             AccessError::Unavailable

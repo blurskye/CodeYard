@@ -2,7 +2,7 @@
 use crate::support::database::Database;
 use codeyard_db_core::cells::pointers::{self, Admission, Change, Event};
 use codeyard_model::cells::{Object, ObjectKind};
-use codeyard_support::cells::Prefix;
+use codeyard_types::cells::Prefix;
 use futures_util::future::BoxFuture;
 use std::sync::atomic::{AtomicUsize, Ordering};
 

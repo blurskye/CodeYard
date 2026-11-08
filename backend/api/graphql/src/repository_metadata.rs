@@ -34,7 +34,7 @@ async fn texts(store: &RepoStore, branch: &str, paths: &[&str]) -> Result<Vec<(S
 fn yaml(text: &str) -> Result<serde_yaml::Value> {
     codeyard_model::workflow_yaml::parse_yaml_with_limit(
         text.as_bytes(),
-        4 * codeyard_support::git_limits::MAX_TEMPLATE_BYTES as usize,
+        4 * codeyard_types::git_limits::MAX_TEMPLATE_BYTES as usize,
     )
     .map_err(unavailable)
 }
@@ -155,7 +155,7 @@ pub(super) async fn resolve(
             }
             let owner = crate::repository::owner(repo, request).await?;
             Ok(json!(files.first().map(|(path, _)| url(
-                &codeyard_webui::pages::repos::ref_path::branch_url(
+                &codeyard_types::ref_path::branch_url(
                     &format!("/{}/{}", owner, repo.name),
                     "blob",
                     &repo.default_branch,
@@ -205,7 +205,7 @@ pub(super) async fn resolve(
             let owner = crate::repository::owner(repo, request).await?;
             Ok(files.first().map(|(path, text)| {
                 let covenant = codeyard_repos::community::contributor_covenant(text);
-                json!({"key":if covenant { "contributor_covenant" } else { "other" },"name":if covenant { "Contributor Covenant" } else { "Other" },"url":url(&codeyard_webui::pages::repos::ref_path::branch_url(&format!("/{}/{}",owner,repo.name),"blob",&repo.default_branch,path))})
+                json!({"key":if covenant { "contributor_covenant" } else { "other" },"name":if covenant { "Contributor Covenant" } else { "Other" },"url":url(&codeyard_types::ref_path::branch_url(&format!("/{}/{}",owner,repo.name),"blob",&repo.default_branch,path))})
             }).unwrap_or(Value::Null))
         }
         "licenseInfo" => {

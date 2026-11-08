@@ -77,7 +77,7 @@ fn refusal(error: &anyhow::Error) -> (StatusCode, String) {
             error.to_string(),
         );
     }
-    if error.is::<codeyard_support::credentials::AccountRestricted>() {
+    if error.is::<codeyard_types::credentials::AccountRestricted>() {
         return (
             StatusCode::FORBIDDEN,
             "Your session no longer permits this change. Sign in again.".into(),

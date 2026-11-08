@@ -20,7 +20,7 @@ use codeyard_db_actions::action_objects::BlobPart;
 use codeyard_db_actions::action_objects::NewObject;
 use codeyard_db_actions::action_objects::RuntimeRun;
 use codeyard_storage::Upload;
-use codeyard_support::object_limits::MAX_OBJECT_BYTES;
+use codeyard_types::object_limits::MAX_OBJECT_BYTES;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;

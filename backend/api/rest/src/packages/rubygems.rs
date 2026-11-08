@@ -20,7 +20,7 @@ use base64::Engine;
 use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_app::app::AppState;
 use codeyard_db_repos::packages::Publish;
-use codeyard_support::object_limits::MAX_OBJECT_BYTES;
+use codeyard_types::object_limits::MAX_OBJECT_BYTES;
 use serde_json::json;
 use serde_json::Value;
 use serde_yaml::Value as Yaml;

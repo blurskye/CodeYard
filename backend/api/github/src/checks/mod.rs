@@ -58,7 +58,7 @@ fn run_value(
     pull_requests: &Value,
 ) -> Value {
     let url = format!("{}/check-runs/{}", repo_url(owner, &repo.name), run.id);
-    json!({"id":run.id,"node_id":codeyard_model::node_id::scoped("CR",repo.id,run.id),"head_sha":suite.head_sha,"name":run.name,"url":url,"html_url":format!("{}/{}/{}/runs/{}",codeyard_model::http_config::link_origin(),codeyard_webui::encode_component(owner),codeyard_webui::encode_component(&repo.name),run.id),"details_url":run.data.details_url,"external_id":run.data.external_id,"status":run.status,"conclusion":run.conclusion,"started_at":run.data.started_at,"completed_at":run.data.completed_at,"check_suite":{"id":suite.id},"output":{"title":run.data.title,"summary":run.data.summary,"text":run.data.text,"annotations_count":count,"annotations_url":format!("{url}/annotations"),"images":run.data.images},"app":publisher,"pull_requests":pull_requests})
+    json!({"id":run.id,"node_id":codeyard_model::node_id::scoped("CR",repo.id,run.id),"head_sha":suite.head_sha,"name":run.name,"url":url,"html_url":format!("{}/{}/{}/runs/{}",codeyard_model::http_config::link_origin(),codeyard_types::paths::encode_component(owner),codeyard_types::paths::encode_component(&repo.name),run.id),"details_url":run.data.details_url,"external_id":run.data.external_id,"status":run.status,"conclusion":run.conclusion,"started_at":run.data.started_at,"completed_at":run.data.completed_at,"check_suite":{"id":suite.id},"output":{"title":run.data.title,"summary":run.data.summary,"text":run.data.text,"annotations_count":count,"annotations_url":format!("{url}/annotations"),"images":run.data.images},"app":publisher,"pull_requests":pull_requests})
 }
 
 async fn suite_document(
@@ -492,10 +492,10 @@ async fn annotations(
                 let base = format!(
                     "{}/{}/{}",
                     codeyard_model::http_config::link_origin(),
-                    codeyard_webui::encode_component(&owner),
-                    codeyard_webui::encode_component(&name)
+                    codeyard_types::paths::encode_component(&owner),
+                    codeyard_types::paths::encode_component(&name)
                 );
-                doc["blob_href"] = json!(codeyard_webui::pages::repos::ref_path::file_url(
+                doc["blob_href"] = json!(codeyard_types::ref_path::file_url(
                     &base,
                     "blob",
                     &suite.head_sha,

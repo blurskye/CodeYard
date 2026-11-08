@@ -9,10 +9,10 @@ pub struct AdminSettings {
     /// A private node reviews each signup request. A public one lets anyone register.
     pub private: bool,
     #[serde(default)]
-    pub scaling: Vec<codeyard_support::cluster::ScalingPolicy>,
+    pub scaling: Vec<codeyard_types::cluster::ScalingPolicy>,
     /// Only a cell enrolled in a directory places organizations in other regions.
     #[serde(default)]
-    pub presence: Option<codeyard_support::cluster::RegionPolicy>,
+    pub presence: Option<codeyard_types::cluster::RegionPolicy>,
     /// `block` or `allow`.
     pub ai_crawlers: String,
     pub osv_base_url: String,

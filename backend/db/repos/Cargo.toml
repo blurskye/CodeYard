@@ -11,7 +11,6 @@ codeyard-db-core.workspace = true
 codeyard-git.workspace = true
 codeyard-model.workspace = true
 codeyard-support.workspace = true
-codeyard-webui.workspace = true
 futures-util.workspace = true
 git2.workspace = true
 hex.workspace = true
@@ -33,4 +32,7 @@ workspace = true
 workspace = true
 
 [dependencies.codeyard-db-identity]
+workspace = true
+
+[dependencies.codeyard-types]
 workspace = true

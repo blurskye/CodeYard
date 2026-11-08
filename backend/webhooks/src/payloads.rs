@@ -65,8 +65,8 @@ pub fn team(access: &codeyard_db_repos::repositories::push_teams::TeamAccess) ->
 }
 
 pub fn team_document(team: &codeyard_db_core::models::Team, org: &str, permission: i16) -> Value {
-    let org = codeyard_webui::encode_component(org);
-    let slug = codeyard_webui::encode_component(&team.slug);
+    let org = codeyard_types::paths::encode_component(org);
+    let slug = codeyard_types::paths::encode_component(&team.slug);
     let url = codeyard_model::urls::api_url(&format!("/teams/{}", team.id));
     let permission = match permission {
         1 => "pull",
@@ -92,8 +92,8 @@ pub fn repository_property(
     value["source_type"] = json!("organization");
     value["url"] = json!(codeyard_model::urls::api_url(&format!(
         "/orgs/{}/properties/schema/{}",
-        codeyard_webui::encode_component(org),
-        codeyard_webui::encode_component(&definition.fields.property_name)
+        codeyard_types::paths::encode_component(org),
+        codeyard_types::paths::encode_component(&definition.fields.property_name)
     )));
     value
 }
@@ -157,7 +157,7 @@ pub fn organization_avatar(org: &codeyard_db_core::models::Organization) -> Stri
             format!(
                 "{}/avatars/{}",
                 link_origin(),
-                codeyard_webui::encode_component(&org.name)
+                codeyard_types::paths::encode_component(&org.name)
             )
         },
         |id| format!("{}/api/files/{id}/download", link_origin()),
@@ -166,7 +166,7 @@ pub fn organization_avatar(org: &codeyard_db_core::models::Organization) -> Stri
 
 /// Organization links are shared by membership responses and organization events.
 pub fn organization(org: &codeyard_db_core::models::Organization) -> Value {
-    let name = codeyard_webui::encode_component(&org.name);
+    let name = codeyard_types::paths::encode_component(&org.name);
     let url = codeyard_model::urls::api_url(&format!("/orgs/{name}"));
     let avatar = organization_avatar(org);
     json!({"login": org.name, "id": org.id, "node_id": codeyard_model::node_id::encode("O", org.id),
@@ -194,7 +194,7 @@ pub fn organization_invitation(
         "role": if invitation.role == "owner" { "admin" } else { "direct_member" },
         "created_at": time(invitation.created_at), "failed_at": optional_time(invitation.failed_at), "failed_reason": invitation.failed_reason,
         "inviter": person(&inviter), "team_count": team_count, "invitation_source": "member",
-        "invitation_teams_url": codeyard_model::urls::api_url(&format!("/orgs/{}/invitations/{}/teams", codeyard_webui::encode_component(&org.name), invitation.id))})
+        "invitation_teams_url": codeyard_model::urls::api_url(&format!("/orgs/{}/invitations/{}/teams", codeyard_types::paths::encode_component(&org.name), invitation.id))})
 }
 
 pub fn repository_traffic(
@@ -390,11 +390,11 @@ pub fn team_organization(
     public_repos: i64,
     has_organization_projects: bool,
 ) -> Value {
-    let slug = codeyard_webui::encode_component(&org.name);
+    let slug = codeyard_types::paths::encode_component(&org.name);
     let url = codeyard_model::urls::api_url(&format!("/orgs/{slug}"));
     json!({"id":org.id,"node_id":node_id::encode("O",org.id),"login":org.name,
         "name":org.display_name.as_deref().unwrap_or(&org.name),"description":org.description,"url":url,
-        "html_url":format!("{}{}",link_origin(),codeyard_webui::profile_path(&org.name)),"avatar_url":organization_avatar(org),
+        "html_url":format!("{}{}",link_origin(),codeyard_types::paths::profile_path(&org.name)),"avatar_url":organization_avatar(org),
         "repos_url":format!("{url}/repos"),"events_url":format!("{url}/events"),
         "hooks_url":format!("{url}/hooks"),"issues_url":format!("{url}/issues"),
         "members_url":format!("{url}/members{{/member}}"),"public_members_url":format!("{url}/public_members{{/member}}"),
@@ -409,7 +409,7 @@ pub fn environment(
     repo: &str,
     reviewers: Vec<Value>,
 ) -> Value {
-    let name = codeyard_webui::encode_component(&environment.name);
+    let name = codeyard_types::paths::encode_component(&environment.name);
     let mut rules = Vec::new();
     let rule = |kind: &str| json!({"id": environment.id, "node_id": codeyard_model::node_id::scoped("G",environment.repo_id,environment.id), "type": kind});
     if environment.wait_timer > 0 {
@@ -509,9 +509,9 @@ pub fn package_url(
     let namespace = if owner.kind == "org" { "orgs" } else { "users" };
     format!(
         "/{namespace}/{}/packages/{}/{}",
-        codeyard_webui::encode_component(&owner.name),
+        codeyard_types::paths::encode_component(&owner.name),
         package.package_type,
-        codeyard_webui::encode_component(&package.name)
+        codeyard_types::paths::encode_component(&package.name)
     )
 }
 
@@ -568,20 +568,20 @@ fn repository_url(owner: &str, name: &str) -> String {
     format!(
         "{}{}",
         link_origin(),
-        codeyard_webui::repository_path(owner, name)
+        codeyard_types::paths::repository_path(owner, name)
     )
 }
 
 /// The public links shared by REST objects and webhook actors.
 pub fn simple_person(person: &Person) -> Value {
     let origin = link_origin();
-    let login = codeyard_webui::encode_component(&person.login);
+    let login = codeyard_types::paths::encode_component(&person.login);
     let url = format!("{origin}/api/v3/users/{login}");
     let mut value = json!({
         "login": person.login, "id": person.id,
         "node_id": codeyard_model::node_id::encode("U", person.id),
         "type": if person.login.ends_with("[bot]") { "Bot" } else { "User" },
-        "html_url": format!("{origin}{}",codeyard_webui::profile_path(&person.login)), "url": url,
+        "html_url": format!("{origin}{}",codeyard_types::paths::profile_path(&person.login)), "url": url,
         "avatar_url": format!("{origin}/avatars/{login}"),
         "gravatar_id": "", "site_admin": person.site_admin,
     });
@@ -702,7 +702,7 @@ pub fn organization_person(id: i64, name: &str) -> Value {
     value["node_id"] = json!(codeyard_model::node_id::encode("O", id));
     value["repos_url"] = json!(codeyard_model::urls::api_url(&format!(
         "/orgs/{}/repos",
-        codeyard_webui::encode_component(name)
+        codeyard_types::paths::encode_component(name)
     )));
     value
 }
@@ -1060,8 +1060,8 @@ pub fn milestone(
     let url = format!(
         "{}/api/v3/repos/{}/{}/milestones/{}",
         link_origin(),
-        codeyard_webui::encode_component(owner),
-        codeyard_webui::encode_component(repo),
+        codeyard_types::paths::encode_component(owner),
+        codeyard_types::paths::encode_component(repo),
         milestone.number
     );
     json!({
@@ -1069,7 +1069,7 @@ pub fn milestone(
         "node_id": node_id::scoped("M",milestone.repo_id,milestone.id),
         "number": milestone.number,
         "url": url,
-        "html_url": format!("{}/{}/{}/milestones/{}", link_origin(), codeyard_webui::encode_component(owner), codeyard_webui::encode_component(repo), milestone.number),
+        "html_url": format!("{}/{}/{}/milestones/{}", link_origin(), codeyard_types::paths::encode_component(owner), codeyard_types::paths::encode_component(repo), milestone.number),
         "labels_url": format!("{url}/labels"),
         "title": milestone.title,
         "description": milestone.description,
@@ -1089,7 +1089,7 @@ pub fn label(label: &codeyard_db_core::models::Label, owner: &str, repo: &str) -
     json!({
         "id": label.id,
         "node_id": node_id::scoped("L",label.repo_id,label.id),
-        "url": format!("{}/api/v3/repos/{}/{}/labels/{}", link_origin(), codeyard_webui::encode_component(owner), codeyard_webui::encode_component(repo), codeyard_webui::encode_component(&label.name)),
+        "url": format!("{}/api/v3/repos/{}/{}/labels/{}", link_origin(), codeyard_types::paths::encode_component(owner), codeyard_types::paths::encode_component(repo), codeyard_types::paths::encode_component(&label.name)),
         "name": label.name,
         "color": label.color.trim_start_matches('#'),
         "description": label.description,
@@ -1210,8 +1210,8 @@ pub fn conversation_comment(
     let base = format!(
         "{}/api/v3/repos/{}/{}",
         link_origin(),
-        codeyard_webui::encode_component(scope.owner),
-        codeyard_webui::encode_component(&scope.repo.name)
+        codeyard_types::paths::encode_component(scope.owner),
+        codeyard_types::paths::encode_component(&scope.repo.name)
     );
     let comment_id = conversation_comment_id(id, pull_request);
     json!({
@@ -1283,8 +1283,8 @@ pub fn issue_json(issue: &Issue, author: &Person, repo: &Repository, owner: &str
     let base = format!(
         "{}/api/v3/repos/{}/{}",
         link_origin(),
-        codeyard_webui::encode_component(owner),
-        codeyard_webui::encode_component(&repo.name)
+        codeyard_types::paths::encode_component(owner),
+        codeyard_types::paths::encode_component(&repo.name)
     );
     let url = format!("{base}/issues/{}", issue.number);
     json!({
@@ -1434,8 +1434,8 @@ pub fn pull_request_review_json(
     let url = format!(
         "{}/api/v3/repos/{}/{}/pulls/{}",
         link_origin(),
-        codeyard_webui::encode_component(owner),
-        codeyard_webui::encode_component(&repo.name),
+        codeyard_types::paths::encode_component(owner),
+        codeyard_types::paths::encode_component(&repo.name),
         pull.number
     );
     let html_url = format!(
@@ -1492,8 +1492,8 @@ pub fn pull_request_review_comment_json(
     let root = format!(
         "{}/api/v3/repos/{}/{}",
         link_origin(),
-        codeyard_webui::encode_component(owner),
-        codeyard_webui::encode_component(&repo.name)
+        codeyard_types::paths::encode_component(owner),
+        codeyard_types::paths::encode_component(&repo.name)
     );
     let url = format!("{root}/pulls/comments/{}", comment.id);
     let pull_url = format!("{root}/pulls/{}", pull.number);
@@ -1696,8 +1696,8 @@ pub fn release_asset(
         "id": asset.id, "node_id": node_id::scoped("RA",release.repo_id,asset.id),
         "url": format!("{base}/releases/assets/{}", asset.id),
         "browser_download_url": format!("{}/{}/{}/releases/download/{}/{}", link_origin(),
-            codeyard_webui::encode_component(owner), codeyard_webui::encode_component(name),
-            codeyard_webui::encode_component(&release.tag_name), codeyard_webui::encode_component(&asset.name)),
+            codeyard_types::paths::encode_component(owner), codeyard_types::paths::encode_component(name),
+            codeyard_types::paths::encode_component(&release.tag_name), codeyard_types::paths::encode_component(&asset.name)),
         "name": asset.name, "label": asset.label, "state": "uploaded",
         "content_type": asset.content_type, "size": asset.size, "digest": format!("sha256:{digest}"),
         "download_count": asset.download_count, "uploader": uploader,
@@ -1718,10 +1718,10 @@ pub fn release_json(
         "id": id, "node_id": node_id::scoped("RE",release.repo_id,id),
         "url": format!("{base}/releases/{id}"), "assets_url": format!("{base}/releases/{id}/assets"),
         "upload_url": format!("{base}/releases/{id}/assets{{?name,label}}"),
-        "html_url": format!("{}/{}/{}/releases/tag/{}", link_origin(), codeyard_webui::encode_component(owner),
-            codeyard_webui::encode_component(name), codeyard_webui::encode_component(&release.tag_name)),
-        "tarball_url": format!("{base}/tarball/{}", codeyard_webui::encode_component(&format!("refs/tags/{}", release.tag_name))),
-        "zipball_url": format!("{base}/zipball/{}", codeyard_webui::encode_component(&format!("refs/tags/{}", release.tag_name))),
+        "html_url": format!("{}/{}/{}/releases/tag/{}", link_origin(), codeyard_types::paths::encode_component(owner),
+            codeyard_types::paths::encode_component(name), codeyard_types::paths::encode_component(&release.tag_name)),
+        "tarball_url": format!("{base}/tarball/{}", codeyard_types::paths::encode_component(&format!("refs/tags/{}", release.tag_name))),
+        "zipball_url": format!("{base}/zipball/{}", codeyard_types::paths::encode_component(&format!("refs/tags/{}", release.tag_name))),
         "tag_name": release.tag_name, "target_commitish": release.target_commitish,
         "name": release.name, "body": release.body, "draft": release.is_draft, "prerelease": release.is_prerelease,"immutable":release.is_immutable,
         "author": simple_person(author), "created_at": time(release.created_at),
@@ -2253,7 +2253,7 @@ pub fn action_run(
         "run_number":run.workflow_run_number,"run_attempt":run.workflow_run_attempt.unwrap_or(1),"display_title":title,
         "event":run.event,"status":status,"conclusion":conclusion,"head_sha":run.head_sha.as_deref().unwrap_or(""),
         "path":run.workflow_path,"workflow_id":workflow_id,"url":url,
-        "html_url":format!("{}/{}/{}/actions?job={}",link_origin(),codeyard_webui::encode_component(owner),codeyard_webui::encode_component(name),run.run_id),
+        "html_url":format!("{}/{}/{}/actions?job={}",link_origin(),codeyard_types::paths::encode_component(owner),codeyard_types::paths::encode_component(name),run.run_id),
         "created_at":time(run.created_at),"updated_at":time(run.updated_at),
         "head_commit":head_commit,"head_repository":head_repository,"repository":repository,
         "jobs_url":format!("{url}/jobs"),"logs_url":format!("{url}/logs"),
@@ -2293,7 +2293,7 @@ pub fn action_job(
     json!({"id":job.id,"node_id":node_id::scoped("J",run.repo_id,job.id),"run_id":run_id,"run_attempt":run.workflow_run_attempt.unwrap_or(1),
         "run_url":format!("{api}/actions/runs/{run_id}"),"head_sha":run.head_sha,"workflow_name":job.workflow_name,
         "head_branch":branch,"name":job.name,"url":format!("{api}/actions/jobs/{}",job.id),
-        "html_url":format!("{}/{}/{}/actions?{query}",link_origin(),codeyard_webui::encode_component(owner),codeyard_webui::encode_component(repo)),
+        "html_url":format!("{}/{}/{}/actions?{query}",link_origin(),codeyard_types::paths::encode_component(owner),codeyard_types::paths::encode_component(repo)),
         "status":job.status,"conclusion":job.conclusion,"started_at":time(job.started_at.unwrap_or(job.created_at)),"completed_at":optional_time(job.completed_at),"created_at":time(job.created_at),
         "check_run_url":format!("{api}/check-runs/{}",job.check_run_id),"labels":job.labels.0,"runner_id":null,"runner_name":if run.engine.as_deref()==Some("codeyard-actions"){Some("codeyard-actions")}else{None},"runner_group_id":null,"runner_group_name":null,
         "steps":steps.iter().map(|step|json!({"number":step.number,"name":step.name,"status":step.status,"conclusion":step.conclusion,"started_at":time(step.started_at),"completed_at":optional_time(step.completed_at)})).collect::<Vec<_>>()})
@@ -2330,7 +2330,7 @@ pub fn secret_scanning_alert(
     let url = format!("{base}/secret-scanning/alerts/{}", alert.number);
     json!({
         "number": alert.number, "created_at": alert.created_at, "updated_at": alert.updated_at,
-        "url": url, "html_url": format!("{}/{}/{}/security/secret-scanning/{}", codeyard_model::http_config::link_origin(), codeyard_webui::encode_component(owner), codeyard_webui::encode_component(repo), alert.number),
+        "url": url, "html_url": format!("{}/{}/{}/security/secret-scanning/{}", codeyard_model::http_config::link_origin(), codeyard_types::paths::encode_component(owner), codeyard_types::paths::encode_component(repo), alert.number),
         "locations_url": format!("{url}/locations"), "state": alert.state,
         "resolution": alert.resolution, "resolution_comment": alert.resolution_comment,
         "resolved_at": alert.resolved_at, "resolved_by": resolved_by.map(user),

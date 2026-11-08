@@ -190,7 +190,7 @@ pub(crate) async fn reset_code_post(
             } else {
                 format!(
                     "/login?reset=done&redirect={}",
-                    codeyard_webui::encode_component(&redirect)
+                    codeyard_types::paths::encode_component(&redirect)
                 )
             };
             ctx.redirect(&target)

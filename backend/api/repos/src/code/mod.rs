@@ -43,8 +43,8 @@ impl<S: Send + Sync> axum::extract::FromRequestParts<S> for GitPathParams {
             .unwrap_or(uri.path());
         let mut pieces = path.trim_start_matches('/').splitn(4, '/');
         let bad = axum::http::StatusCode::BAD_REQUEST;
-        let owner = codeyard_support::git_paths::from_url(pieces.next().ok_or(bad)?).ok_or(bad)?;
-        let repo = codeyard_support::git_paths::from_url(pieces.next().ok_or(bad)?).ok_or(bad)?;
+        let owner = codeyard_types::git_paths::from_url(pieces.next().ok_or(bad)?).ok_or(bad)?;
+        let repo = codeyard_types::git_paths::from_url(pieces.next().ok_or(bad)?).ok_or(bad)?;
         if owner.contains('\0') || repo.contains('\0') {
             return Err(bad);
         }
@@ -52,7 +52,7 @@ impl<S: Send + Sync> axum::extract::FromRequestParts<S> for GitPathParams {
             std::collections::HashMap::from([("owner".into(), owner), ("repo".into(), repo)]);
         if pieces.next().is_some() {
             let tail =
-                codeyard_support::git_paths::from_url(pieces.next().unwrap_or("")).ok_or(bad)?;
+                codeyard_types::git_paths::from_url(pieces.next().unwrap_or("")).ok_or(bad)?;
             params.insert("ref_path".into(), tail);
         }
         Ok(Self(params))

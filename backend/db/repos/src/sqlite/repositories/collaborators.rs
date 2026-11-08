@@ -214,7 +214,7 @@ pub async fn respond(
         )
         .await
         .map_err(|error| {
-            if error.is::<codeyard_support::credentials::AccountRestricted>() {
+            if error.is::<codeyard_types::credentials::AccountRestricted>() {
                 Refusal::Denied.into()
             } else {
                 error

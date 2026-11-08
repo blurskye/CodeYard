@@ -97,7 +97,7 @@ pub fn patch_rows(patch: &str) -> Vec<PatchRow<'_>> {
 
 /// The digit count the gutters must fit, when it is more than the four they fit by default.
 /// CSS widens them for a change far into a very long file.
-pub(crate) fn patch_gutter_digits(rows: &[PatchRow<'_>]) -> Option<String> {
+pub fn patch_gutter_digits(rows: &[PatchRow<'_>]) -> Option<String> {
     let digits = rows
         .iter()
         .flat_map(|row| [row.old, row.new])
