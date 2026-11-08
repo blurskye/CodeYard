@@ -132,11 +132,13 @@ push sockets into the state directory. The earlier run without them is in bracke
 
 No pod restarted during these steps. In the earlier run the SSH pod restarted twice when
 it started while the database was unreachable. Now every role retries the connection and the
-migration lock with backoff for up to `DATABASE_CONNECT_WAIT_SECONDS` (default 60) before it
-exits; an SSH pod deleted together with the primary was serving after 26 s without a
-restart. On a fresh install pods can still restart once or twice, because the first
-migration's commit waits until a synchronous standby exists. The write and read gaps are set
-by promotion and by sessions living on the primary, so this change does not shorten them.
+migration lock with backoff for up to `DATABASE_CONNECT_WAIT_SECONDS` (default 60, 480 with
+the operator) before it exits; an SSH pod deleted together with the primary was serving after
+26 s without a restart. On a fresh install the first migration's commit waits, for up to ten
+minutes, until the first synchronous standby has joined; the other pods keep retrying the
+migration lock meanwhile, and pods starting together take turns turning cluster mode on.
+The write and read gaps are set by promotion and by sessions living on the primary, so this
+change does not shorten them.
 
 The web pods reconnect through PgBouncer without restarting. Page reads stop together with
 writes: sessions live on the primary, and the replica URL is used only for replicas that

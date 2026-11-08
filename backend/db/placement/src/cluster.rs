@@ -306,11 +306,22 @@ pub async fn enable_cluster_with_quorum(pool: &DbPool, value: &str) -> Result<bo
         "1" => false,
         _ => anyhow::bail!("write quorum must be majority or 1"),
     };
+    let started = std::time::Instant::now();
     tokio::time::timeout(std::time::Duration::from_secs(10), async {
-        if cluster_enabled(pool).await? {
-            return Ok(false);
-        }
-        let maintenance = maintenance_lock(pool).await?;
+        let maintenance = loop {
+            if cluster_enabled(pool).await? {
+                return Ok(false);
+            }
+            match maintenance_lock(pool).await {
+                Ok(maintenance) => break maintenance,
+                // Nodes of a new installation start together: the lock is taken while another
+                // node turns cluster mode on, or by that node serving right after. Look again.
+                Err(_) if started.elapsed() < std::time::Duration::from_secs(5) => {
+                    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                }
+                Err(error) => return Err(error),
+            }
+        };
         let changed = match pool {
             DbPool::Postgres(native) => {
                 crate::postgres::cluster::enable_cluster(native, majority).await

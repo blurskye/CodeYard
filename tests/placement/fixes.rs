@@ -247,3 +247,28 @@ async fn adoption_keeps_current_families_together_on_both_engines() {
         .unwrap();
     adoption_and_index(&postgres.pool).await;
 }
+
+/// Core pods of a new installation start together. One that finds the maintenance lock
+/// taken while another pod turns cluster mode on waits for it instead of exiting.
+#[tokio::test]
+async fn simultaneous_first_starts_enable_cluster_without_failing() {
+    let postgres = PostgresDatabase::new().await;
+    let DbPool::Postgres(native) = &postgres.pool else {
+        unreachable!("PostgreSQL fixture")
+    };
+    let other = codeyard_db_placement::cluster::maintenance_lock(&postgres.pool)
+        .await
+        .unwrap();
+    let pool = postgres.pool.clone();
+    let starting =
+        tokio::spawn(async move { codeyard_db_placement::cluster::enable_cluster(&pool).await });
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    assert!(!starting.is_finished());
+    assert!(
+        codeyard_db_placement::postgres::cluster::enable_cluster(native, true)
+            .await
+            .unwrap()
+    );
+    other.release().await;
+    assert!(!starting.await.unwrap().unwrap());
+}

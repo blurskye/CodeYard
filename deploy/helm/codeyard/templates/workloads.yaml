@@ -198,6 +198,10 @@ spec:
             - name: {{ index $url 0 }}
               value: "postgres://$(CNPG_APP_USER):$(CNPG_APP_PASSWORD)@{{ index $url 1 }}:5432/codeyard?sslmode=verify-full&sslrootcert=/etc/codeyard/postgres/ca.crt"
             {{- end }}
+            # A new operator cluster needs a few minutes for PostgreSQL and its first
+            # synchronous standby; keep retrying for most of the ten-minute startup probe.
+            - name: DATABASE_CONNECT_WAIT_SECONDS
+              value: "480"
             {{- end }}
             {{- with $.Values.config.extraEnv }}
             {{- toYaml . | nindent 12 }}

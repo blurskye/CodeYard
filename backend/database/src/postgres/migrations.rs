@@ -67,6 +67,16 @@ async fn apply(
             .execute(&mut *tx)
             .await?;
     }
+    // A new PostgreSQL cluster that requires a synchronous standby (CloudNativePG's
+    // `dataDurability: required`) holds the first commit until a standby has joined, which
+    // can take minutes. Wait for it here, with the migration lock held, so the other nodes
+    // retry the lock and every write after startup finds the standby. Bounded: a cancelled
+    // wait leaves the commit done locally.
+    if migrations.len() > applied.len() {
+        sqlx::query("SET LOCAL statement_timeout = '10min'")
+            .execute(&mut *tx)
+            .await?;
+    }
     tx.commit().await?;
 
     info!("Migrations completed successfully");

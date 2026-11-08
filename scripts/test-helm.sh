@@ -93,6 +93,7 @@ for role in web ssh; do
     grep -q '@codeyard-pg-ro:5432/codeyard?sslmode=verify-full' "$work/$role-cnpg.yaml"
     grep -q '@codeyard-pg-rw:5432/codeyard?sslmode=verify-full' "$work/$role-cnpg.yaml"
     grep -q 'secretName: codeyard-pg-ca' "$work/$role-cnpg.yaml"
+    grep -A1 'name: DATABASE_CONNECT_WAIT_SECONDS' "$work/$role-cnpg.yaml" | grep -q 'value: "480"'
     if grep -q 'key: DATABASE_URL' "$work/$role-cnpg.yaml"; then
         echo "CloudNativePG $role pods still read DATABASE_URL from the Secret" >&2
         exit 1
