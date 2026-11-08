@@ -636,6 +636,10 @@ pub async fn initialize_repository_copy(
         bail!("Git repository initialization failed");
     }
     if let Some(source) = source {
+        ensure!(
+            tokio::fs::try_exists(source).await?,
+            "Source repository is unavailable"
+        );
         let source = source
             .to_str()
             .ok_or_else(|| anyhow!("Invalid source storage path"))?;

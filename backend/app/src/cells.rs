@@ -591,18 +591,24 @@ pub async fn fork_source(
         .map_err(Error::unavailable)?
         .filter(|repo| !repo.is_stub);
     if let Some(repository) = local {
-        let source = codeyard_identity::cells::Local {
-            pool: state.pool.clone(),
-        }
-        .repository_source(owner, name, &proof)
+        // Local forks need repository read access, not an exportable owner profile.
+        let source = codeyard_db_repos::repositories::creation::read_repository_source(
+            &state.pool,
+            actor,
+            repository.id,
+        )
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-        if source.repository.id != repository.id {
+        if source.name != repository.name
+            || source.owner_kind != repository.owner_kind
+            || source.owner_user_id != repository.owner_user_id
+            || source.owner_org_id != repository.owner_org_id
+        {
             return Err(Error::unavailable("Fork source changed"));
         }
         return Ok(ForkSource {
-            repository,
+            repository: source,
             admission: None,
         });
     }
