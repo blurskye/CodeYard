@@ -1,0 +1,2463 @@
+# Codebase map
+
+One line per hand-written code file, grouped by crate, then the tests, scripts and other folders.
+A line is the file's own doc comment where it has one. The generated GraphQL crate and the
+runner's compatibility fixtures are listed once. Add, move or remove the line with the file;
+the [architecture](ARCHITECTURE.md#crates) explains how the crates fit together.
+
+## `codeyard` (root package, `backend/app/wiring/`)
+
+Codeyard: self-hosted Git hosting with native Rust and Dioxus SSR-first hydration.
+
+- `backend/app/wiring/backend/cli/arguments.rs` — CLI command schema
+- `backend/app/wiring/backend/cli/cells.rs` — Operator commands for a cell's identity and allocation ranges
+- `backend/app/wiring/backend/cli/cluster.rs` — Node membership and replica commands
+- `backend/app/wiring/backend/cli/commands.rs` — Operator account/repository/database operations
+- `backend/app/wiring/backend/cli/mod.rs` — CLI startup and secret admission
+- `backend/app/wiring/backend/mod.rs` — Module assembly for cli, node
+- `backend/app/wiring/backend/node/config.rs` — Serving role configuration
+- `backend/app/wiring/backend/node/mod.rs` — Node service selection and owned serving lifecycle. Desired roles do not confer enrollment, repository authority or engine privileges
+- `backend/app/wiring/backend/node/router.rs` — Router role wiring. It opens no cell database and owns both public listeners
+- `backend/app/wiring/backend/node/runtime.rs` — `codeyard serve`: starts the HTTP server, the selected SSH transport and the CI service, then waits for a shutdown signal
+- `backend/app/wiring/lib.rs` — One application: native backend authority and shared Dioxus SSR/hydration views
+- `backend/app/wiring/main.rs` — Native/browser executable entry
+
+## `codeyard-api-github` (`backend/api/github/`)
+
+- `backend/api/github/src/actions/action_permissions.rs` — The repository execution switch leaves native limits and engine selection intact
+- `backend/api/github/src/actions/action_secrets.rs` — Sealed-box input is opened once, then stored with the site's encryption key
+- `backend/api/github/src/actions/action_variables.rs` — actions action variables handlers
+- `backend/api/github/src/actions/approval.rs` — Fork approval uses the native pull request head check and execution authority
+- `backend/api/github/src/actions/cache_policy.rs` — Repository cache policies are administrative changes to the runtime's existing limits
+- `backend/api/github/src/actions/concurrency.rs` — Concurrency reads expose live leases and retained workflow configuration separately
+- `backend/api/github/src/actions/environment_values.rs` — actions environment values handlers
+- `backend/api/github/src/actions/jobs.rs` — Job and step reads use actual runner observations; no parsed YAML is presented as execution
+- `backend/api/github/src/actions/logs.rs` — Log redirects are minute-long capabilities over immutable, bounded native snapshots
+- `backend/api/github/src/actions/mod.rs` — Actions REST adapters use the same runs and object storage as both CI engines
+- `backend/api/github/src/actions/objects.rs` — Cache and artifact metadata, deletion, and short-lived artifact downloads
+- `backend/api/github/src/actions/oidc.rs` — OIDC settings share the issuer's stored templates and native administration checks
+- `backend/api/github/src/actions/org_policy.rs` — Organization ceilings are enforced by the same cache transactions as repository limits
+- `backend/api/github/src/actions/org_usage.rs` — Organization cache reports use one authorized snapshot, including private repositories
+- `backend/api/github/src/actions/organization_values.rs` — Organization Actions values share visibility checks with workflow delivery
+- `backend/api/github/src/actions/reruns.rs` — New attempts use native immutable admission and observed dependency state
+- `backend/api/github/src/actions/reviews.rs` — Deployment reviews retain the native revision and reviewer checks
+- `backend/api/github/src/actions/run_mutations.rs` — Cancellation and deletion retain the worker's authority, cleanup, and notification paths
+- `backend/api/github/src/actions/runners.rs` — GitHub runner administration projects Codeyard's scoped cluster workers
+- `backend/api/github/src/actions/runs.rs` — Run documents project durable executions, not invented check suites or billing records
+- `backend/api/github/src/actions/settings.rs` — Settings and policy documents are stored with the native organization and repository policy
+- `backend/api/github/src/actions/usage.rs` — Timing uses recorded executions, including re-runs, without minute rounding or multipliers
+- `backend/api/github/src/actions/workflows.rs` — Workflows are discovered from the default branch; IDs and disabled state are durable
+- `backend/api/github/src/activity/events.rs` — activity events handlers
+- `backend/api/github/src/activity/feeds.rs` — activity feeds handlers
+- `backend/api/github/src/activity/mod.rs` — Stars use the same access checks and notices as the repository page
+- `backend/api/github/src/activity/notifications.rs` — Token-native projections and mutations of the same persisted inbox used by the web UI
+- `backend/api/github/src/activity/subscriptions.rs` — activity subscriptions handlers
+- `backend/api/github/src/apps/installations.rs` — JWT discovery and installation management, backed by native account consent
+- `backend/api/github/src/apps/manifests.rs` — One-time, session-bound manifest conversion. Only public verification keys persist
+- `backend/api/github/src/apps/mod.rs` — OAuth application owners authenticate with their client ID and secret, not a user token
+- `backend/api/github/src/apps/webhooks.rs` — JWT-authorized app webhook configuration, history and real background redelivery
+- `backend/api/github/src/auth.rs` — Token-only authentication, separate from browser sessions and CSRF
+- `backend/api/github/src/checks/documents.rs` — checks documents handlers
+- `backend/api/github/src/checks/mod.rs` — Check publishers share repository authority, but cannot overwrite another publisher's runs
+- `backend/api/github/src/code-scanning/databases.rs` — CodeQL archives uploaded by workflows and downloaded by repository readers
+- `backend/api/github/src/code-scanning/mod.rs` — code-scanning handlers
+- `backend/api/github/src/code-scanning/tests.rs` — code-scanning tests handlers
+- `backend/api/github/src/code-security/mod.rs` — Organization security configurations share the repository security settings store
+- `backend/api/github/src/code-security/tests.rs` — code-security tests handlers
+- `backend/api/github/src/dependabot/dependabot_alerts.rs` — Dependabot alerts use the same live database authority as native security forms
+- `backend/api/github/src/dependabot/mod.rs` — Organization Dependabot credentials and repository access settings
+- `backend/api/github/src/dependency-graph/mod.rs` — dependency-graph handlers
+- `backend/api/github/src/diff_media.rs` — The `.diff` and `.patch` media types, which `gh pr diff` and `git am` read
+- `backend/api/github/src/gists/comments.rs` — gists comments handlers
+- `backend/api/github/src/gists/documents.rs` — gists documents handlers
+- `backend/api/github/src/gists/mod.rs` — gists handlers
+- `backend/api/github/src/git/git_objects.rs` — The Git database API does not move refs when it creates objects
+- `backend/api/github/src/git/mod.rs` — module index
+- `backend/api/github/src/git/refs.rs` — git refs handlers
+- `backend/api/github/src/interactions/mod.rs` — interactions handlers
+- `backend/api/github/src/interactions/pull_caps.rs` — interactions pull caps handlers
+- `backend/api/github/src/issues/assignees.rs` — issues assignees handlers
+- `backend/api/github/src/issues/comments.rs` — issues comments handlers
+- `backend/api/github/src/issues/events.rs` — Issue events and discussion entries share one chronological, paginated timeline
+- `backend/api/github/src/issues/global_issues.rs` — issues global issues handlers
+- `backend/api/github/src/issues/issue_attributes.rs` — issues issue attributes handlers
+- `backend/api/github/src/issues/labels.rs` — Repository labels and their assignments use the same authorized transactions as the forms
+- `backend/api/github/src/issues/locking.rs` — issues locking handlers
+- `backend/api/github/src/issues/milestones.rs` — issues milestones handlers
+- `backend/api/github/src/issues/mod.rs` — issues handlers
+- `backend/api/github/src/issues/pins.rs` — issues pins handlers
+- `backend/api/github/src/issues/relationships.rs` — issues relationships handlers
+- `backend/api/github/src/issues/suggestions.rs` — issues suggestions handlers
+- `backend/api/github/src/lib.rs` — crate root and `router()`: the GitHub REST surface under `/api/v3`, plus `/pull/N.diff|.patch` plain-text pages
+- `backend/api/github/src/meta/mod.rs` — Small discovery endpoints reuse the same templates and Markdown renderer as repository pages
+- `backend/api/github/src/migrations/authors.rs` — Author mappings retain original identities and never alter imported commits
+- `backend/api/github/src/migrations/export_worker.rs` — migrations export worker handlers
+- `backend/api/github/src/migrations/export_worker/projects.rs` — migrations export worker projects handlers
+- `backend/api/github/src/migrations/exports.rs` — migrations exports handlers
+- `backend/api/github/src/migrations/mod.rs` — Source-import status and retry use the same durable attempt as the background Git transfer
+- `backend/api/github/src/optional_json.rs` — A JSON request body that may be left out, for endpoints whose fields are all optional
+- `backend/api/github/src/orgs/artifact_metadata.rs` — Artifact inventory writes resolve the same repository-scoped provenance as attestation reads
+- `backend/api/github/src/orgs/attestations.rs` — Repository, user and organization endpoints share bundles, subject indexes and live repository access
+- `backend/api/github/src/orgs/blocks.rs` — Organization blocking is enforced by native repository and invitation authority
+- `backend/api/github/src/orgs/external_properties.rs` — External property values remain separate from organization-defined custom properties
+- `backend/api/github/src/orgs/hooks.rs` — Organization hooks share validation, encrypted secrets and sends with native settings
+- `backend/api/github/src/orgs/immutable_releases.rs` — Immutable release enforcement settings are owned by organization owners
+- `backend/api/github/src/orgs/installations.rs` — Organization owners see installations from the same store as app and user discovery
+- `backend/api/github/src/orgs/invitations.rs` — Invitations remain offers until a verified recipient accepts through REST or native settings
+- `backend/api/github/src/orgs/issue_fields.rs` — Organization fields share inherited native definitions, typed values and stable select IDs
+- `backend/api/github/src/orgs/issue_types.rs` — Organization issue types are the same definitions inherited by repository issues
+- `backend/api/github/src/orgs/membership.rs` — orgs membership handlers
+- `backend/api/github/src/orgs/mod.rs` — Organization discovery and memberships use the native tenant authority rules
+- `backend/api/github/src/orgs/outside.rs` — Outside collaborators retain explicit repository grants, never organization-wide authority
+- `backend/api/github/src/orgs/properties.rs` — Organization repository property definitions and values share native transactions
+- `backend/api/github/src/orgs/roles.rs` — Predefined roles inherit native repository permissions without granting organization ownership
+- `backend/api/github/src/orgs/rule_suites.rs` — orgs rule suites handlers
+- `backend/api/github/src/orgs/security.rs` — Deprecated security-manager team operations alias the native predefined organization role
+- `backend/api/github/src/orgs/settings.rs` — orgs settings handlers
+- `backend/api/github/src/orgs/token_grants.rs` — Organization owners review and revoke the fine-grained tokens that reach their organization
+- `backend/api/github/src/packages/mod.rs` — Package metadata and recovery use the same records and authority as the registries
+- `backend/api/github/src/pagination.rs` — `page`/`per_page` parsing and Link headers for REST lists
+- `backend/api/github/src/private-registries/mod.rs` — private-registries handlers
+- `backend/api/github/src/projects/items.rs` — projects items handlers
+- `backend/api/github/src/projects/mod.rs` — Projects v2 adapters share the owner-scoped native project operations
+- `backend/api/github/src/pulls/async_merge.rs` — pulls async merge handlers
+- `backend/api/github/src/pulls/comments.rs` — pulls comments handlers
+- `backend/api/github/src/pulls/merge.rs` — pulls merge handlers
+- `backend/api/github/src/pulls/mod.rs` — Pull requests use the published commits, including a fork's retained pull ref
+- `backend/api/github/src/pulls/mutations.rs` — pulls mutations handlers
+- `backend/api/github/src/pulls/reviews.rs` — pulls reviews handlers
+- `backend/api/github/src/pulls/reviews/writes.rs` — pulls reviews writes handlers
+- `backend/api/github/src/pulls/stacks.rs` — pulls stacks handlers
+- `backend/api/github/src/pulls/team_reviewers.rs` — pulls team reviewers handlers
+- `backend/api/github/src/rate-limit/mod.rs` — module index
+- `backend/api/github/src/rate-limit/rate_limits.rs` — Primary REST limits use persistent counters, including anonymous requests
+- `backend/api/github/src/reactions/mod.rs` — reactions handlers
+- `backend/api/github/src/repos/archives.rs` — Archive redirects pin the revision, and the download repeats the normal read authorization
+- `backend/api/github/src/repos/autolinks.rs` — repos autolinks handlers
+- `backend/api/github/src/repos/branch_operations.rs` — Branch renames and upstream synchronization use the owning repository store
+- `backend/api/github/src/repos/branches.rs` — Branch reads use the same protection matcher as pushes
+- `backend/api/github/src/repos/code_owners.rs` — repos code owners handlers
+- `backend/api/github/src/repos/collaborators.rs` — Invitations and effective collaborator permissions, including organization and team grants
+- `backend/api/github/src/repos/commit_comments.rs` — repos commit comments handlers
+- `backend/api/github/src/repos/commit_pulls.rs` — Commit association reads share the native ancestry query and saved discussion metadata
+- `backend/api/github/src/repos/commits.rs` — repos commits handlers
+- `backend/api/github/src/repos/community.rs` — repos community handlers
+- `backend/api/github/src/repos/comparison.rs` — repos comparison handlers
+- `backend/api/github/src/repos/contents.rs` — Contents API preconditions use blob IDs; publication still leases the entire branch tip
+- `backend/api/github/src/repos/copy.rs` — Forks and template generation use the same authoritative creation and storage pipeline as forms
+- `backend/api/github/src/repos/dependencies.rs` — Native leased dependency scans and ordinary, reviewed security-update pull requests
+- `backend/api/github/src/repos/deploy_keys.rs` — Deploy-key writes retain live credentials and cross-account fingerprint uniqueness
+- `backend/api/github/src/repos/deployment_protection.rs` — Custom environment rules use installed GitHub Apps and the same gates as Actions
+- `backend/api/github/src/repos/deployments.rs` — Deployment requests use immutable commits and preserve every reported status
+- `backend/api/github/src/repos/environments.rs` — Environment configuration is shared with Actions rather than kept in API-only records
+- `backend/api/github/src/repos/immutable_releases.rs` — repos immutable releases handlers
+- `backend/api/github/src/repos/merges.rs` — Branch merges are direct native writes, never synthetic pull-request merges
+- `backend/api/github/src/repos/mod.rs` — Repository lifecycle and metadata use the same authority checks as the settings forms
+- `backend/api/github/src/repos/pages.rs` — Pages control plane. Build and deployment attempts fail explicitly without a publisher
+- `backend/api/github/src/repos/private_reporting.rs` — Private vulnerability reporting is backed by the native private-report workflow
+- `backend/api/github/src/repos/protection.rs` — Classic branch protection shares the rules enforced by Git pushes and merges
+- `backend/api/github/src/repos/protection_operations.rs` — Additional classic protection settings and the rules derived from them
+- `backend/api/github/src/repos/push_teams.rs` — Native organization-team push allowances, including live membership enforcement
+- `backend/api/github/src/repos/releases.rs` — Release reads and writes retain draft visibility and tag publication in the repository domain
+- `backend/api/github/src/repos/repository_activity.rs` — repos repository activity handlers
+- `backend/api/github/src/repos/repository_attestations.rs` — repos repository attestations handlers
+- `backend/api/github/src/repos/repository_teams.rs` — Repository-scoped view of the existing organization team grants
+- `backend/api/github/src/repos/rulesets.rs` — Organization and repository rule documents share validation, storage and history
+- `backend/api/github/src/repos/statistics.rs` — Statistics share one bounded, ref-cached history scan on local and remote storage
+- `backend/api/github/src/repos/statuses.rs` — External status reporters share the status rows used by branch protection
+- `backend/api/github/src/repos/traffic.rs` — repos traffic handlers
+- `backend/api/github/src/repos/webhooks.rs` — Repository hooks share validation, encrypted secrets and delivery with the settings page
+- `backend/api/github/src/routes.rs` — [GENERATED by `scripts/github-api-routes.py` from `spec/github/api.github.com.json.gz`] the route table: every GitHub operation id, method and path…
+- `backend/api/github/src/search/catalog_search.rs` — search catalog search handlers
+- `backend/api/github/src/search/content_search.rs` — search content search handlers
+- `backend/api/github/src/search/global.rs` — Cells share one search index. Hits in this cell's repositories are checked again against live access; another cell's private hit is shown only to a…
+- `backend/api/github/src/search/mod.rs` — search handlers
+- `backend/api/github/src/secret-scanning/mod.rs` — Secret alert adapters share the stored alerts and resolution rules with native forms
+- `backend/api/github/src/secret-scanning/patterns.rs` — secret-scanning patterns handlers
+- `backend/api/github/src/security-advisories/advisories.rs` — Repository advisories and confidential reports share the native disclosure workflow
+- `backend/api/github/src/security-advisories/mod.rs` — module index
+- `backend/api/github/src/teams/mod.rs` — Organization teams share native membership, repository and visibility checks
+- `backend/api/github/src/users/blocks.rs` — users blocks handlers
+- `backend/api/github/src/users/emails.rs` — Account email privacy never makes an unverified address public
+- `backend/api/github/src/users/gpg_keys.rs` — users gpg keys handlers
+- `backend/api/github/src/users/mod.rs` — Accounts and follow edges use the same identity operations as the profile pages
+- `backend/api/github/src/users/signing_keys.rs` — users signing keys handlers
+- `backend/api/github/src/users/social_accounts.rs` — users social accounts handlers
+
+## `codeyard-github-graphql` (`backend/api/github-graphql/`)
+
+GitHub GraphQL types and resolver traits derived from the published schema.
+
+- Generated from the GitHub GraphQL schema by `scripts/github-graphql-types.py`; never edited by hand.
+
+## `codeyard-api-graphql` (`backend/api/graphql/`)
+
+- `backend/api/graphql/src/arguments.rs` — Borrowed views over already validated, typed GraphQL arguments
+- `backend/api/graphql/src/bindings.rs` — Typed schema bindings over the authorized presentation values loaded by each family
+- `backend/api/graphql/src/bindings/collaboration_fields.rs` — Issue/PR collaboration fields used by api/query_builder.go in cli/cli
+- `backend/api/graphql/src/bindings/discussions.rs` — bindings discussions handlers
+- `backend/api/graphql/src/bindings/git_fields.rs` — Typed Git and status fields selected by the upstream CLI query builder
+- `backend/api/graphql/src/bindings/issue_bindings.rs` — Bindings for issue management and relationship mutations
+- `backend/api/graphql/src/bindings/mutation_fields.rs` — Typed mutation entry points; implementations delegate to the shared domain operations
+- `backend/api/graphql/src/bindings/node_fields.rs` — bindings node fields handlers
+- `backend/api/graphql/src/bindings/projects.rs` — Project bindings kept separate from the shared GraphQL lane
+- `backend/api/graphql/src/bindings/repository_fields.rs` — The fields selected by cli/cli's api/query_builder.go and repository commands
+- `backend/api/graphql/src/bindings/repository_metadata.rs` — Fields exported by gh's repository JSON selection
+- `backend/api/graphql/src/bindings/search_fields.rs` — bindings search fields handlers
+- `backend/api/graphql/src/checks.rs` — Checks and legacy statuses share a rollup, while their credential scopes remain distinct
+- `backend/api/graphql/src/collaboration.rs` — Shared issue/PR metadata; all rows come from the REST lane's named operations
+- `backend/api/graphql/src/collaboration_mutations.rs` — Metadata writes call the REST lane's native, authorized operations and notification batch
+- `backend/api/graphql/src/comment_mutations.rs` — comment mutations handlers
+- `backend/api/graphql/src/commit_comment.rs` — Commit discussion reads retain REST's repository visibility and author-association rules
+- `backend/api/graphql/src/connection.rs` — Offset cursors keep forward and backward pages in the same ordering
+- `backend/api/graphql/src/discussions.rs` — discussions handlers
+- `backend/api/graphql/src/gists.rs` — gh's gist picker uses creation order and loads file text only when requested
+- `backend/api/graphql/src/git.rs` — Git data uses the same repository store and status rows as the REST adapters
+- `backend/api/graphql/src/git_objects.rs` — Immutable Git node lookup and refs use RepoStore, including remote repositories
+- `backend/api/graphql/src/issue.rs` — issue handlers
+- `backend/api/graphql/src/issue/management.rs` — issue management handlers
+- `backend/api/graphql/src/issue/metadata.rs` — issue metadata handlers
+- `backend/api/graphql/src/issue/mutations.rs` — issue mutations handlers
+- `backend/api/graphql/src/lib.rs` — `router()` for `/api/graphql`, schema instantiation, response byte budget ("Query response size limit exceeded"), rate-limit error ("API rate limit…
+- `backend/api/graphql/src/metadata_mutations.rs` — Translate GraphQL IDs into the REST lane's validated metadata batch, not a second write path
+- `backend/api/graphql/src/milestone.rs` — milestone handlers
+- `backend/api/graphql/src/mutations.rs` — Mutation adaptation only: permissions and side effects stay in the REST domain operations
+- `backend/api/graphql/src/node_objects.rs` — REST node families reconstructed only after repository and family-scope authorization
+- `backend/api/graphql/src/projects.rs` — `gh project` resolvers over the shared owner-scoped project domain
+- `backend/api/graphql/src/pull_request.rs` — Pull request Git reads and review presentation from the shared REST operations
+- `backend/api/graphql/src/reaction_mutations.rs` — reaction mutations handlers
+- `backend/api/graphql/src/release.rs` — Release lists share the native draft visibility rule
+- `backend/api/graphql/src/repository.rs` — repository handlers
+- `backend/api/graphql/src/repository_list.rs` — Owner-scoped repository connections used by the CLI's list and search paths
+- `backend/api/graphql/src/repository_metadata.rs` — Repository-list selections use the same Git files and catalogues as native pages
+- `backend/api/graphql/src/repository_mutations.rs` — Repository creation and edits use native provisioning and settings transactions
+- `backend/api/graphql/src/request.rs` — JSON request parsing shared with the public cell router
+- `backend/api/graphql/src/review_mutations.rs` — Review drafts, publication and reviewer requests retain the REST lane's native authority checks
+- `backend/api/graphql/src/review_requests.rs` — Pull review requests project the native user/team records and use the same mutations as REST
+- `backend/api/graphql/src/rulesets.rs` — `Repository.rulesets` and `Organization.rulesets` read the rule documents the REST API stores
+- `backend/api/graphql/src/schema.rs` — The derive schema is compiled in its own crate and instantiated once
+- `backend/api/graphql/src/team.rs` — Team identities use native active-membership and secret-team visibility, not repository grants
+- `backend/api/graphql/src/user.rs` — user handlers
+
+## `codeyard-api-http` (`backend/api/http/`)
+
+- `backend/api/http/src/cell_routes.rs` — Record policies from the same constructors that install the application's routes
+- `backend/api/http/src/context.rs` — Verified browser request context, setup admission and form protection
+- `backend/api/http/src/credentials.rs` — Shared credential header decoding; each adapter owns credential authority
+- `backend/api/http/src/csrf.rs` — Use the DB/session-bound synchronizer and origin policy of native forms
+- `backend/api/http/src/error.rs` — `ApiError`/`ApiFailure`: typed authority refusals survive `anyhow` context, driver text never escapes; validation is 422, untyped failure is 503…
+- `backend/api/http/src/interaction_proofs.rs` — Warm a derived Git index for authenticated repository mutations. This middleware grants nothing: failed/missing/stale proofs are rechecked and fail…
+- `backend/api/http/src/lib.rs` — crate root: config, context, csrf, errors, middleware, origin, render, sessions, static assets and the `shared/` tree
+- `backend/api/http/src/middleware.rs` — Node access and private representation middleware
+- `backend/api/http/src/multipart.rs` — Reading multipart form parts with a size limit, so a text field is never buffered whole
+- `backend/api/http/src/origin.rs` — Same-origin submission and local redirect policy shared by HTTP adapters
+- `backend/api/http/src/range.rs` — One single-range header contract for immutable HTTP downloads
+- `backend/api/http/src/read_routing.rs` — Read selection is shared by native pages and APIs; credentials and writes stay primary
+- `backend/api/http/src/render.rs` — Safe HTML, authorized page-model and error response construction
+- `backend/api/http/src/session.rs` — session cookies: `build_session_cookie(_for)`, `build_logout_cookie`, `secure_cookie`, `session_duration_days`, `extract_session(_id)`…
+- `backend/api/http/src/shared/admin/actions.rs` — shared admin actions handlers
+- `backend/api/http/src/shared/admin/mod.rs` — module index
+- `backend/api/http/src/shared/auth/errors.rs` — HTTP projection of concrete identity operation failures. No driver text escapes
+- `backend/api/http/src/shared/auth/mod.rs` — module index
+- `backend/api/http/src/shared/ci/actions_page.rs` — `repository_actions`, `actions`, `run_matches_repository`: the Actions tab page model
+- `backend/api/http/src/shared/ci/jobs/mod.rs` — shared ci jobs handlers
+- `backend/api/http/src/shared/ci/mod.rs` — shared ci handlers
+- `backend/api/http/src/shared/ci/repository_events.rs` — The native repository-event form calls the same admission service as REST
+- `backend/api/http/src/shared/ci/responses.rs` — shared ci responses handlers
+- `backend/api/http/src/shared/ci/results.rs` — The Results Twirp JSON API and Azure block-blob subset used by Actions v4
+- `backend/api/http/src/shared/ci/run_forms.rs` — Native forms on a run's page: cancel a queued or running run, or run it again at the same commit. Both check CSRF and use the run service's…
+- `backend/api/http/src/shared/ci/trigger.rs` — shared ci trigger handlers
+- `backend/api/http/src/shared/crawlers.rs` — shared crawlers handlers
+- `backend/api/http/src/shared/files/download.rs` — shared files download handlers
+- `backend/api/http/src/shared/files/mod.rs` — shared files handlers
+- `backend/api/http/src/shared/github/code_scanning.rs` — Code scanning accepts open scanners rather than depending on GitHub's CodeQL service
+- `backend/api/http/src/shared/github/code_scanning/databases.rs` — shared github code scanning databases handlers
+- `backend/api/http/src/shared/github/gists/mod.rs` — shared github gists handlers
+- `backend/api/http/src/shared/github/git_objects.rs` — module index
+- `backend/api/http/src/shared/github/mod.rs` — shared github handlers
+- `backend/api/http/src/shared/github/pagination.rs` — `Pagination` (page_size, window, collect, response, headers): GitHub Link-header paging shared by REST lists
+- `backend/api/http/src/shared/mod.rs` — index of the `shared/` handler tree
+- `backend/api/http/src/shared/projects.rs` — Project pages and plain forms use the same project operations as REST
+- `backend/api/http/src/shared/repos/access.rs` — Browser session decoding and repository authority HTTP responses
+- `backend/api/http/src/shared/repos/chrome.rs` — `Loaded` repository chrome: `load_metadata`, `load_database`, `safe_error`, `store_error`, `ApiResult`; the repository page shell loader
+- `backend/api/http/src/shared/repos/code/archive.rs` — shared repos code archive handlers
+- `backend/api/http/src/shared/repos/code/contents.rs` — module index
+- `backend/api/http/src/shared/repos/code/contributors.rs` — shared repos code contributors handlers
+- `backend/api/http/src/shared/repos/code/mod.rs` — shared repos code handlers
+- `backend/api/http/src/shared/repos/code/upload.rs` — shared repos code upload handlers
+- `backend/api/http/src/shared/repos/discussion.rs` — shared repos discussion handlers
+- `backend/api/http/src/shared/repos/forms.rs` — Reading and answering the HTML forms of the repository pages
+- `backend/api/http/src/shared/repos/mod.rs` — shared repos handlers
+- `backend/api/http/src/shared/repos/pulls/diff.rs` — shared repos pulls diff handlers
+- `backend/api/http/src/shared/repos/pulls/mod.rs` — module index
+- `backend/api/http/src/shared/repos/refs/mod.rs` — module index
+- `backend/api/http/src/shared/repos/refs/references.rs` — shared repos refs references handlers
+- `backend/api/http/src/shared/repos/releases/mod.rs` — module index
+- `backend/api/http/src/shared/repos/responses.rs` — shared repos responses handlers
+- `backend/api/http/src/shared/user/interactions.rs` — shared user interactions handlers
+- `backend/api/http/src/shared/user/mod.rs` — module index
+- `backend/api/http/src/shared/user/responses.rs` — shared user responses handlers
+- `backend/api/http/src/static_files.rs` — Embedded native assets + contained dx-generated runtime files. Never a SPA fallback
+- `backend/api/http/src/traffic.rs` — Observe only actual successful navigation responses, after SSR has completed
+
+## `codeyard-api-repos` (`backend/api/repos/`)
+
+- `backend/api/repos/src/access.rs` — `find_repository`, `readable_repository`, `check_repo_admin_access`, `check_repo_write_access`: repository authority for pages and JSON
+- `backend/api/repos/src/activity/engagement.rs` — activity engagement handlers
+- `backend/api/repos/src/activity/forks.rs` — activity forks handlers
+- `backend/api/repos/src/activity/mod.rs` — Activity on a repository: stars, watchers, stargazers and forks
+- `backend/api/repos/src/activity/stargazers.rs` — activity stargazers handlers
+- `backend/api/repos/src/advisories.rs` — advisories handlers
+- `backend/api/repos/src/checks.rs` — checks handlers
+- `backend/api/repos/src/chrome.rs` — chrome handlers
+- `backend/api/repos/src/code/archive.rs` — code archive handlers
+- `backend/api/repos/src/code/blame.rs` — code blame handlers
+- `backend/api/repos/src/code/blob.rs` — code blob handlers
+- `backend/api/repos/src/code/contents.rs` — code contents handlers
+- `backend/api/repos/src/code/contributors.rs` — code contributors handlers
+- `backend/api/repos/src/code/find.rs` — The "Go to file" page: match the complete tree before retaining bounded paths
+- `backend/api/repos/src/code/languages.rs` — code languages handlers
+- `backend/api/repos/src/code/mod.rs` — Code: browsing the tree and files, raw and archive downloads, editing and uploading file content, and the language and contributor summaries
+- `backend/api/repos/src/code/raw.rs` — code raw handlers
+- `backend/api/repos/src/code/tree.rs` — code tree handlers
+- `backend/api/repos/src/code/upload.rs` — Upload files: a browser form that adds several files to one branch in one commit. The page and its form share the address `/OWNER/REPO/upload/REF` or…
+- `backend/api/repos/src/collection.rs` — collection handlers
+- `backend/api/repos/src/collection/properties.rs` — Bounded native creation drafts; definitions and write authority remain server-side
+- `backend/api/repos/src/dependabot.rs` — Native security forms share alert reconciliation and live mutation authority with REST
+- `backend/api/repos/src/dependencies.rs` — Confidential dependency review; the domain and transactional DAL remain authoritative
+- `backend/api/repos/src/dependency_graph.rs` — dependency graph handlers
+- `backend/api/repos/src/deploy_keys.rs` — Deploy keys over JSON, and the settings section's forms. Both call the same checks in `repositories::deploy_keys`, and both need repository admin…
+- `backend/api/repos/src/disclosure.rs` — Native private vulnerability reporting. Every confidential read and write goes through the DAL
+- `backend/api/repos/src/discussion.rs` — What issue and pull request pages share: loading the item and its repository, the detail view with comments and reactions, and the text shown for…
+- `backend/api/repos/src/forms.rs` — forms handlers
+- `backend/api/repos/src/insights.rs` — Repository insights pages. Each reads what is already recorded: the database's daily counts and workflow runs, the contributors and code frequency…
+- `backend/api/repos/src/insights/traffic.rs` — insights traffic handlers
+- `backend/api/repos/src/invitations.rs` — Native recipient workflow, backed by the same invitation transactions as the REST adapters
+- `backend/api/repos/src/issues/assignees.rs` — Assignee forms on issue and pull request pages. The database checks the write right and which users may be assigned, so these handlers only resolve…
+- `backend/api/repos/src/issues/attributes.rs` — issues attributes handlers
+- `backend/api/repos/src/issues/collection.rs` — issues collection handlers
+- `backend/api/repos/src/issues/comments.rs` — issues comments handlers
+- `backend/api/repos/src/issues/issue.rs` — issues issue handlers
+- `backend/api/repos/src/issues/labels.rs` — issues labels handlers
+- `backend/api/repos/src/issues/locking.rs` — issues locking handlers
+- `backend/api/repos/src/issues/management.rs` — issues management handlers
+- `backend/api/repos/src/issues/mod.rs` — issues handlers
+- `backend/api/repos/src/issues/pins.rs` — issues pins handlers
+- `backend/api/repos/src/issues/reactions.rs` — issues reactions handlers
+- `backend/api/repos/src/issues/relationships.rs` — issues relationships handlers
+- `backend/api/repos/src/issues/suggestions.rs` — issues suggestions handlers
+- `backend/api/repos/src/issues/tasks.rs` — Ticking a task box in an issue or pull request body, or in a comment. The box flips in the stored text and the text is saved through the same update…
+- `backend/api/repos/src/labels.rs` — labels handlers
+- `backend/api/repos/src/lib.rs` — `router()`: repository resource, creation form, settings page and the repository-wide form endpoint; `pub mod` per feature (access, code, refs…
+- `backend/api/repos/src/migrations.rs` — Native migration forms share import admission and storage publication with REST
+- `backend/api/repos/src/milestones.rs` — Milestones: the list and page of a repository's milestones, their plain forms, and the milestone an issue or pull request is given. Writers manage…
+- `backend/api/repos/src/pages.rs` — pages handlers
+- `backend/api/repos/src/paging.rs` — Paging for lists: the `page` and `per_page` of JSON lists and the page numbers of HTML lists
+- `backend/api/repos/src/properties.rs` — Native metadata forms use the same policy and transactions as REST and creation
+- `backend/api/repos/src/pulls/checks.rs` — The Checks tab of a pull request: the workflow runs on its head commit
+- `backend/api/repos/src/pulls/collection.rs` — pulls collection handlers
+- `backend/api/repos/src/pulls/comments.rs` — pulls comments handlers
+- `backend/api/repos/src/pulls/commits.rs` — The Commits tab of a pull request: the commits its head has that its base does not
+- `backend/api/repos/src/pulls/diff.rs` — pulls diff handlers
+- `backend/api/repos/src/pulls/merge.rs` — pulls merge handlers
+- `backend/api/repos/src/pulls/mod.rs` — pulls handlers
+- `backend/api/repos/src/pulls/pull.rs` — The pull request JSON answers
+- `backend/api/repos/src/pulls/ready.rs` — pulls ready handlers
+- `backend/api/repos/src/pulls/requested_reviewers.rs` — pulls requested reviewers handlers
+- `backend/api/repos/src/pulls/review_forms.rs` — Native review forms for pull requests: reviews and their dismissal, review requests, inline comments written from the diff, conversation resolution…
+- `backend/api/repos/src/pulls/reviews.rs` — pulls reviews handlers
+- `backend/api/repos/src/pulls/security.rs` — Code scanning checks are projections of accepted analyses, never fabricated CI runs
+- `backend/api/repos/src/pulls/stack.rs` — Adding pull requests to a stack and taking them out, from the JSON API and from the pull request page
+- `backend/api/repos/src/pulls/workflows.rs` — pulls workflows handlers
+- `backend/api/repos/src/refs/branches.rs` — refs branches handlers
+- `backend/api/repos/src/refs/commits/collection.rs` — refs commits collection handlers
+- `backend/api/repos/src/refs/commits/comments.rs` — Native participation in the same commit discussions exposed by REST
+- `backend/api/repos/src/refs/commits/commit.rs` — refs commits commit handlers
+- `backend/api/repos/src/refs/commits/mod.rs` — refs commits handlers
+- `backend/api/repos/src/refs/commits/status.rs` — refs commits status handlers
+- `backend/api/repos/src/refs/commits/statuses.rs` — refs commits statuses handlers
+- `backend/api/repos/src/refs/compare.rs` — Branch comparison: the compare page, and the comparison that pull request forms share with it
+- `backend/api/repos/src/refs/merge.rs` — Native branch merge adapters; both JSON and no-JavaScript forms use the shared domain operation
+- `backend/api/repos/src/refs/mod.rs` — Refs: branches, tags, commit history and comparisons between refs
+- `backend/api/repos/src/refs/references.rs` — The references a page's Markdown may link, resolved for its viewer. The page model carries the answer, so the server and the browser render the same…
+- `backend/api/repos/src/refs/tags.rs` — refs tags handlers
+- `backend/api/repos/src/releases/attestation.rs` — releases attestation handlers
+- `backend/api/repos/src/releases/json.rs` — The release JSON API, shaped like GitHub's `/repos/{owner}/{repo}/releases`. Writers create, change and delete releases; drafts are shown only to…
+- `backend/api/repos/src/releases/mod.rs` — Releases: the list and pages of a repository's releases, their native forms, asset uploads and downloads, and the JSON API. The domain module owns…
+- `backend/api/repos/src/releases/pages.rs` — Release pages and their native forms. Each form posts back to its page; the domain decides who may write, and a refused form is shown as it was…
+- `backend/api/repos/src/releases/reactions.rs` — releases reactions handlers
+- `backend/api/repos/src/repository.rs` — the repository resource: `get_repo`, `rename_repo`, `transfer`, `update_repo`, delete, visibility, archive, settings page and its forms
+- `backend/api/repos/src/repository_discussions.rs` — Authorized browser destinations for discussion and discussion-comment URLs
+- `backend/api/repos/src/responses.rs` — responses handlers
+- `backend/api/repos/src/secret_scanning.rs` — Native secret scanning pages use the same transactions as REST
+- `backend/api/repos/src/security.rs` — Repository security pages use the same alert rows and dismissal transaction as REST
+- `backend/api/repos/src/settings/branch_protection.rs` — settings branch protection handlers
+- `backend/api/repos/src/settings/collaborators.rs` — settings collaborators handlers
+- `backend/api/repos/src/settings/environment_values.rs` — settings environment values handlers
+- `backend/api/repos/src/settings/mod.rs` — Repository settings: who can read and write, collaborators, secrets and branch protection
+- `backend/api/repos/src/settings/permissions.rs` — settings permissions handlers
+- `backend/api/repos/src/settings/secrets.rs` — settings secrets handlers
+- `backend/api/repos/src/settings/variables.rs` — settings variables handlers
+
+## `codeyard-api-rest` (`backend/api/rest/`)
+
+- `backend/api/rest/src/admin/actions.rs` — The admin Actions page: whether workflows run on this site, the limits on each run and the runner image
+- `backend/api/rest/src/admin/ai_crawlers.rs` — The site settings page: the sign-up mode and the site-wide AI crawler setting
+- `backend/api/rest/src/admin/audit.rs` — The audit log page: recorded administrative changes, newest first, filtered by the kind of change and the actor
+- `backend/api/rest/src/admin/email.rs` — Admin email settings and test-mail forms
+- `backend/api/rest/src/admin/email_test.rs` — admin email test handlers
+- `backend/api/rest/src/admin/mod.rs` — Site administration routes; endpoint operations retain their current authority
+- `backend/api/rest/src/admin/nodes.rs` — Admin nodes page: the cluster's members, with approve and revoke
+- `backend/api/rest/src/admin/overview.rs` — The admin overview page: waiting sign-up requests and the activity charts
+- `backend/api/rest/src/admin/signup_requests.rs` — admin signup requests handlers
+- `backend/api/rest/src/admin/storage.rs` — Admin storage overview page
+- `backend/api/rest/src/admin/users.rs` — Administrator account management: the users page, signup requests, creating accounts, bans and roles. Every handler rechecks administrator authority…
+- `backend/api/rest/src/artifact_metadata_pages.rs` — Browser inventory reads share the metadata repository authority and bounded database projections
+- `backend/api/rest/src/attestations.rs` — Native attestation browsing, bundle downloads and CSRF-protected deletion
+- `backend/api/rest/src/auth/change_password.rs` — auth change password handlers
+- `backend/api/rest/src/auth/email_links.rs` — The pages behind the codes and links in email: asking for a password reset, choosing the new password with the mailed code or link, and confirming an…
+- `backend/api/rest/src/auth/errors.rs` — HTTP projection of concrete identity operation failures. No driver text escapes
+- `backend/api/rest/src/auth/github_apps.rs` — Native registration and account-owner consent for GitHub Apps
+- `backend/api/rest/src/auth/github_apps/manifests.rs` — Posting a manifest saves only a short-lived draft; approval is a separate CSRF form
+- `backend/api/rest/src/auth/login.rs` — auth login handlers
+- `backend/api/rest/src/auth/logout.rs` — auth logout handlers
+- `backend/api/rest/src/auth/mod.rs` — Browser sign-in, account creation and native authentication forms
+- `backend/api/rest/src/auth/oauth.rs` — Browser cookies and redirects for the shared OAuth operation
+- `backend/api/rest/src/auth/oauth_apps.rs` — GitHub's OAuth device and authorization-code flows, including the public CLI client
+- `backend/api/rest/src/auth/session.rs` — auth session handlers
+- `backend/api/rest/src/auth/two_factor.rs` — The second step of password sign-in: `/login/two-factor`. The password step hands over a sealed pending token and this page; the session is created…
+- `backend/api/rest/src/avatar_ops.rs` — Profile pictures of users and organizations
+- `backend/api/rest/src/ci/actions_page.rs` — ci actions page handlers
+- `backend/api/rest/src/ci/jobs/collection.rs` — ci jobs collection handlers
+- `backend/api/rest/src/ci/jobs/job.rs` — ci jobs job handlers
+- `backend/api/rest/src/ci/jobs/mod.rs` — ci jobs handlers
+- `backend/api/rest/src/ci/mod.rs` — JSON and browser CI resources retain their distinct authentication and response layers
+- `backend/api/rest/src/ci/oidc.rs` — Public discovery and job-authenticated token exchange, independent of browser sessions
+- `backend/api/rest/src/ci/repository_events.rs` — empty file
+- `backend/api/rest/src/ci/responses.rs` — ci responses handlers
+- `backend/api/rest/src/ci/results.rs` — The Results Twirp JSON API and Azure block-blob subset used by Actions v4
+- `backend/api/rest/src/ci/run_forms.rs` — empty file
+- `backend/api/rest/src/ci/runners.rs` — Native runner settings and credential redemption; the REST adapter shares the same DAOs
+- `backend/api/rest/src/ci/trigger.rs` — ci trigger handlers
+- `backend/api/rest/src/ci/workflows.rs` — ci workflows handlers
+- `backend/api/rest/src/crawlers.rs` — robots.txt and ai.txt follow the site's AI crawler setting (`node_configuration.ai_crawlers`)
+- `backend/api/rest/src/dashboard/mod.rs` — The signed-in user's own issues and pull requests: `/issues` and `/pulls`
+- `backend/api/rest/src/discovery/content_search.rs` — Code and commit search. A search of several repositories walks the repositories the viewer can read, most recently updated first, and shows a few…
+- `backend/api/rest/src/discovery/explore.rs` — discovery explore handlers
+- `backend/api/rest/src/discovery/home.rs` — discovery home handlers
+- `backend/api/rest/src/discovery/mod.rs` — Discovery routes and safe repository-card projection
+- `backend/api/rest/src/discovery/search.rs` — discovery search handlers
+- `backend/api/rest/src/discovery/stars.rs` — discovery stars handlers
+- `backend/api/rest/src/files/collection.rs` — files collection handlers
+- `backend/api/rest/src/files/confirm.rs` — files confirm handlers
+- `backend/api/rest/src/files/content.rs` — files content handlers
+- `backend/api/rest/src/files/download.rs` — files download handlers
+- `backend/api/rest/src/files/file.rs` — files file handlers
+- `backend/api/rest/src/files/mod.rs` — files handlers
+- `backend/api/rest/src/files/public.rs` — files public handlers
+- `backend/api/rest/src/files/stats.rs` — files stats handlers
+- `backend/api/rest/src/gists/forms.rs` — gists forms handlers
+- `backend/api/rest/src/gists/mod.rs` — Native gist pages and forms share the Git-backed domain with the GitHub API
+- `backend/api/rest/src/gists/pages.rs` — gists pages handlers
+- `backend/api/rest/src/git_http.rs` — Git smart HTTP. Basic auth accepts a personal access token, never a password or session
+- `backend/api/rest/src/git_http/tests.rs` — tests for Git smart HTTP auth and service negotiation
+- `backend/api/rest/src/health.rs` — Liveness and role-aware readiness for load balancers
+- `backend/api/rest/src/help.rs` — The help page. It needs no account, and the header shows the viewer's account when there is one
+- `backend/api/rest/src/lib.rs` — `create_router` merges every resource router (auth, users, admin, orgs, projects, discovery, gists, ci, files, notifications, packages, git_http…
+- `backend/api/rest/src/metrics.rs` — Private Prometheus gauges. Node ids and fixed states are the only labels
+- `backend/api/rest/src/notifications/done.rs` — notifications done handlers
+- `backend/api/rest/src/notifications/done_all.rs` — notifications done all handlers
+- `backend/api/rest/src/notifications/inbox.rs` — notifications inbox handlers
+- `backend/api/rest/src/notifications/mod.rs` — notifications handlers
+- `backend/api/rest/src/notifications/read.rs` — notifications read handlers
+- `backend/api/rest/src/notifications/read_all.rs` — notifications read all handlers
+- `backend/api/rest/src/notifications/save.rs` — notifications save handlers
+- `backend/api/rest/src/notifications/ws.rs` — `notifications_ws_handler`/`handle_socket`: websocket push of inbox changes for the hydrated UI
+- `backend/api/rest/src/organizations/action_values.rs` — organizations action values handlers
+- `backend/api/rest/src/organizations/avatar.rs` — The organization picture forms: choose an image and it becomes the picture, or remove the current one. Owners and admins only; the store enforces that
+- `backend/api/rest/src/organizations/code_security.rs` — organizations code security handlers
+- `backend/api/rest/src/organizations/collection.rs` — The actor's organization collection, using the same authorized settings projection
+- `backend/api/rest/src/organizations/dependabot.rs` — organizations dependabot handlers
+- `backend/api/rest/src/organizations/governance.rs` — Exceptional audited ingress: explicit IDs, current verified staff, no tenant reads
+- `backend/api/rest/src/organizations/invitations.rs` — The invitee's answer to an organization invitation. Membership starts only on accept
+- `backend/api/rest/src/organizations/membership.rs` — Native membership commands; last-owner policy belongs to the DAO
+- `backend/api/rest/src/organizations/mod.rs` — Organization browser resources; authorization remains in named DB transactions
+- `backend/api/rest/src/organizations/organization.rs` — Organization settings, bounded native commands and authorized page projections
+- `backend/api/rest/src/organizations/private_registries.rs` — organizations private registries handlers
+- `backend/api/rest/src/organizations/profile.rs` — The public page of an organization, at the same address as a user profile
+- `backend/api/rest/src/organizations/properties.rs` — Session-bound property controls. The larger body budget is isolated from other organization forms
+- `backend/api/rest/src/organizations/roles.rs` — organizations roles handlers
+- `backend/api/rest/src/organizations/settings.rs` — Session-bound, bounded owner controls for the same organization policies used by REST
+- `backend/api/rest/src/organizations/teams.rs` — Team ingress and authorized detail projections; DAO policy remains authoritative
+- `backend/api/rest/src/organizations/tokens.rs` — Owners set the organization's token policy and review the fine-grained tokens that reach it. The same rows back the REST personal-access-token…
+- `backend/api/rest/src/organizations/webhooks.rs` — The webhooks section's forms on an organization settings page. Only owners may use them
+- `backend/api/rest/src/packages/archives.rs` — Read bounded package metadata without extracting publisher-controlled paths
+- `backend/api/rest/src/packages/maven.rs` — Maven repository-layout requests share a host with repository pages and Git
+- `backend/api/rest/src/packages/mod.rs` — Native registry protocols use personal and job tokens, never browser cookies
+- `backend/api/rest/src/packages/npm.rs` — packages npm handlers
+- `backend/api/rest/src/packages/nuget.rs` — NuGet v3 discovery, publication, flat-container, registration and search
+- `backend/api/rest/src/packages/oci.rs` — packages oci handlers
+- `backend/api/rest/src/packages/pages.rs` — packages pages handlers
+- `backend/api/rest/src/packages/rubygems.rs` — RubyGems push and Bundler's compact index; no Ruby deserialization or extraction
+- `backend/api/rest/src/packages/tokens.rs` — Docker exchanges login credentials for short-lived, repository-scoped bearer tokens
+- `backend/api/rest/src/pictures.rs` — Picture forms: a settings form that sends a picture as `multipart/form-data`, a few small text fields (the CSRF token) and one file named `picture`
+- `backend/api/rest/src/projects.rs` — Project pages and plain forms use the same project operations as REST
+- `backend/api/rest/src/repository_redirects.rs` — A request for the old name of a repository that moved to an owner in another cell is redirected to its current name, as GitHub does after a transfer…
+- `backend/api/rest/src/tests.rs` — Router-level tests: the composed app's health, asset, error and form redirect behaviour, checked through `create_router` without a database
+- `backend/api/rest/src/user/appearance.rs` — user appearance handlers
+- `backend/api/rest/src/user/avatar.rs` — Upload or remove a user's picture through native settings forms
+- `backend/api/rest/src/user/blocks.rs` — user blocks handlers
+- `backend/api/rest/src/user/email.rs` — Changing the account's email address (the current password is required), mailing a new confirmation code for it, confirming it with that code, and…
+- `backend/api/rest/src/user/fine_grained.rs` — Settings pages for fine-grained personal access tokens. Every change goes through `identity::fine_grained`, which checks the session, the owner and…
+- `backend/api/rest/src/user/gpg.rs` — user gpg handlers
+- `backend/api/rest/src/user/interactions.rs` — user interactions handlers
+- `backend/api/rest/src/user/keys.rs` — user keys handlers
+- `backend/api/rest/src/user/mod.rs` — Signed-in account settings and native forms
+- `backend/api/rest/src/user/profile.rs` — user profile handlers
+- `backend/api/rest/src/user/responses.rs` — user responses handlers
+- `backend/api/rest/src/user/sessions.rs` — The account's signed-in sessions: the list on the settings page, ending one, and ending every session except the one making the request
+- `backend/api/rest/src/user/tokens.rs` — user tokens handlers
+- `backend/api/rest/src/user/two_factor.rs` — Account settings for two-factor sign-in: set up, confirm, regenerate recovery codes, turn off
+- `backend/api/rest/src/users/activity.rs` — Public profile activity: pushes, issues, pull requests and comments, newest first
+- `backend/api/rest/src/users/avatar.rs` — One address for every account picture: `/avatars/NAME`. An account with an uploaded picture is sent to that file, whose own visibility rules apply.…
+- `backend/api/rest/src/users/follow.rs` — users follow handlers
+- `backend/api/rest/src/users/mod.rs` — Public account profiles and follow forms
+- `backend/api/rest/src/users/profile.rs` — users profile handlers
+
+## `codeyard-app` (`backend/app/`)
+
+- `backend/app/src/api_shared/github/issues.rs` — GitHub issue lookup projection
+- `backend/app/src/api_shared/github/labels.rs` — GitHub label lookup projection
+- `backend/app/src/api_shared/github/mod.rs` — GitHub resource lookup
+- `backend/app/src/api_shared/github/pointers.rs` — Home pointers select resource cells; their existing HTTP handlers own list authorization
+- `backend/app/src/api_shared/github/repos.rs` — GitHub repository document projection
+- `backend/app/src/api_shared/mod.rs` — Legacy adapter grouping
+- `backend/app/src/app.rs` — Shared application state: database, storage, CI and notification services
+- `backend/app/src/artifact_metadata.rs` — Durable deployment jobs commit their inventory and terminal result in one transaction
+- `backend/app/src/backups/cluster.rs` — Cluster backups reuse replica streams. Restore keeps nodes and voters fenced until installed
+- `backend/app/src/backups/mod.rs` — `codeyard backup` and `codeyard restore` for single-node and cluster installations
+- `backend/app/src/backups/repair.rs` — `codeyard repo verify [--repair]` and `codeyard repo rebuild`
+- `backend/app/src/cells.rs` — Cell RPC composition: identity owns proofs; repository stores own Git exports
+- `backend/app/src/cells/search.rs` — Renders this cell's current search documents and writes them to the global index. Each delivery reads the live rows, so a late or repeated delivery…
+- `backend/app/src/dashboard/mod.rs` — The signed-in user's own issues and pull requests, across the repositories they can read
+- `backend/app/src/gists.rs` — Gists reuse repository placement, Git objects and transport. SQL admission precedes the ref publication; durable pending writes reconcile lost…
+- `backend/app/src/lib.rs` — Module assembly for cells, api_shared, app, artifact_metadata, backups
+- `backend/app/src/nuget.rs` — NuGet compatibility classification, including metadata whose normalized version lost build data
+- `backend/app/src/organizations.rs` — Shared organization lifecycle effects for native settings and REST
+- `backend/app/src/packages.rs` — Content-addressed objects are reserved before storage I/O so interrupted writes are collected
+- `backend/app/src/projects.rs` — Project item filtering and ordering are shared by REST, native views and GraphQL
+- `backend/app/src/vulnerabilities/mod.rs` — OSV mirrors and repository alerts share the pinned dependency inventory
+- `backend/app/tests/git_broker.rs` — Gateway tests on throwaway databases and real Git repositories
+- `backend/app/tests/git_broker/openssh_daemon.rs` — Real sshd broker fixture
+- `backend/app/tests/receive/mod.rs` — Receive-hook integration fixture assembly
+- `backend/app/tests/receive/policy_tests.rs` — Push permission checks in the receive hooks, on a throwaway SQLite database
+- `backend/app/tests/receive/quorum_tests.rs` — Receive-hook quorum refusal contracts
+
+## `codeyard-cache` (`backend/cache/`)
+
+Disposable content cache with a bounded local tier.
+
+- `backend/cache/src/lib.rs` — Disposable content-derived values only. Callers must authorize before every lookup
+- `backend/cache/src/local.rs` — bounded in-process content cache
+- `backend/cache/src/remote.rs` — The Redis dependency and all protocol operations stay inside this crate
+- `backend/cache/tests/valkey.rs` — Opt-in contracts against real Valkey servers; `scripts/with-valkey.sh` starts them
+
+## `codeyard-ci` (`backend/ci/`)
+
+- `backend/ci/src/admission.rs` — admission
+- `backend/ci/src/code_owners.rs` — CODEOWNERS: which owners a path has at a commit, and which of them may review it
+- `backend/ci/src/code_owners/diagnostics.rs` — Diagnostics use the same tokenizer, pattern rules and live owner resolution as review gates
+- `backend/ci/src/config.rs` — CI settings from environment variables
+- `backend/ci/src/environment_values.rs` — Bind environment values to admitted job IDs before either engine receives them
+- `backend/ci/src/events.rs` — Repository events use the default branch's workflow and the webhook's unchanged document
+- `backend/ci/src/lib.rs` — CI/Actions: workflow triggers queue runs; worker nodes run them with `act`
+- `backend/ci/src/logs.rs` — Runner stage names and the limit on what one run stores
+- `backend/ci/src/logs/archive.rs` — Download formats project durable observations; archive members never stand in for executions
+- `backend/ci/src/oidc.rs` — OIDC identities come from admitted workflows and live job credentials, never request claims
+- `backend/ci/src/process.rs` — Running CI commands: own process group, deadline, cancellation and line-by-line output streaming
+- `backend/ci/src/pull_requests/branches.rs` — Open pull requests follow their branches. Fork heads are retained in the base repository so deleting a fork does not remove the commits being reviewed
+- `backend/ci/src/pull_requests/code_owners.rs` — Code owners on pull requests: the review requests a pull request gets when it opens or its head moves, and the approvals that a branch rule with…
+- `backend/ci/src/pull_requests/mod.rs` — module list
+- `backend/ci/src/pull_requests/workflows.rs` — Queues the workflows that `pulls` now need on their new base
+- `backend/ci/src/push.rs` — push
+- `backend/ci/src/queue.rs` — One CI queue, reached through the database or a paired core node
+- `backend/ci/src/receive.rs` — receive
+- `backend/ci/src/refs.rs` — Branch and tag mutations shared by JSON and native forms
+- `backend/ci/src/reusable.rs` — Admission snapshots called workflows so workers never fetch a moving ref or another repository
+- `backend/ci/src/runner_credentials.rs` — Runner credentials use cluster pairing unchanged; removal has its own hash domain
+- `backend/ci/src/runner_labels.rs` — `runs-on` labels of a workflow, and which job features each mode supports
+- `backend/ci/src/runs.rs` — Admission, enqueue and cancellation of durable CI runs
+- `backend/ci/src/runtime.rs` — Credentials shared by today's act worker and future runners
+- `backend/ci/src/schedule.rs` — UTC schedules are discovered on the default branch; enqueue serializes each minute across nodes
+- `backend/ci/src/tokens.rs` — Workflow permissions are replaced, not merged, at each explicit permissions block
+- `backend/ci/src/worker.rs` — A CI worker: claims queued runs and executes their workflows with `act`
+- `backend/ci/src/workers.rs` — Worker execution and shutdown for this node
+
+## `codeyard-database` (`backend/database/`)
+
+Codeyard database connections, migrations and shared records.
+
+- `backend/database/src/cells.rs` — Cell-local ID allocation. Operators initialize a stopped installation before registration
+- `backend/database/src/cells/authorization.rs` — Home-cell proofs and bounded, short-lived authorization answers. No personal credentials are inserted into a stub's native credential tables
+- `backend/database/src/cells/authorization/freshness.rs` — Deadlines for heartbeat-proved identity snapshots. These types do not establish that a heartbeat and credential came from one snapshot; the database…
+- `backend/database/src/cells/authorization/heartbeat.rs` — The heartbeat and the presented credential are selected by one SQL statement
+- `backend/database/src/cells/authorization/scope.rs` — Foreign proofs belong to one operation, never to a shared credential cache
+- `backend/database/src/cells/capacity.rs` — A bounded native-cell sample; counters and bytes never read another cell's schema
+- `backend/database/src/cells/directory.rs` — Directory publication runs while the caller retains its local namespace and authority locks
+- `backend/database/src/cells/notices.rs` — A mention of an account homed in another cell reaches that account's home inbox. The repository's cell decides who may read, so only public…
+- `backend/database/src/cells/outbox.rs` — Cleanup survives a native commit, a lost reply and process shutdown. Delivery is idempotent
+- `backend/database/src/cells/ownership.rs` — Where every table's rows belong, so an account move (architecture stage 6) knows which rows to copy and which writes its freeze refuses. A row…
+- `backend/database/src/cells/pointers.rs` — Home-cell membership and star pointers discover remote resources; they never grant access
+- `backend/database/src/cells/pulls.rs` — A base owns its pull request; the head cell retains explicit publication consent
+- `backend/database/src/cells/regions.rs` — Authenticated requests per account, router region and UTC day. Only requests a router forwarded are counted, under the router's region. Counts stay…
+- `backend/database/src/cells/repositories.rs` — A fork's source is read under its resource cell's authority; its storage stays private
+- `backend/database/src/cells/search.rs` — The global search index holds every cell's repository, issue, pull request and code documents. A cell writes only its own repositories' documents…
+- `backend/database/src/cells/stubs.rs` — Remote identity metadata retains local foreign keys, never personal credentials
+- `backend/database/src/ci_logs.rs` — ci logs
+- `backend/database/src/ci_messages.rs` — The branch name a run is stored and shown with
+- `backend/database/src/ci_policy.rs` — Policy refusals from the native CI enqueue and cancellation transactions
+- `backend/database/src/connection.rs` — Opening the application database (SQLite or PostgreSQL)
+- `backend/database/src/lib.rs` — Shared database connections, migrations and record types
+- `backend/database/src/limits.rs` — single constant MAX_JSON
+- `backend/database/src/migrations.rs` — Schema migrations, one baseline per database engine
+- `backend/database/src/models/audit.rs` — One audit log row, with the acting account's name when it still exists
+- `backend/database/src/models/ci.rs` — ci
+- `backend/database/src/models/cluster.rs` — A machine that is, or is waiting to become, part of the cluster
+- `backend/database/src/models/commit_comments.rs` — commit comments
+- `backend/database/src/models/deploy_keys.rs` — A deploy key as stored, with the title and the read/write flag the columns hold as `name` and
+- `backend/database/src/models/email.rs` — The saved mail server
+- `backend/database/src/models/files.rs` — files
+- `backend/database/src/models/following.rs` — following
+- `backend/database/src/models/issues.rs` — issues
+- `backend/database/src/models/milestones.rs` — milestones
+- `backend/database/src/models/mod.rs` — module list
+- `backend/database/src/models/native_arrays.rs` — Explicit native decoding for PostgreSQL arrays and SQLite JSON arrays
+- `backend/database/src/models/notifications.rs` — notifications
+- `backend/database/src/models/organizations.rs` — organizations
+- `backend/database/src/models/pull_requests.rs` — pull requests
+- `backend/database/src/models/releases.rs` — A release as stored
+- `backend/database/src/models/repositories.rs` — repositories
+- `backend/database/src/models/users.rs` — users
+- `backend/database/src/models/webhooks.rs` — A webhook as stored
+- `backend/database/src/pool.rs` — SQLx connections with acquisition waiters shared by every handle of an application pool
+- `backend/database/src/postgres/migrations.rs` — PostgreSQL schema migrations
+- `backend/database/src/postgres/mod.rs` — module list
+- `backend/database/src/queries/action_objects.rs` — action objects
+- `backend/database/src/queries/action_settings.rs` — action settings
+- `backend/database/src/queries/actions.rs` — actions
+- `backend/database/src/queries/ci.rs` — ci
+- `backend/database/src/queries/ci_tokens.rs` — ci tokens
+- `backend/database/src/queries/code_security.rs` — code security
+- `backend/database/src/queries/credentials.rs` — Bare IDs are trusted in-process calls
+- `backend/database/src/queries/dependabot_alerts.rs` — dependabot alerts
+- `backend/database/src/queries/dependency_graph.rs` — One reported default-branch revision, ordered by server receipt rather than detector clocks
+- `backend/database/src/queries/deployment_reviews.rs` — deployment reviews
+- `backend/database/src/queries/discussions.rs` — discussions
+- `backend/database/src/queries/files.rs` — How long a client has to send the bytes after reserving an upload
+- `backend/database/src/queries/fine_grained_tokens.rs` — fine grained tokens
+- `backend/database/src/queries/github_apps.rs` — github apps
+- `backend/database/src/queries/mod.rs` — module list for cross-domain transaction helpers
+- `backend/database/src/queries/notifications/mod.rs` — module list
+- `backend/database/src/queries/notifications/records.rs` — records
+- `backend/database/src/queries/notifications/threads.rs` — threads
+- `backend/database/src/queries/oauth_apps.rs` — oauth apps
+- `backend/database/src/queries/organizations/mod.rs` — mod
+- `backend/database/src/queries/organizations/properties.rs` — properties
+- `backend/database/src/queries/organizations/roles.rs` — Shared by the legacy security-team API and the organization-role API
+- `backend/database/src/queries/postgres/action_jobs.rs` — PostgreSQL side of `queries/action_jobs.rs`
+- `backend/database/src/queries/postgres/action_logs.rs` — Freeze the same effective retention used by artifact creation when logs become complete
+- `backend/database/src/queries/postgres/action_objects.rs` — PostgreSQL side of `queries/action_objects.rs`
+- `backend/database/src/queries/postgres/action_settings.rs` — PostgreSQL side of `queries/action_settings.rs`
+- `backend/database/src/queries/postgres/advisories.rs` — PostgreSQL side of `queries/advisories.rs`
+- `backend/database/src/queries/postgres/ci.rs` — PostgreSQL side of `queries/ci.rs`
+- `backend/database/src/queries/postgres/ci_tokens.rs` — PostgreSQL side of `queries/ci_tokens.rs`
+- `backend/database/src/queries/postgres/code_security.rs` — PostgreSQL side of `queries/code_security.rs`
+- `backend/database/src/queries/postgres/credentials.rs` — The caller retains account/repository authority before retaining its credential
+- `backend/database/src/queries/postgres/dependabot_alerts.rs` — The catalogue an inventory can match: advisories without an OSV record, and those whose
+- `backend/database/src/queries/postgres/dependency_graph.rs` — PostgreSQL side of `queries/dependency_graph.rs`
+- `backend/database/src/queries/postgres/deployment_reviews.rs` — PostgreSQL side of `queries/deployment_reviews.rs`
+- `backend/database/src/queries/postgres/discussions.rs` — PostgreSQL side of `queries/discussions.rs`
+- `backend/database/src/queries/postgres/files.rs` — Queues the file's bytes for deletion in the caller's transaction
+- `backend/database/src/queries/postgres/fine_grained_tokens.rs` — A token's bounds with its live membership and policy; package transactions read it too
+- `backend/database/src/queries/postgres/mod.rs` — Runs `attempt` up to three times, retrying with a short wait when Postgres reports a
+- `backend/database/src/queries/postgres/notifications/mod.rs` — module list
+- `backend/database/src/queries/postgres/notifications/records/mod.rs` — module list
+- `backend/database/src/queries/postgres/notifications/records/threads.rs` — PostgreSQL side of `queries/notifications/records/threads.rs`
+- `backend/database/src/queries/postgres/oauth_apps.rs` — Credentials discover their issuer after resource locks
+- `backend/database/src/queries/postgres/organizations/authority.rs` — PostgreSQL side of `queries/organizations/authority.rs`
+- `backend/database/src/queries/postgres/organizations/mod.rs` — module list
+- `backend/database/src/queries/postgres/organizations/properties.rs` — PostgreSQL side of `queries/organizations/properties.rs`
+- `backend/database/src/queries/postgres/organizations/roles.rs` — Role membership remains meaningful for reads when organization writes are suspended
+- `backend/database/src/queries/postgres/repositories/access.rs` — Effectful callers lock the rows they depend on in their own
+- `backend/database/src/queries/postgres/repositories/mod.rs` — module list
+- `backend/database/src/queries/postgres/repositories/records.rs` — The ancestors of the fork bound to $1, found by walking forked_from_id upward
+- `backend/database/src/queries/postgres/repository_stats.rs` — PostgreSQL side of `queries/repository_stats.rs`
+- `backend/database/src/queries/postgres/runners.rs` — PostgreSQL side of `queries/runners.rs`
+- `backend/database/src/queries/postgres/secret_scanning.rs` — PostgreSQL side of `queries/secret_scanning.rs`
+- `backend/database/src/queries/postgres/secrets.rs` — Call under the owning organization/repository authority locks, after the proposed edit
+- `backend/database/src/queries/postgres/users/blocks.rs` — PostgreSQL side of `queries/users/blocks.rs`
+- `backend/database/src/queries/postgres/users/mod.rs` — module list
+- `backend/database/src/queries/postgres/users/tokens.rs` — Called after resource authority has been locked, in the transaction that writes it
+- `backend/database/src/queries/postgres/users/transitions.rs` — PostgreSQL side of `queries/users/transitions.rs`
+- `backend/database/src/queries/repository_stats.rs` — repository stats
+- `backend/database/src/queries/rulesets.rs` — rulesets
+- `backend/database/src/queries/rulesets/matching.rs` — Current native repository metadata, including typed effective property values/defaults
+- `backend/database/src/queries/rulesets/records.rs` — records
+- `backend/database/src/queries/runners.rs` — runners
+- `backend/database/src/queries/secret_scanning.rs` — secret scanning
+- `backend/database/src/queries/secrets.rs` — secrets
+- `backend/database/src/queries/source_imports.rs` — source imports
+- `backend/database/src/queries/sqlite/action_jobs.rs` — SQLite side of `queries/action_jobs.rs`
+- `backend/database/src/queries/sqlite/action_logs.rs` — Freeze the same effective retention used by artifact creation when logs become complete
+- `backend/database/src/queries/sqlite/action_objects.rs` — SQLite side of `queries/action_objects.rs`
+- `backend/database/src/queries/sqlite/action_settings.rs` — SQLite side of `queries/action_settings.rs`
+- `backend/database/src/queries/sqlite/advisories.rs` — SQLite side of `queries/advisories.rs`
+- `backend/database/src/queries/sqlite/ci.rs` — SQLite side of `queries/ci.rs`
+- `backend/database/src/queries/sqlite/ci_tokens.rs` — SQLite side of `queries/ci_tokens.rs`
+- `backend/database/src/queries/sqlite/code_security.rs` — SQLite side of `queries/code_security.rs`
+- `backend/database/src/queries/sqlite/credentials.rs` — SQLite side of `queries/credentials.rs`
+- `backend/database/src/queries/sqlite/dependabot_alerts.rs` — The catalogue an inventory can match: advisories without an OSV record, and those whose
+- `backend/database/src/queries/sqlite/dependency_graph.rs` — SQLite side of `queries/dependency_graph.rs`
+- `backend/database/src/queries/sqlite/deployment_reviews.rs` — SQLite side of `queries/deployment_reviews.rs`
+- `backend/database/src/queries/sqlite/discussions.rs` — SQLite side of `queries/discussions.rs`
+- `backend/database/src/queries/sqlite/files.rs` — Queues the file's bytes for deletion in the caller's transaction
+- `backend/database/src/queries/sqlite/fine_grained_tokens.rs` — A token's bounds with its live membership and policy; package transactions read it too
+- `backend/database/src/queries/sqlite/mod.rs` — module list
+- `backend/database/src/queries/sqlite/notifications/mod.rs` — module list
+- `backend/database/src/queries/sqlite/notifications/records/mod.rs` — module list
+- `backend/database/src/queries/sqlite/notifications/records/threads.rs` — SQLite side of `queries/notifications/records/threads.rs`
+- `backend/database/src/queries/sqlite/organizations/authority.rs` — SQLite side of `queries/organizations/authority.rs`
+- `backend/database/src/queries/sqlite/organizations/mod.rs` — module list
+- `backend/database/src/queries/sqlite/organizations/properties.rs` — SQLite side of `queries/organizations/properties.rs`
+- `backend/database/src/queries/sqlite/organizations/roles.rs` — Role membership remains meaningful for reads when organization writes are suspended
+- `backend/database/src/queries/sqlite/repositories/access.rs` — Effectful callers use BEGIN IMMEDIATE and recheck before durable admission
+- `backend/database/src/queries/sqlite/repositories/mod.rs` — module list
+- `backend/database/src/queries/sqlite/repository_stats.rs` — SQLite side of `queries/repository_stats.rs`
+- `backend/database/src/queries/sqlite/runners.rs` — SQLite side of `queries/runners.rs`
+- `backend/database/src/queries/sqlite/search.rs` — Text matching for SQLite. Its LIKE folds ASCII letters only, so a search compiles its text to a case-insensitive Unicode regular expression. The…
+- `backend/database/src/queries/sqlite/secret_scanning.rs` — SQLite side of `queries/secret_scanning.rs`
+- `backend/database/src/queries/sqlite/secrets.rs` — SQLite side of `queries/secrets.rs`
+- `backend/database/src/queries/sqlite/time.rs` — SQLite side of `queries/time.rs`
+- `backend/database/src/queries/sqlite/users/blocks.rs` — SQLite side of `queries/users/blocks.rs`
+- `backend/database/src/queries/sqlite/users/mod.rs` — module list
+- `backend/database/src/queries/sqlite/users/tokens.rs` — Called inside the resource's BEGIN IMMEDIATE transaction, after account authority
+- `backend/database/src/queries/sqlite/users/transitions.rs` — SQLite side of `queries/users/transitions.rs`
+- `backend/database/src/queries/users/accounts.rs` — A settings operation retains its originating credential alongside account data
+- `backend/database/src/queries/users/mod.rs` — module list
+- `backend/database/src/queries/users/tokens.rs` — Token timestamps must round-trip through SQLite's four-digit calendar representation
+- `backend/database/src/queries/webhooks.rs` — Another of the owner's hooks already sends one of the events to the same configuration
+- `backend/database/src/read_routing.rs` — Optional PostgreSQL content reads; authority and transactions always use the primary
+- `backend/database/src/sqlite/migrations.rs` — SQLite schema migrations
+- `backend/database/src/sqlite/mod.rs` — module list
+
+## `codeyard-db-actions` (`backend/db/actions/`)
+
+- `backend/db/actions/src/action_concurrency.rs` — Workflow and job requests share one repository/group ordering and one holder set
+- `backend/db/actions/src/action_jobs.rs` — action jobs: types, validation and engine dispatch
+- `backend/db/actions/src/action_logs.rs` — action logs: types, validation and engine dispatch
+- `backend/db/actions/src/action_objects.rs` — action objects: types, validation and engine dispatch
+- `backend/db/actions/src/action_replays.rs` — A claim carries its replay across a cluster RPC frame together with the run, workflow and
+- `backend/db/actions/src/action_runs.rs` — action runs: types, validation and engine dispatch
+- `backend/db/actions/src/action_settings.rs` — Whether an organization switch lets one of its repositories use the feature
+- `backend/db/actions/src/action_workflows.rs` — action workflows: types, validation and engine dispatch
+- `backend/db/actions/src/actions.rs` — The site's Actions settings
+- `backend/db/actions/src/checks.rs` — checks: types, validation and engine dispatch
+- `backend/db/actions/src/ci.rs` — ci: types, validation and engine dispatch
+- `backend/db/actions/src/ci/claims.rs` — claims
+- `backend/db/actions/src/ci/log_chunks.rs` — log chunks
+- `backend/db/actions/src/ci_admission.rs` — ci admission
+- `backend/db/actions/src/ci_concurrency.rs` — ci concurrency
+- `backend/db/actions/src/ci_concurrency_resolve.rs` — Workflow concurrency combines immutable admission inputs with transaction-assigned run identity
+- `backend/db/actions/src/ci_tokens.rs` — ci tokens: types, validation and engine dispatch
+- `backend/db/actions/src/dependabot.rs` — dependabot
+- `backend/db/actions/src/deployment_protection.rs` — deployment protection: types, validation and engine dispatch
+- `backend/db/actions/src/deployment_reviews.rs` — deployment reviews: types, validation and engine dispatch
+- `backend/db/actions/src/deployments.rs` — deployments: types, validation and engine dispatch
+- `backend/db/actions/src/environment_values.rs` — environment values: types, validation and engine dispatch
+- `backend/db/actions/src/environments.rs` — environments: types, validation and engine dispatch
+- `backend/db/actions/src/lib.rs` — Crate root: module declarations and re-exports
+- `backend/db/actions/src/oidc.rs` — oidc: types, validation and engine dispatch
+- `backend/db/actions/src/postgres/action_concurrency.rs` — PostgreSQL side of `action_concurrency.rs`
+- `backend/db/actions/src/postgres/action_jobs.rs` — PostgreSQL side of `action_jobs.rs`
+- `backend/db/actions/src/postgres/action_logs.rs` — PostgreSQL side of `action_logs.rs`
+- `backend/db/actions/src/postgres/action_objects.rs` — PostgreSQL side of `action_objects.rs`
+- `backend/db/actions/src/postgres/action_replays.rs` — PostgreSQL side of `action_replays.rs`
+- `backend/db/actions/src/postgres/action_runs.rs` — Called after admission's repository lock, before its transaction commits
+- `backend/db/actions/src/postgres/action_settings.rs` — PostgreSQL side of `action_settings.rs`
+- `backend/db/actions/src/postgres/action_workflows.rs` — PostgreSQL side of `action_workflows.rs`
+- `backend/db/actions/src/postgres/actions.rs` — PostgreSQL side of `actions.rs`
+- `backend/db/actions/src/postgres/checks.rs` — PostgreSQL side of `checks.rs`
+- `backend/db/actions/src/postgres/checks/native.rs` — PostgreSQL side of `checks/native.rs`
+- `backend/db/actions/src/postgres/ci.rs` — Whether `actor` may run (or, with `cd`, deploy) workflows for this repository
+- `backend/db/actions/src/postgres/ci_tokens.rs` — PostgreSQL side of `ci_tokens.rs`
+- `backend/db/actions/src/postgres/dependabot.rs` — PostgreSQL side of `queries/dependabot.rs`
+- `backend/db/actions/src/postgres/deployment_protection.rs` — PostgreSQL side of `deployment_protection.rs`
+- `backend/db/actions/src/postgres/deployment_reviews.rs` — PostgreSQL side of `deployment_reviews.rs`
+- `backend/db/actions/src/postgres/deployments.rs` — PostgreSQL side of `deployments.rs`
+- `backend/db/actions/src/postgres/environment_values.rs` — PostgreSQL side of `environment_values.rs`
+- `backend/db/actions/src/postgres/environments.rs` — PostgreSQL side of `environments.rs`
+- `backend/db/actions/src/postgres/mod.rs` — module list
+- `backend/db/actions/src/postgres/oidc.rs` — PostgreSQL side of `oidc.rs`
+- `backend/db/actions/src/postgres/oidc_settings.rs` — PostgreSQL side of `queries/oidc_settings.rs`
+- `backend/db/actions/src/postgres/private_registries.rs` — PostgreSQL side of `private_registries.rs`
+- `backend/db/actions/src/postgres/runners.rs` — PostgreSQL side of `runners.rs`
+- `backend/db/actions/src/postgres/secrets.rs` — PostgreSQL side of `secrets.rs`
+- `backend/db/actions/src/postgres/variables.rs` — Collaborator access, leaving out the read access a public repository gives everyone: as on
+- `backend/db/actions/src/private_registries.rs` — private registries: types, validation and engine dispatch
+- `backend/db/actions/src/runners.rs` — runners: types, validation and engine dispatch
+- `backend/db/actions/src/secrets.rs` — secrets: types, validation and engine dispatch
+- `backend/db/actions/src/sqlite/action_concurrency.rs` — SQLite side of `action_concurrency.rs`
+- `backend/db/actions/src/sqlite/action_jobs.rs` — SQLite side of `action_jobs.rs`
+- `backend/db/actions/src/sqlite/action_logs.rs` — SQLite side of `action_logs.rs`
+- `backend/db/actions/src/sqlite/action_objects.rs` — SQLite side of `action_objects.rs`
+- `backend/db/actions/src/sqlite/action_replays.rs` — SQLite side of `action_replays.rs`
+- `backend/db/actions/src/sqlite/action_runs.rs` — Called inside admission's immediate transaction
+- `backend/db/actions/src/sqlite/action_settings.rs` — SQLite side of `action_settings.rs`
+- `backend/db/actions/src/sqlite/action_workflows.rs` — SQLite side of `action_workflows.rs`
+- `backend/db/actions/src/sqlite/actions.rs` — SQLite side of `actions.rs`
+- `backend/db/actions/src/sqlite/checks.rs` — SQLite side of `checks.rs`
+- `backend/db/actions/src/sqlite/checks/native.rs` — SQLite side of `checks/native.rs`
+- `backend/db/actions/src/sqlite/ci.rs` — Whether `actor` may run (or, with `cd`, deploy) workflows for this repository
+- `backend/db/actions/src/sqlite/ci_tokens.rs` — SQLite side of `ci_tokens.rs`
+- `backend/db/actions/src/sqlite/dependabot.rs` — SQLite side of `queries/dependabot.rs`
+- `backend/db/actions/src/sqlite/deployment_protection.rs` — SQLite side of `deployment_protection.rs`
+- `backend/db/actions/src/sqlite/deployment_reviews.rs` — SQLite side of `deployment_reviews.rs`
+- `backend/db/actions/src/sqlite/deployments.rs` — SQLite side of `deployments.rs`
+- `backend/db/actions/src/sqlite/environment_values.rs` — SQLite side of `environment_values.rs`
+- `backend/db/actions/src/sqlite/environments.rs` — SQLite side of `environments.rs`
+- `backend/db/actions/src/sqlite/mod.rs` — module list
+- `backend/db/actions/src/sqlite/oidc.rs` — SQLite side of `oidc.rs`
+- `backend/db/actions/src/sqlite/oidc_settings.rs` — SQLite side of `queries/oidc_settings.rs`
+- `backend/db/actions/src/sqlite/private_registries.rs` — SQLite side of `private_registries.rs`
+- `backend/db/actions/src/sqlite/runners.rs` — SQLite side of `runners.rs`
+- `backend/db/actions/src/sqlite/secrets.rs` — SQLite side of `secrets.rs`
+- `backend/db/actions/src/sqlite/variables.rs` — Collaborator access, leaving out the read access a public repository gives everyone: as on
+- `backend/db/actions/src/variables.rs` — variables: types, validation and engine dispatch
+
+## `codeyard-db-directory` (`backend/db/directory/`)
+
+- `backend/db/directory/src/claims.rs` — Pending keys are invisible until their local object has been created and activated
+- `backend/db/directory/src/lib.rs` — The global directory owns a separate PostgreSQL database; cells never use its credentials
+- `backend/db/directory/src/presence.rs` — Regions where an organization's reads are served by its home cell's regional web nodes
+- `backend/db/directory/src/registry.rs` — registry
+- `backend/db/directory/src/search.rs` — The global search index lives in the directory database. A cell writes only documents of repositories homed in it, and a query returns a private…
+- `backend/db/directory/src/shards.rs` — The map from the 256 logical shards to the clusters that hold them, and moving one shard to another cluster with no failed lookup
+
+## `codeyard-db-identity` (`backend/db/identity/`)
+
+- `backend/db/identity/src/api_limits.rs` — database-backed API request budgets
+- `backend/db/identity/src/audit.rs` — filtered audit log pages
+- `backend/db/identity/src/auth_admission.rs` — Failed-login limits per client address and per account, shared by every node. Storage that cannot answer denies the attempt
+- `backend/db/identity/src/credentials.rs` — empty placeholder module
+- `backend/db/identity/src/deploy_keys.rs` — repository-scoped deploy-key enrollment and authority
+- `backend/db/identity/src/email.rs` — encrypted mail settings, token links and transactional mail queue
+- `backend/db/identity/src/fine_grained_tokens.rs` — scoped token selection, policy and review
+- `backend/db/identity/src/following.rs` — follow relationships and restricted-account checks
+- `backend/db/identity/src/github_app_hooks.rs` — app webhook subscriptions and delivery history
+- `backend/db/identity/src/github_app_manifests.rs` — manifest approval and one-time conversion
+- `backend/db/identity/src/github_apps.rs` — GitHub App registrations, installations and repository access
+- `backend/db/identity/src/import_authors.rs` — imported author identity mappings
+- `backend/db/identity/src/interactions.rs` — account/org/repository contribution restrictions
+- `backend/db/identity/src/lib.rs` — Crate root: module declarations and re-exports
+- `backend/db/identity/src/mail_config.rs` — The mail server settings: read from the database row or from CODEYARD_SMTP_* variables
+- `backend/db/identity/src/oauth_apps.rs` — OAuth applications, grants and token exchange
+- `backend/db/identity/src/postgres/api_limits.rs` — PostgreSQL database-backed API request budgets
+- `backend/db/identity/src/postgres/audit.rs` — PostgreSQL filtered audit log pages
+- `backend/db/identity/src/postgres/credentials.rs` — PostgreSQL live initiating-credential checks
+- `backend/db/identity/src/postgres/deploy_keys.rs` — PostgreSQL repository-scoped deploy-key enrollment and authority
+- `backend/db/identity/src/postgres/email.rs` — PostgreSQL encrypted mail settings, token links and transactional mail queue
+- `backend/db/identity/src/postgres/fine_grained_tokens.rs` — PostgreSQL scoped token selection, policy and review
+- `backend/db/identity/src/postgres/following.rs` — PostgreSQL follow relationships and restricted-account checks
+- `backend/db/identity/src/postgres/github_app_hooks.rs` — PostgreSQL app webhook subscriptions and delivery history
+- `backend/db/identity/src/postgres/github_app_manifests.rs` — PostgreSQL manifest approval and one-time conversion
+- `backend/db/identity/src/postgres/github_apps.rs` — PostgreSQL GitHub App registrations, installations and repository access
+- `backend/db/identity/src/postgres/import_authors.rs` — PostgreSQL imported author identity mappings
+- `backend/db/identity/src/postgres/interactions.rs` — PostgreSQL account/org/repository contribution restrictions
+- `backend/db/identity/src/postgres/mod.rs` — domain module wiring
+- `backend/db/identity/src/postgres/oauth_apps.rs` — PostgreSQL OAuth applications, grants and token exchange
+- `backend/db/identity/src/postgres/relationships.rs` — PostgreSQL issue dependency/sub-issue relationship mutations
+- `backend/db/identity/src/postgres/signature_verifications.rs` — PostgreSQL persistent verified-signature result records
+- `backend/db/identity/src/postgres/users/accounts.rs` — PostgreSQL account lifecycle, password updates and public author attribution
+- `backend/db/identity/src/postgres/users/admission.rs` — PostgreSQL atomic client/account login budget charging
+- `backend/db/identity/src/postgres/users/blocks.rs` — PostgreSQL account blocking and repository-interaction guards
+- `backend/db/identity/src/postgres/users/emails.rs` — PostgreSQL verified address changes and one-time verification
+- `backend/db/identity/src/postgres/users/gpg_keys.rs` — PostgreSQL GPG primary/subkey storage and fingerprint lookup
+- `backend/db/identity/src/postgres/users/mod.rs` — domain module wiring
+- `backend/db/identity/src/postgres/users/profiles.rs` — PostgreSQL profile settings, public email and account statistics
+- `backend/db/identity/src/postgres/users/sessions.rs` — PostgreSQL browser sessions, CSRF and OAuth state
+- `backend/db/identity/src/postgres/users/signing_keys.rs` — PostgreSQL SSH signing keys and owner lookup
+- `backend/db/identity/src/postgres/users/signup_requests.rs` — PostgreSQL signup review with redacted metadata and decision mail
+- `backend/db/identity/src/postgres/users/social_accounts.rs` — PostgreSQL bounded profile social links
+- `backend/db/identity/src/postgres/users/ssh_keys.rs` — PostgreSQL complete SSH-key validation and unique fingerprints
+- `backend/db/identity/src/postgres/users/tokens.rs` — PostgreSQL personal token lifecycle and write scope retention
+- `backend/db/identity/src/postgres/users/transitions.rs` — PostgreSQL account admission/restriction changes and authority locking
+- `backend/db/identity/src/postgres/users/two_factor.rs` — PostgreSQL encrypted TOTP state and single-use recovery codes
+- `backend/db/identity/src/relationships.rs` — issue dependency/sub-issue relationship mutations
+- `backend/db/identity/src/signature_verifications.rs` — persistent verified-signature result records
+- `backend/db/identity/src/sqlite/api_limits.rs` — SQLite database-backed API request budgets
+- `backend/db/identity/src/sqlite/audit.rs` — SQLite filtered audit log pages
+- `backend/db/identity/src/sqlite/credentials.rs` — SQLite live initiating-credential checks
+- `backend/db/identity/src/sqlite/deploy_keys.rs` — SQLite repository-scoped deploy-key enrollment and authority
+- `backend/db/identity/src/sqlite/email.rs` — SQLite encrypted mail settings, token links and transactional mail queue
+- `backend/db/identity/src/sqlite/fine_grained_tokens.rs` — SQLite scoped token selection, policy and review
+- `backend/db/identity/src/sqlite/following.rs` — SQLite follow relationships and restricted-account checks
+- `backend/db/identity/src/sqlite/github_app_hooks.rs` — SQLite app webhook subscriptions and delivery history
+- `backend/db/identity/src/sqlite/github_app_manifests.rs` — SQLite manifest approval and one-time conversion
+- `backend/db/identity/src/sqlite/github_apps.rs` — SQLite GitHub App registrations, installations and repository access
+- `backend/db/identity/src/sqlite/import_authors.rs` — SQLite imported author identity mappings
+- `backend/db/identity/src/sqlite/inet.rs` — SQLite side of `queries/inet.rs`
+- `backend/db/identity/src/sqlite/interactions.rs` — SQLite account/org/repository contribution restrictions
+- `backend/db/identity/src/sqlite/mod.rs` — domain module wiring
+- `backend/db/identity/src/sqlite/oauth_apps.rs` — SQLite OAuth applications, grants and token exchange
+- `backend/db/identity/src/sqlite/relationships.rs` — SQLite issue dependency/sub-issue relationship mutations
+- `backend/db/identity/src/sqlite/signature_verifications.rs` — SQLite persistent verified-signature result records
+- `backend/db/identity/src/sqlite/users/accounts.rs` — SQLite account lifecycle, password updates and public author attribution
+- `backend/db/identity/src/sqlite/users/admission.rs` — SQLite atomic client/account login budget charging
+- `backend/db/identity/src/sqlite/users/blocks.rs` — SQLite account blocking and repository-interaction guards
+- `backend/db/identity/src/sqlite/users/emails.rs` — SQLite verified address changes and one-time verification
+- `backend/db/identity/src/sqlite/users/gpg_keys.rs` — SQLite GPG primary/subkey storage and fingerprint lookup
+- `backend/db/identity/src/sqlite/users/mod.rs` — domain module wiring
+- `backend/db/identity/src/sqlite/users/profiles.rs` — SQLite profile settings, public email and account statistics
+- `backend/db/identity/src/sqlite/users/sessions.rs` — SQLite browser sessions, CSRF and OAuth state
+- `backend/db/identity/src/sqlite/users/signing_keys.rs` — SQLite SSH signing keys and owner lookup
+- `backend/db/identity/src/sqlite/users/signup_requests.rs` — SQLite signup review with redacted metadata and decision mail
+- `backend/db/identity/src/sqlite/users/social_accounts.rs` — SQLite bounded profile social links
+- `backend/db/identity/src/sqlite/users/ssh_keys.rs` — SQLite complete SSH-key validation and unique fingerprints
+- `backend/db/identity/src/sqlite/users/tokens.rs` — SQLite personal token lifecycle and write scope retention
+- `backend/db/identity/src/sqlite/users/transitions.rs` — SQLite account admission/restriction changes and authority locking
+- `backend/db/identity/src/sqlite/users/two_factor.rs` — SQLite encrypted TOTP state and single-use recovery codes
+- `backend/db/identity/src/users/accounts.rs` — account lifecycle, password updates and public author attribution
+- `backend/db/identity/src/users/admission.rs` — atomic client/account login budget charging
+- `backend/db/identity/src/users/blocks.rs` — account blocking and repository-interaction guards
+- `backend/db/identity/src/users/emails.rs` — verified address changes and one-time verification
+- `backend/db/identity/src/users/gpg_keys.rs` — GPG primary/subkey storage and fingerprint lookup
+- `backend/db/identity/src/users/mod.rs` — domain module wiring
+- `backend/db/identity/src/users/profiles.rs` — profile settings, public email and account statistics
+- `backend/db/identity/src/users/sessions.rs` — browser sessions, CSRF and OAuth state
+- `backend/db/identity/src/users/signing_keys.rs` — SSH signing keys and owner lookup
+- `backend/db/identity/src/users/signup_requests.rs` — signup review with redacted metadata and decision mail
+- `backend/db/identity/src/users/social_accounts.rs` — bounded profile social links
+- `backend/db/identity/src/users/ssh_keys.rs` — complete SSH-key validation and unique fingerprints
+- `backend/db/identity/src/users/tokens.rs` — personal token lifecycle and write scope retention
+- `backend/db/identity/src/users/transitions.rs` — account admission/restriction changes and authority locking
+- `backend/db/identity/src/users/two_factor.rs` — encrypted TOTP state and single-use recovery codes
+
+## `codeyard-db-orgs` (`backend/db/orgs/`)
+
+- `backend/db/orgs/src/lib.rs` — Crate root: module declarations and re-exports
+- `backend/db/orgs/src/organization_values.rs` — organization values: types, validation and engine dispatch
+- `backend/db/orgs/src/organizations/access.rs` — access: types, validation and engine dispatch
+- `backend/db/orgs/src/organizations/blocks.rs` — blocks: types, validation and engine dispatch
+- `backend/db/orgs/src/organizations/deletion.rs` — deletion: types, validation and engine dispatch
+- `backend/db/orgs/src/organizations/discovery.rs` — discovery: types, validation and engine dispatch
+- `backend/db/orgs/src/organizations/external_properties.rs` — external properties: types, validation and engine dispatch
+- `backend/db/orgs/src/organizations/immutable_releases.rs` — immutable releases: types, validation and engine dispatch
+- `backend/db/orgs/src/organizations/invitations.rs` — Native and REST offers use the same recipient and team validation in the authority transaction
+- `backend/db/orgs/src/organizations/membership.rs` — membership: types, validation and engine dispatch
+- `backend/db/orgs/src/organizations/mod.rs` — mod
+- `backend/db/orgs/src/organizations/outside.rs` — outside: types, validation and engine dispatch
+- `backend/db/orgs/src/organizations/profiles.rs` — profiles: types, validation and engine dispatch
+- `backend/db/orgs/src/organizations/properties.rs` — properties: types, validation and engine dispatch
+- `backend/db/orgs/src/organizations/properties/query.rs` — query
+- `backend/db/orgs/src/organizations/recovery.rs` — recovery: types, validation and engine dispatch
+- `backend/db/orgs/src/organizations/roles.rs` — roles: types, validation and engine dispatch
+- `backend/db/orgs/src/organizations/settings.rs` — settings: types, validation and engine dispatch
+- `backend/db/orgs/src/organizations/team_invitations.rs` — team invitations: types, validation and engine dispatch
+- `backend/db/orgs/src/organizations/teams.rs` — A lean identity read: credential, organization policy and team visibility share one snapshot
+- `backend/db/orgs/src/postgres/mod.rs` — module list
+- `backend/db/orgs/src/postgres/organizations/access.rs` — PostgreSQL side of `organizations/access.rs`
+- `backend/db/orgs/src/postgres/organizations/action_values.rs` — PostgreSQL side of `organizations/action_values.rs`
+- `backend/db/orgs/src/postgres/organizations/authority.rs` — Revalidate the initiating credential only after the operation has acquired its authority locks
+- `backend/db/orgs/src/postgres/organizations/blocks.rs` — PostgreSQL side of `organizations/blocks.rs`
+- `backend/db/orgs/src/postgres/organizations/cache.rs` — PostgreSQL side of `organizations/cache.rs`
+- `backend/db/orgs/src/postgres/organizations/deletion.rs` — PostgreSQL side of `organizations/deletion.rs`
+- `backend/db/orgs/src/postgres/organizations/discovery.rs` — PostgreSQL side of `organizations/discovery.rs`
+- `backend/db/orgs/src/postgres/organizations/external_properties.rs` — PostgreSQL side of `organizations/external_properties.rs`
+- `backend/db/orgs/src/postgres/organizations/immutable_releases.rs` — PostgreSQL side of `organizations/immutable_releases.rs`
+- `backend/db/orgs/src/postgres/organizations/invitations.rs` — PostgreSQL side of `organizations/invitations.rs`
+- `backend/db/orgs/src/postgres/organizations/membership.rs` — PostgreSQL side of `organizations/membership.rs`
+- `backend/db/orgs/src/postgres/organizations/mod.rs` — module list
+- `backend/db/orgs/src/postgres/organizations/outside.rs` — PostgreSQL side of `organizations/outside.rs`
+- `backend/db/orgs/src/postgres/organizations/profiles.rs` — PostgreSQL side of `organizations/profiles.rs`
+- `backend/db/orgs/src/postgres/organizations/properties.rs` — PostgreSQL side of `organizations/properties.rs`
+- `backend/db/orgs/src/postgres/organizations/recovery.rs` — PostgreSQL side of `organizations/recovery.rs`
+- `backend/db/orgs/src/postgres/organizations/roles.rs` — PostgreSQL side of `organizations/roles.rs`
+- `backend/db/orgs/src/postgres/organizations/rulesets.rs` — PostgreSQL side of `organizations/rulesets.rs`
+- `backend/db/orgs/src/postgres/organizations/rulesets/access.rs` — PostgreSQL side of `organizations/rulesets/access.rs`
+- `backend/db/orgs/src/postgres/organizations/rulesets/suites.rs` — PostgreSQL side of `organizations/rulesets/suites.rs`
+- `backend/db/orgs/src/postgres/organizations/settings.rs` — PostgreSQL side of `organizations/settings.rs`
+- `backend/db/orgs/src/postgres/organizations/team_invitations.rs` — PostgreSQL side of `organizations/team_invitations.rs`
+- `backend/db/orgs/src/postgres/organizations/teams.rs` — PostgreSQL side of `organizations/teams.rs`
+- `backend/db/orgs/src/postgres/organizations/teams/exports.rs` — PostgreSQL side of `organizations/teams/exports.rs`
+- `backend/db/orgs/src/sqlite/mod.rs` — module list
+- `backend/db/orgs/src/sqlite/organizations/access.rs` — SQLite side of `organizations/access.rs`
+- `backend/db/orgs/src/sqlite/organizations/action_values.rs` — SQLite side of `organizations/action_values.rs`
+- `backend/db/orgs/src/sqlite/organizations/authority.rs` — Revalidate the initiating credential inside the same immediate transaction as the write
+- `backend/db/orgs/src/sqlite/organizations/blocks.rs` — SQLite side of `organizations/blocks.rs`
+- `backend/db/orgs/src/sqlite/organizations/cache.rs` — SQLite side of `organizations/cache.rs`
+- `backend/db/orgs/src/sqlite/organizations/deletion.rs` — SQLite side of `organizations/deletion.rs`
+- `backend/db/orgs/src/sqlite/organizations/discovery.rs` — SQLite side of `organizations/discovery.rs`
+- `backend/db/orgs/src/sqlite/organizations/external_properties.rs` — SQLite side of `organizations/external_properties.rs`
+- `backend/db/orgs/src/sqlite/organizations/immutable_releases.rs` — SQLite side of `organizations/immutable_releases.rs`
+- `backend/db/orgs/src/sqlite/organizations/invitations.rs` — SQLite side of `organizations/invitations.rs`
+- `backend/db/orgs/src/sqlite/organizations/membership.rs` — SQLite side of `organizations/membership.rs`
+- `backend/db/orgs/src/sqlite/organizations/mod.rs` — module list
+- `backend/db/orgs/src/sqlite/organizations/outside.rs` — SQLite side of `organizations/outside.rs`
+- `backend/db/orgs/src/sqlite/organizations/profiles.rs` — SQLite side of `organizations/profiles.rs`
+- `backend/db/orgs/src/sqlite/organizations/properties.rs` — SQLite side of `organizations/properties.rs`
+- `backend/db/orgs/src/sqlite/organizations/recovery.rs` — SQLite side of `organizations/recovery.rs`
+- `backend/db/orgs/src/sqlite/organizations/roles.rs` — SQLite side of `organizations/roles.rs`
+- `backend/db/orgs/src/sqlite/organizations/rulesets.rs` — SQLite side of `organizations/rulesets.rs`
+- `backend/db/orgs/src/sqlite/organizations/rulesets/access.rs` — SQLite side of `organizations/rulesets/access.rs`
+- `backend/db/orgs/src/sqlite/organizations/rulesets/suites.rs` — SQLite side of `organizations/rulesets/suites.rs`
+- `backend/db/orgs/src/sqlite/organizations/settings.rs` — SQLite side of `organizations/settings.rs`
+- `backend/db/orgs/src/sqlite/organizations/team_invitations.rs` — SQLite side of `organizations/team_invitations.rs`
+- `backend/db/orgs/src/sqlite/organizations/teams.rs` — SQLite side of `organizations/teams.rs`
+- `backend/db/orgs/src/sqlite/organizations/teams/exports.rs` — SQLite side of `organizations/teams/exports.rs`
+
+## `codeyard-db-placement` (`backend/db/placement/`)
+
+- `backend/db/placement/src/backups.rs` — backup snapshot readers (SQLite VACUUM INTO / PostgreSQL exported snapshot), pull request heads and CI revisions kept with a backup; restore fencing
+- `backend/db/placement/src/cluster.rs` — cluster: types, validation and engine dispatch
+- `backend/db/placement/src/cluster/replicas.rs` — A holder's readiness and allocation history
+- `backend/db/placement/src/cluster/writes.rs` — writes: types, validation and engine dispatch
+- `backend/db/placement/src/copy.rs` — Copy a whole application database into an empty database of the other engine
+- `backend/db/placement/src/copy/postgres.rs` — postgres
+- `backend/db/placement/src/copy/sqlite.rs` — sqlite
+- `backend/db/placement/src/drain.rs` — Drain admission reserves complete fork families before changing a node's state
+- `backend/db/placement/src/lib.rs` — Crate root: module declarations and re-exports
+- `backend/db/placement/src/metrics.rs` — metrics: types, validation and engine dispatch
+- `backend/db/placement/src/moves.rs` — Moving a user or organization, with its repositories, to another cell, or one repository to a new owner in another cell. Both cells run PostgreSQL.…
+- `backend/db/placement/src/node_config.rs` — node config: types, validation and engine dispatch
+- `backend/db/placement/src/objects.rs` — Durable object placement. Copy readiness is published only after checked bytes are durable
+- `backend/db/placement/src/postgres/backups.rs` — PostgreSQL side of `backups.rs`
+- `backend/db/placement/src/postgres/cluster.rs` — Cluster membership on PostgreSQL. Roles are a `TEXT[]` column
+- `backend/db/placement/src/postgres/cluster/writes.rs` — PostgreSQL side of `cluster/writes.rs`
+- `backend/db/placement/src/postgres/drain.rs` — PostgreSQL side of `drain.rs`
+- `backend/db/placement/src/postgres/metrics.rs` — PostgreSQL side of `metrics.rs`
+- `backend/db/placement/src/postgres/mod.rs` — module list
+- `backend/db/placement/src/postgres/node_config.rs` — PostgreSQL side of `node_config.rs`
+- `backend/db/placement/src/postgres/objects.rs` — PostgreSQL side of `objects.rs`
+- `backend/db/placement/src/postgres/rebalance.rs` — PostgreSQL side of `rebalance.rs`
+- `backend/db/placement/src/postgres/scaling.rs` — PostgreSQL side of `scaling.rs`
+- `backend/db/placement/src/rebalance.rs` — One bounded copy-then-promote move per participating node
+- `backend/db/placement/src/regions.rs` — Organization presence regions from counted member requests. A directory-enrolled PostgreSQL cell evaluates its own organizations once an hour on one…
+- `backend/db/placement/src/scaling.rs` — Database-clock lease and policy evaluation; external effects use add and drain
+- `backend/db/placement/src/sqlite/backups.rs` — SQLite side of `backups.rs`
+- `backend/db/placement/src/sqlite/cluster.rs` — Cluster membership on SQLite. Roles are a JSON array in a TEXT column
+- `backend/db/placement/src/sqlite/cluster/writes.rs` — SQLite side of `cluster/writes.rs`
+- `backend/db/placement/src/sqlite/drain.rs` — SQLite side of `drain.rs`
+- `backend/db/placement/src/sqlite/metrics.rs` — SQLite side of `metrics.rs`
+- `backend/db/placement/src/sqlite/mod.rs` — module list
+- `backend/db/placement/src/sqlite/node_config.rs` — SQLite side of `node_config.rs`
+- `backend/db/placement/src/sqlite/objects.rs` — SQLite side of `objects.rs`
+- `backend/db/placement/src/sqlite/rebalance.rs` — SQLite side of `rebalance.rs`
+- `backend/db/placement/src/sqlite/scaling.rs` — SQLite side of `scaling.rs`
+
+## `codeyard-db-repos` (`backend/db/repos/`)
+
+- `backend/db/repos/src/activity.rs` — bounded repository/user activity selection
+- `backend/db/repos/src/artifact_metadata.rs` — artifact/deployment metadata and target authority
+- `backend/db/repos/src/artifact_metadata/pages.rs` — deployment/artifact metadata page queries
+- `backend/db/repos/src/assignees.rs` — issue/PR assignment and candidate checks
+- `backend/db/repos/src/attestations.rs` — attestations
+- `backend/db/repos/src/catalog_search.rs` — repository catalogue query parsing and scoped results
+- `backend/db/repos/src/discussion_search.rs` — issue/PR search expression parsing and SQL predicates
+- `backend/db/repos/src/discussions.rs` — discussion revision checks and shared mutation authority
+- `backend/db/repos/src/events.rs` — activity events and origin-credential selection
+- `backend/db/repos/src/files.rs` — upload reservations, quota and durable deletion metadata
+- `backend/db/repos/src/gists.rs` — gist revision trees and publication recovery
+- `backend/db/repos/src/graphql.rs` — rooted node ownership and query admission
+- `backend/db/repos/src/issue_attributes.rs` — account-owned issue types and custom field values
+- `backend/db/repos/src/issues.rs` — issue creation, numbering and state
+- `backend/db/repos/src/issues/management.rs` — issue pin/delete/transfer and closing-PR candidates
+- `backend/db/repos/src/labels.rs` — repository labels and authorized item assignment
+- `backend/db/repos/src/lib.rs` — Crate root: module declarations and re-exports
+- `backend/db/repos/src/milestones.rs` — milestone catalogues, counts and revisions
+- `backend/db/repos/src/notifications/events.rs` — cross-node notification hints and late-commit cursor safety
+- `backend/db/repos/src/notifications/mod.rs` — domain module wiring
+- `backend/db/repos/src/notifications/records.rs` — authorized inbox records and delivery metadata
+- `backend/db/repos/src/notifications/threads.rs` — notification thread scope/subscription decisions
+- `backend/db/repos/src/packages.rs` — package publication, registry credentials and blob lifecycle
+- `backend/db/repos/src/pages.rs` — Pages settings and durable build/deployment records
+- `backend/db/repos/src/pins.rs` — issue/PR pin snapshots
+- `backend/db/repos/src/postgres/activity.rs` — PostgreSQL bounded repository/user activity selection
+- `backend/db/repos/src/postgres/artifact_metadata.rs` — PostgreSQL artifact/deployment metadata and target authority
+- `backend/db/repos/src/postgres/artifact_metadata/pages.rs` — PostgreSQL deployment/artifact metadata page queries
+- `backend/db/repos/src/postgres/assignees.rs` — PostgreSQL issue/PR assignment and candidate checks
+- `backend/db/repos/src/postgres/attestations.rs` — Owner-scoped association changes precede repository and metadata row locks
+- `backend/db/repos/src/postgres/catalog_search.rs` — PostgreSQL repository catalogue query parsing and scoped results
+- `backend/db/repos/src/postgres/discussion_search.rs` — PostgreSQL issue/PR search expression parsing and SQL predicates
+- `backend/db/repos/src/postgres/discussions.rs` — PostgreSQL discussion revision checks and shared mutation authority
+- `backend/db/repos/src/postgres/events.rs` — PostgreSQL activity events and origin-credential selection
+- `backend/db/repos/src/postgres/files.rs` — PostgreSQL upload reservations, quota and durable deletion metadata
+- `backend/db/repos/src/postgres/gists.rs` — PostgreSQL gist revision trees and publication recovery
+- `backend/db/repos/src/postgres/graphql.rs` — PostgreSQL rooted node ownership and query admission
+- `backend/db/repos/src/postgres/issue_attributes.rs` — PostgreSQL account-owned issue types and custom field values
+- `backend/db/repos/src/postgres/issues.rs` — PostgreSQL issue creation, numbering and state
+- `backend/db/repos/src/postgres/issues/management.rs` — PostgreSQL issue pin/delete/transfer and closing-PR candidates
+- `backend/db/repos/src/postgres/labels.rs` — PostgreSQL repository labels and authorized item assignment
+- `backend/db/repos/src/postgres/milestones.rs` — PostgreSQL milestone catalogues, counts and revisions
+- `backend/db/repos/src/postgres/mod.rs` — domain module wiring
+- `backend/db/repos/src/postgres/notifications/events.rs` — PostgreSQL cross-node notification hints and late-commit cursor safety
+- `backend/db/repos/src/postgres/notifications/mod.rs` — domain module wiring
+- `backend/db/repos/src/postgres/notifications/records.rs` — PostgreSQL authorized inbox records and delivery metadata
+- `backend/db/repos/src/postgres/notifications/records/threads.rs` — PostgreSQL notification thread scope/subscription decisions
+- `backend/db/repos/src/postgres/packages.rs` — PostgreSQL package publication, registry credentials and blob lifecycle
+- `backend/db/repos/src/postgres/pages.rs` — PostgreSQL Pages settings and durable build/deployment records
+- `backend/db/repos/src/postgres/pins.rs` — PostgreSQL issue/PR pin snapshots
+- `backend/db/repos/src/postgres/projects.rs` — PostgreSQL project ownership and board metadata
+- `backend/db/repos/src/postgres/projects/exports.rs` — PostgreSQL project/item field export pagination
+- `backend/db/repos/src/postgres/projects/extended.rs` — PostgreSQL extended project field/item operations
+- `backend/db/repos/src/postgres/projects/items.rs` — PostgreSQL authorized project board items and field values
+- `backend/db/repos/src/postgres/pull_caps.rs` — PostgreSQL transactional PR author limits and bypass policy
+- `backend/db/repos/src/postgres/pull_requests/async_merge.rs` — PostgreSQL durable asynchronous merge requests and recovery
+- `backend/db/repos/src/postgres/pull_requests/auto_merge.rs` — PostgreSQL writer consent bound to PR head and policy
+- `backend/db/repos/src/postgres/pull_requests/cells.rs` — PostgreSQL cross-cell pull-head consent and push refresh events
+- `backend/db/repos/src/postgres/pull_requests/conversion.rs` — PostgreSQL issue-to-PR canonical row conversion
+- `backend/db/repos/src/postgres/pull_requests/merge_policy.rs` — PostgreSQL merge-policy epochs and consent revision checks
+- `backend/db/repos/src/postgres/pull_requests/mod.rs` — domain module wiring
+- `backend/db/repos/src/postgres/pull_requests/records.rs` — PostgreSQL domain records and bounded row queries
+- `backend/db/repos/src/postgres/pull_requests/reviews.rs` — PostgreSQL review state, pending comments and thread publication
+- `backend/db/repos/src/postgres/pull_requests/team_reviewers.rs` — PostgreSQL team review requests and recipient notifications
+- `backend/db/repos/src/postgres/pull_requests/viewed.rs` — PostgreSQL per-reader blob-based viewed-file marks
+- `backend/db/repos/src/postgres/reactions.rs` — PostgreSQL subject-scoped reaction writes and counts
+- `backend/db/repos/src/postgres/releases.rs` — PostgreSQL release/tag metadata and asset publication
+- `backend/db/repos/src/postgres/releases/notes.rs` — PostgreSQL release notes from pinned merged-PR ranges
+- `backend/db/repos/src/postgres/releases/read.rs` — PostgreSQL single-snapshot release reader
+- `backend/db/repos/src/postgres/repositories/access.rs` — PostgreSQL current repository access and retained publication identity
+- `backend/db/repos/src/postgres/repositories/activity.rs` — PostgreSQL bounded repository/user activity selection
+- `backend/db/repos/src/postgres/repositories/autolinks.rs` — PostgreSQL repository-admin autolink settings
+- `backend/db/repos/src/postgres/repositories/collaborators.rs` — PostgreSQL collaborator grants and invitation admission
+- `backend/db/repos/src/postgres/repositories/commit_comments.rs` — PostgreSQL immutable-commit discussions and author identity
+- `backend/db/repos/src/postgres/repositories/creation.rs` — PostgreSQL authorized repository insertion and owner admission
+- `backend/db/repos/src/postgres/repositories/dependencies.rs` — PostgreSQL verified dependency-update proposal state
+- `backend/db/repos/src/postgres/repositories/discovery.rs` — PostgreSQL readable fork discovery and owner/network resolution
+- `backend/db/repos/src/postgres/repositories/engagement.rs` — PostgreSQL repository watches, stars and subscriptions
+- `backend/db/repos/src/postgres/repositories/github.rs` — PostgreSQL GitHub repository/team projection queries
+- `backend/db/repos/src/postgres/repositories/immutable_releases.rs` — PostgreSQL immutable release/tag/asset reservations
+- `backend/db/repos/src/postgres/repositories/mod.rs` — domain module wiring
+- `backend/db/repos/src/postgres/repositories/protection.rs` — PostgreSQL branch write rules and protection snapshots
+- `backend/db/repos/src/postgres/repositories/push_teams.rs` — PostgreSQL team-based push allowances
+- `backend/db/repos/src/postgres/repositories/records.rs` — PostgreSQL domain records and bounded row queries
+- `backend/db/repos/src/postgres/repositories/security.rs` — PostgreSQL confidential disclosure reports and replies
+- `backend/db/repos/src/postgres/repositories/topics.rs` — PostgreSQL bounded repository topics and website fields
+- `backend/db/repos/src/postgres/repositories/traffic.rs` — PostgreSQL bounded private traffic observations and reports
+- `backend/db/repos/src/postgres/repository_discussions.rs` — PostgreSQL repository discussion categories, threads and comments
+- `backend/db/repos/src/postgres/repository_exports.rs` — PostgreSQL authorized repository export jobs and ID-keyset enumeration
+- `backend/db/repos/src/postgres/repository_stats.rs` — PostgreSQL derived language/contributor statistics and source revisions
+- `backend/db/repos/src/postgres/source_imports.rs` — PostgreSQL durable import state, completion and cancellation
+- `backend/db/repos/src/postgres/suggestions.rs` — PostgreSQL typed proposal review and transition receipts
+- `backend/db/repos/src/postgres/timeline.rs` — PostgreSQL bounded issue/PR timeline events
+- `backend/db/repos/src/postgres/webhooks.rs` — PostgreSQL hook subscriptions and delivery records
+- `backend/db/repos/src/projects.rs` — project ownership and board metadata
+- `backend/db/repos/src/pull_caps.rs` — transactional PR author limits and bypass policy
+- `backend/db/repos/src/pull_requests/async_merge.rs` — durable asynchronous merge requests and recovery
+- `backend/db/repos/src/pull_requests/auto_merge.rs` — writer consent bound to PR head and policy
+- `backend/db/repos/src/pull_requests/cells.rs` — The native head owns publication consent; the native base queues refresh work
+- `backend/db/repos/src/pull_requests/merge_policy.rs` — merge-policy epochs and consent revision checks
+- `backend/db/repos/src/pull_requests/mod.rs` — domain module wiring
+- `backend/db/repos/src/pull_requests/records.rs` — domain records and bounded row queries
+- `backend/db/repos/src/pull_requests/reviews.rs` — review state, pending comments and thread publication
+- `backend/db/repos/src/pull_requests/team_reviewers.rs` — team review requests and recipient notifications
+- `backend/db/repos/src/pull_requests/viewed.rs` — per-reader blob-based viewed-file marks
+- `backend/db/repos/src/reactions.rs` — subject-scoped reaction writes and counts
+- `backend/db/repos/src/release_integrity.rs` — A signed release statement binds the tag, commit and asset digests, not editable notes
+- `backend/db/repos/src/releases.rs` — release/tag metadata and asset publication
+- `backend/db/repos/src/releases/notes.rs` — release notes from pinned merged-PR ranges
+- `backend/db/repos/src/repositories/access.rs` — current repository access and retained publication identity
+- `backend/db/repos/src/repositories/activity.rs` — bounded repository/user activity selection
+- `backend/db/repos/src/repositories/autolinks.rs` — repository-admin autolink settings
+- `backend/db/repos/src/repositories/collaborators.rs` — collaborator grants and invitation admission
+- `backend/db/repos/src/repositories/commit_comments.rs` — immutable-commit discussions and author identity
+- `backend/db/repos/src/repositories/creation.rs` — authorized repository insertion and owner admission
+- `backend/db/repos/src/repositories/credentials.rs` — live initiating-credential checks
+- `backend/db/repos/src/repositories/dependencies.rs` — verified dependency-update proposal state
+- `backend/db/repos/src/repositories/dependencies/tests.rs` — dev-only regression tests
+- `backend/db/repos/src/repositories/discovery.rs` — readable fork discovery and owner/network resolution
+- `backend/db/repos/src/repositories/engagement.rs` — repository watches, stars and subscriptions
+- `backend/db/repos/src/repositories/github.rs` — GitHub repository/team projection queries
+- `backend/db/repos/src/repositories/immutable_releases.rs` — immutable release/tag/asset reservations
+- `backend/db/repos/src/repositories/mod.rs` — domain module wiring
+- `backend/db/repos/src/repositories/protection.rs` — branch write rules and protection snapshots
+- `backend/db/repos/src/repositories/push_teams.rs` — team-based push allowances
+- `backend/db/repos/src/repositories/records.rs` — domain records and bounded row queries
+- `backend/db/repos/src/repositories/security.rs` — confidential disclosure reports and replies
+- `backend/db/repos/src/repositories/topics.rs` — bounded repository topics and website fields
+- `backend/db/repos/src/repositories/traffic.rs` — bounded private traffic observations and reports
+- `backend/db/repos/src/repositories/traffic/tests.rs` — dev-only regression tests
+- `backend/db/repos/src/repository_discussions.rs` — repository discussion categories, threads and comments
+- `backend/db/repos/src/repository_exports.rs` — authorized repository export jobs and ID-keyset enumeration
+- `backend/db/repos/src/repository_stats.rs` — derived language/contributor statistics and source revisions
+- `backend/db/repos/src/rulesets.rs` — typed rulesets and evaluation history
+- `backend/db/repos/src/rulesets/operations.rs` — ruleset CRUD and history operations
+- `backend/db/repos/src/rulesets/records.rs` — empty placeholder module
+- `backend/db/repos/src/rulesets/tests.rs` — dev-only regression tests
+- `backend/db/repos/src/source_imports.rs` — durable import state, completion and cancellation
+- `backend/db/repos/src/sqlite/activity.rs` — SQLite bounded repository/user activity selection
+- `backend/db/repos/src/sqlite/artifact_metadata.rs` — SQLite artifact/deployment metadata and target authority
+- `backend/db/repos/src/sqlite/artifact_metadata/pages.rs` — SQLite deployment/artifact metadata page queries
+- `backend/db/repos/src/sqlite/assignees.rs` — SQLite issue/PR assignment and candidate checks
+- `backend/db/repos/src/sqlite/catalog_search.rs` — SQLite repository catalogue query parsing and scoped results
+- `backend/db/repos/src/sqlite/discussion_search.rs` — SQLite issue/PR search expression parsing and SQL predicates
+- `backend/db/repos/src/sqlite/discussions.rs` — SQLite discussion revision checks and shared mutation authority
+- `backend/db/repos/src/sqlite/events.rs` — SQLite activity events and origin-credential selection
+- `backend/db/repos/src/sqlite/files.rs` — SQLite upload reservations, quota and durable deletion metadata
+- `backend/db/repos/src/sqlite/gists.rs` — SQLite gist revision trees and publication recovery
+- `backend/db/repos/src/sqlite/graphql.rs` — SQLite rooted node ownership and query admission
+- `backend/db/repos/src/sqlite/issue_attributes.rs` — SQLite account-owned issue types and custom field values
+- `backend/db/repos/src/sqlite/issues.rs` — SQLite issue creation, numbering and state
+- `backend/db/repos/src/sqlite/issues/management.rs` — SQLite issue pin/delete/transfer and closing-PR candidates
+- `backend/db/repos/src/sqlite/labels.rs` — SQLite repository labels and authorized item assignment
+- `backend/db/repos/src/sqlite/milestones.rs` — SQLite milestone catalogues, counts and revisions
+- `backend/db/repos/src/sqlite/mod.rs` — domain module wiring
+- `backend/db/repos/src/sqlite/notifications/events.rs` — SQLite cross-node notification hints and late-commit cursor safety
+- `backend/db/repos/src/sqlite/notifications/mod.rs` — domain module wiring
+- `backend/db/repos/src/sqlite/notifications/records.rs` — SQLite authorized inbox records and delivery metadata
+- `backend/db/repos/src/sqlite/notifications/records/threads.rs` — SQLite notification thread scope/subscription decisions
+- `backend/db/repos/src/sqlite/packages.rs` — SQLite package publication, registry credentials and blob lifecycle
+- `backend/db/repos/src/sqlite/pages.rs` — SQLite Pages settings and durable build/deployment records
+- `backend/db/repos/src/sqlite/pins.rs` — SQLite issue/PR pin snapshots
+- `backend/db/repos/src/sqlite/projects.rs` — SQLite project ownership and board metadata
+- `backend/db/repos/src/sqlite/projects/exports.rs` — SQLite project/item field export pagination
+- `backend/db/repos/src/sqlite/projects/extended.rs` — SQLite extended project field/item operations
+- `backend/db/repos/src/sqlite/projects/items.rs` — SQLite authorized project board items and field values
+- `backend/db/repos/src/sqlite/pull_caps.rs` — SQLite transactional PR author limits and bypass policy
+- `backend/db/repos/src/sqlite/pull_requests/async_merge.rs` — SQLite durable asynchronous merge requests and recovery
+- `backend/db/repos/src/sqlite/pull_requests/auto_merge.rs` — SQLite writer consent bound to PR head and policy
+- `backend/db/repos/src/sqlite/pull_requests/cells.rs` — SQLite cross-cell pull-head consent and push refresh events
+- `backend/db/repos/src/sqlite/pull_requests/conversion.rs` — SQLite issue-to-PR canonical row conversion
+- `backend/db/repos/src/sqlite/pull_requests/merge_policy.rs` — SQLite merge-policy epochs and consent revision checks
+- `backend/db/repos/src/sqlite/pull_requests/mod.rs` — domain module wiring
+- `backend/db/repos/src/sqlite/pull_requests/records.rs` — SQLite domain records and bounded row queries
+- `backend/db/repos/src/sqlite/pull_requests/reviews.rs` — SQLite review state, pending comments and thread publication
+- `backend/db/repos/src/sqlite/pull_requests/team_reviewers.rs` — SQLite team review requests and recipient notifications
+- `backend/db/repos/src/sqlite/pull_requests/viewed.rs` — SQLite per-reader blob-based viewed-file marks
+- `backend/db/repos/src/sqlite/reactions.rs` — SQLite subject-scoped reaction writes and counts
+- `backend/db/repos/src/sqlite/releases.rs` — SQLite release/tag metadata and asset publication
+- `backend/db/repos/src/sqlite/releases/notes.rs` — SQLite release notes from pinned merged-PR ranges
+- `backend/db/repos/src/sqlite/releases/read.rs` — SQLite single-snapshot release reader
+- `backend/db/repos/src/sqlite/repositories/access.rs` — SQLite current repository access and retained publication identity
+- `backend/db/repos/src/sqlite/repositories/activity.rs` — SQLite bounded repository/user activity selection
+- `backend/db/repos/src/sqlite/repositories/autolinks.rs` — SQLite repository-admin autolink settings
+- `backend/db/repos/src/sqlite/repositories/collaborators.rs` — SQLite collaborator grants and invitation admission
+- `backend/db/repos/src/sqlite/repositories/commit_comments.rs` — SQLite immutable-commit discussions and author identity
+- `backend/db/repos/src/sqlite/repositories/creation.rs` — SQLite authorized repository insertion and owner admission
+- `backend/db/repos/src/sqlite/repositories/dependencies.rs` — SQLite verified dependency-update proposal state
+- `backend/db/repos/src/sqlite/repositories/discovery.rs` — SQLite readable fork discovery and owner/network resolution
+- `backend/db/repos/src/sqlite/repositories/engagement.rs` — SQLite repository watches, stars and subscriptions
+- `backend/db/repos/src/sqlite/repositories/github.rs` — SQLite GitHub repository/team projection queries
+- `backend/db/repos/src/sqlite/repositories/immutable_releases.rs` — SQLite immutable release/tag/asset reservations
+- `backend/db/repos/src/sqlite/repositories/mod.rs` — domain module wiring
+- `backend/db/repos/src/sqlite/repositories/protection.rs` — SQLite branch write rules and protection snapshots
+- `backend/db/repos/src/sqlite/repositories/push_teams.rs` — SQLite team-based push allowances
+- `backend/db/repos/src/sqlite/repositories/records.rs` — SQLite domain records and bounded row queries
+- `backend/db/repos/src/sqlite/repositories/security.rs` — SQLite confidential disclosure reports and replies
+- `backend/db/repos/src/sqlite/repositories/topics.rs` — SQLite bounded repository topics and website fields
+- `backend/db/repos/src/sqlite/repositories/traffic.rs` — SQLite bounded private traffic observations and reports
+- `backend/db/repos/src/sqlite/repository_discussions.rs` — SQLite repository discussion categories, threads and comments
+- `backend/db/repos/src/sqlite/repository_exports.rs` — SQLite authorized repository export jobs and ID-keyset enumeration
+- `backend/db/repos/src/sqlite/repository_stats.rs` — SQLite derived language/contributor statistics and source revisions
+- `backend/db/repos/src/sqlite/source_imports.rs` — SQLite durable import state, completion and cancellation
+- `backend/db/repos/src/sqlite/suggestions.rs` — SQLite typed proposal review and transition receipts
+- `backend/db/repos/src/sqlite/timeline.rs` — SQLite bounded issue/PR timeline events
+- `backend/db/repos/src/sqlite/webhooks.rs` — SQLite hook subscriptions and delivery records
+- `backend/db/repos/src/suggestions.rs` — typed proposal review and transition receipts
+- `backend/db/repos/src/timeline.rs` — bounded issue/PR timeline events
+- `backend/db/repos/src/webhooks.rs` — hook subscriptions and delivery records
+
+## `codeyard-db-security` (`backend/db/security/`)
+
+- `backend/db/security/src/advisories.rs` — advisories: types, validation and engine dispatch
+- `backend/db/security/src/attestation_validation.rs` — attestation validation: types, validation and engine dispatch
+- `backend/db/security/src/attestations.rs` — attestations: types, validation and engine dispatch
+- `backend/db/security/src/code_scanning.rs` — code scanning: types, validation and engine dispatch
+- `backend/db/security/src/code_security.rs` — code security: types, validation and engine dispatch
+- `backend/db/security/src/codeql.rs` — codeql: types, validation and engine dispatch
+- `backend/db/security/src/dependabot.rs` — dependabot: types, validation and engine dispatch
+- `backend/db/security/src/dependabot_alerts.rs` — Only lightweight filter metadata is streamed; complete documents are loaded for this page
+- `backend/db/security/src/dependency_graph.rs` — A generated SBOM report can be downloaded for a day, and a repository keeps this many
+- `backend/db/security/src/lib.rs` — Crate root: module declarations and re-exports
+- `backend/db/security/src/postgres/advisories.rs` — PostgreSQL side of `advisories.rs`
+- `backend/db/security/src/postgres/attestations.rs` — PostgreSQL side of `attestations.rs`
+- `backend/db/security/src/postgres/code_scanning.rs` — PostgreSQL side of `code_scanning.rs`
+- `backend/db/security/src/postgres/code_scanning/list.rs` — PostgreSQL side of `code_scanning/list.rs`
+- `backend/db/security/src/postgres/code_scanning/pulls.rs` — PostgreSQL side of `code_scanning/pulls.rs`
+- `backend/db/security/src/postgres/code_scanning/read.rs` — PostgreSQL side of `code_scanning/read.rs`
+- `backend/db/security/src/postgres/code_security.rs` — PostgreSQL side of `code_security.rs`
+- `backend/db/security/src/postgres/codeql.rs` — PostgreSQL side of `codeql.rs`
+- `backend/db/security/src/postgres/dependabot.rs` — PostgreSQL side of `dependabot.rs`
+- `backend/db/security/src/postgres/dependabot_alerts.rs` — Page identifiers under one read snapshot without retaining the catalogue's documents
+- `backend/db/security/src/postgres/dependency_graph.rs` — PostgreSQL side of `dependency_graph.rs`
+- `backend/db/security/src/postgres/mod.rs` — module list
+- `backend/db/security/src/postgres/repository_attestations.rs` — PostgreSQL side of `queries/repository_attestations.rs`
+- `backend/db/security/src/postgres/secret_scanning.rs` — PostgreSQL side of `secret_scanning.rs`
+- `backend/db/security/src/postgres/secret_scanning/patterns.rs` — PostgreSQL side of `secret_scanning/patterns.rs`
+- `backend/db/security/src/postgres/vulnerabilities.rs` — PostgreSQL side of `vulnerabilities.rs`
+- `backend/db/security/src/secret_scanning.rs` — secret scanning: types, validation and engine dispatch
+- `backend/db/security/src/sqlite/advisories.rs` — SQLite side of `advisories.rs`
+- `backend/db/security/src/sqlite/attestations.rs` — SQLite side of `attestations.rs`
+- `backend/db/security/src/sqlite/code_scanning.rs` — SQLite side of `code_scanning.rs`
+- `backend/db/security/src/sqlite/code_scanning/list.rs` — SQLite side of `code_scanning/list.rs`
+- `backend/db/security/src/sqlite/code_scanning/pulls.rs` — SQLite side of `code_scanning/pulls.rs`
+- `backend/db/security/src/sqlite/code_scanning/read.rs` — SQLite side of `code_scanning/read.rs`
+- `backend/db/security/src/sqlite/code_security.rs` — SQLite side of `code_security.rs`
+- `backend/db/security/src/sqlite/codeql.rs` — SQLite side of `codeql.rs`
+- `backend/db/security/src/sqlite/dependabot.rs` — SQLite side of `dependabot.rs`
+- `backend/db/security/src/sqlite/dependabot_alerts.rs` — SQLite side of `dependabot_alerts.rs`
+- `backend/db/security/src/sqlite/dependency_graph.rs` — SQLite side of `dependency_graph.rs`
+- `backend/db/security/src/sqlite/mod.rs` — module list
+- `backend/db/security/src/sqlite/repository_attestations.rs` — SQLite side of `queries/repository_attestations.rs`
+- `backend/db/security/src/sqlite/secret_scanning.rs` — SQLite side of `secret_scanning.rs`
+- `backend/db/security/src/sqlite/secret_scanning/patterns.rs` — SQLite side of `secret_scanning/patterns.rs`
+- `backend/db/security/src/sqlite/vulnerabilities.rs` — SQLite side of `vulnerabilities.rs`
+- `backend/db/security/src/vulnerabilities.rs` — vulnerabilities: types, validation and engine dispatch
+
+## `codeyard-git` (`backend/git/`)
+
+Codeyard Git reads and hardened Git commands.
+
+- `backend/git/src/ci.rs` — Git reads behind CI admission: which commit a run will use, and the workflow files inside it
+- `backend/git/src/comparison.rs` — Comparison metadata and oldest-first pages without copying objects between forks
+- `backend/git/src/error.rs` — The error every store call returns, and the reasons that travel with it between nodes
+- `backend/git/src/gist_types.rs` — bounded gist request and revision values
+- `backend/git/src/gists.rs` — Flat, bounded gist trees and immutable revision reads, shared by API saves and receive hooks
+- `backend/git/src/lib.rs` — Git itself: libgit2 reads and hardened `git` commands against a repository directory. Application code reaches a repository through…
+- `backend/git/src/maintenance.rs` — Packing after writes. Git's automatic gc is off for every command this server runs, so nothing else packs a repository. A repository that keeps…
+- `backend/git/src/mirror.rs` — Whole-repository copies for backups and restores, the Git checks and repairs that follow a restore, and the `deleted/` directory that keeps deleted…
+- `backend/git/src/oauth.rs` — Credentials without the workflows permission may not change the workflows they publish
+- `backend/git/src/objects.rs` — Git database objects are written without publishing a reference
+- `backend/git/src/publications.rs` — Server-owned branch publication provenance. Metadata tags end at an empty tree, so Git GC retains live-branch history without adding synthetic…
+- `backend/git/src/ref_names.rs` — Canonical public reference names used at publication boundaries
+- `backend/git/src/repository.rs` — bounded Git repository tree/blob/history/ref operations
+- `backend/git/src/repository/blob_preview.rs` — One bounded cat-file stream owns line counting and forward/backward preview boundaries
+- `backend/git/src/repository/checked.rs` — Merge commits, repository creation and CI checkouts from exact revisions
+- `backend/git/src/repository/history_tests.rs` — dev-only regression tests
+- `backend/git/src/repository/locks.rs` — Repository serialization. Ordinary operations use the process mutex and Git CAS; branch provenance additionally uses an interprocess lease.…
+- `backend/git/src/repository/process.rs` — Running `git`: scrubbed environment, hooks off, bounded output and timeouts
+- `backend/git/src/repository/process_tests.rs` — dev-only regression tests
+- `backend/git/src/repository/regression_tests.rs` — dev-only regression tests
+- `backend/git/src/repository/release_notes.rs` — A bounded, primary-pinned history for release-note generation. Only object IDs cross RPC
+- `backend/git/src/repository/replay.rs` — Replays the commits of one history onto another, one at a time, the way a rebase does
+- `backend/git/src/repository/retained.rs` — Hidden Git-data refs retain only objects not already reachable from ordinary refs
+- `backend/git/src/repository/revert.rs` — Build an inverse change without moving any branch; normal publication checks still apply
+- `backend/git/src/secret_scanning.rs` — Push protection reads the receive quarantine without publishing its objects
+- `backend/git/src/stats.rs` — bounded derived language and contributor statistics
+
+## `codeyard-git-storage` (`backend/git-storage/`)
+
+- `backend/git-storage/src/api_shared/github/checks.rs` — Check publishers share repository authority, but cannot overwrite another publisher's runs
+- `backend/git-storage/src/api_shared/github/checks/documents.rs` — Bounded request-local enrichment for Checks pages. Database parents, publishers and pull associations are batched; Git heads are read once and…
+- `backend/git-storage/src/api_shared/github/contents.rs` — Contents API preconditions use blob IDs; publication still leases the entire branch tip
+- `backend/git-storage/src/api_shared/github/mod.rs` — domain module wiring
+- `backend/git-storage/src/api_shared/mod.rs` — domain module wiring
+- `backend/git-storage/src/cluster/mod.rs` — domain module wiring
+- `backend/git-storage/src/cluster/placement.rs` — In cluster mode new repositories use the online storage node with the most free space
+- `backend/git-storage/src/cluster/replicas.rs` — copy/quarantine directory leases and safe retirement
+- `backend/git-storage/src/context.rs` — node/storage context and fenced term directory selection
+- `backend/git-storage/src/git_transport.rs` — bounded remote Git stream admission and IO
+- `backend/git-storage/src/lib.rs` — Crate root: module declarations and re-exports
+- `backend/git-storage/src/local_rpc.rs` — in-process dispatch and copy selection
+- `backend/git-storage/src/objects.rs` — Shared-file placement and byte exchange over the existing node RPC transport
+- `backend/git-storage/src/push_tests.rs` — dev-only regression tests
+- `backend/git-storage/src/push_workflows.rs` — `push` runs for refs the server moves itself: web editor and file API saves, merges, and new branches and tags. Receive hooks share the same…
+- `backend/git-storage/src/receive_ci.rs` — injected receive-hook CI resource interface
+- `backend/git-storage/src/ref_errors.rs` — typed branch-publication refusal mapping
+- `backend/git-storage/src/repositories/access.rs` — Current repository read, write and administration decisions
+- `backend/git-storage/src/repositories/dependencies.rs` — Shared lockfile parsing and verified security-update proposals
+- `backend/git-storage/src/repositories/git_sessions/broker.rs` — private receive-hook broker shared by HTTP/SSH
+- `backend/git-storage/src/repositories/git_sessions/hook_barrier.rs` — test-only hook wait/release barriers
+- `backend/git-storage/src/repositories/git_sessions/hooks.rs` — Receive authorization and follow-up after Git accepts immutable updates
+- `backend/git-storage/src/repositories/git_sessions/mod.rs` — Shared Git sessions and live receive-hook authority for every transport
+- `backend/git-storage/src/repositories/git_sessions/private_files.rs` — Files and sockets only the server's user may touch, for the OpenSSH gateway (Linux)
+- `backend/git-storage/src/repositories/git_sessions/protocol.rs` — One bounded length-prefixed JSON request, then directional binary frames
+- `backend/git-storage/src/repositories/languages.rs` — Stored default-branch languages, including successfully computed empty results
+- `backend/git-storage/src/repositories/lifecycle.rs` — Creating repositories: the authorized database row, then its Git storage
+- `backend/git-storage/src/repositories/mod.rs` — domain module wiring
+- `backend/git-storage/src/repositories/pull_requests/mod.rs` — domain module wiring
+- `backend/git-storage/src/repositories/pull_requests/reviewers.rs` — review-request event delivery
+- `backend/git-storage/src/repositories/pull_requests/team_reviewers.rs` — Shared manual team requests and notification delivery for native and GitHub adapters
+- `backend/git-storage/src/repositories/reads.rs` — Repository read selection shared by browser and JSON adapters
+- `backend/git-storage/src/repositories/releases/immutable.rs` — Publication-time immutable releases share the primary Git lock with every tag writer
+- `backend/git-storage/src/repositories/releases/mod.rs` — domain module wiring
+- `backend/git-storage/src/repositories/rule_suites.rs` — Rule suites: how each pushed ref fared against the rulesets in evaluate mode
+- `backend/git-storage/src/repositories/store/fork_snapshot.rs` — Fork copies export only visible branches and tags, under the original credential
+- `backend/git-storage/src/repositories/store/local.rs` — The local store: the bare repository is a directory on this machine. Each method runs the matching Git code, moving blocking libgit2 work off the…
+- `backend/git-storage/src/repositories/store/local/branches.rs` — branch rename and upstream merge publication
+- `backend/git-storage/src/repositories/store/local/exports.rs` — publication-locked repository migration archive export
+- `backend/git-storage/src/repositories/store/local/foreign.rs` — A foreign fork stages fetched objects privately and uses the normal copy publisher
+- `backend/git-storage/src/repositories/store/local/gists.rs` — gist revision trees and publication recovery
+- `backend/git-storage/src/repositories/store/local/imports.rs` — checked source imports and cancellation
+- `backend/git-storage/src/repositories/store/local/writes.rs` — durable fixed-voter ref preparation and publication
+- `backend/git-storage/src/repositories/store/mod.rs` — The one way to reach a repository's Git data
+- `backend/git-storage/src/repositories/store/remote.rs` — Forward repository operations to their owning storage node
+- `backend/git-storage/src/request_context.rs` — explicit per-request node context
+- `backend/git-storage/src/rpc_client.rs` — fixed-voter publication RPC and safe read failover
+- `backend/git-storage/src/store_types.rs` — The values that cross the store boundary: Git sessions, blob reads, merge requests and the size limits that apply to them
+- `backend/git-storage/src/webhooks/documents.rs` — Stored state that GitHub sends with webhook objects: topics, labels, assignees, milestones, counts and reactions. The payload builders run without…
+- `backend/git-storage/src/webhooks/mod.rs` — Webhooks: subscriptions on repositories and organizations, and the background sends that follow a committed write. Callers never wait for a send, and…
+- `backend/git-storage/src/webhooks/ref_changes.rs` — Webhook events for published branch and tag changes: `create`, `delete` and `push`
+- `backend/git-storage/src/webhooks/statuses.rs` — The `status` event, sent after a commit status is saved through REST or the native API
+- `backend/git-storage/src/wire.rs` — bounded repository RPC operation and credential wire types
+- `backend/git-storage/src/workflow_schedule.rs` — UTC/POSIX workflow schedule validation
+- `backend/git-storage/src/workflows.rs` — bounded pinned-workflow discovery and parse cache
+- `backend/git-storage/tests/branches.rs` — A refresh that started while a pull request was open still reads the fork after the pull request closed. The closed pull request takes nothing from…
+- `backend/git-storage/tests/store.rs` — The store against real bare repositories in temporary directories
+- `backend/git-storage/tests/writes.rs` — dev-only regression tests
+
+## `codeyard-identity` (`backend/identity/`)
+
+- `backend/identity/src/accounts.rs` — Account password/email changes
+- `backend/identity/src/activity.rs` — A user's public activity, filtered to the repositories the viewer may read
+- `backend/identity/src/blocks.rs` — Account block policy
+- `backend/identity/src/cells.rs` — The home cell validates credentials; resource cells receive only public metadata and bounds
+- `backend/identity/src/client_address.rs` — Trusted client-address lookup
+- `backend/identity/src/credentials.rs` — Account/password input admission
+- `backend/identity/src/database_context.rs` — database context definitions
+- `backend/identity/src/email_links.rs` — Links mailed to a user: one confirms an address, one lets a forgotten password be reset. The mail carries a random token, shown as a code to paste…
+- `backend/identity/src/emails.rs` — Secondary addresses require their own confirmation and never authorize a password reset
+- `backend/identity/src/fine_grained.rs` — Fine-grained personal access tokens. Each token has one resource owner (the user or an organization the user belongs to), a repository selection and…
+- `backend/identity/src/github_apps.rs` — GitHub App public-key credentials and explicit repository permission bounds
+- `backend/identity/src/github_auth.rs` — Token-only authentication, separate from browser sessions and CSRF
+- `backend/identity/src/gpg.rs` — OpenPGP enrollment verifies self-certifications and signing-subkey back signatures
+- `backend/identity/src/keys.rs` — SSH key management shared by browser forms, JSON and operator commands
+- `backend/identity/src/lib.rs` — Account policy and atomic identity operations, independent of ingress transport
+- `backend/identity/src/login.rs` — Password first-factor login
+- `backend/identity/src/oauth/mod.rs` — Browser-bound single-use OAuth admission. Provider exchange stays outside transactions
+- `backend/identity/src/oauth/oidc.rs` — Organization-specific OIDC issuers configured by the operator; no email-based linking
+- `backend/identity/src/oauth/providers.rs` — Supported provider requests and bounded response parsing. One configured HTTP client
+- `backend/identity/src/oauth_apps.rs` — OAuth clients authorize through native forms; only hashes of codes, secrets and tokens persist
+- `backend/identity/src/passwords.rs` — Native password work: fixed reviewed cost, bounded PHC acceptance and no async-worker KDF
+- `backend/identity/src/profiles.rs` — Shared profile updates; account records never double as public response models
+- `backend/identity/src/registration.rs` — Password account registration
+- `backend/identity/src/repository_access.rs` — Live repository authorization
+- `backend/identity/src/sessions.rs` — Session issuance and effect-time authority
+- `backend/identity/src/setup.rs` — First-admin setup admission
+- `backend/identity/src/signatures.rs` — Commit and tag signatures are checked against the signer's registered GPG and SSH signing keys, and the committer address must be a verified address…
+- `backend/identity/src/tokens.rs` — Personal token lifecycle (only hashes persist) and restricted activity-feed credentials
+- `backend/identity/src/two_factor.rs` — Authenticator-app second factor: RFC 6238 codes (SHA-1, 6 digits, 30 seconds, one step of clock drift either side), one-time recovery codes and the…
+
+## `codeyard-nodes` (`backend/nodes/`)
+
+- `backend/nodes/src/lib.rs` — Crate root: module declarations and re-exports
+- `backend/nodes/src/link.rs` — One request stream between two nodes, whichever transport carried it. Protocol code reads and writes a `Link`; the transport modules open and accept…
+- `backend/nodes/src/pairing.rs` — Pairing: how a machine becomes a cluster node. Every route ends with the node's public key in `nodes`:
+- `backend/nodes/src/settings.rs` — How often a running node records that it is alive and where it can be reached
+- `backend/nodes/src/settings_tests.rs` — settings tests
+- `backend/nodes/src/tcp.rs` — Opens a request stream to `node` at `address`
+- `backend/nodes/src/tls.rs` — TLS for node connections over TCP. Each side presents its node key as a raw ed25519 public key (RFC 7250) and proves that it holds the key with the…
+- `backend/nodes/src/transport.rs` — The iroh endpoint: protocol names, relay choice, binding, and the rule that only active cluster members may connect
+- `backend/nodes/src/worker.rs` — worker
+- `backend/nodes/src/writes.rs` — Fixed voters and a database-decided quorum. Git preparation and publication belong to the stores; only their durable votes and applied versions can…
+
+## `codeyard-notifications` (`backend/notifications/`)
+
+- `backend/notifications/src/assignments.rs` — Assignment notifications. A user who is newly assigned to an issue or pull request hears about it, unless they assigned themselves, are restricted…
+- `backend/notifications/src/broadcast.rs` — Cross-node hint polling and local sockets
+- `backend/notifications/src/create.rs` — Durable recipient notification creation
+- `backend/notifications/src/delivery.rs` — Authorized hint projection
+- `backend/notifications/src/email/mod.rs` — Outgoing email over SMTP. The server settings live in `config`, the texts in `messages`, `links` mails the address confirmation and password reset…
+- `backend/notifications/src/email/outbox.rs` — Mail waits in the `email_outbox` table until a node sends it. Several nodes may run the sender at once: each claims its own rows. A failed send is…
+- `backend/notifications/src/email/send.rs` — Building a message and handing it to the SMTP server
+- `backend/notifications/src/following.rs` — Follow edges and their best-effort notices, shared by JSON and native forms
+- `backend/notifications/src/inbox.rs` — Session/token inbox authority
+- `backend/notifications/src/lib.rs` — Notifications are persisted authority; broadcasts are hints only
+- `backend/notifications/src/mentions.rs` — Mention notifications. A new issue, pull request, comment or review text, and an edited issue or pull request body, notifies each user it newly…
+- `backend/notifications/src/reasons.rs` — The reasons the notification list filters by. A reason has a name for the URL and a label for the page, and covers the stored kinds that the…
+- `backend/notifications/src/watchers.rs` — Watch notifications. A new issue, pull request or published release notifies the users watching the repository: everyone on "All activity", and…
+
+## `codeyard-placement` (`backend/placement/`)
+
+- `backend/placement/src/ci.rs` — CI queue RPCs. The authenticated node key owns every worker id it supplies
+- `backend/placement/src/drain.rs` — One drain operation for the panel, REST and CLI; storage work resumes on each pass
+- `backend/placement/src/lib.rs` — Cluster membership: node keys, pairing, and the listeners that let paired nodes reach each other, over iroh or over TCP with TLS. A plain single node…
+- `backend/placement/src/provision.rs` — Optional operator-owned machine provisioning. Commands come only from the environment
+- `backend/placement/src/replicas/mod.rs` — Replica copies. Each storage node makes the copies its own repositories need, as the replica setting says, brings the copies it holds up to date, and…
+- `backend/placement/src/replicas/promote.rs` — Promotion. Quorum repositories change terms and reconstruct canonical refs before serving again. Silence only starts that recovery attempt. Legacy…
+- `backend/placement/src/replicas/rebalance.rs` — Rebalancing uses the existing replica copier, fenced family promotion and retained paths
+- `backend/placement/src/replicas/transfer.rs` — Bringing one copy up to its primary. The primary lists its HEAD and refs, and streams a pack of the objects they need beyond the copy's tips. The…
+- `backend/placement/src/scaling.rs` — One lease leader, one evaluation per database minute, and the existing add/drain paths
+- `backend/placement/src/tcp.rs` — Node connections over TCP. The listener takes TLS connections (see `tls`), checks the peer's key against membership, and passes the one request on…
+- `backend/placement/src/worker.rs` — Core addresses and the dialing-only context for a worker with no database
+
+## `codeyard-repos` (`backend/repos/`)
+
+- `backend/repos/src/activity.rs` — Accepted ref activity shared by editor/branch/merge publication and Git HTTP/SSH hooks
+- `backend/repos/src/collaborators.rs` — Collaborator invitations keep admission separate from permission grants
+- `backend/repos/src/commit_comments.rs` — immutable-commit discussions and author identity
+- `backend/repos/src/community.rs` — pinned community-file and license discovery
+- `backend/repos/src/dependencies/lockfiles.rs` — Read resolved versions without invoking package managers or following external files
+- `backend/repos/src/dependencies/mod.rs` — domain module wiring
+- `backend/repos/src/dependencies/npm.rs` — Bounded npm lockfiles and conservative registry patch updates, without running npm
+- `backend/repos/src/dependencies/npm/tests.rs` — dev-only regression tests
+- `backend/repos/src/deploy_keys.rs` — Deploy keys: who may manage a repository's keys, what a key may do over Git, and the settings section that lists them. A key acts only for its own…
+- `backend/repos/src/editor.rs` — Single-file commits for the web editor and the file API: write the blob and trees, create the commit, then move the branch only if it still points…
+- `backend/repos/src/gists.rs` — gist revision trees and publication recovery
+- `backend/repos/src/imports/archive.rs` — Reads migration records and Git object files without extracting an upstream tar to disk
+- `backend/repos/src/imports/archive/git.rs` — Repack only verified, reachable objects in a fresh quarantine repository
+- `backend/repos/src/imports/archive/tests.rs` — dev-only regression tests
+- `backend/repos/src/imports/forge.rs` — Bounded forge metadata reads. Upstream pagination links never choose a request destination
+- `backend/repos/src/imports/mod.rs` — domain module wiring
+- `backend/repos/src/lib.rs` — Crate root: module declarations and re-exports
+- `backend/repos/src/maintainer_edit.rs` — Personal-fork consent is scoped to one open pull request, never general Git write access
+- `backend/repos/src/migration_archive.rs` — Migration records and bare repositories share one bounded tar.gz archive
+- `backend/repos/src/npm.rs` — npm package-name grammar shared by hosted registries and dependency metadata
+- `backend/repos/src/protection.rs` — The one decision about who may change which branch
+- `backend/repos/src/push_protection.rs` — Push protection refuses a publication that adds a secret, unless the actor holds an unused bypass for that exact secret. Receive hooks and file saves…
+- `backend/repos/src/ref_changes.rs` — immutable ref move events and webhook publication
+- `backend/repos/src/source.rs` — Fetch every advertised ref through Git's smart HTTP protocol, without following upstream URLs
+- `backend/repos/src/source/tests.rs` — dev-only regression tests
+- `backend/repos/src/stacks.rs` — Stacks: pull requests in one repository that build on each other, each one's base branch being the head branch of the pull request below it. A pull…
+- `backend/repos/src/templates.rs` — Templates for the files a new repository can start with: .gitignore files and licenses
+- `backend/repos/src/traffic.rs` — Traffic means observed native navigations and completed initial Git object transfers
+- `backend/repos/src/traffic/clone.rs` — Bounded streaming observation of initial Git object transfers, not advertisements/fetches
+- `backend/repos/src/validation.rs` — repository identifiers and safe Git command parsing
+
+## `codeyard-repos-pulls` (`backend/repos-pulls/`)
+
+- `backend/repos-pulls/src/code_scanning.rs` — Open scanners submit SARIF; queued uploads survive restarts and commit atomically
+- `backend/repos-pulls/src/code_scanning/tests.rs` — dev-only regression tests
+- `backend/repos-pulls/src/issues/assignments.rs` — Assigning people to issues and pull requests. The REST and GraphQL APIs, the issue and pull request pages and issue creation all change assignees…
+- `backend/repos-pulls/src/issues/branches.rs` — Branch creation uses the normal ref publication checks before recording the link
+- `backend/repos-pulls/src/issues/closing.rs` — Closing keyword references in pull request descriptions
+- `backend/repos-pulls/src/issues/comments.rs` — discussion comment authorization and notification effects
+- `backend/repos-pulls/src/issues/mod.rs` — domain module wiring
+- `backend/repos-pulls/src/issues/mutations.rs` — shared issue/PR mutations and committed side effects
+- `backend/repos-pulls/src/issues/references.rs` — Resolve human issue references without exposing private repositories
+- `backend/repos-pulls/src/issues/suggestions.rs` — Shared post-commit effects for REST and native suggestion review
+- `backend/repos-pulls/src/lib.rs` — Crate root: module declarations and re-exports
+- `backend/repos-pulls/src/repositories/advisories.rs` — Temporary remediation forks reuse repository storage placement and checked fork initialization
+- `backend/repos-pulls/src/repositories/commit_comments.rs` — Discussions anchored to immutable commits, shared by REST and native forms
+- `backend/repos-pulls/src/repositories/commit_pulls.rs` — Associations are derived from published Git ancestry, not commit-message references
+- `backend/repos-pulls/src/repositories/community.rs` — Community standards are derived from real files at a pinned default-branch commit
+- `backend/repos-pulls/src/repositories/dependencies/mod.rs` — domain module wiring
+- `backend/repos-pulls/src/repositories/dependencies/registry.rs` — Registry downloads verify patch candidates; advisory matching belongs to vulnerabilities
+- `backend/repos-pulls/src/repositories/dependencies/updates.rs` — Verified proposals only. No package manager, repository script, force push or auto-merge
+- `backend/repos-pulls/src/repositories/dependencies/worker.rs` — Leased proposals consume the inventory and alerts maintained by the vulnerability worker
+- `backend/repos-pulls/src/repositories/dependency_graph.rs` — Dependency inventories pin Git before reading either file and never execute package managers
+- `backend/repos-pulls/src/repositories/engagement.rs` — Repository star/watch changes and explicit best-effort notices
+- `backend/repos-pulls/src/repositories/files.rs` — Web editor and API file writes: check who may write where, then have the store commit the file and move the branch, failing if it changed since the…
+- `backend/repos-pulls/src/repositories/identity_interactions.rs` — Git-derived proof preparation happens outside database transactions. Only the database decides whether a contribution may commit, using the live…
+- `backend/repos-pulls/src/repositories/imports.rs` — Git source imports retain no source credentials and publish only into empty repositories
+- `backend/repos-pulls/src/repositories/issue_templates.rs` — Issue and pull request templates kept in the repository. They are read from the default branch through the repository store, so they work on local…
+- `backend/repos-pulls/src/repositories/merges.rs` — Direct branch merges use normal ref-admission policy, not pull-request approval authority
+- `backend/repos-pulls/src/repositories/mod.rs` — Repository operations shared by the HTML pages, JSON API and SSH
+- `backend/repos-pulls/src/repositories/pull_requests/async_merge.rs` — Durable asynchronous requests, executed by the server's bounded, shutdown-drained Git tasks
+- `backend/repos-pulls/src/repositories/pull_requests/auto_merge.rs` — Auto-merge: a writer asks for a pull request to merge once its requirements pass. A background check then merges it through the ordinary merge path…
+- `backend/repos-pulls/src/repositories/pull_requests/comments.rs` — discussion comment authorization and notification effects
+- `backend/repos-pulls/src/repositories/pull_requests/comments/tests.rs` — dev-only regression tests
+- `backend/repos-pulls/src/repositories/pull_requests/merge.rs` — PR approval/protection checks and compare-and-swap publication
+- `backend/repos-pulls/src/repositories/pull_requests/mod.rs` — domain module wiring
+- `backend/repos-pulls/src/repositories/pull_requests/mutations.rs` — shared issue/PR mutations and committed side effects
+- `backend/repos-pulls/src/repositories/pull_requests/restack.rs` — Rebase stack: moves the open layers of a stack onto the layers below them. Each layer replays its own commits onto the new head of the layer below…
+- `backend/repos-pulls/src/repositories/pull_requests/revert.rs` — Revert through the normal branch publication and pull request creation paths
+- `backend/repos-pulls/src/repositories/pull_requests/reviews.rs` — review state, pending comments and thread publication
+- `backend/repos-pulls/src/repositories/pull_requests/update_branch.rs` — Bring a pull head up to date without merging or closing the pull request
+- `backend/repos-pulls/src/repositories/releases.rs` — Releases: a named, optionally annotated tag with notes and uploaded assets. Readers see the published releases of a repository they can read; writers…
+- `backend/repos-pulls/src/repositories/releases/notes.rs` — Release notes derived from a pinned Git range and the repository's real merged pull requests
+- `backend/repos-pulls/src/repositories/secret_scanning/jobs.rs` — Durable scan work survives process restarts; Git reads go through the repository store
+- `backend/repos-pulls/src/repositories/secret_scanning/mod.rs` — Credential detection shared by history scans and push protection
+- `backend/repos-pulls/src/services.rs` — injected domain resource operations (implemented by app)
+- `backend/repos-pulls/src/webhook_payloads/mod.rs` — domain module wiring
+- `backend/repos-pulls/src/webhook_payloads/release.rs` — release-note payload enrichment
+- `backend/repos-pulls/src/webhook_payloads/repository.rs` — pinned community-file/profile payload projection
+
+## `codeyard-repos-rpc` (`backend/repos-rpc/`)
+
+- `backend/repos-rpc/src/git_session.rs` — storage-side Git-session admission and quorum phases
+- `backend/repos-rpc/src/lib.rs` — Repository protocol composition; wire format and policy have explicit owners
+- `backend/repos-rpc/src/objects.rs` — Byte objects share authenticated node transport, but never Git/user authorization
+- `backend/repos-rpc/src/regression_tests.rs` — dev-only regression tests
+- `backend/repos-rpc/src/repository.rs` — repository protocol dispatch or document projection
+
+## `codeyard-router` (`backend/router/`)
+
+- `backend/router/src/accounts.rs` — Foreign credential checks use the shared pinned node-key RPC transport
+- `backend/router/src/body.rs` — A bounded producer keeps ownership even when a downstream reader stops polling
+- `backend/router/src/capacity.rs` — Existing users do not depend on reports. Stale or failed reports close new placement
+- `backend/router/src/directory.rs` — One bounded directory exchange over the existing pinned node-key TLS transport
+- `backend/router/src/frontend.rs` — Public HTTP entry point. Directory routes select targets; cells retain authentication
+- `backend/router/src/graphql.rs` — Plan only top-level GraphQL dispatch; nested selections stay in their parent's cell
+- `backend/router/src/graphql_dispatch.rs` — Whole-document validation precedes dispatch. Mutations retain root-field order
+- `backend/router/src/http.rs` — Streaming HTTP forwarding. A target must come from a validated directory record
+- `backend/router/src/lib.rs` — Cross-cell routing and the authenticated directory client; no cell database credentials
+- `backend/router/src/request.rs` — Preserve JSON numbers when serde_json's arbitrary-precision feature is enabled
+- `backend/router/src/routes.rs` — Bounded, short-lived directory routes. No database credentials or user secrets are cached
+- `backend/router/src/rpc.rs` — Bounded node-key TLS request/response transport shared by directory and cell RPC
+- `backend/router/src/selection.rs` — The same catalogue that builds the cell HTTP routes selects their owning cell
+- `backend/router/src/validation.rs` — Run the shared schema's full validation before any cross-cell mutation is dispatched
+
+## `codeyard-runner` (`backend/runner/`)
+
+Runs GitHub Actions workflows: Codeyard's job runner, also usable on its own.
+
+- `backend/runner/tests/compat/` — workflow fixtures for the runner compatibility tests.
+- `backend/runner/scripts/windows-base-image/build.sh` — QEMU image provisioning is Codeyard-specific, not ported from actions/runner
+- `backend/runner/src/expressions/eval.rs` — Ported from actions/runner's `src/Sdk/Expressions/EvaluationResult.cs` and `Sdk/{Operators,Functions}`
+- `backend/runner/src/expressions/hash_files.rs` — Ported from actions/runner's `src/Misc/expressionFunc/hashFiles/src/hashFiles.ts` and its bundled `@actions/glob`
+- `backend/runner/src/expressions/mod.rs` — Ported from actions/runner's `src/Sdk/Expressions` and `src/Sdk/DTExpressions2`
+- `backend/runner/src/expressions/parser.rs` — Ported from actions/runner's `src/Sdk/Expressions/ExpressionParser.cs` and `Tokens/LexicalAnalyzer.cs`
+- `backend/runner/src/expressions/tests.rs` — Cases from actions/runner's `src/Test/L0/Sdk/ExpressionParserL0.cs`, `Worker/Expressions/ConditionFunctionsL0.cs` and the expression documentation
+- `backend/runner/src/fs.rs` — Private temporary storage shared by execution and server credential producers
+- `backend/runner/src/lib.rs` — Runs GitHub Actions workflows on one machine, the way `act` does, so Codeyard can start it as a separate process. Three parts:
+- `backend/runner/src/main.rs` — CLI entry point following actions/runner's `Runner.Listener/Runner.cs`
+- `backend/runner/src/process.rs` — Shared bounded subprocess output framing. Oversized lines are omitted, never truncated: retaining a prefix could expose part of a credential that…
+- `backend/runner/src/process/cgroup.rs` — Worker/job-owned cgroup v2 lifetime, independent of process-group leaders
+- `backend/runner/src/progress.rs` — Authenticated runner progress. The server supplies the private envelope nonce; workflow output is data inside a Log update and cannot become another…
+- `backend/runner/src/runner/actions.rs` — Action loading and handlers following actions/runner's `Runner.Worker/ActionManager.cs` and `Handlers/`
+- `backend/runner/src/runner/commands.rs` — File and stdout commands following actions/runner's `Runner.Worker/FileCommandManager.cs` and `ActionCommandManager.cs`
+- `backend/runner/src/runner/containers.rs` — Podman container operations following actions/runner's `Runner.Worker/ContainerOperationProvider.cs`
+- `backend/runner/src/runner/environment_values.rs` — The core binds job IDs to environment scopes; engines never infer scope from global values
+- `backend/runner/src/runner/jobs.rs` — Dependency-ready logical jobs; leaf permits remain shared across reusable calls
+- `backend/runner/src/runner/matchers.rs` — Problem matchers keep multiline state for one job, as actions/runner's IssueMatcher does
+- `backend/runner/src/runner/mod.rs` — Job and step execution following actions/runner's `Runner.Worker/JobRunner.cs` and `StepsRunner.cs`
+- `backend/runner/src/runner/output.rs` — Bounded output ownership. Job futures never perform blocking stdout writes, including authenticated progress. Ordinary logs are best effort; losing…
+- `backend/runner/src/runner/process.rs` — Child process lifetime following actions/runner's `Runner.Sdk/ProcessInvoker.cs`
+- `backend/runner/src/runner/reusable.rs` — Called workflow files are read before any job can change the checkout
+- `backend/runner/src/runner/reusable_tests.rs` — reusable tests
+- `backend/runner/src/values.rs` — Named Actions value contracts shared by storage, claim producers and native consumers
+- `backend/runner/src/vm/mod.rs` — Follows actions/runner's `src/Runner.Worker/Handlers/ScriptHandler.cs` for PowerShell steps
+- `backend/runner/src/workflow/dispatch_inputs.rs` — The inputs a manual `workflow_dispatch` run takes: the fields a workflow declares, and the checks a submitted set must pass before its run is queued
+- `backend/runner/src/workflow/events.rs` — Event declarations shared by discovery, admission and execution
+- `backend/runner/src/workflow/mod.rs` — Workflow files, ported from actions/runner's `Sdk/WorkflowParser`: parsing and checking them, the order of their jobs, and expanding a job's matrix…
+- `backend/runner/src/workflow/parser.rs` — Follows actions/runner's `Sdk/WorkflowParser/workflow-v1.0.json` and `Conversion/IdBuilder.cs`
+- `backend/runner/src/workflow/planner.rs` — Follows actions/runner's `Sdk/WorkflowParser/Conversion/{MatrixBuilder,JobNameBuilder}.cs`
+- `backend/runner/src/workflow/tests.rs` — Tests examples from actions/runner's `Sdk/WorkflowParser` and the workflow syntax documentation
+- `backend/runner/tests/compat.rs` — Compatibility checks following actions/runner's `src/Test/L0/Worker` at the CLI boundary
+- `backend/runner/tests/runner.rs` — Real CLI tests following actions/runner's `Runner.Worker` job and handler behaviour
+
+## `codeyard-search` (`backend/search/`)
+
+Codeyard repository catalog and content search.
+
+- `backend/search/src/catalog.rs` — README and license predicates use pinned Git snapshots, bounded like live code search
+- `backend/search/src/content.rs` — Live default-branch search using the bounded native Git/RPC operations. No independent index
+- `backend/search/src/lib.rs` — Repository catalog search and live code and commit search
+
+## `codeyard-security` (`backend/security/`)
+
+Codeyard cryptography, tokens, outbound address checks and secret detection.
+
+- `backend/security/src/crypto.rs` — Random tokens and keyed hashes shared by native server code
+- `backend/security/src/fs.rs` — Host-owned persistent state directories and their process-lifetime exclusion
+- `backend/security/src/http_credentials.rs` — Bounded Authorization header decoding; each adapter owns the meaning of the credential
+- `backend/security/src/lib.rs` — Cryptography, token hashes, outbound address checks, secret detection, node keys and private state directories with their exclusive file locks
+- `backend/security/src/locks.rs` — Filesystem ownership and evicting keyed process locks
+- `backend/security/src/node_identity.rs` — The node's key. Its public half is the node's identity in the cluster (the iroh endpoint id). The secret half stays on this machine
+- `backend/security/src/outbound.rs` — Where a webhook may send. Private, loopback, link-local and metadata addresses are refused unless `WEBHOOKS_ALLOW_PRIVATE=true`. The addresses are…
+- `backend/security/src/secret_detection/mod.rs` — Credential detection shared by history scans and push protection
+- `backend/security/src/secret_detection/patterns.rs` — Custom pattern validation and matching use the same bounded Rust regex engine as built-ins
+- `backend/security/src/secret_detection/scanner.rs` — Bounded credential scanning
+- `backend/security/src/secrets/mod.rs` — Repository-secret AES-256-GCM; S3 objects do not use this encryptor. Also the shared check for the random hex tokens used as session ids, CSRF tokens…
+- `backend/security/src/token_hash.rs` — Native credential digesting
+
+## `codeyard-ssh` (`backend/ssh/`)
+
+- `backend/ssh/src/handler.rs` — SSH key admission and bounded Git channel lifecycle
+- `backend/ssh/src/lib.rs` — Crate root: module declarations and re-exports
+- `backend/ssh/src/openssh.rs` — Host OpenSSH authenticates; these credential-free helpers only talk to the persistent application's private broker. The broker UID (and root) is…
+- `backend/ssh/src/openssh/cli.rs` — OpenSSH helper stream framing and quarantined-object checks
+- `backend/ssh/src/rate_limit.rs` — bounded IPv4/IPv6-prefix SSH abuse buckets
+- `backend/ssh/src/request_tests.rs` — Real SSH request/reply and protocol negotiation regressions
+- `backend/ssh/src/router.rs` — SSH termination and a pinned, router-authenticated hop to the owning cell
+- `backend/ssh/src/server.rs` — SSH host-key persistence, connection caps and proxy admission
+
+## `codeyard-storage` (`backend/storage/`)
+
+- `backend/storage/src/files/deletion.rs` — metadata deletion plus durable byte-removal retry
+- `backend/storage/src/files/downloads.rs` — authorized signed download capabilities and accounting
+- `backend/storage/src/files/local_uploads.rs` — owned pending local upload reception before expiry
+- `backend/storage/src/files/mod.rs` — File uploads (avatars, attachments, assets): reserve, upload, confirm, download and delete. Queries live in `db::files`; bytes in `storage`
+- `backend/storage/src/files/uploads.rs` — quota reservation, signed PUT and verified activation
+- `backend/storage/src/lib.rs` — Where uploaded files live: a directory under the state directory, or an S3-compatible bucket when the S3_* environment variables are set
+- `backend/storage/src/local.rs` — Uploaded files stored as plain files under `<state_dir>/objects`
+- `backend/storage/src/nodes.rs` — Object byte transport supplied by the cluster, without a dependency on repository RPC
+- `backend/storage/src/range.rs` — Byte ranges shared by repository and object readers, independent of HTTP headers
+- `backend/storage/src/s3.rs` — Uploaded files in an S3-compatible bucket. Clients upload and download directly with presigned URLs; the server only signs, checks and deletes
+- `backend/storage/src/zip_archives.rs` — Opening untrusted ZIP archives. The `zip` reader reserves and parses as many central directory entries as the end record it picks advertises, and it…
+
+## `codeyard-testing` (`backend/testing/`)
+
+- `backend/testing/src/lib.rs` — Closed-state test fixture
+
+## `codeyard-types` (`backend/types/`)
+
+- `backend/types/src/account_input.rs` — Account namespace and email constraints
+- `backend/types/src/advisories.rs` — Advisory validation and CVSS
+- `backend/types/src/advisory_documents.rs` — advisory documents definitions
+- `backend/types/src/cell_ids.rs` — Cell prefixes shared by ID allocation, credential issuers and request routing
+- `backend/types/src/cell_routes.rs` — Routing policy declared by the application's own route constructors
+- `backend/types/src/cells.rs` — Directory records and validated keys shared by cell clients and routers
+- `backend/types/src/ci.rs` — Workflow expansion/log limits
+- `backend/types/src/cluster.rs` — Public, credential-free scaling policy shared by settings forms and the controller
+- `backend/types/src/command_codec.rs` — Target-independent workflow-command escaping, shared with browser log rendering
+- `backend/types/src/credentials.rs` — Credential-independent identity comparisons
+- `backend/types/src/dependency_graph.rs` — Dependency submissions retain each detector's latest view without mixing commit histories
+- `backend/types/src/dependency_inventory.rs` — Submitted dependency graphs and immutable SBOM reports
+- `backend/types/src/file_names.rs` — Basename admission
+- `backend/types/src/file_search.rs` — One bounded path-query rule for owning-store scans and hydrated file finding
+- `backend/types/src/fine_grained.rs` — Fine-grained permission catalog
+- `backend/types/src/git_ids.rs` — Complete Git SHA-1 syntax shared by native storage, adapters and browser views
+- `backend/types/src/git_limits.rs` — Git write limits shared by native admission and browser forms
+- `backend/types/src/git_paths.rs` — Reversible Git path identities shared by storage, SSR and hydrated links
+- `backend/types/src/github_apps.rs` — github apps definitions
+- `backend/types/src/github_error.rs` — HTTP compatibility error projection
+- `backend/types/src/graphql_cursor.rs` — Shared offset cursor encoding for native connections and bounded cell reads
+- `backend/types/src/graphql_error.rs` — graphql error definitions
+- `backend/types/src/http_config.rs` — Safe runtime clone endpoints for repository pages. No host paths or credentials
+- `backend/types/src/identity.rs` — identity definitions
+- `backend/types/src/issue_input.rs` — Issue/PR/comment input constraints
+- `backend/types/src/lib.rs` — Browser-safe types, syntax rules and limits shared by the server and the web UI. Modules that need server libraries are built for the server only
+- `backend/types/src/links.rs` — Link admission shared by Markdown rendering and stored link templates
+- `backend/types/src/mail.rs` — Transaction-queued email descriptions
+- `backend/types/src/mail_config.rs` — SMTP DTOs and validation extraction
+- `backend/types/src/mail_messages.rs` — The texts of the mail the site sends. Plain text and short. `origin` is the scheme and host from PUBLIC_URL; without it a mail has no links, since a…
+- `backend/types/src/media.rs` — Media policy shared by native admission, serving and hydrated picture pickers
+- `backend/types/src/node_id.rs` — Stable opaque identifiers shared by REST and GraphQL: a short type prefix (`R` repository, `U` user, `I` issue, …; each kind's prefix is at its call…
+- `backend/types/src/node_roles.rs` — Desired service roles, not enrollment or repository/execution authority
+- `backend/types/src/oauth_apps.rs` — oauth apps definitions
+- `backend/types/src/object_limits.rs` — Object-size contract
+- `backend/types/src/package_input.rs` — package input definitions
+- `backend/types/src/patch.rs` — Reading a unified diff: line classes, line numbers and the badges of a file header
+- `backend/types/src/paths.rs` — Percent-encoding of URL path segments and the product paths built from them
+- `backend/types/src/permissions.rs` — Shared workflow permission bounds
+- `backend/types/src/project_query.rs` — project query definitions
+- `backend/types/src/ref_path.rs` — Splits the path of a repository address into the longest known ref and the path inside it
+- `backend/types/src/repositories.rs` — Repository-facing DTOs/refusals
+- `backend/types/src/repository_names.rs` — Repository-name admission shared by native authority and browser feedback
+- `backend/types/src/security_reports.rs` — security reports definitions
+- `backend/types/src/ssh_mode.rs` — Startup-only SSH transport selection. Detection never edits or reloads sshd
+- `backend/types/src/tokens.rs` — Credential wire constants and syntax
+- `backend/types/src/urls.rs` — Public URL formatting
+- `backend/types/src/versions.rs` — Ecosystem ordering for OSV interval endpoints, not dependency requirement resolution
+- `backend/types/src/vulnerabilities.rs` — vulnerabilities definitions
+- `backend/types/src/webhook_events.rs` — Event names a webhook can subscribe to. The names are GitHub's, so receivers that already branch on them keep working. The form's EVENT_OPTIONS is…
+- `backend/types/src/webhook_ids.rs` — webhook ids definitions
+- `backend/types/src/website.rs` — Credential-free HTTP(S) addresses for public website fields and links
+- `backend/types/src/workflow_glob.rs` — workflow glob definitions
+- `backend/types/src/workflow_yaml.rs` — Bounded native workflow parsing
+
+## `codeyard-webhooks` (`backend/webhooks/`)
+
+- `backend/webhooks/src/comment_documents.rs` — viewer-safe comment webhook projection
+- `backend/webhooks/src/delivery.rs` — One webhook request: signed, sent with a timeout and no redirects, retried on server errors and timeouts, and recorded with what was sent and what…
+- `backend/webhooks/src/deployment_protection.rs` — Gate requests are private to the App whose decision the run is waiting for
+- `backend/webhooks/src/github_apps.rs` — App subscriptions use the native payload builder, sender, URL safety and delivery queue
+- `backend/webhooks/src/issue_documents.rs` — viewer-scoped issue documents and relationship counts
+- `backend/webhooks/src/lib.rs` — Crate root: module declarations and re-exports
+- `backend/webhooks/src/panel.rs` — The webhook section of a settings page: the view model it renders, built after the viewer has been checked, and the form fields it posts back as a…
+- `backend/webhooks/src/payloads.rs` — Payloads in the shape GitHub documents for each event, as far as this data model has the fields. Fields without a Codeyard counterpart are left out…
+- `backend/webhooks/src/payloads/code_scanning.rs` — bounded SARIF ingest and durable scan queue
+- `backend/webhooks/src/payloads/gists.rs` — gist revision trees and publication recovery
+- `backend/webhooks/src/settings.rs` — Managing webhooks: who may, what a form may save, and the ping, test and redelivery actions. Every action checks the actor before it reads or changes…
+
+## `codeyard-webui` (`webui/`)
+
+Codeyard Dioxus views: server rendering and browser hydration.
+
+- `webui/src/app.rs` — The same safe owned presentation tree is rendered on the server and hydrated in the browser
+- `webui/src/bootstrap.rs` — Safe typed bootstrap for the supported Dioxus hydration protocol
+- `webui/src/components/avatar.rs` — avatar definitions
+- `webui/src/components/charts.rs` — Small column charts, one column per day or week, and the timeframe links above them. The admin overview and a repository's insights draw their…
+- `webui/src/components/code.rs` — Native, pure subset of the approved code viewer. Only generated escaped spans enter HTML
+- `webui/src/components/confirm.rs` — confirm definitions
+- `webui/src/components/copy.rs` — copy definitions
+- `webui/src/components/deploy_keys.rs` — The deploy keys section of repository settings: the keys the repository has, and a form to add one. Every control is a plain form or link, so the…
+- `webui/src/components/forms.rs` — Controlled visible draft fields survive unrelated parent re-renders/polls
+- `webui/src/components/interactions.rs` — interactions definitions
+- `webui/src/components/languages.rs` — A repository's language mix: a bar of coloured segments with a legend. The repository page shows the bar in its About panel. Repository cards show…
+- `webui/src/components/markdown.rs` — Markdown rendering: pulldown-cmark parses (CommonMark, tables, task lists, strikethrough, alerts, footnotes in documents) and `Emitter` writes the…
+- `webui/src/components/markdown_html.rs` — Raw HTML in Markdown: a tokenizer for the HTML of one block or inline event, the allow-list of elements and attributes, and the checks on attribute…
+- `webui/src/components/markdown_preview.rs` — A Markdown body as one plain line, for list rows such as a notification or a search result
+- `webui/src/components/markdown_tests.rs` — Contracts for src / components / markdown tests
+- `webui/src/components/markdown_toolbar.rs` — The formatting buttons above a Markdown textarea. A button puts its syntax around the selected text, which only the browser can read, so the buttons…
+- `webui/src/components/menu.rs` — Dropdown menus. Every `details.native-menu` gets this behaviour once the page hydrates: a click outside closes it, a link inside it closes it, Escape…
+- `webui/src/components/mod.rs` — View exports/date-count formatting
+- `webui/src/components/references.rs` — GitHub-style references in rendered Markdown: `#123`, `@user`, a bare commit SHA, `owner/repo#123` and `owner/repo@sha`. This module classifies the…
+- `webui/src/components/repository_properties.rs` — Typed repository metadata inputs shared by creation and repository settings
+- `webui/src/components/shell.rs` — Site/repository navigation shell
+- `webui/src/components/task_lists.rs` — Task list items (`- [ ]` and `- [x]`) in a stored body. The lists count them, and a box ticks one item of the stored text. Items are numbered in…
+- `webui/src/components/theme.rs` — theme definitions
+- `webui/src/components/time.rs` — A time shown as a date before hydration and a live age after mounting
+- `webui/src/components/webhooks.rs` — The webhooks section of repository and organization settings: the hook list, the form for one hook, and each hook's recent deliveries. Every control…
+- `webui/src/document.rs` — HTML document and safe chrome
+- `webui/src/hydration.rs` — Browser launch and hydration bootstrap wiring
+- `webui/src/lib.rs` — Shared safe Dioxus views: useful server HTML and identical browser hydration
+- `webui/src/navigation/load.rs` — Authorized page-model transport and decoding
+- `webui/src/navigation/mod.rs` — Browser navigation/history state
+- `webui/src/pages/account.rs` — Account pages: sign-in and sign-out, account settings, administration and profiles
+- `webui/src/pages/admin/actions.rs` — Admin Actions page: whether workflows run on this site, the limits on each run, and the runner image. Repositories can set lower limits in their own…
+- `webui/src/pages/admin/audit.rs` — Administrator audit log: who did what, newest first, as sentences, with a filter on the kind of change and on the actor
+- `webui/src/pages/admin/email.rs` — Admin email page: the outgoing mail server, with a button that sends a test message
+- `webui/src/pages/admin/mod.rs` — Site administration: the overview, users, site settings, email, the audit log, and the cluster pages. Every page shares the section list and title…
+- `webui/src/pages/admin/nav.rs` — The frame of every administration page: the section list beside the page title and body
+- `webui/src/pages/admin/nodes/mod.rs` — The nodes page: `/admin/nodes`
+- `webui/src/pages/admin/nodes/page.rs` — Admin list of the cluster's nodes, with approve and revoke
+- `webui/src/pages/admin/page.rs` — The administration overview: sign-up requests that wait for a decision, and daily activity charts. Counts with a page of their own (users, storage)…
+- `webui/src/pages/admin/settings.rs` — Site settings: who can sign up and the AI crawler policy
+- `webui/src/pages/admin/storage/mod.rs` — The storage page: `/admin/storage`
+- `webui/src/pages/admin/storage/page.rs` — Admin storage overview. Storage is configured with environment variables; credentials and filesystem paths are never page data
+- `webui/src/pages/admin/tests.rs` — Admin page contracts: the timeframe control, the overview, the users page, site settings and the chart
+- `webui/src/pages/admin/users.rs` — Administrator users page: pending signup requests, account creation, and the searchable account list with its actions
+- `webui/src/pages/artifact_metadata.rs` — Read-only publisher inventory. Provenance association is not a signature-verification verdict
+- `webui/src/pages/attestations.rs` — Stored provenance is not a verification verdict; the same owned model renders and hydrates
+- `webui/src/pages/auth/apps.rs` — Native GitHub App registration and installation forms
+- `webui/src/pages/auth/mod.rs` — Sign-in, registration, setup and sign-out pages: `/login`, `/register`, `/setup`, `/enter`, `/logout`
+- `webui/src/pages/auth/oauth.rs` — OAuth approval uses native forms before and after hydration
+- `webui/src/pages/auth/page.rs` — Authentication, setup and logout presentation
+- `webui/src/pages/auth/tests.rs` — Auth page contracts: escaped sign-in forms, secrets that are never repopulated, and the password field
+- `webui/src/pages/ci/mod.rs` — The Actions lane: the `/ci` page, and the pages rendered through the same `Page` enum
+- `webui/src/pages/ci/page.rs` — Safe Actions presentation shared by SSR and hydration. This is the Actions lane: the `/ci` page and the dispatch recovery page, both rendered through…
+- `webui/src/pages/dashboard/mod.rs` — The signed-in user's own work: the issue and pull request lists under `/issues` and `/pulls`
+- `webui/src/pages/dashboard/page.rs` — The signed-in user's issue and pull request lists, across the repositories they can read
+- `webui/src/pages/discovery/migration.rs` — migration definitions
+- `webui/src/pages/discovery/mod.rs` — Public pages: the home page, explore, search, the new repository form
+- `webui/src/pages/discovery/page.rs` — Request-loaded discovery views. Models contain only fields intended for display
+- `webui/src/pages/discovery/page_tests.rs` — Contracts for src / pages / discovery / page tests
+- `webui/src/pages/error.rs` — The one error page. Native HTML errors and hydrated navigation both render it
+- `webui/src/pages/fields.rs` — Shared native form controls, and the form values that survive a refused submission
+- `webui/src/pages/gists/mod.rs` — Gist lists, immutable file views and native editors, shared by SSR and hydration
+- `webui/src/pages/gists/page.rs` — page definitions
+- `webui/src/pages/help/mod.rs` — The help page: keyboard shortcuts, the documentation and how to report a problem
+- `webui/src/pages/help/page.rs` — The help page: the keyboard shortcuts that exist, where the documentation is, and how to report a problem
+- `webui/src/pages/mod.rs` — Module assembly for account, admin, artifact_metadata, attestations, auth
+- `webui/src/pages/notifications/live.rs` — live definitions
+- `webui/src/pages/notifications/mod.rs` — The notifications page: `/notifications`
+- `webui/src/pages/notifications/page.rs` — Recipient-scoped notification presentation
+- `webui/src/pages/orgs/actions.rs` — actions definitions
+- `webui/src/pages/orgs/avatar.rs` — avatar definitions
+- `webui/src/pages/orgs/blocks.rs` — blocks definitions
+- `webui/src/pages/orgs/code_security.rs` — code security definitions
+- `webui/src/pages/orgs/collaborators.rs` — collaborators definitions
+- `webui/src/pages/orgs/dependabot.rs` — dependabot definitions
+- `webui/src/pages/orgs/fields.rs` — fields definitions
+- `webui/src/pages/orgs/governance.rs` — governance definitions
+- `webui/src/pages/orgs/membership.rs` — membership definitions
+- `webui/src/pages/orgs/mod.rs` — Organization pages: the organization list and settings, the public profile, and team pages
+- `webui/src/pages/orgs/page.rs` — Safe organization presentation models shared by SSR and normal hydration
+- `webui/src/pages/orgs/private_registries.rs` — private registries definitions
+- `webui/src/pages/orgs/profile.rs` — Public organization page: the organization, its repositories, and for members its people and teams
+- `webui/src/pages/orgs/properties.rs` — Repository property definitions and owner-only bulk value forms; all forms work without scripts
+- `webui/src/pages/orgs/properties_tests.rs` — Contracts for src / pages / orgs / properties tests
+- `webui/src/pages/orgs/roles.rs` — roles definitions
+- `webui/src/pages/orgs/settings.rs` — settings definitions
+- `webui/src/pages/orgs/settings_tests.rs` — Contracts for src / pages / orgs / settings tests
+- `webui/src/pages/orgs/team_page.rs` — Public team page: a team's members or repository grants, as the viewer may see them
+- `webui/src/pages/orgs/teams.rs` — teams definitions
+- `webui/src/pages/orgs/tests.rs` — Contracts for src / pages / orgs / tests
+- `webui/src/pages/orgs/tokens.rs` — The owners' token policy for an organization, its pending fine-grained token requests and the tokens it has approved
+- `webui/src/pages/packages.rs` — Package lists, installation instructions and native settings forms
+- `webui/src/pages/projects.rs` — Native project forms render the same models on the server and after hydration
+- `webui/src/pages/projects/tests.rs` — Contracts for src / pages / projects / tests
+- `webui/src/pages/repos/actions/dispatch.rs` — dispatch definitions
+- `webui/src/pages/repos/actions/logs.rs` — Pure projection of persisted act and codeyard-actions output. A missing marker never proves success
+- `webui/src/pages/repos/actions/mod.rs` — Repository Actions pages: the run list, a run's detail and logs, and the dispatch form
+- `webui/src/pages/repos/actions/polling.rs` — Live run metadata and cursor-based log updates; normal navigation still loads the full page
+- `webui/src/pages/repos/actions/repository_event.rs` — repository event definitions
+- `webui/src/pages/repos/actions/run.rs` — run definitions
+- `webui/src/pages/repos/actions/runs.rs` — runs definitions
+- `webui/src/pages/repos/actions/tests.rs` — Contracts for src / pages / repos / actions / tests
+- `webui/src/pages/repos/advisories.rs` — advisories definitions
+- `webui/src/pages/repos/blame/mod.rs` — The blame view: `/:owner/:repo/blame/*`
+- `webui/src/pages/repos/blame/page.rs` — page definitions
+- `webui/src/pages/repos/blob/mod.rs` — The file view: `/:owner/:repo/blob/*`
+- `webui/src/pages/repos/blob/page.rs` — page definitions
+- `webui/src/pages/repos/branches/mod.rs` — The branch and tag lists: `/:owner/:repo/branches` and `/:owner/:repo/tags`
+- `webui/src/pages/repos/branches/page.rs` — page definitions
+- `webui/src/pages/repos/checks.rs` — Published check output is readable before hydration, including every annotation page
+- `webui/src/pages/repos/chrome.rs` — chrome definitions
+- `webui/src/pages/repos/commits/comments.rs` — Commit discussions use native forms; Markdown preview also works before hydration
+- `webui/src/pages/repos/commits/commit_target.rs` — The commit choice of a form that writes to a branch: commit to it directly, or put the commit on a new branch whose name the user can change and…
+- `webui/src/pages/repos/commits/mod.rs` — Commit history and commit detail: `/:owner/:repo/commits` and `/:owner/:repo/commit/:sha`
+- `webui/src/pages/repos/commits/page.rs` — page definitions
+- `webui/src/pages/repos/commits/pulls.rs` — pulls definitions
+- `webui/src/pages/repos/compare/mod.rs` — The branch comparison page: `/:owner/:repo/compare` and `/:owner/:repo/compare/*spec`
+- `webui/src/pages/repos/compare/page.rs` — The branch comparison page: the Files changed list of a pull request, for any two branches of one repository
+- `webui/src/pages/repos/dependabot.rs` — dependabot definitions
+- `webui/src/pages/repos/dependencies.rs` — Administrator-only dependency inventory, advisory review and delegated update controls
+- `webui/src/pages/repos/dependency_graph.rs` — dependency graph definitions
+- `webui/src/pages/repos/disclosure.rs` — Private reports: only their reporter and current repository administrators receive this model
+- `webui/src/pages/repos/discussions.rs` — Read-only discussion pages share the repository chrome and safe Markdown renderer
+- `webui/src/pages/repos/editor/delete_file.rs` — delete file definitions
+- `webui/src/pages/repos/editor/mod.rs` — The file editor, delete and upload pages: `/:owner/:repo/new/*`, `edit/*`, `delete/*` and `upload/*`
+- `webui/src/pages/repos/editor/page.rs` — page definitions
+- `webui/src/pages/repos/editor/upload.rs` — The upload page: pick files, name the commit, and add the files to the branch in one commit
+- `webui/src/pages/repos/find/mod.rs` — The go-to-file list: `/:owner/:repo/find/*`
+- `webui/src/pages/repos/find/page.rs` — "Go to file": every file path at one revision. The server applies the `q` query when it renders; hydration filters complete listings locally and…
+- `webui/src/pages/repos/insights.rs` — Repository insights: daily activity, contributors, weekly code frequency, workflow usage and forks, each on its own page beside a section list, as…
+- `webui/src/pages/repos/insights/activity.rs` — activity definitions
+- `webui/src/pages/repos/insights/traffic.rs` — traffic definitions
+- `webui/src/pages/repos/invitations.rs` — Recipient-facing repository invitations; pending invitations are not repository access
+- `webui/src/pages/repos/issues/attributes.rs` — attributes definitions
+- `webui/src/pages/repos/issues/detail.rs` — detail definitions
+- `webui/src/pages/repos/issues/dom.rs` — The browser calls the list widgets need: the caret and scroll of the search box, and focus, scrolling and clicks for the suggestion and filter lists.…
+- `webui/src/pages/repos/issues/editor.rs` — editor definitions
+- `webui/src/pages/repos/issues/filter_menu.rs` — The list filter menus. Each is a native details element, so without JavaScript it opens and its choices are links that apply the filter. Once the…
+- `webui/src/pages/repos/issues/list.rs` — list definitions
+- `webui/src/pages/repos/issues/management.rs` — management definitions
+- `webui/src/pages/repos/issues/mod.rs` — Issue and pull request pages: the list, the detail, and the new and edit forms for both kinds
+- `webui/src/pages/repos/issues/new.rs` — new definitions
+- `webui/src/pages/repos/issues/page.rs` — Shared SSR/hydrated issue and PR presentation. Values are authorized by the caller
+- `webui/src/pages/repos/issues/reactions.rs` — The reaction bar under a description, a comment or a review. It is one native form: each reaction is a submit button, so it works without JavaScript
+- `webui/src/pages/repos/issues/relationships.rs` — relationships definitions
+- `webui/src/pages/repos/issues/search.rs` — The search text of an issue or pull request list. The box holds the filters as qualifiers, such as `state:closed` and `label:"two words"`, and the…
+- `webui/src/pages/repos/issues/search_box.rs` — The search box of an issue or pull request list. Without JavaScript it is a plain text field in the list's GET form. Once the page has hydrated, the…
+- `webui/src/pages/repos/issues/suggestions.rs` — suggestions definitions
+- `webui/src/pages/repos/issues/tests.rs` — Contracts for src / pages / repos / issues / tests
+- `webui/src/pages/repos/issues/tests/regressions.rs` — Contracts for src / pages / repos / issues / tests / regressions
+- `webui/src/pages/repos/labels/mod.rs` — The labels page, `/:owner/:repo/labels`. Everyone reads the labels here. An administrator adds, changes and deletes them, and the forms post to the…
+- `webui/src/pages/repos/labels/page.rs` — page definitions
+- `webui/src/pages/repos/merge.rs` — Native direct merges. Each option carries the commit identity displayed to the user
+- `webui/src/pages/repos/milestones/mod.rs` — Milestone pages: `/:owner/:repo/milestones`, `/milestones/new` and `/milestones/:number`
+- `webui/src/pages/repos/milestones/page.rs` — Milestone pages: the list, a milestone's page with its issues, and the new-milestone form
+- `webui/src/pages/repos/mod.rs` — Module assembly for actions, advisories, blame, blob, branches
+- `webui/src/pages/repos/page.rs` — Request-specific repository HTML. Data here is safe presentation data, never persistence rows
+- `webui/src/pages/repos/pages.rs` — Native Pages administration; there is deliberately no claim that sites are being hosted
+- `webui/src/pages/repos/pulls/checks.rs` — The Checks tab of a pull request: the workflow runs on its head commit
+- `webui/src/pages/repos/pulls/commits.rs` — The Commits tab of a pull request: the commits its head has that its base does not
+- `webui/src/pages/repos/pulls/diff.rs` — diff definitions
+- `webui/src/pages/repos/pulls/mod.rs` — Pull request pages: the commits, checks and files-changed views, and the review panels shared with the discussion
+- `webui/src/pages/repos/pulls/review.rs` — Review presentation for pull requests: the review form and reviews in the discussion, the reviewers panel, conversation badges, and inline threads on…
+- `webui/src/pages/repos/ref_switcher.rs` — The branch and tag menu of the repository pages. It lists both kinds of ref, narrows them as the reader types, and links each name to the page the…
+- `webui/src/pages/repos/ref_switcher_tests.rs` — Contracts for src / pages / repos / ref switcher tests
+- `webui/src/pages/repos/releases/mod.rs` — Releases: the list, a release's page and the form that publishes or edits one
+- `webui/src/pages/repos/releases/page.rs` — Release pages: the list with its paging, a release's notes and downloads, and the form that publishes a release or edits one, with its assets
+- `webui/src/pages/repos/secret_scanning.rs` — Security views contain alert metadata, never credential values
+- `webui/src/pages/repos/security.rs` — security definitions
+- `webui/src/pages/repos/security/checks.rs` — Read-only projections of durable SARIF analyses on a pull request's current revision
+- `webui/src/pages/repos/settings/environments.rs` — environments definitions
+- `webui/src/pages/repos/settings/mod.rs` — The repository settings page and the forms on it
+- `webui/src/pages/repos/settings/page.rs` — page definitions
+- `webui/src/pages/repos/settings/properties.rs` — Native repository metadata values; schema administration stays with organization owners
+- `webui/src/pages/repos/settings/secrets.rs` — secrets definitions
+- `webui/src/pages/repos/tests.rs` — Contracts for src / pages / repos / tests
+- `webui/src/pages/repos/tree/mod.rs` — The repository root and file tree: `/:owner/:repo` and `/:owner/:repo/tree/*`
+- `webui/src/pages/repos/tree/page.rs` — page definitions
+- `webui/src/pages/runners.rs` — Runner settings use native forms before and after hydration
+- `webui/src/pages/settings/fine_grained.rs` — Fine-grained personal access tokens: the list, the form that creates one, and one token's page
+- `webui/src/pages/settings/mod.rs` — Account settings: `/settings`, and the forms that post back to it
+- `webui/src/pages/settings/page.rs` — Account settings presentation
+- `webui/src/pages/settings/tests.rs` — Account settings contracts: a rejected form keeps its non-secret fields, and never its secrets
+- `webui/src/pages/users/mod.rs` — The profile page: `/:username`, with the repository list, the stars tab and the activity feed
+- `webui/src/pages/users/page.rs` — Public identity profile and repository filtering
+- `webui/src/pages/users/tests.rs` — Profile page contracts: safe website links, and the repository and activity lists
+
+## Repository root
+
+- `Containerfile` — Packaging only: nothing is compiled in this build. The server binary and the browser bundle are built outside the image (scripts/release.sh). Before…
+- `build.nix` — Native/browser/test toolchains
+- `flake.nix` — Pinned Nix builder entry
+
+## `examples/`
+
+- `examples/actions_values_ui.rs` — Browser fixture runner: build the real UI, then `cargo run --example actions_values_ui`
+
+## `schema/`
+
+- `schema/directory/0001.schema.sql` — The directory is a separate PostgreSQL database, with its own unreleased baseline
+- `schema/postgres/0001.schema.sql` — codeyard PostgreSQL schema
+- `schema/sqlite/0001.schema.sql` — codeyard SQLite schema
+
+## `scripts/`
+
+- `scripts/actions_smoke.py` — Private screenshot storage for Actions browser smoke commands
+- `scripts/bench-cell.sh` — One disposable PostgreSQL node; use an already built binary, never build here
+- `scripts/build-webui.sh` — Build the browser bundle: the Dioxus WASM application and its JS glue, which the server serves from WEBUI_DIST, plus the Tailwind CSS the server…
+- `scripts/builder-check.sh` — One source check round on the builder: workspace check, Clippy and the browser WASM build
+- `scripts/builder-test.sh` — Run inside the pinned test environment with an owned, disposable PostgreSQL
+- `scripts/builder-tests.sh` — Builder test gate, one part per job so each stays under 40 minutes: bash scripts/builder-tests.sh build|lib|database|placement|cells build compiles…
+- `scripts/capture-demo.py` — Record GIFs of real flows through the forge: the README demo and a set for visual review
+- `scripts/capture-ui-gallery.py` — Capture the current forge UI with a disposable SQLite server and Chromium
+- `scripts/cargo-executable.py` — Print the unique executable Cargo reported for a named binary target
+- `scripts/check-web-dependencies.py` — Reject native authority in the actual resolved browser dependency graph
+- `scripts/ci-local.sh` — Local release gate. Every command runs on the VPS builder through scripts/vps; nothing is compiled on this machine. --pg gives a run a throwaway…
+- `scripts/e2e.sh` — End-to-end check of the real codeyard server, on SQLite, PostgreSQL and a cluster
+- `scripts/elf-store-paths.py` — Print the /nix/store directories an ELF binary needs at run time: its interpreter
+- `scripts/github-api-routes.py` — Generate the /api/v3 route table and the coverage document from GitHub's REST description
+- `scripts/github-graphql-types.py` — Generate derive-schema types from GitHub's SDL; --check refuses stale output
+- `scripts/install-openssh.py` — Explicit, fail-closed native-host OpenSSH setup. No application startup here
+- `scripts/kube-ha.py` — Run Codeyard on a Kubernetes cluster with CloudNativePG and test it through its real boundaries
+- `scripts/release.sh` — Build the server binary and browser bundle into dist/release/, then package the server image
+- `scripts/run-openssh-coexistence.py` — One-shot privileged rehearsal ONLY in an explicitly provisioned disposable VM
+- `scripts/s3-tests.sh` — Runs the #[ignore]d S3 tests of tests/storage/production_storage.rs against a throwaway RustFS
+- `scripts/start-ci-runner.sh` — Start a dedicated rootless Podman API for trusted local Actions workflows
+- `scripts/test-builder-sync.sh` — Focused regressions for scripts/vps staging, its export isolation and release.sh packaging
+- `scripts/test-cell-e2e-cells.sh` — One isolated round; scripts/e2e.sh owns fixture cleanup and the 25-minute deadline
+- `scripts/test-cell-e2e-cluster.sh` — One isolated round; scripts/e2e.sh owns fixture cleanup and the 25-minute deadline
+- `scripts/test-cell-e2e-pgbouncer.sh` — One isolated round; scripts/e2e.sh owns fixture cleanup and the 25-minute deadline
+- `scripts/test-cell-e2e-quorum.sh` — One isolated round; scripts/e2e.sh owns fixture cleanup and the 25-minute deadline
+- `scripts/test-cell-e2e-replica.sh` — One isolated round; scripts/e2e.sh owns fixture cleanup and the 25-minute deadline
+- `scripts/test-cell-e2e.sh` — Run only the remaining cells-lane client rounds, retaining each round's own timeout
+- `scripts/test-cell-move-regressions.sh` — Isolated retries for unrelated cluster failures from the account-move test round
+- `scripts/test-cell-moves.sh` — Focused stage 6 tests; run inside scripts/builder-test.sh on the test builder
+- `scripts/test-compose-config.sh` — test compose config script
+- `scripts/test-helm.sh` — Render-only checks: no image builds or Kubernetes access
+- `scripts/test-webui-publish.sh` — Exercise publication failure and retry using owned fake build tools, without compiling
+- `scripts/with-valkey.sh` — Run a command with disposable loopback Valkey servers for the cache contract tests: one standalone server and a three-shard Cluster. The cache logs…
+
+## `tests/`
+
+- `tests/browser/test-actions-live.py` — Dispatch the real live smoke workflow through native Actions forms
+- `tests/browser/test-actions-ui.py` — Showcase the Actions UI against a repository with pre-seeded fixture runs
+- `tests/browser/test-actions-values-ui.py` — Real UI checks; invoked by examples/actions_values_ui.rs, never a mock bundle
+- `tests/browser/test-cluster-browser.py` — Check cluster administration on an owned e2e fixture, with and without hydration
+- `tests/browser/test-gists-browser.py` — Exercise the real gist application with and without hydration, in an owned SQLite install
+- `tests/browser/test-runners-browser.py` — Exercise the disposable runner-settings fixture with and without hydration
+- `tests/browser/test-webui-regressions.py` — Playwright checks against a disposable, bundled server with a long issue and a PR diff
+- `tests/cells/advisories.rs` — One advisory dataset for every cell: each cell pulls the same OSV mirror and matches its own repositories, so a new advisory raises Dependabot alerts…
+- `tests/cells/authorization.rs` — Home answers travel over node-key TLS; directory enrollment grants no resource authority
+- `tests/cells/directory.rs` — Directory requests use real authenticated node-key TLS and live enrollment
+- `tests/cells/frontend.rs` — Public HTTP selection against native cells and an authenticated directory
+- `tests/cells/graphql.rs` — Router dispatch over real directory TLS and two HTTP cells, without app resolvers in the router
+- `tests/cells/main.rs` — `cells` module root
+- `tests/cells/moves.rs` — A token keeps working after its user moves to another cell: the router sends account-wide requests to the new home, and the cell that issued the…
+- `tests/cells/publication.rs` — Native mutations publish through real pinned directory TLS and retain local transaction authority
+- `tests/cells/regions.rs` — Regions through the real router: signups land in the router's region, accounts keep their home, an organization with presence reads from its home…
+- `tests/cells/search.rs` — The global search index over the real pinned directory transport: each cell writes only its own repositories, later versions win, and private…
+- `tests/ci/access_changes.rs` — Collaborator access changes and PostgreSQL bans while CI is finishing
+- `tests/ci/action_secrets.rs` — Repository secrets use sealed-box input, encrypted storage and metadata-only reads
+- `tests/ci/action_variables.rs` — Contracts for ci / action variables
+- `tests/ci/actions_approval.rs` — Fork runs remain unclaimable until a trusted base writer approves the pinned head
+- `tests/ci/actions_cache_policy.rs` — Administrative cache limits patch one field and constrain existing and future runtime objects
+- `tests/ci/actions_concurrency.rs` — Workflow leases serialize claims, replace pending runs, and retain finished-run configuration
+- `tests/ci/actions_enterprise.rs` — Absent tenancy and provider identities must never become fabricated data
+- `tests/ci/actions_job_concurrency.rs` — Job-level concurrency: one job per group holds it, a newer job replaces the waiting one, and cancel-in-progress cancels the holder, which keeps the…
+- `tests/ci/actions_jobs.rs` — A native worker's authenticated observations survive completion and remain repository-scoped
+- `tests/ci/actions_logs.rs` — Real ZIP/text responses and delegated log capabilities on each database
+- `tests/ci/actions_objects.rs` — Actions REST metadata and capability downloads operate on real runtime uploads on both databases
+- `tests/ci/actions_org_policy.rs` — Organization cache ceilings constrain existing objects and stale runtime preflights
+- `tests/ci/actions_org_usage.rs` — Organization cache reports include real uploads, paging, and current tenant authority
+- `tests/ci/actions_reruns.rs` — Real native attempts preserve pinned content, identities, counters and runner contexts
+- `tests/ci/actions_run_mutations.rs` — Run mutations check scoped credentials again at the effect and retain runtime cleanup
+- `tests/ci/actions_runs.rs` — Native-backed run documents, stable workflow counters, filters and attempt lookup
+- `tests/ci/actions_settings.rs` — The Actions settings: an administrator sets the site's limits on each run, a repository may only lower them, a claimed run carries the stricter of…
+- `tests/ci/actions_usage.rs` — Timing includes immutable re-run attempts and excludes unobserved and self-hosted jobs
+- `tests/ci/actions_workflows.rs` — GitHub workflow discovery, immutable dispatch, and disabling at durable admission on both databases
+- `tests/ci/attestations.rs` — Contracts for ci / attestations
+- `tests/ci/branch_names.rs` — A CI run stores the branch it ran for the way a manual run names it: `main`, not `refs/heads/main`. A pushed tag keeps its full ref, so it cannot be…
+- `tests/ci/checks.rs` — All twelve checks operations use the real router and the vendored response schemas
+- `tests/ci/dependabot.rs` — Dependabot secrets must never be exposed to an Actions run
+- `tests/ci/deployment_protection.rs` — Environment rule APIs and App decisions fence real CI claims on both engines
+- `tests/ci/dispatch_replay.rs` — Dispatch form limits and reruns retain the same workflow inputs and files
+- `tests/ci/engines.rs` — Both real runners execute admitted workflows through the CI worker loop
+- `tests/ci/environment_engines.rs` — Both real engines receive job-bound scopes, including Unicode case aliases
+- `tests/ci/environment_limits.rs` — Contracts for ci / environment limits
+- `tests/ci/environment_values.rs` — Contracts for ci / environment values
+- `tests/ci/gh_apps.rs` — gh 2.102.0 requests pass through the application router on both engines
+- `tests/ci/github_tokens.rs` — Run credentials through REST, smart Git and the live credential rechecks on both engines
+- `tests/ci/log_chunks.rs` — Incremental log durability, cursors and retention on both native engines
+- `tests/ci/main.rs` — Contracts for ci / main
+- `tests/ci/oidc.rs` — Called workflows retain their own OIDC identity and cannot borrow a caller's permission
+- `tests/ci/organization_values.rs` — Contracts for ci / organization values
+- `tests/ci/push_events.rs` — Push admission uses the published ref and endpoint trees, regardless of the write route
+- `tests/ci/queue.rs` — The CI queue while authority changes, on disposable SQLite and PostgreSQL databases: a claim checks again that the person who started a run may still…
+- `tests/ci/queue/filtered_history.rs` — Contracts for ci / queue / filtered history
+- `tests/ci/results.rs` — Toolkit-shaped Twirp requests and Azure block blobs over the real router on both engines
+- `tests/ci/reusable.rs` — Called workflows are admitted from authorized repositories and run from immutable snapshots
+- `tests/ci/run_actions.rs` — Cancelling and re-running a CI run from its page, through the native forms. Writers may use them, readers may not, and a run can be cancelled by the…
+- `tests/ci/runners.rs` — REST runner administration uses real cluster pairing and the native claim transactions
+- `tests/ci/trigger_events.rs` — Pull request activity filters and base-workflow authority through the HTTP API
+- `tests/ci/workers.rs` — Database-free workers reach the real core queue over encrypted loopback iroh
+- `tests/collaboration/assignment_notifications.rs` — Assignment notifications, on SQLite and PostgreSQL. A user who is newly assigned to an issue or pull request hears about it once, through the…
+- `tests/collaboration/comment_changes.rs` — Editing and deleting comments on issues and pull requests, through the native forms. Authors and repository writers may moderate comments; only…
+- `tests/collaboration/gh_status_search.rs` — Requests and response fields used by pkg/cmd/status and pkg/search in gh
+- `tests/collaboration/github.rs` — GitHub labels through the real router on SQLite and PostgreSQL
+- `tests/collaboration/github_catalog_search.rs` — Contracts for collaboration / github catalog search
+- `tests/collaboration/github_comments.rs` — Contracts for collaboration / github comments
+- `tests/collaboration/github_commit_reactions.rs` — Contracts for collaboration / github commit reactions
+- `tests/collaboration/github_content_search.rs` — Contracts for collaboration / github content search
+- `tests/collaboration/github_events.rs` — Contracts for collaboration / github events
+- `tests/collaboration/github_global_issues.rs` — Contracts for collaboration / github global issues
+- `tests/collaboration/github_issue_attributes.rs` — Contracts for collaboration / github issue attributes
+- `tests/collaboration/github_issues.rs` — Contracts for collaboration / github issues
+- `tests/collaboration/github_locking.rs` — Contracts for collaboration / github locking
+- `tests/collaboration/github_milestones.rs` — Contracts for collaboration / github milestones
+- `tests/collaboration/github_parent_creation.rs` — Contracts for collaboration / github parent creation
+- `tests/collaboration/github_pins.rs` — Contracts for collaboration / github pins
+- `tests/collaboration/github_projects.rs` — Projects v2 through the real router on both engines
+- `tests/collaboration/github_reactions.rs` — Contracts for collaboration / github reactions
+- `tests/collaboration/github_relationships.rs` — Contracts for collaboration / github relationships
+- `tests/collaboration/github_release_reactions.rs` — Contracts for collaboration / github release reactions
+- `tests/collaboration/github_search.rs` — Contracts for collaboration / github search
+- `tests/collaboration/github_suggestions.rs` — Contracts for collaboration / github suggestions
+- `tests/collaboration/inputs.rs` — Issue, pull request, comment and review text, repository descriptions, oversized comparisons and the collaborator list, through the JSON API and the…
+- `tests/collaboration/list_views.rs` — The issue list's sort keys and filters, and the milestone list's sort, over HTTP on SQLite and PostgreSQL. Each sort orders the rows, each filter…
+- `tests/collaboration/main.rs` — Contracts for collaboration / main
+- `tests/collaboration/mention_notifications.rs` — Mention notifications over HTTP and the native forms. A user that new issue, pull request, comment or review text mentions is notified, and so is a…
+- `tests/collaboration/milestone_pagination.rs` — Contracts for collaboration / milestone pagination
+- `tests/collaboration/milestones_and_assignees.rs` — Assignees, milestones and the issue list filters on disposable SQLite and PostgreSQL databases. Setup failure fails the test; nothing is skipped or…
+- `tests/collaboration/notification_badge.rs` — The header's unread badge, on SQLite and PostgreSQL. A signed-in page shows the unread inbox count on the Inbox icon and on the phone menu, and the…
+- `tests/collaboration/notification_privacy.rs` — Notification privacy on disposable PostgreSQL and SQLite databases: what each user can list, acknowledge and receive, and the original-session inbox
+- `tests/collaboration/notification_privacy/contention.rs` — Contracts for collaboration / notification privacy / contention
+- `tests/collaboration/notification_privacy/delivery.rs` — Original live-session and stale/forged wakeup projection contracts
+- `tests/collaboration/notification_privacy/fixture.rs` — Contracts for collaboration / notification privacy / fixture
+- `tests/collaboration/notification_privacy/provenance.rs` — Original-scope contracts: a notification keeps the repository it was about, even after that repository is deleted, so private history stays hidden
+- `tests/collaboration/notification_privacy/session_inbox.rs` — Original-session persisted inbox contracts on real native stores
+- `tests/collaboration/notification_privacy/threads.rs` — Contracts for collaboration / notification privacy / threads
+- `tests/collaboration/notification_privacy/token_inbox.rs` — Token and browser inboxes use the same native rows and transaction-scoped authority
+- `tests/collaboration/notification_views.rs` — The notification tabs and their marks, through the JSON API and the native forms, on SQLite and PostgreSQL. Saved and done move items between tabs…
+- `tests/collaboration/page_regressions.rs` — Bounded database-backed discussion pages and recoverable native submissions
+- `tests/collaboration/reactions.rs` — Reactions on issue descriptions and comments, on pull request reviews and their inline comments, and the timeline of changes, through the native…
+- `tests/collaboration/references.rs` — GitHub-style references in Markdown over HTTP. A reader gets links only to the repositories it can read: a private or missing repository reads as…
+- `tests/collaboration/sidebar.rs` — Assignees, milestones and list filters through the native forms and pages, on SQLite and PostgreSQL. A writer manages; a reader sees; a stranger…
+- `tests/collaboration/submission_regressions.rs` — Contracts for collaboration / submission regressions
+- `tests/collaboration/templates.rs` — Issue and pull request templates: the issue chooser, the prefilled issue form, the `config.yml` switch for blank issues, the pull request description…
+- `tests/collaboration/templates/reads.rs` — Contracts for collaboration / templates / reads
+- `tests/collaboration/webui_regressions.rs` — Contracts for collaboration / webui regressions
+- `tests/database/account_transitions.rs` — Contracts for database / account transitions
+- `tests/database/cell_forks.rs` — A foreign source cannot authorize a native fork after its last admission is revoked
+- `tests/database/cell_memberships.rs` — Pointer delivery is ordered and atomic; a pointer never becomes native account authority
+- `tests/database/cell_stubs.rs` — Remote metadata keeps references without creating local accounts or credentials
+- `tests/database/cells.rs` — The operator CLI reserves ranges atomically and preserves existing cell-zero IDs
+- `tests/database/copy.rs` — Copying a whole application database between SQLite and PostgreSQL
+- `tests/database/dependency_security.rs` — Contracts for database / dependency security
+- `tests/database/directory.rs` — Separate-directory operator commands and atomic claims across two cells
+- `tests/database/foreign_authorization.rs` — Heartbeat proofs belong to one operation and never create local credentials
+- `tests/database/main.rs` — Contracts for database / main
+- `tests/database/migrations.rs` — The migration ledger refuses a database whose recorded history differs from this build
+- `tests/database/move_cli.rs` — The operator move runs against two real cells and a pinned directory, then Git and HTTP reads preserved issue/pull numbers, CI history and…
+- `tests/database/move_http.rs` — The real HTTP write path must obey a move's database freeze, including rollback
+- `tests/database/move_regions.rs` — The hourly region evaluation moves a user whose own counted requests come from another region, through the same move as `cell move`, and keeps to its…
+- `tests/database/move_repository.rs` — A repository transferred to an owner in another cell keeps its issue and pull request numbers and Git history, and its old name redirects. The CLI…
+- `tests/database/moves.rs` — Account moves between two PostgreSQL cells: the freeze, the copy, a failed copy, a repeated copy and the release
+- `tests/database/native.rs` — Real native SQLite contracts and populated PostgreSQL parity
+- `tests/database/ops.rs` — Contracts for database / ops
+- `tests/database/queries.rs` — Database layer tests
+- `tests/database/regressions.rs` — Regression contracts for database effects and their current authority on both engines
+- `tests/database/regressions/assignment_and_search.rs` — Contracts for database / regressions / assignment and search
+- `tests/database/regressions/contention.rs` — Contracts for database / regressions / contention
+- `tests/database/regressions/infra.rs` — Contracts for database / regressions / infra
+- `tests/database/regressions/notifications.rs` — Contracts for database / regressions / notifications
+- `tests/database/regressions/session_and_delivery.rs` — Contracts for database / regressions / session and delivery
+- `tests/e2e/e2e-cells.py` — Two native PostgreSQL cells behind the real HTTP/SSH router, driven by gh and Git
+- `tests/e2e/e2e-github.py` — Unmodified GitHub CLI and github-script against e2e.sh's actual forge processes
+- `tests/e2e/e2e-web.py` — HTTP and HTML helper for scripts/e2e.sh. Standard library only
+- `tests/e2e/gh_sweep/cases_g1.py` — Real-gh repository, organization, catalog and ruleset contracts
+- `tests/e2e/gh_sweep/cases_g2.py` — Real-gh pull request tests. All repositories, branches and metadata are case-local
+- `tests/e2e/gh_sweep/cases_g3.py` — Real-gh issue, discussion and label cases; every repository is case-private
+- `tests/e2e/gh_sweep/cases_g4.py` — Projects v2 against real gh (including its GraphQL, not REST, errors)
+- `tests/e2e/gh_sweep/cases_g5.py` — Real-gh release and gist cases; each invocation owns its repositories and gists
+- `tests/e2e/gh_sweep/cases_g6.py` — Actions/settings sweep: disposable repositories, no marketplace actions or shared names
+- `tests/e2e/gh_sweep/cases_g7.py` — Real-gh g7 contracts. All mutable CLI configuration is private to a case
+- `tests/e2e/gh_sweep/cases_g8.py` — Cloud-only commands test gh's GHES/auth guards, not github.com services
+- `tests/e2e/gh_sweep/example_cases.py` — Three small examples; group lanes supply the exhaustive command variants
+- `tests/e2e/gh_sweep/harness.py` — Shared real-gh sweep contract (Python standard library only)
+- `tests/e2e/gh_sweep/lane_check.py` — Static done-check for one lane: python3 tests/e2e/gh_sweep/lane_check.py g3
+- `tests/e2e/test-e2e-github.py` — Harness guards only; real CLI compatibility is checked by scripts/e2e.sh
+- `tests/e2e/test-e2e-web.py` — Regressions for the HTTP/native form test client
+- `tests/e2e/test-gh-sweep.py` — Offline harness tests: only a temporary fake gh executable is ever launched
+- `tests/git/deploy_keys.rs` — Deploy keys over built-in SSH: a read-only key clones its repository and cannot push, a write key pushes, a key never reaches another repository, and…
+- `tests/git/gists.rs` — Real gist smart HTTP, built-in SSH, remote publication, and promoted-copy recovery
+- `tests/git/http.rs` — Real Git smart-HTTP clients against disposable servers on both databases
+- `tests/git/main.rs` — Contracts for git / main
+- `tests/git/maintainer_ssh.rs` — A base maintainer pushes over built-in SSH to the head branch of a fork's pull request that allows maintainer edits, and to nothing else in that fork
+- `tests/git/production.rs` — Merge and fork tests on real Git repositories, with a throwaway PostgreSQL schema for the database parts. A missing database is a failure, not a skip
+- `tests/git/publication_authority.rs` — Live actor and repository authority at local Git publication boundaries
+- `tests/git/ref_limits.rs` — Git pushes over smart HTTP at the branch and tag limit, and branch names that are not ASCII
+- `tests/git/remote.rs` — Real Git clients use a web/SSH node whose repositories live on a storage node
+- `tests/git/remote/streaming.rs` — Large and multi-round Git transfers through real HTTP and built-in SSH servers
+- `tests/git/rule_suites.rs` — Real pushes record rule suites for rulesets in evaluate mode without being refused
+- `tests/git/secret_scanning.rs` — Real receive-pack rejects quarantined secrets and honors only the pusher's bypass
+- `tests/git/ssh_host_key.rs` — Contracts for git / ssh host key
+- `tests/git/ssh_key_enrollment.rs` — Shared SSH key validation, enrollment and live identity reads on both databases
+- `tests/git/startup_storage.rs` — Contracts for git / startup storage
+- `tests/identity/account_management.rs` — Account management contracts on SQLite and PostgreSQL: administrator roles, email changes behind the current password, organization invitations and…
+- `tests/identity/admin_accounts.rs` — The administration account list reads recorded repository sizes. A GET never scans repositories, so an uncached or missing repository cannot slow it…
+- `tests/identity/admin_pages.rs` — The administration forms: ban, role, signup request decisions, account creation and the refusal of everyone who is not an administrator, on SQLite…
+- `tests/identity/administration_regressions.rs` — Contracts for identity / administration regressions
+- `tests/identity/authority_regressions.rs` — Account metadata, privileged mutations and enrollment retain their database authority
+- `tests/identity/avatars.rs` — Profile pictures of users and organizations, on SQLite and PostgreSQL: a user points their picture at a confirmed upload in the shared domain or…
+- `tests/identity/cells.rs` — A cookie's routing prefix cannot alias a local session with the same random value
+- `tests/identity/cli_identity.rs` — The public executable remains codeyard despite Cargo's identifier constraint
+- `tests/identity/csrf.rs` — Browser auth contracts: CSRF synchronizers, native auth forms, setup names and temporary-password settings. Page navigation admission is tested…
+- `tests/identity/email_links.rs` — Codes and links sent by email, on SQLite and PostgreSQL: confirming an address and resetting a password. Mail is only queued here; nothing talks to…
+- `tests/identity/fine_grained_tokens.rs` — Fine-grained personal access tokens from the settings pages: the create form, the value shown once, regeneration, expiry and deletion, on both engines
+- `tests/identity/gh_gists_gpg.rs` — Exact gh 2.102.0 gist and GPG-key requests through the application router
+- `tests/identity/gh_keys_auth.rs` — Requests emitted by gh 2.102.0 for SSH keys and Enterprise auth status
+- `tests/identity/gists_authority.rs` — Live gist authority, publication recovery, and size boundaries on both engines
+- `tests/identity/gists_namespace.rs` — The new namespace neither hides existing accounts nor lets deleted gist URLs be captured
+- `tests/identity/gists_pages.rs` — The native gist forms work without product JavaScript and use the same stored Git data
+- `tests/identity/github.rs` — GitHub account documents, follow edges and keys through the real router on both engines
+- `tests/identity/github_app_manifests.rs` — Browser-approved manifest conversion and signed app webhooks on both real databases
+- `tests/identity/github_apps.rs` — App JWTs, installation credentials and native account consent through the real router
+- `tests/identity/github_blocks.rs` — Private blocking policy is enforced at the same database effects used by every transport
+- `tests/identity/github_emails.rs` — Secondary email management uses the real router, mail codes, and both database engines
+- `tests/identity/github_gists.rs` — GitHub gist contracts against real Git storage and each database engine
+- `tests/identity/github_gpg.rs` — Contracts for identity / github gpg
+- `tests/identity/github_interactions.rs` — Contracts for identity / github interactions
+- `tests/identity/github_pull_caps.rs` — Contracts for identity / github pull caps
+- `tests/identity/identity_public_response.rs` — Contracts for identity / identity public response
+- `tests/identity/main.rs` — Contracts for identity / main
+- `tests/identity/native_oauth.rs` — Provider sign-in is a browser flow, separate from the token-only API
+- `tests/identity/oauth_apps.rs` — GitHub CLI OAuth requests, native approval, replay and revocation on both databases
+- `tests/identity/oauth_cli.rs` — The real gh binary talks to the real router over its supported Unix-socket transport
+- `tests/identity/production_auth.rs` — Required PostgreSQL-only auth fixtures. No .env fallback and no silent skips
+- `tests/identity/profile_activity.rs` — Profile activity lists what a user pushed, opened and commented on, and hides items in repositories the viewer cannot read
+- `tests/identity/review_regressions.rs` — Review, profile and session regressions on both database engines
+- `tests/identity/two_factor.rs` — Two-factor sign-in: enabling with a generated code, the password step withholding the session, single-use codes, recovery codes, password-gated…
+- `tests/identity/two_factor/session.rs` — Contracts for identity / two factor / session
+- `tests/notification_polling/main.rs` — Contracts for notification polling / main
+- `tests/organizations/authority.rs` — Organization authority contracts on disposable PostgreSQL and SQLite databases
+- `tests/organizations/contribution_authority.rs` — Contribution authority on disposable PostgreSQL and SQLite databases: who may open, comment on and review issues and pull requests. Setup failure…
+- `tests/organizations/discovery_owner.rs` — Owner names on discovery pages and APIs, on disposable PostgreSQL and SQLite databases. Model responses are not raw HTML or hydrated pages
+- `tests/organizations/discovery_owner/contracts.rs` — Contracts for organizations / discovery owner / contracts
+- `tests/organizations/discovery_owner/fixture.rs` — Owned fixture rows only; no production organization creation or storage conversion
+- `tests/organizations/discovery_owner/malformed.rs` — Contracts for organizations / discovery owner / malformed
+- `tests/organizations/github.rs` — Organization REST documents and privacy through the real router on both engines
+- `tests/organizations/github/blocks.rs` — Contracts for organizations / github / blocks
+- `tests/organizations/github/dependabot_access.rs` — Contracts for organizations / github / dependabot access
+- `tests/organizations/github/hooks.rs` — Contracts for organizations / github / hooks
+- `tests/organizations/github/installations.rs` — Organization installation discovery and who may manage fine-grained token grants, on both engines
+- `tests/organizations/github/invitations.rs` — Contracts for organizations / github / invitations
+- `tests/organizations/github/issue_fields.rs` — Contracts for organizations / github / issue fields
+- `tests/organizations/github/issue_types.rs` — Contracts for organizations / github / issue types
+- `tests/organizations/github/outside.rs` — Contracts for organizations / github / outside
+- `tests/organizations/github/private_registries.rs` — Contracts for organizations / github / private registries
+- `tests/organizations/github/properties.rs` — Contracts for organizations / github / properties
+- `tests/organizations/github/properties/lifecycle.rs` — Contracts for organizations / github / properties / lifecycle
+- `tests/organizations/github/properties/native.rs` — Contracts for organizations / github / properties / native
+- `tests/organizations/github/release_settings.rs` — Contracts for organizations / github / release settings
+- `tests/organizations/github/repo_rulesets.rs` — Contracts for organizations / github / repo rulesets
+- `tests/organizations/github/roles.rs` — Contracts for organizations / github / roles
+- `tests/organizations/github/rulesets.rs` — Contracts for organizations / github / rulesets
+- `tests/organizations/github/security.rs` — Contracts for organizations / github / security
+- `tests/organizations/github/settings.rs` — Contracts for organizations / github / settings
+- `tests/organizations/github/settings/native.rs` — Contracts for organizations / github / settings / native
+- `tests/organizations/github/settings/policies.rs` — Contracts for organizations / github / settings / policies
+- `tests/organizations/github/teams.rs` — Team REST and legacy routes use the native organization policy on both engines
+- `tests/organizations/github/teams/nested.rs` — Contracts for organizations / github / teams / nested
+- `tests/organizations/github/token_grants.rs` — Organization-owned fine-grained tokens: the owners' policy, approval, revocation and membership, through the REST grant endpoints and the settings…
+- `tests/organizations/identity_regressions.rs` — Organization repository discovery, paging, deletion scope and invitation consumption
+- `tests/organizations/invitation_pagination.rs` — Contracts for organizations / invitation pagination
+- `tests/organizations/main.rs` — Contracts for organizations / main
+- `tests/organizations/namespace_authority.rs` — Namespace contracts on disposable PostgreSQL schemas and SQLite files: users and organizations cannot share a name. A missing PostgreSQL URL fails…
+- `tests/organizations/owner_authorization.rs` — Live router and native-form authorization regressions on disposable SQLite, Git and local objects. No private installation or CI executor
+- `tests/organizations/pages.rs` — Actual application-router and native-form contracts on disposable databases
+- `tests/organizations/pages/deletion.rs` — Organization deletion refusals, and the unknown-username message for owners and admins
+- `tests/organizations/pages/fixture.rs` — Shared disposable fixtures only; no server listeners, executor or ambient installation
+- `tests/organizations/pages/members.rs` — Contracts for organizations / pages / members
+- `tests/organizations/pages/pagination.rs` — Contracts for organizations / pages / pagination
+- `tests/organizations/pages/profile.rs` — Contracts for organizations / pages / profile
+- `tests/organizations/pages/public.rs` — The public organization page at /NAME: each viewer sees the repositories the store allows
+- `tests/organizations/pages/routes.rs` — Contracts for organizations / pages / routes
+- `tests/organizations/pages/team_page.rs` — The team page at /orgs/NAME/teams/SLUG. Only active organization members see it; anyone else gets the answer of a missing team, and a secret team…
+- `tests/organizations/repository_access.rs` — Repository read access through organization roles, teams and direct grants, on a disposable SQLite file and an owned gitserv_test PostgreSQL schema
+- `tests/organizations/repository_creation.rs` — Who may create repositories (personal, organization, forks), on SQLite and PostgreSQL, plus creating a real bare repository on disk
+- `tests/organizations/repository_creation/fixture.rs` — Child-process and file-wait helpers for repository creation tests
+- `tests/organizations/repository_pages.rs` — Actual application router, native forms and empty Git initialization on disposable PostgreSQL/SQLite fixtures. Setup failures fail the test; nothing…
+- `tests/organizations/repository_pages/choices.rs` — Contracts for organizations / repository pages / choices
+- `tests/organizations/repository_pages/fixture.rs` — Disposable native fixtures: the actual router, repository storage and Git initialization
+- `tests/organizations/repository_pages/forms.rs` — Contracts for organizations / repository pages / forms
+- `tests/organizations/rulesets.rs` — Contracts for organizations / rulesets
+- `tests/organizations/write_authority.rs` — Who can write to organization repositories (edit issues/PRs, merge, fork, run CI) as team grants, roles and account restrictions change
+- `tests/placement/backups.rs` — Operator commands restore only disposable databases and directories owned by this fixture
+- `tests/placement/cli.rs` — The `cluster` subcommands as the executable runs them: what works without a database, what must be refused on a SQLite installation, and (the first…
+- `tests/placement/drain.rs` — Contracts for cluster / drain
+- `tests/placement/fixes.rs` — Contracts for cluster / fixes
+- `tests/placement/main.rs` — Contracts for cluster / main
+- `tests/placement/monitoring.rs` — Contracts for cluster / monitoring
+- `tests/placement/monitoring_bounds.rs` — Contracts for cluster / monitoring bounds
+- `tests/placement/notification_cluster.rs` — Notification hints cross web nodes through a bounded database cursor
+- `tests/placement/objects.rs` — Real authenticated storage sockets behind independent web routers, without S3
+- `tests/placement/pairing.rs` — Cluster pairing and the member check, with real iroh endpoints on localhost and PostgreSQL. A missing fixture fails these tests; nothing is skipped
+- `tests/placement/production_controls.rs` — Persistent account/IP counters must be shared by independently composed web nodes
+- `tests/placement/quorum.rs` — Real receive hooks and two in-process storage RPC servers share one database
+- `tests/placement/quorum_default.rs` — New installations choose majority; selecting the legacy policy never rewrites Git data
+- `tests/placement/quorum_disk.rs` — An owned, bounded tmpfs produces real ENOSPC without filling the builder's disk
+- `tests/placement/quorum_sql.rs` — SQL, coordinator and local term-recovery contracts run unchanged on both engines
+- `tests/placement/replicas.rs` — Replicas: copies of a repository on other storage nodes. The database rules run on both engines; the copying runs between real in-process nodes on…
+- `tests/placement/scaling.rs` — Contracts for cluster / scaling
+- `tests/placement/search.rs` — Code search over a repository stored on another node. The web node asks the storage node for the matching lines through the repository RPC, as it…
+- `tests/placement/sso.rs` — Two real web processes complete one organization login against an owned OIDC provider
+- `tests/placement/storage_moves.rs` — A repository on a storage node moves with its owner account to another cell
+- `tests/placement/tcp.rs` — Node connections over TCP and TLS, with real sockets on loopback and one PostgreSQL database. Most nodes here have no iroh socket and are reachable…
+- `tests/pull_requests/audit_regressions.rs` — PR read budgets, revision checks and metadata projections on both databases
+- `tests/pull_requests/code_owners.rs` — CODEOWNERS on pull requests: who is asked to review, and the merge wait that a branch rule adds, on SQLite and PostgreSQL
+- `tests/pull_requests/compare.rs` — The branch comparison page over HTTP: a public repository reads anonymously, a private one a stranger cannot read stays a plain 404, the same branch…
+- `tests/pull_requests/diff_view.rs` — The pull request files page in its unified and split views, on SQLite and PostgreSQL. The address names the view with `view=split`, the toggle links…
+- `tests/pull_requests/forks.rs` — Fork pull requests through JSON and native HTML, on both databases
+- `tests/pull_requests/github.rs` — GitHub pull request reads through the real router on both engines
+- `tests/pull_requests/github_async_merge.rs` — Contracts for pull requests / github async merge
+- `tests/pull_requests/github_issue_conversion.rs` — Contracts for pull requests / github issue conversion
+- `tests/pull_requests/github_maintainer_edit.rs` — Contracts for pull requests / github maintainer edit
+- `tests/pull_requests/github_multiline.rs` — Contracts for pull requests / github multiline
+- `tests/pull_requests/github_reviews.rs` — Review reads retain pending-review privacy, and dismissals use live administration rights
+- `tests/pull_requests/github_stacks.rs` — Contracts for pull requests / github stacks
+- `tests/pull_requests/github_team_reviewers.rs` — Requested teams are durable native identities, with live nested membership and visibility
+- `tests/pull_requests/github_update_branch.rs` — Contracts for pull requests / github update branch
+- `tests/pull_requests/github_writes.rs` — Contracts for pull requests / github writes
+- `tests/pull_requests/main.rs` — Contracts for pull requests / main
+- `tests/pull_requests/merge_decisions.rs` — Protected merges require every independent CI producer, on SQLite and PostgreSQL
+- `tests/pull_requests/merge_followup.rs` — An applied merge still reconciles PRs and CI when repository metadata cannot be saved
+- `tests/pull_requests/merge_methods.rs` — Merge methods on pull requests, on SQLite and PostgreSQL. A squash or rebase merge writes the commits its method promises, the repository's allowed…
+- `tests/pull_requests/publication_regressions.rs` — Contracts for pull requests / publication regressions
+- `tests/pull_requests/ready.rs` — A draft pull request can be taken out of draft by its author and by people with write access, only while it is open, through the JSON API and the…
+- `tests/pull_requests/refresh.rs` — Pull requests follow their branches through the JSON API and the HTML merge form, on SQLite and PostgreSQL: editor saves, branch changes and merges…
+- `tests/pull_requests/restack.rs` — Rebase stack on SQLite and PostgreSQL, through the JSON API, the native form and the pull request page. A rebase replays each open layer's own…
+- `tests/pull_requests/review_flow.rs` — The pull request review flow through the native forms: the review box, who may vote, stale and outdated marks after a push, inline comments from the…
+- `tests/pull_requests/review_rules.rs` — Pull request review rules: who may review, when a review needs a body, how approvals and change requests count under a branch rule, reply threading…
+- `tests/pull_requests/stacks.rs` — Stacks on SQLite and PostgreSQL, through the JSON API and the pull request page. A pull request joins a stack only when someone asks it to. Once…
+- `tests/repositories/archive_and_default_branch.rs` — Archiving a repository makes it read-only for everyone, and unarchiving gives that back. The default branch is chosen among existing branches by an…
+- `tests/repositories/audit_regressions.rs` — Contracts for repositories / audit regressions
+- `tests/repositories/blame.rs` — The blame page over HTTP on disposable SQLite and PostgreSQL data: who last changed each line, the blob page's link to it, and the refusals for…
+- `tests/repositories/blob_preview.rs` — Contracts for repositories / blob preview
+- `tests/repositories/branch_protection_settings.rs` — Branch protection rules on the repository settings page: the native forms add, change and delete rules, refuse bad input with the submitted values…
+- `tests/repositories/branch_tabs.rs` — The branch list's All, Active and Stale tabs on SQLite and PostgreSQL. A branch is stale when its tip commit is older than 90 days. The tabs filter…
+- `tests/repositories/browsing_regressions.rs` — Namespace-aware browsing and database-only repository pages on both engines
+- `tests/repositories/cell_routes.rs` — Routing policies come from the real route constructors, including nested API aliases
+- `tests/repositories/dashboard_repositories.rs` — The dashboard's repository sections on SQLite and PostgreSQL: the viewer's own repositories, repositories shared with the viewer, and Trending…
+- `tests/repositories/deploy_keys.rs` — Deploy keys through the JSON API and the settings forms, on SQLite and PostgreSQL: only repository admins manage them, a key is unique across account…
+- `tests/repositories/discovery_pages.rs` — The public discovery pages on SQLite and PostgreSQL. Search answers with its result types, sorts and counts, and keeps private repositories and their…
+- `tests/repositories/editor_save.rs` — Editor saves through the JSON API and the HTML form, on SQLite and PostgreSQL
+- `tests/repositories/find.rs` — The "Go to file" page over HTTP on disposable SQLite and PostgreSQL data: the file listing of a branch, the `q` filter, the repository root's link to…
+- `tests/repositories/fine_grained_tokens.rs` — Fine-grained personal access tokens on repositories: each repository selection, read and write grants, and the resource owner, through REST, GraphQL…
+- `tests/repositories/github.rs` — GitHub REST documents through the real router on both database engines
+- `tests/repositories/github/access_restrictions.rs` — Contracts for repositories / github / access restrictions
+- `tests/repositories/github/activity.rs` — Contracts for repositories / github / activity
+- `tests/repositories/github/advisories.rs` — Contracts for repositories / github / advisories
+- `tests/repositories/github/autolinks.rs` — Contracts for repositories / github / autolinks
+- `tests/repositories/github/branch_admission.rs` — Contracts for repositories / github / branch admission
+- `tests/repositories/github/code_owners.rs` — Contracts for repositories / github / code owners
+- `tests/repositories/github/code_scanning.rs` — Contracts for repositories / github / code scanning
+- `tests/repositories/github/code_scanning/databases.rs` — Contracts for repositories / github / code scanning / databases
+- `tests/repositories/github/code_scanning/pagination.rs` — Contracts for repositories / github / code scanning / pagination
+- `tests/repositories/github/code_scanning/pulls.rs` — Contracts for repositories / github / code scanning / pulls
+- `tests/repositories/github/code_scanning/webhooks.rs` — Contracts for repositories / github / code scanning / webhooks
+- `tests/repositories/github/code_security.rs` — Contracts for repositories / github / code security
+- `tests/repositories/github/code_security/transfers.rs` — Contracts for repositories / github / code security / transfers
+- `tests/repositories/github/commit_comments.rs` — Contracts for repositories / github / commit comments
+- `tests/repositories/github/commit_pulls.rs` — Contracts for repositories / github / commit pulls
+- `tests/repositories/github/community.rs` — Contracts for repositories / github / community
+- `tests/repositories/github/comparison.rs` — Contracts for repositories / github / comparison
+- `tests/repositories/github/copy.rs` — Contracts for repositories / github / copy
+- `tests/repositories/github/dependabot_alerts.rs` — Contracts for repositories / github / dependabot alerts
+- `tests/repositories/github/dependencies.rs` — Contracts for repositories / github / dependencies
+- `tests/repositories/github/dependencies/provider.rs` — Contracts for repositories / github / dependencies / provider
+- `tests/repositories/github/dependencies/workers.rs` — Contracts for repositories / github / dependencies / workers
+- `tests/repositories/github/dependency_graph.rs` — Contracts for repositories / github / dependency graph
+- `tests/repositories/github/dependency_inventory.rs` — Contracts for repositories / github / dependency inventory
+- `tests/repositories/github/dispatch.rs` — Contracts for repositories / github / dispatch
+- `tests/repositories/github/immutable_releases.rs` — Contracts for repositories / github / immutable releases
+- `tests/repositories/github/immutable_releases/namespaces.rs` — Contracts for repositories / github / immutable releases / namespaces
+- `tests/repositories/github/merges.rs` — Contracts for repositories / github / merges
+- `tests/repositories/github/migrations.rs` — Contracts for repositories / github / migrations
+- `tests/repositories/github/migrations/exports.rs` — Contracts for repositories / github / migrations / exports
+- `tests/repositories/github/native_invitations.rs` — Contracts for repositories / github / native invitations
+- `tests/repositories/github/oidc.rs` — Contracts for repositories / github / oidc
+- `tests/repositories/github/pages.rs` — Contracts for repositories / github / pages
+- `tests/repositories/github/patch.rs` — Contracts for repositories / github / patch
+- `tests/repositories/github/protection.rs` — Contracts for repositories / github / protection
+- `tests/repositories/github/push_teams.rs` — Contracts for repositories / github / push teams
+- `tests/repositories/github/release_notes.rs` — Contracts for repositories / github / release notes
+- `tests/repositories/github/repository_action_permissions.rs` — Contracts for repositories / github / repository action permissions
+- `tests/repositories/github/review_protection.rs` — Contracts for repositories / github / review protection
+- `tests/repositories/github/secret_scanning.rs` — Contracts for repositories / github / secret scanning
+- `tests/repositories/github/teams.rs` — Contracts for repositories / github / teams
+- `tests/repositories/github/traffic.rs` — Contracts for repositories / github / traffic
+- `tests/repositories/github/verification.rs` — Contracts for repositories / github / verification
+- `tests/repositories/github_activity.rs` — Stars over GitHub REST, with both database engines and token scopes
+- `tests/repositories/github_deploy.rs` — Deployment configuration through the real REST router on both engines
+- `tests/repositories/github_deploy/deployments.rs` — Contracts for repositories / github deploy / deployments
+- `tests/repositories/github_deploy/meta.rs` — Contracts for repositories / github deploy / meta
+- `tests/repositories/github_deploy/oidc.rs` — Actions OIDC exchange verifies signatures using only public discovery material
+- `tests/repositories/github_events.rs` — Contracts for repositories / github events
+- `tests/repositories/github_notifications.rs` — Contracts for repositories / github notifications
+- `tests/repositories/github_subscriptions.rs` — Contracts for repositories / github subscriptions
+- `tests/repositories/graphql.rs` — The GitHub schema and resolvers through the real token-authenticated router
+- `tests/repositories/graphql/discussion.rs` — gh discussion's queries and writes through the real router on both engines
+- `tests/repositories/graphql/gh_cli.rs` — Queries captured from gh 2.102.0, including its fragments and feature detection
+- `tests/repositories/graphql/gh_issues.rs` — CLI 2.102.0 query text from api/queries_issue.go, query_builder.go and pkg/cmd/issue
+- `tests/repositories/graphql/gh_teams.rs` — Query texts from gh 2.102.0's release, org and repo command paths
+- `tests/repositories/graphql/git_lane_nodes.rs` — Contracts for repositories / graphql / git lane nodes
+- `tests/repositories/graphql/job_tokens.rs` — The GraphQL boundary must not widen the REST job-token policy
+- `tests/repositories/graphql/lookups.rs` — Lookup fields answer with GitHub's NOT_FOUND wording or null, which gh matches on
+- `tests/repositories/graphql/maintainers.rs` — Contracts for repositories / graphql / maintainers
+- `tests/repositories/graphql/metadata_mutations.rs` — Contracts for repositories / graphql / metadata mutations
+- `tests/repositories/graphql/node_id.rs` — Independent encoders for asserting the public REST/GraphQL ID contract
+- `tests/repositories/graphql/objects.rs` — Contracts for repositories / graphql / objects
+- `tests/repositories/graphql/projects.rs` — gh project's actual GraphQL shapes through the token-authenticated router
+- `tests/repositories/graphql/projects/cli.rs` — Wire documents emitted by gh 2.102.0 from pkg/cmd/project and api/queries_repo.go
+- `tests/repositories/graphql/projects/metadata.rs` — gh issue/pr project documents from api/queries_projects_v2.go and queries_{repo,org}.go
+- `tests/repositories/graphql/projects/selections.rs` — ProjectV2 compatibility selections used by `cli/cli`'s project commands
+- `tests/repositories/graphql/repo_metadata.rs` — The remaining RepositoryGraphQL selections emitted by gh repo list --json
+- `tests/repositories/graphql/repository_mutations.rs` — Contracts for repositories / graphql / repository mutations
+- `tests/repositories/graphql/reviews.rs` — Contracts for repositories / graphql / reviews
+- `tests/repositories/graphql_status.rs` — Contracts for repositories / graphql status
+- `tests/repositories/initial_files.rs` — A new repository's first commit holds the README, .gitignore and license its creator chose, on disposable SQLite and PostgreSQL data
+- `tests/repositories/insights.rs` — Repository insights pages over HTTP: the daily activity, contributors matched to their accounts, a year of code frequency, workflow usage, forks, and…
+- `tests/repositories/label_authority.rs` — Label authority, scope and atomicity on disposable PostgreSQL and SQLite databases. Setup failure fails the test; nothing is skipped or mocked
+- `tests/repositories/label_authority/contention.rs` — Contracts for repositories / label authority / contention
+- `tests/repositories/language_cache.rs` — Contracts for repositories / language cache
+- `tests/repositories/languages.rs` — Repository languages are stored rows of the default branch's language mix. A push, web edit, merge or fork that moves the default branch stores them…
+- `tests/repositories/main.rs` — Contracts for repositories / main
+- `tests/repositories/object_pools.rs` — Contracts for repositories / object pools
+- `tests/repositories/readme.rs` — Repository README previews, tree revisions, commit history and diffs over HTTP on disposable SQLite and PostgreSQL data
+- `tests/repositories/ref_paths.rs` — Contracts for repositories / ref paths
+- `tests/repositories/regressions.rs` — Repository form identity, bounded lists and effect-time authority on both databases
+- `tests/repositories/releases.rs` — Releases through the JSON API and the native forms, the authorization matrix for drafts and private repositories, uploaded assets, source archives…
+- `tests/repositories/releases/regressions.rs` — Contracts for repositories / releases / regressions
+- `tests/repositories/search.rs` — Search over what each viewer can read, over HTTP on disposable SQLite and PostgreSQL data: private, collaborator and organization repositories by…
+- `tests/repositories/secret_authority.rs` — Secret authority and lock contention on disposable PostgreSQL and SQLite databases. Database-level contracts only; secrets are not delivered to CI…
+- `tests/repositories/secret_authority/contention.rs` — Contracts for repositories / secret authority / contention
+- `tests/repositories/secret_authority/fixture.rs` — Contracts for repositories / secret authority / fixture
+- `tests/repositories/secret_scanning.rs` — Contracts for repositories / secret scanning
+- `tests/repositories/settings_authority.rs` — Settings authority contracts on disposable PostgreSQL and SQLite databases: who may update, rename or delete a repository, and what each of those does
+- `tests/repositories/settings_authority/fixture.rs` — Contracts for repositories / settings authority / fixture
+- `tests/repositories/settings_confirmation.rs` — The general settings form: saving only a description needs no confirmation, while changing visibility is refused without the explicit confirmation.…
+- `tests/repositories/topics.rs` — Repository topics and the About website through the JSON and native forms, and the Explore topic filter. A save replaces the whole topic set, is…
+- `tests/repositories/upload_files.rs` — Upload files through the browser form, on SQLite and PostgreSQL. A writer adds files in one commit; a reader, a visitor, a stale head, a protected…
+- `tests/repositories/webhooks.rs` — Repository webhooks through the settings forms and the API, on SQLite and PostgreSQL: who may manage hooks, that the secret is never rendered, the…
+- `tests/repositories/webhooks/regressions.rs` — Contracts for repositories / webhooks / regressions
+- `tests/scripts/test-capture-ui-gallery.py` — The UI gallery server must not read a checkout .env or touch a real database
+- `tests/scripts/test-install-openssh.py` — Disposable filesystem + mocked subprocess fixtures; never touch host SSH/sudo
+- `tests/scripts/test-no-redis.py` — The optional cache has one native owner and is absent from authority and WASM
+- `tests/scripts/test-openssh-config.py` — Real sshd parser checks. Never starts/reloads a daemon or reads host config
+- `tests/scripts/test-ops-scripts.py` — Disposable regressions for bundle publishing, CI networking and E2E setup
+- `tests/scripts/test-release-image.py` — Build fixture releases and inspect every shipped image layer, not just the rootfs
+- `tests/scripts/test-web-dependencies.py` — Tooling-only dependency graph guard tests; does not invoke Cargo
+- `tests/storage/attestations.rs` — Real HTTP attestation conversations, including shared storage and live visibility, on both engines
+- `tests/storage/attestations/access.rs` — Contracts for storage / attestations / access
+- `tests/storage/attestations/docker_conflicts.rs` — Contracts for storage / attestations / docker conflicts
+- `tests/storage/attestations/inventory.rs` — Contracts for storage / attestations / inventory
+- `tests/storage/attestations/metadata.rs` — Contracts for storage / attestations / metadata
+- `tests/storage/attestations/pages.rs` — Contracts for storage / attestations / pages
+- `tests/storage/attestations/users.rs` — Contracts for storage / attestations / users
+- `tests/storage/deletion_authority.rs` — Contracts for storage / deletion authority
+- `tests/storage/local_storage.rs` — Uploaded files on a real SQLite database and a real state directory, through the domain functions and through the HTTP routes. No S3 is involved; the…
+- `tests/storage/main.rs` — Contracts for storage / main
+- `tests/storage/packages.rs` — Registry requests as Docker sends them, against both database engines
+- `tests/storage/packages/access.rs` — Contracts for storage / packages / access
+- `tests/storage/packages/ecosystems.rs` — Client-shaped Maven/Gradle, NuGet and RubyGems conversations on both databases
+- `tests/storage/packages/pages.rs` — Contracts for storage / packages / pages
+- `tests/storage/packages/rest.rs` — Contracts for storage / packages / rest
+- `tests/storage/production_storage.rs` — Upload records and quotas on a real PostgreSQL schema, and the S3 side of uploads: signing, confirming, downloading and deleting
+- `tests/storage/production_storage/shared_web.rs` — Independent web nodes keep only temporary files on their own disks
+- `tests/storage/remote_store.rs` — Two real iroh nodes, one shared PostgreSQL database, and separate disks
+- `tests/storage/remote_store/associations.rs` — Association parity gets its own fixture so it does not enlarge the broad RPC contract future
+- `tests/storage/remote_store/imports.rs` — Source imports are publishers, not a way to import somebody else's server attestations
+- `tests/storage/remote_store/publications.rs` — Real publishers, primary-only reads and no-op/ABA identity parity across storage RPC
+- `tests/support/database.rs` — Selects the existing disposable SQLite or seeded PostgreSQL fixture
+- `tests/support/fake_s3.rs` — Bucket startup only; object operations must fail rather than pretend to store bytes
+- `tests/support/fake_webui_bundle.rs` — A tiny stand-in for the generated browser bundle (`WEBUI_DIST`), so a test can render full HTML pages without building the WASM application
+- `tests/support/git_remote.rs` — Built-in SSH and HTTP test servers and the Git and API calls they take in tests
+- `tests/support/git_server.rs` — The `codeyard` server as a child process, and a Git client that sends a token, for tests that speak smart HTTP the way a real client does
+- `tests/support/github_spec.rs` — Checks `/api/v3` responses against GitHub's own REST description in `spec/github/`
+- `tests/support/http_client.rs` — A signed-in user talking to the application's JSON API and HTML forms, in process. The shortcuts that name a repository (`save`, `branch`…
+- `tests/support/large_stack.rs` — Runs a very large async test body on its own big thread stack
+- `tests/support/logs.rs` — Captures what the code under test logs, so a test can read it or wait for the event that shows a background task reached a point
+- `tests/support/mod.rs` — Contracts for support / mod
+- `tests/support/native_database.rs` — Disposable native-database fixtures. Raw drivers are test-only, never exposed through the application handle. No environment mutation, .env or silent…
+- `tests/support/organizations.rs` — Helpers for the outcomes of organization changes
+- `tests/support/production_ci.rs` — A throwaway PostgreSQL schema (from GITSERV_TEST_DATABASE_URL) with one user, one repository and a workflow commit, dropped when the fixture ends
+- `tests/support/rpc_operations.rs` — Every repository operation, with whether a worker may read it while claimed
+- `tests/support/server.rs` — Starting the `codeyard` binary as a child process on free local ports
+- `tests/web/crawler_policy.rs` — robots.txt, ai.txt and X-Robots-Tag follow the administrator's AI crawler setting
+- `tests/web/error_pages.rs` — Error pages over HTTP: repository errors keep the repository header for a viewer who may read it, a private repository stays a plain 404, and a…
+- `tests/web/form_body.rs` — A form whose body has been read gives its slot back while its handler waits for the database
+- `tests/web/main.rs` — Contracts for web / main
+- `tests/web/native_form_drafts.rs` — Native VDOM policy tests, not browser/domain acceptance or mocked product responses
+- `tests/web/native_privacy.rs` — Contracts for web / native privacy
+- `tests/web/runtime_startup.rs` — Recovery and logging through a running standalone server on both databases
+- `tests/web/ssr_document.rs` — SSR document and safe bootstrap contracts using typed view fixtures
+- `tests/web/token_pages.rs` — The fine-grained token pages render on the server with plain forms, so they work without JavaScript, and they are only for the signed-in account and…
+- `tests/web/work_pages.rs` — `/issues` and `/pulls` list the signed-in user's own work, so a visitor is sent to sign in

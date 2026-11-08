@@ -33,7 +33,7 @@ installation records no storage node and uses local storage, also when its node
 connection is open for runners.
 Pages, file saves, merges and streamed clone/fetch/push sessions use the same
 `RepoStore` interface on either node. Host OpenSSH serves only local repositories;
-HTTP and built-in SSH can serve remote repositories. See [Architecture](ARCHITECTURE.md) for RPC framing and pairing.
+HTTP and built-in SSH can serve remote repositories. See [Architecture](ARCHITECTURE.md#clusters) for the node transport and [Running a cluster](CLUSTER.md) for pairing.
 
 ## Repository maintenance
 

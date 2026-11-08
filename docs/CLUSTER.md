@@ -4,7 +4,7 @@ A single machine needs none of this. An installation starts in single-node mode:
 `server` runs the web pages, Git storage and SSH, and `runner` machines may join to run
 Actions jobs ([CI local runner](CI_LOCAL_RUNNER.md)). Use cluster mode when you want web
 and SSH servers separate from the machines that hold the repositories, or several
-repository disks. [Architecture](ARCHITECTURE.md) section 2 explains how it works.
+repository disks. [Architecture](ARCHITECTURE.md#clusters) explains how it works.
 
 `cluster enable` and `serve --cluster` require PostgreSQL. A single-node installation
 keeps SQLite support. The [readiness plan](CLUSTER_PLAN.md) records outstanding runtime
@@ -696,8 +696,9 @@ and clone/fetch sessions are spread across current copies. Other reads still pre
 the fork family. Asynchronous copies that are behind require `cluster promote --force`;
 quorum promotion must retain every committed ref. A comparison between two repositories
 (a fork's compare page) is not served by a copy.
-Re-check the iroh and russh versions in [Architecture](ARCHITECTURE.md) when you upgrade
-either. Cores and CI workers must run the same release, because a worker only claims from
+iroh is pinned at `=1.2.0` and needs the final rand 0.10 crates; russh 0.56 used
+release-candidate crypto crates that cannot share a dependency graph with them, so russh
+is at 0.63. Re-check both pins when you upgrade either. Cores and CI workers must run the same release, because a worker only claims from
 cores on the same events protocol.
 
 Account restrictions (bans, suspensions, demotions) take PostgreSQL advisory locks keyed

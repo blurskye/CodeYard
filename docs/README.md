@@ -4,13 +4,14 @@ Start with the [README](../README.md) for setup.
 
 ## Reference
 
-- [Architecture](ARCHITECTURE.md): the high-level code map, request flows, data layout and how clustering works.
+- [Architecture](ARCHITECTURE.md): the crates, request flows, data layout, clusters and cells.
+- [Codebase map](CODEBASE_MAP.md): one line per code file, grouped by crate.
+- [Codebase style](CODEBASE_STYLE.md): how the code is written.
 - [HTTP API](API.md): the JSON endpoints, account rules, errors and limits.
 - [Gists](GISTS.md): native snippets, Git transport, secret links, limits and recovery.
 - [Running a cluster](CLUSTER.md): roles, pairing nodes, storage nodes, CI workers and limits.
 - [Kubernetes](KUBERNETES.md): Helm installation, CloudNativePG, role scaling, the cluster failover test and current limits.
-- [Cluster readiness plan](CLUSTER_PLAN.md): checks on the cluster that exists, what is still missing, and the decision for each open question.
-- [Crate split plan](CRATE_SPLIT_PLAN.md): how the one big crate becomes crates under `backend/`, with the order and the circles to cut.
+- [Cluster readiness plan](CLUSTER_PLAN.md): checks on the cluster that exists, what is still missing, the decision for each open question, and the cells plan.
 - [CI API](CI_API.md): workflow runs, who may start them, statuses and known gaps.
 - [GitHub API plan](GITHUB_API_PLAN.md): making `/api/v3` and GraphQL match GitHub, what stays unsupported, and the worker split.
 - [Pages and repository security](PAGES_AND_SECURITY.md): Pages control-plane limits, pinned dependency/SBOM reports and confidential advisory workflows.
@@ -30,6 +31,9 @@ Start with the [README](../README.md) for setup.
 - `cargo fmt --all -- --check`, `cargo clippy --locked --workspace --all-targets -- -D warnings` and
   `cargo test --locked --workspace --all-targets` are the format, lint and test checks. PostgreSQL tests
   read `GITSERV_TEST_DATABASE_URL`.
+- `scripts/builder-check.sh` (check, Clippy and the browser WASM build) and
+  `scripts/builder-tests.sh build|lib|database|placement|cells` are the builder gates, one
+  part per job.
 - `scripts/e2e.sh` starts real servers on SQLite, PostgreSQL and a four-node cluster
   and drives them over HTTP, SSH and Git, including remote storage and database-free CI.
   Its SSR and served JS/WASM checks do not execute hydrated browser navigation.

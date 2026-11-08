@@ -3,8 +3,8 @@
 Goal: a cluster that survives losing any one machine, grows and shrinks from the admin
 panel or the API, and can be trusted in production. This plan covers three things: what
 to check in the cluster code that exists, what is still missing, and the decision made for
-every open question. [Architecture](ARCHITECTURE.md#3-scaling-out-cells-behind-a-router-plan-not-built)
-keeps the longer plan for cells; this file comes first and does not repeat it.
+every open question. The [cells plan](#cells-plan) at the end holds the stages and their
+acceptance lists; [Architecture](ARCHITECTURE.md) describes what is built.
 
 Items 1–9, 11 and 12 have source implementations and acceptance tests. Workspace,
 Clippy and WASM checks pass, including the fault-test source and full-disk placement fix.
@@ -96,7 +96,7 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
    Cluster mode refuses to start with node-local files. Local disk remains the single-node
    default. Why not S3 only: it adds a required dependency; storage nodes already have
    disks, placement and copies.
-3. **Write quorum.** As in the architecture document: a `reference-transaction` hook sends
+3. **Write quorum.** As in the [stage 0 plan](#stage-0-durability-on-one-installation-and-in-every-cell): a `reference-transaction` hook sends
    the change to the voting copies, a push is acknowledged after a majority hold it, and a
    push is refused with the reason when there is no majority within 10 seconds. Default
    `majority`; `1` keeps today's behaviour. Closes A2.
@@ -137,7 +137,7 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
 9. **PostgreSQL high availability.** The operator runs Patroni, PgBouncer or a managed
    service; Codeyard does not manage it. Codeyard's part: the pool size is configurable
    (it is fixed at 20 today), connections recover after a failover, and the documents give
-   a tested setup. Stage 0 check 6 in the architecture document (kill the primary during
+   a tested setup. Stage 0 check 6 in the [cells plan](#cells-plan) (kill the primary during
    `gh issue create`) is the acceptance test. Reads to replicas come with stage 1.
 10. **Rolling upgrades.** The node protocol accepts the previous release. After the first
     public release, schema changes are additive and a release is deployed in two steps
@@ -683,3 +683,553 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
 The acceptance list is part A plus items 1 to 12. New edge cases found on the way become
 notes for the owner, not new items. If three rounds each find new failures in one item,
 stop and report in plain words what works and what does not.
+
+## Cells plan
+
+Two findings set the order of work:
+
+- **Durability comes before cells.** Git processes set `core.fsync=all` and
+  `core.fsyncMethod=batch`, libgit2 fsync is enabled, and cluster plan items 3 and 11
+  provide quorum publication, copies, backups and fenced restore. Stage 0 extends
+  acceptance to three voters and every ref publisher; VM hard-reset acceptance remains
+  an operator check.
+- **One large cell still needs work.** Account authority locks are scoped by account,
+  organizations use row locks, names and email addresses reserve their own keys, and
+  package reads use snapshots without package locks. Attestation and metadata changes
+  serialize by owner; orphan collection locks only candidate bundle rows.
+  Notification hints use bounded cursor polling and the pool is configurable. CI logs
+  use compressed objects with metadata in `ci_log_chunks`; uploads recheck the worker
+  before committing their pointer. Stage 1 acceptance and measured capacity remain open.
+
+So stages 0 and 1 work inside one installation, and cells come after. "With ease" does not
+hold at 10 billion accounts: every part is well known, but the base case is about 1,000
+PostgreSQL clusters and 7,000 storage nodes, and running them is the real work.
+
+**Baseline.** GitHub runs MySQL on Vitess and Git on Spokes, which acknowledges a push once
+a majority of replicas hold it. GitLab's Gitaly votes on ref updates through Git's
+`reference-transaction` hook, and GitLab Cells places each Organization in one cell behind
+a global service for names, emails and tokens. Slack's workspace shards broke when shared
+channels made cross-workspace work common. We follow GitLab Cells for placement, Spokes and
+Gitaly for ref quorum, and Notion's logical shards for the one global table.
+
+### Stage 0: durability, on one installation and in every cell
+
+Stage 0 needs no cells or router. It closes every gap where acknowledged data can be lost.
+
+- **Single-node part, built:** `core.fsync` on every Git process, `codeyard backup` and
+  `codeyard restore`, `codeyard repo verify [--repair]`, `codeyard repo rebuild`, and the
+  7-day restore window for deleted repositories and uploads. `scripts/e2e.sh` checks
+  acceptance items 5, 8 and 9 on SQLite and PostgreSQL and item 7 on PostgreSQL. Item 4
+  needs a VM hard reset and is checked by hand. Operations are described in
+  [Storage architecture](STORAGE_ARCHITECTURE.md#backups).
+- **Cluster part:** fixed-voter ref quorum, PostgreSQL arbitration and
+  ref journals, snapshot backups and fenced offline restore are implemented. Operators
+  provide PostgreSQL HA. Three-voter process-loss acceptance passes; VM hard-reset
+  acceptance and measured limits remain pending;
+  [Where we are](#where-we-are) is the current acceptance list.
+
+| Store | Decision | RPO | RTO |
+|---|---|---|---|
+| Git refs and objects, cluster | acknowledge after a quorum of copies hold the change (below) | 0 while a majority of voting copies survive | take-over after 1 minute |
+| Git, one machine | `core.fsync=all`, `core.fsyncMethod=batch` on every Git process (`backend/git/src/repository/process.rs`); `codeyard backup` | 0 on a crash; the last backup on disk loss | restore time |
+| Derived Git data: pack indexes, bitmaps, commit-graphs, the language and contributor tables | not backed up or replicated; `codeyard repo rebuild` makes it again | none | slower pages meanwhile |
+| PostgreSQL | Patroni with `synchronous_mode_strict` and a synchronous standby in another zone; WAL archive and daily base backups with pgBackRest or WAL-G; 14 days of point-in-time recovery | 0 on node or zone loss; under a minute on cluster loss | about 30 s failover; about 2 h to restore 4 TB |
+| SQLite | already WAL with `synchronous=FULL`; `codeyard backup` copies it online with `VACUUM INTO`; Litestream optional | 0 on a crash; the last backup on disk loss | minutes |
+| CI logs | compressed chunks in object storage, metadata in SQL; a job completes only after its last chunk is stored | the unstored tail of a running job | none |
+| Artifacts, caches, uploads | Two checked storage-node copies, or optional versioned S3; local disk on one machine | last completed cluster backup, or the operator's S3 recovery point | restore time |
+| Node keys, membership | membership is in the database; a lost node pairs again with a new key; `SECRETS_MASTER_KEY` and `CLUSTER_*` are kept offline, apart from the backups | none | minutes |
+
+**Ref quorum.** Initialization selects up to three fixed storage voters (at least two)
+and PostgreSQL decides which ref changes commit. A majority must prepare durable objects
+and publish refs before acknowledgement. Canonical refs and term fencing recover a committed change after
+a primary dies; an uncertain outcome tells the client to fetch before retrying. Further
+replicas remain asynchronous. `majority` is the new-cluster default; explicit `1` retains
+the legacy asynchronous path. Initialization, copy and promotion share this coordinator.
+See [Quorum push preparation](CLUSTER.md#quorum-push-preparation) for limits and recovery.
+Three-voter preparation and stale-voter recovery pass on SQLite and PostgreSQL.
+The real-process quorum round passes HTTP/SSH pushes, editor saves, gh branch creation
+and merges after immediate primary loss, and majority-loss refusal. The VM hard-reset
+check remains open.
+
+**Backup and restore.** `codeyard backup <dir>` runs while the installation serves: the
+database first (`VACUUM INTO`, `pg_dump`, or only the restore time when pgBackRest or WAL-G
+runs), then every repository by incremental `git fetch --mirror` including the hidden
+`refs/codeyard/*`, then local uploads. The rule is that **the database may be older than
+Git, never newer**: rows point at commits (pull request heads, merges, CI runs, releases),
+and extra commits are harmless.
+
+`codeyard restore <dir>` loads all three into an empty installation, then runs
+`codeyard repo verify --repair` and `codeyard repo rebuild`. Verify runs
+`git fsck --connectivity-only` and compares each pull request with `refs/pull/N/head`:
+an open pull request follows a ref that moved, a missing ref is made again, refs of pull
+requests the database lacks are removed, and a commit the database names but Git lacks is
+reported. Cluster restore instead installs each original storage identity while startup
+is fenced, reconstructs canonical voter terms through offline `repo verify --repair`,
+and permits serving only after the required Git and object copies are ready. Region
+failover from a database newer than Git remains future work.
+
+Deleted repositories move to `<REPOS_PATH>/deleted/`, and uploads keep their pending
+deletion, for 7 days (`RESTORE_WINDOW_SECONDS`), after which the expiry sweep removes them.
+A database restored to before a delete gets the repository back from `deleted/` through
+verify. GitHub keeps deleted repositories for 90 days.
+
+**Stage 0 acceptance**, on SQLite and PostgreSQL where it applies:
+
+1. Three storage nodes: `git push` over HTTP and over SSH, `kill -9` of the primary as soon
+   as the push returns; within 2 minutes `git clone` has the commit, without `--force`.
+2. The same for an editor save, `gh pr merge` and a branch created with `gh api`.
+3. Two of three voting members stopped: `git push` is refused with the reason and no
+   member's refs change. One stopped, or `write_quorum=1`: the push succeeds.
+4. One machine in a VM, hard reset (`echo b > /proc/sysrq-trigger`) right after an
+   acknowledged push: after boot `git fsck` is clean and the commit is there.
+5. `codeyard backup` during a loop of `git push` and `gh issue create`, then
+   `codeyard restore` on an empty machine: verify reports nothing, and `git clone`,
+   `gh issue list`, `gh pr checkout`, `gh run view --log` and attachments work.
+6. The PostgreSQL primary is killed during a loop of `gh issue create`; every issue whose
+   URL was returned still exists.
+7. PostgreSQL restored to a time T with Git newer than T, then
+   `codeyard repo verify --repair`: every pull request page and `gh pr checkout` work.
+8. `gh repo delete`, then the database restored to before it: the repository clones.
+9. Derived data deleted, then `codeyard repo rebuild`: pages, code search and clones work.
+
+### Cells and placement
+
+**The owner account, a user or an org, is the unit of sharding.** Its repositories, issues,
+pull requests, packages, CI and settings have one home cell for writes. Organizations
+span regions through read replicas and Git copies; their rows stay together in that cell. Why:
+URLs, permissions and nearly all 4,728 query sites are scoped by owner and repository, so a
+cell runs today's code unchanged, as in GitLab Cells. Cost: anything between owners in two
+cells crosses cells: forks, pull requests from forks, stars, follows, outside members.
+
+A cell is a complete installation as in [Architecture](ARCHITECTURE.md#clusters), sharing nothing with other cells; an
+existing installation becomes cell 0 with no data change. A new account goes to the least
+full open cell in the nearest region, or to the org's cell when it joins through an
+invitation or SSO. A cell closes to new accounts at 2 TB or half its measured write
+capacity; enterprises get their own cell.
+
+- **An org with 100,000 employees** is 100,000 membership rows in one cell, with stubs
+  (below) for members from other cells; per-org locks keep it from blocking other orgs.
+- **A repository with millions of stars** keeps the star rows, with a stub of about 200
+  bytes per remote stargazer; the stargazer's home cell keeps a pointer.
+- **A repository with 100,000 forks**: each fork lives in its owner's cell, and the forks in
+  one cell share an object pool through alternates, as on GitHub: at most one full copy per
+  cell, about 1,000, not 100,000.
+- **Hot cells and accounts** show in per-cell and per-account metrics. Placement closes a
+  hot cell; a hot account gets bigger machines until moves exist (stage 6), then its own
+  cell.
+
+### Git storage
+
+**Git stays on local NVMe in each cell: three voting copies across zones, more
+asynchronous copies for reads, and one in the disaster-recovery region.** Why: GitHub and
+GitLab run this model, and it keeps a cell one failure domain. Cost: four physical copies,
+which makes storage the second largest cost.
+
+- Clones and fetches, about 90% of git traffic, go to any current copy and use bitmaps,
+  commit-graphs and a pack-objects cache, as on gitlab.com. CDN bundles are left out:
+  clients ship with `transfer.bundleURI` off.
+- Objects cross cells only by fetch: a fork, a pull request head, a transfer.
+- Packing is a geometric repack with a multi-pack index and split commit-graph, and never
+  prunes; object pools repack in the background and keep every object a member uses.
+- Limits: 100 MB per file and 2 GB per push, as on GitHub, and a warning at 10 GB per
+  repository; large files go to LFS in object storage.
+- Git on object storage, which GitHub is testing in 2026, waits until storage dominates
+  the bill.
+
+### The directory
+
+**One global directory in sharded PostgreSQL maps names to cells and keeps them unique.**
+It holds user and org names (compared exactly, as the application does), rename redirects,
+emails, SSH key fingerprints including deploy keys, the cell registry (id prefixes,
+addresses, node keys, open or closed) and forwarding entries for moved accounts and
+repositories. Why: `/alice/repo`, a login by email and an SSH key carry no id to route by.
+Cost: one more global system, on the path of every signup and key change.
+
+- About 400 bytes per account, 4 TB at 10 billion, in 256 logical shards by hash of the key
+  on 16 clusters at first. Names, emails and fingerprints are separate keys, so a claim
+  touches one shard.
+- A claim inserts a pending row with an expiry under a unique key; the cell creates the
+  account and confirms, and a failed signup expires. No two-phase commit.
+- Each region has asynchronous read replicas, and routers cache routes for 60 seconds; a
+  stale route reaches the wrong cell, which names the right one.
+- With a shard down, existing users keep working from caches and replicas, while signups,
+  renames and new emails or keys on that shard fail. The cells hold the same rows, so the
+  directory can be rebuilt from them.
+- Each shard holds its keys and its own copy of the objects they belong to; the copy in the
+  object's own shard is its home row. So a shard moves alone: writes to it are refused while
+  it is copied, lookups keep reading the old cluster until the map switches, and the old
+  copy goes once those lookups are done. A claim across clusters commits one cluster after
+  another; a failure between them leaves pending keys that expire, as a failed signup does.
+
+### The router
+
+**A stateless `router` role in the same binary runs in every region** and proxies HTTP,
+both APIs, smart HTTP and SSH to a cell's web and SSH nodes. Why: URLs, clone URLs and
+tokens stay the same wherever an account lives, as behind GitHub's front ends. Cost: one
+more hop, about 1 ms in a region, and about 300 routers for 5 Tbps of git.
+
+- It routes by the owner in the path (`/{owner}/…`, `/repos/{owner}/{repo}`,
+  `/users/{name}`, `/orgs/{org}`), by id prefix for bare-id routes and node ids, by the
+  credential's cell for routes without an owner (`/user`, `/notifications`), by the login
+  field for `POST /session`, and by placement for signup.
+- GraphQL: each top-level field routes on its own arguments; a query reaching two cells is
+  split and merged. Nested fields come from the parent's cell, using stubs.
+- SSH: the router terminates SSH with the deployment's host key, finds the key's account in
+  the directory and opens the session to the cell named by the exec path; `ssh -T` goes to
+  the key's home cell.
+- The rules sit next to the application's routes; a test fails when a route has none.
+
+### Ids
+
+**Every id is `prefix × 2^37 + n`, a 16-bit prefix and a 37-bit sequence, below 2^53.** A
+new cell sets each sequence's `MINVALUE`, `MAXVALUE` and `START` to its prefix's range;
+cell 0 is prefix 0 and keeps today's ids. A cell takes a second prefix when a sequence
+passes 80% of its 137 billion values. Rows keep their ids when an account moves, so foreign
+keys copy unchanged. Why: unique without coordination and exact in JavaScript clients and
+Actions scripts; the draft's `cell << 42` leaves 11 bits, 2,048 cells, fewer than the high
+case. Cost: a sequence change per new cell.
+
+Node ids for every kind except repositories, users and orgs move to the msgpack form
+`[0, root id, id]`, which GitHub uses and Codeyard already uses for discussion comments, so
+a moved repository needs one forwarding entry, not one per comment. The
+`{kind}_{base64 id}` form keeps resolving.
+Project fields, items and drafts use the project account's root, including items linked
+from another owner's repository. Issue type and field definitions use their account root;
+field values, workflows, environments, gists and review requests use their repository root.
+GraphQL `databaseId` is null when a scoped ID exceeds its 32-bit field; schema-supported
+`fullDatabaseId` fields return the complete decimal ID. Internal lookups keep the full ID.
+Computed project fields carry their owning account and project in a bounded composite key.
+Review requests have stable row identities; user and team requests retain their separate
+uniqueness constraints. A stored protection rule retains its App owner's ID after App removal.
+Recorded issue-transfer redirects also validate former roots for issues, comments and
+their events and reactions. Every read and write still checks the current repository.
+
+### Accounts across cells
+
+**A cell keeps a stub row in `users`, `organizations` or `repositories` for each remote
+account or repository it refers to**: global id, name, display name, avatar, `home_cell`,
+no credentials (`password_hash` is already nullable), changed only by events from the home
+cell. Why: 169 foreign keys point at users and orgs and 121 at repositories; stubs keep
+them and nearly every query, and only listings skip stubs, about 20 to 40 of the 144
+queries that read `users` plus a few repository lists. Cost: stubs lag by seconds, and a
+listing that forgets the filter shows a stub as an account.
+
+- Credentials live in the home cell and carry it: cookies `<prefix>.<random>`, tokens
+  `cy_pat_<prefix>_<64 hex>` (the secret scanner accepts both forms), OAuth and device
+  codes likewise. A value without a prefix belongs to cell 0.
+- A cell given a foreign credential asks the home primary for the account, scopes and
+  CSRF token on each admission. The home selects the credential and its cell-local
+  heartbeat in one snapshot. An answer belongs only to the current operation; there is
+  no shared foreign-credential cache. The published age bound defaults to 2 seconds,
+  including a 250 ms clock-error allowance. Wall and monotonic deadlines are checked
+  after waits; an expired or unavailable proof grants nothing. Home reads currently
+  stay on primary, not an identity replica. This replacement passes source checks;
+  runtime acceptance is pending in [Where we are](#where-we-are).
+- Permission checks stay in the resource's cell, where members, teams and collaborators
+  are rows.
+- A cross-cell pull request lives in the base repository's cell, which fetches the head
+  into `refs/pull/N/head` on each push event from the fork's cell. A maintainer's push to
+  the fork goes to the fork's cell, which asks the base cell for permission.
+- A mention resolves through the directory and creates a stub. Home cells keep pointers to
+  remote memberships for "my orgs" and "my repositories".
+  Grant and delete triggers queue pointer events in the granting transaction. The home
+  applies ordered events idempotently after checking the live sending key and directory
+  ownership. Pointers discover cells only: private REST lists and GraphQL organization lists
+  call those cells' existing handlers with the original credential and merge bounded pages. A stale pointer
+  never supplies permission; a resource-cell outage gives a service-unavailable error. Native
+  browser lists use those cells' authorized page models with the original cookie. One shared
+  row/byte budget bounds all merged lists; home credentials are rechecked after remote waits.
+- Stars keep their rows and count in the repository's cell. The same transactional
+  outbox sends a distinct star pointer to the actor's home; removing a collaborator does
+  not remove a star pointer. GitHub and browser star lists merge authorized resource-cell
+  pages in star order, including home-cell stars. Anonymous profile reads request public
+  repositories only. Duplicate delivery and an older event cannot restore a removed star.
+
+### Global features
+
+Each cell writes an outbox table in the same transaction as the change. A worker delivers
+events to other cells, at least once and idempotent by event id; global services read the
+outbox by cursor. No message bus until the consumers need one.
+
+Cross-cell mention notices carry public repository metadata only. Visibility, deletion and
+direct membership changes reclaim their outbox deliveries to withdraw recipient stubs.
+Inbox projections also check the source's current public state over authenticated RPC;
+private, deleted or unavailable sources contribute no notice payload or unread badge.
+The stub alone never authorizes an inbox read. Source checks, both-engine HTTP contracts,
+two-cell privacy/deletion/member-revocation checks and notification polling pass; see
+[Where we are](#where-we-are).
+
+| Feature | Where it lives | Fed by | Lag |
+|---|---|---|---|
+| Notifications, email | inbox in the home cell; the resource's cell finds recipients and sends one batch per home cell | outbox delivery | seconds |
+| Issue, PR, repository search | PostgreSQL tables in the directory database, served by a separate `cell directory serve`; documents carry their repository, its public flag and readers, and each cell rechecks its own hits against live access | outbox delivery | under a minute |
+| Code search | the same index, holding default-branch text files (up to 2,000 files and 16 MiB per repository), rewritten after a push | outbox delivery | under a minute |
+| User, label, topic, commit search | the local cell | none | none |
+| Activity feed | read from the event index when viewed, no copy per follower | outbox cursor | seconds |
+| Explore, trending | the search index's public repository documents, ranked by stars or creation | outbox delivery | under a minute |
+| Dependency graph, "used by" | each cell parses manifests; the search index keeps each public repository's packages and answers dependents | outbox delivery | under a minute |
+| Security advisories | one dataset copied to every cell and matched locally | pull | minutes |
+| Stars, follows | rows and count in the target's cell, a pointer in the actor's home cell | outbox delivery | seconds |
+
+### Disposable content cache
+
+`backend/cache` has an always-on bounded local LRU and optional standalone or Cluster
+Valkey through the Redis protocol. It is native-only and off remotely by default.
+The Markdown API resolves access and references before lookup; keys include the entire
+rendering input. No sessions, permissions, locks or rate limits use the cache. Remote
+failure is a miss, calls have a 50 ms budget, all values expire, and slot-split batches
+retain partial misses in order. Single-flight and per-family recompute limits bound
+cold work. [Cache configuration and contracts](../backend/cache/README.md) describe the
+opt-in service and the external tests. Source checks and runtime are pending.
+
+### CI
+
+**One job queue per cell, as today, with ephemeral runners shared by a region's cells.** A
+regional autoscaler starts a fresh VM per untrusted job, registered to the job's cell with
+a reusable token; rootless Podman stays for trusted self-hosted runners, as it is no
+sandbox. Logs go to object storage in chunks (stage 1); artifacts and caches live there
+with retention (90 and 7 days, as GitHub) and per-repository quotas. Abuse limits are per
+account (concurrency, minutes) and per cell (queue caps), beside the existing approval for
+workflows from forks. Why: CI is the largest cost and must grow apart from the database.
+Cost: an autoscaler and VM images to maintain.
+
+### PostgreSQL inside a cell
+
+**A cell holds at most 4 TB of database, about 10 million accounts and 10,000 write
+transactions per second at peak, and closes to new accounts at 2 TB.** Why: a 4 TB restore
+takes about 2 hours, which bounds the worst outage; size, not load, sets the cell count.
+Cost: four PostgreSQL nodes per 10 million accounts.
+
+- Stage 1 reuses scoped account and org authority, per-package publish locks and
+  lock-free registry snapshots, notification cursor polling and configurable pools behind
+  PgBouncer. `ci_log_chunks` holds object keys, checksums and bounded ranges; bytes use the
+  local, S3 or storage-node object backend. Cleanup is reserved before upload and committed
+  pointers cancel it; deletion retains objects for the seven-day restore window.
+  `DATABASE_READ_URL` routes issue/PR GET and GraphQL query content to a physical replica only after checking
+  database identity and replay against the primary's WAL position. Credentials and writes
+  stay on primary, including reads for five seconds after the same credential wrote.
+  Missing, behind, promoted or stopped replicas use primary. Other content families remain
+  on primary; bulk-table retention and completed load measurements remain open.
+- Four nodes: primary, synchronous standby in a second zone, asynchronous read replica in a
+  third, and an asynchronous copy in the disaster-recovery region. Patroni with etcd runs
+  failover, pgBackRest or WAL-G archives WAL (pgBackRest changed maintainers in 2026), and
+  every cell runs a monthly restore drill.
+- Schema changes expand, then contract: one binary works with schema N and N+1, and
+  releases go out in waves (a canary cell, 1%, 10%, all) that stop at the first failure.
+
+### Account moves
+
+**Moves are built last (stage 6).** Until then an account stays where it was placed and
+cells close at half their limit. Every table declares how its rows reach an owner, by an
+owner column or through a repository or another row; a test fails when a table has none,
+the way `codeyard db copy` already walks the catalog. `codeyard cell move` freezes the
+account (reads work; a per-account trigger refuses writes, also from background workers;
+GitHub REST 503 responses include retry guidance and `Retry-After`),
+copies its repositories with Git and its rows in one target transaction with deferred
+foreign keys, switches the directory, waits out the routers' route cache, and turns the
+source rows into stubs (`backend/db/placement/src/moves.rs`). A receiving copy stays
+write-frozen until its source has durably switched; retries cannot replace an active
+target. The source retains a released move row with bounded cleanup paths until its
+Git directories are removed, so a crash after row release resumes cleanup rather than
+recopying the destination. The CLI takes the same move lease in both cells and checks
+the target before copying Git, so a refused retry preserves its commits as well as its rows. The CLI
+retains the existing Git publication leases through the copy and switch
+so an earlier admitted push finishes before the snapshot. A source freeze lifts by itself when it
+runs out, and a failed move before the switch leaves the source serving. Ids do not change, and the source copy stays until the move is
+checked. Why: rebalancing matters only once cells fill unevenly, and logical replication
+cannot do it, since row filters see only a table's own columns. Cost: ownership rules for
+all tables, kept complete for good, and a freeze of minutes for a normal account, hours
+for a very large org. Splitting an account by repository is rejected, since its teams and
+permissions would span cells; a single repository transferred to another cell uses the
+same rules (stage 3).
+
+Automatic region moves apply only to individual user accounts. Web nodes count requests
+per authenticated account, source region (from the router's header) and day, including
+API and CI tokens; SSH requests are not counted. Anonymous requests and outside readers
+of public repositories never count. Defaults in site settings: a seven-day window, at
+least 1,000 counted requests, at least 70% from one other region, held on three
+consecutive days. The hourly evaluator moves the account to the least full open cell in
+that region using the move above. It reuses scaling-policy database leases, dry run and
+pause: one leader, a 30-day account cooldown, one move per cell, a daily cap on this
+cell's moves to each region, no moves for pinned accounts, and no evaluation with only
+one region. Every move is audited; dry run only logs and audits "would move". All
+thresholds and controls are editable in site settings.
+
+Organizations never move automatically. They gain presence regions where at least 15% of
+their members' counted requests originate over seven days, with at least 500 requests and
+the condition held for three days. Counting follows the same authenticated-actor rule.
+Admins can edit thresholds and add or remove presence by hand. Remove presence when its
+share remains below 5% for 14 days. An org still has one home cell for every write, with
+no multi-master, two-phase commit or splitting its rows across cells.
+
+In a presence region, the home cell has an asynchronous database read replica shared by
+all its organizations; provision one when any organization first needs it. The org's
+repositories have non-voting Git copies there, using the existing copier, rebalancer and
+publication path. Routers send GETs and fetch/clone to the nearest current replica or Git
+copy, fall back to home when unavailable, and send all writes and reads for a few seconds
+after the same session wrote to home. A behind Git copy never serves clones. Regional
+presence adds one full copy of the cell database per presence region, plus one full Git
+copy of each present org's repositories per storage copy, indexes and WAL included in
+capacity planning. Only reads become local: distant writes still pay the round trip to
+the home region.
+
+### Failures
+
+| Failure | What users see | RPO | RTO |
+|---|---|---|---|
+| Web, SSH or router node | a retried request | 0 | seconds |
+| Storage node or zone | writes to its repositories wait for take-over; reads use copies | 0 | 1 to 2 minutes |
+| A cell's PostgreSQL primary | writes fail during failover | 0 | about 30 seconds |
+| A whole cell (bad migration, corruption) | its accounts, about 0.1% of users, see an error page; other cells show its stubs as last seen | the recovery point chosen | about 2 hours |
+| A region | its cells restart from their copies in the paired region | seconds | about 30 minutes, an operator's call |
+| A directory shard | signups, renames, new emails and keys on that shard fail | 0 | about 30 seconds |
+| Search or another index | those pages show an error | 0, the outbox keeps events | until it catches up |
+
+### Regions
+
+**Each cell lives in one region across three zones, with an asynchronous copy of its
+database and Git in a paired region.** Routers, directory replicas and runners run in every
+region; anonymous public pages and release downloads go through a CDN. A request inside a
+region costs milliseconds; a contributor on another continent pays 100 to 250 ms per
+request to the repository's cell. An account can be pinned to a region; residency covers
+the data it owns, not its comments in other regions' repositories. China is a separate
+deployment with its own directory. Why: synchronous writes across regions would add a long
+round trip to every write. Cost: losing a region loses seconds of writes and needs an
+operator to fail over.
+
+### Capacity model
+
+Base-case assumptions, none measured: 10 billion accounts, 1 billion active a day, 200
+requests per active user a day (5.8 million a second at peak), 5% of them writes, 10 to 20
+queries each; 400 KB of database per account (GitHub is nearer 2 MB; the high case uses
+3 MB); 2 repositories per account at 5 MB after object pools; 1 billion pushes and 20 PB of
+git egress a day; 500 million CI jobs a day at 7 vCPU-minutes each.
+
+| Part | Base case | High case |
+|---|---|---|
+| Database | 4 PB: about 1,000 cells, 4,000 PostgreSQL nodes | 30 PB: about 7,500 cells, 30,000 nodes |
+| Load per cell | about 6,000 requests, 300 writes and 60,000 to 120,000 queries a second | lower |
+| Directory | about 4 TB on 16 clusters | the same |
+| Git | 100 PB, 400 PB on disk with four copies: about 7,000 storage nodes of 60 TB | the same |
+| Bandwidth | about 5 Tbps of git at peak, plus pages | the same |
+| Web and SSH; routers | about 3,000; about 300 | the same |
+| CI | about 3.5 million vCPU at peak | the same |
+
+CI dominates the cost, then Git storage and bandwidth. The database is the smallest line
+but the hardest to run: a cell's writes are a few percent of what one primary takes, so data
+size and restore time set the cell count.
+
+### Stages
+
+A single machine stays one cell after every stage, with no router or directory, and SQLite
+stays allowed; an SQLite installation joins a multi-cell deployment after `codeyard db copy`
+to PostgreSQL. Every stage keeps `scripts/e2e.sh` passing; each list is checked with real
+`gh` and `git`.
+
+| Stage | Builds | Touches old code |
+|---|---|---|
+| 0 | durability (above) | moderately: Git settings, hooks, `begin_ref_change`, replicas, new commands |
+| 1 | one big cell | **widely**: lock calls in 44 database modules, every log path, notifications, read routing |
+| 2 | two cells: router, directory, id ranges, credential prefixes, stubs | **widely**: credential formats, listing queries, a rule per route |
+| 3 | cross-cell forks, pull requests, notifications, transfers; object pools | moderately |
+| 4 | global indexes | moderately |
+| 5 | regions, disaster recovery, waves, directory shards, CDN | little |
+| 6 | account moves | **widely**: an ownership rule for every table |
+
+Stage 2 is the smallest multi-cell deployment that works end to end; until stage 3 a fork
+across cells is refused with a clear message.
+
+**Stage 1.** (1) Invitations in 50 orgs run beside 500 clients reading issues, and no
+request waits on another org's lock. (2) Registry reads take no lock; publishes to
+different packages run in parallel. (3) No `NOTIFY` or `LISTEN` remains, and a notification
+reaches an open browser within 2 seconds of `gh issue comment`. (4) `ci_logs` is gone,
+`gh run view --log` shows the whole log, and a killed runner leaves a failed job with its
+stored log. (5) With a replica, `gh issue view` right after `gh issue create` shows the
+issue. (6) Clones come from current copies, never from one that is behind. (7)
+`scripts/e2e.sh` passes behind PgBouncer. (8) A benchmark on stated hardware records one
+cell's write rate, read rate and clone throughput, and the capacity model is updated.
+
+**Stage 2.** (1) An existing installation becomes cell 0 with no data change, and
+`scripts/e2e.sh` passes through the router. (2) A cell-1 user runs `gh auth login` and
+`gh repo create`, and pushes and clones over HTTP and SSH. (3) Added with `gh api` as a
+collaborator on a cell-0 repository, that user pushes there over SSH and runs
+`gh pr create` and `gh pr merge`. (4) A signup with a name taken in the other cell is
+refused. (5) Cell-1 ids are at least 2^37 and below 2^53, and `gh` and JavaScript read them
+exactly. (6) `node(id:)` resolves objects in both cells, and one GraphQL query with
+`repository` fields in both returns both. (7) A revoked cell-1 token stops working on
+cell-0 repositories within 60 seconds. (8) The test suite passes with stub rows present,
+and search, member lists and counts never show a stub as an account. (9) With cell 1
+stopped, cell-0 users keep working and cell-1 pages show a clear error.
+
+**Stage 3.** (1) `gh repo fork` across cells, a push to the fork, `gh pr create` upstream:
+the pull request follows each push, and `gh pr checkout` and `gh pr merge` work. (2) The
+upstream maintainer pushes to the fork's branch. (3) 100 forks in one cell share one pool,
+and disk use grows only by new objects. (4) A mention of a user in the other cell reaches
+`gh api notifications` within a minute, with one email. (5) A star across cells updates the
+count and the user's star list. (6) A repository transferred to the other cell keeps its
+issue and pull request numbers, and the old URL redirects. (7) A cell killed during
+cross-cell traffic delivers its outbox after restart, without duplicates.
+
+**Stage 4.** (1) `gh search repos`, `issues`, `prs` and `code` return results from both
+cells, private ones only to readers, within a minute of a change. (2) An index rebuilt from
+nothing returns the same results. (3) Explore, trending and "used by" cover both cells, and
+a new advisory raises alerts in both. (4) With search stopped, pages work and search shows
+an error.
+
+**Stage 5.** (1) Signups go to their region's cells, and pinned accounts keep their home
+region; org presence can span regions.
+(2) With a region stopped, its cells serve from the paired region within 30 minutes, and
+`codeyard repo verify --repair` lists what it fixed. (3) A schema change goes out in waves,
+a failing canary stops it, and old and new binaries run side by side. (4) A directory shard
+moves between clusters with no failed lookup. (5) With two regions, an org whose members
+work from B gains presence there: clone and `gh issue list` use B's current copies and
+match home, a push reaches home and the following B read shows it, a stopped replica
+falls back to home, and presence is removed after the share drops.
+
+**Stage 6.** (1) A test fails when a table has no ownership rule. (2) A user with
+repositories, issues, pull requests, CI history and packages moves cells, and `git clone`,
+`gh repo view`, `gh issue list`, `gh run list`, old REST and node ids and links from other
+cells keep working. (3) An org with 1,000 members moves with every member's access
+unchanged. (4) During the freeze writes get a retry message, and a move stopped halfway
+leaves the source serving as before. (5) With two regions, self-authenticated counts from
+another region crossing the threshold on three days move a user and preserve clone,
+`gh` and links. Anonymous reads never trigger a move; pinned and cooled-down accounts
+never move, and dry run changes no placement. Lease contention, pause, the daily region
+pair cap and one-move-per-cell guard hold. (6) Organization presence meets stage 5's
+two-region acceptance without moving its home cell or splitting its rows.
+
+### Not built, rejected, and the biggest risk
+
+Not built at all: a new database engine; multi-master writes; synchronous writes across
+regions; two-phase commit across cells; splitting an org; GraphQL federation below
+top-level fields; a consensus protocol for refs; our own CDN or object store; exact global
+rate limits, which stay per cell and per router. Git on object storage and a message bus
+wait until storage cost or the number of consumers calls for them.
+
+Rejected:
+
+- Sharding by repository or table (Vitess at GitHub and Slack): a query router under all
+  4,728 query sites, and no joins across owners.
+- Distributed SQL (CockroachDB, YugabyteDB, Spanner) or Citus: consensus or a coordinator on
+  every write, one large failure domain, and gaps in PostgreSQL features Codeyard uses
+  (`LISTEN`/`NOTIFY` is early access in YugabyteDB); CockroachDB is no longer open source.
+  Rejected on design, not on a benchmark.
+- One primary with many replicas, as OpenAI runs for 800 million users: 4 PB fits neither
+  one database nor one restore.
+- Resolving remote users at read time: drops 169 foreign keys and touches hundreds of
+  queries.
+- Forks in the upstream's cell, as GitLab Cells plans: the forker's org permissions would
+  cross cells on every access.
+- A host name or redirect per cell: URLs would change on moves, and Git and `gh` handle
+  redirected pushes badly.
+- Search by asking every cell (the draft): a thousand requests per query.
+- Time-based ids (Snowflake) pass 2^53; `cell << 42` allows only 2,048 cells.
+- Logical replication for moves: row filters see only a table's own columns.
+
+The biggest risk is that cross-cell work is the normal case. With 1,000 cells, a fork, a
+star or an outside contributor is in another cell 999 times in 1,000, so stubs, the outbox
+and foreign credential checks carry most open-source traffic; if they lag or break, open
+source on Codeyard breaks. So from stage 2 every end-to-end test spreads its users over two
+cells. The next risks are a listing that forgets to skip stubs, and running thousands of
+PostgreSQL clusters, which stays possible only if the waves, drills and placement of stage
+5 run by themselves.
