@@ -760,7 +760,7 @@ pub async fn rewrite_template_history(
                 let reference = reference?;
                 let name = reference
                     .name()
-                    .ok_or_else(|| anyhow!("Invalid reference name"))?
+                    .map_err(|_| anyhow!("Invalid reference name"))?
                     .to_owned();
                 bytes += name.len();
                 if names.len() >= super::MAX_REPOSITORY_REFS

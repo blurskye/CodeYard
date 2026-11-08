@@ -192,7 +192,7 @@ async fn copies(pg: bool) {
         let git = git2::Repository::open_bare(&generated.disk_path).unwrap();
         let head = git.head().unwrap().peel_to_commit().unwrap();
         assert_eq!(head.parent_count(), 0);
-        assert_eq!(head.author().name(), Some("bob"));
+        assert_eq!(head.author().name().ok(), Some("bob"));
         assert!(head.tree().unwrap().get_name("README.md").is_some());
         assert!(head
             .tree()

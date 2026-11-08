@@ -49,7 +49,7 @@ fn entries(repo: &Repository, commit: &Commit<'_>) -> Result<Vec<TreeObjectEntry
     let mut files = Vec::new();
     let mut previous_name: Option<String> = None;
     for entry in &tree {
-        let name = entry.name().ok_or_else(invalid)?;
+        let name = entry.name().map_err(|_| invalid())?;
         ensure!(
             previous_name
                 .as_deref()
@@ -227,7 +227,7 @@ pub fn prepare(path: &Path, input: &GistEdit, name: &str, email: &str) -> Result
         );
         let (oid, mode, content) = if let Some(content) = &change.content {
             (
-                Oid::zero(),
+                Oid::ZERO_SHA1,
                 original
                     .get(name)
                     .map(|(_, mode)| mode.clone())
@@ -342,6 +342,7 @@ fn history_metadata(
                 author_email: commit
                     .author()
                     .email()
+                    .ok()
                     .filter(|email| email.len() <= super::repository::MAX_COMMIT_EMAIL_BYTES)
                     .unwrap_or_default()
                     .into(),

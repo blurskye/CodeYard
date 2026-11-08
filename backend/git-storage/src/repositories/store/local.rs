@@ -1019,9 +1019,9 @@ impl LocalStore {
             for value in values {
                 let reference = repo.find_reference(&value.name)?;
                 let matches = if value.kind == "symbolic" {
-                    reference.symbolic_target() == Some(value.target.as_str())
+                    reference.symbolic_target().ok().flatten() == Some(value.target.as_str())
                 } else {
-                    reference.symbolic_target().is_none()
+                    reference.symbolic_target().ok().flatten().is_none()
                         && reference.target().map(|oid| oid.to_string()).as_deref()
                             == Some(value.target.as_str())
                 };
@@ -3484,7 +3484,7 @@ impl LocalStore {
                         let repo = git2::Repository::open_bare(&path)?;
                         let target = repo
                             .find_reference("HEAD")?
-                            .symbolic_target()
+                            .symbolic_target()?
                             .map(str::to_owned);
                         Ok(target)
                     })

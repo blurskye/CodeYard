@@ -1749,7 +1749,7 @@ async fn quorum_directory_recovery(pool: &DbPool) {
             recovered.find_reference(MAIN).unwrap().target(),
             Some(commit)
         );
-        assert_eq!(recovered.head().unwrap().name(), Some(MAIN));
+        assert_eq!(recovered.head().unwrap().name().ok(), Some(MAIN));
         assert!(recovered.find_reference("refs/heads/stale-child").is_err());
         assert!(term_path(root.path(), uuid, 1).exists());
     }

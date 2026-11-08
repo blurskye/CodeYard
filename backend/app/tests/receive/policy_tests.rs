@@ -739,7 +739,10 @@ mod fixture {
             .unwrap();
         assert!(String::from_utf8_lossy(&result).contains("ng refs/heads/spare"));
         assert_eq!(
-            bare.find_reference("HEAD").unwrap().symbolic_target(),
+            bare.find_reference("HEAD")
+                .unwrap()
+                .symbolic_target()
+                .unwrap(),
             Some("refs/heads/spare")
         );
         fixture.pool.close().await;
@@ -779,7 +782,10 @@ mod fixture {
                 .is_ok()
         );
         assert_eq!(
-            bare.find_reference("HEAD").unwrap().symbolic_target(),
+            bare.find_reference("HEAD")
+                .unwrap()
+                .symbolic_target()
+                .unwrap(),
             Some("refs/heads/trunk")
         );
         let row = codeyard_db_repos::repositories::records::get_repository_by_id(

@@ -376,6 +376,7 @@ async fn contract(pg: bool) {
         .unwrap()
         .symbolic_target()
         .unwrap()
+        .unwrap()
         .to_owned();
     let local = codeyard_db_repos::repositories::records::create_repository(
         pool,
@@ -445,7 +446,10 @@ async fn contract(pg: bool) {
         .await
         .is_err());
     assert_eq!(
-        git.find_reference("HEAD").unwrap().symbolic_target(),
+        git.find_reference("HEAD")
+            .unwrap()
+            .symbolic_target()
+            .unwrap(),
         Some(original_head.as_str())
     );
     metadata.id += 1;

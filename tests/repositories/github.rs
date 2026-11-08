@@ -2824,7 +2824,8 @@ async fn update_contract(pg: bool) {
             .unwrap()
             .head()
             .unwrap()
-            .name(),
+            .name()
+            .ok(),
         Some("refs/heads/dev")
     );
     checked(

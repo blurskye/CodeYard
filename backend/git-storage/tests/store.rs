@@ -479,7 +479,11 @@ async fn failed_head_change_restores_the_previous_database_default() {
         .await
         .is_err());
     assert_eq!(
-        f.repo.find_reference("HEAD").unwrap().symbolic_target(),
+        f.repo
+            .find_reference("HEAD")
+            .unwrap()
+            .symbolic_target()
+            .unwrap(),
         Some("refs/heads/main")
     );
     let row = codeyard_db_repos::repositories::records::get_repository_by_id(&a.pool, a.repo_id)
@@ -540,7 +544,11 @@ async fn cancelling_a_default_branch_request_does_not_cancel_head_synchronizatio
         .unwrap();
     assert_eq!(row.default_branch, "topic");
     assert_eq!(
-        f.repo.find_reference("HEAD").unwrap().symbolic_target(),
+        f.repo
+            .find_reference("HEAD")
+            .unwrap()
+            .symbolic_target()
+            .unwrap(),
         Some("refs/heads/topic")
     );
 }
@@ -2621,7 +2629,7 @@ async fn rebase_drops_a_commit_whose_change_the_base_already_has() {
         .unwrap();
     // The second commit adds nothing to the first, so only the first one is written.
     assert_eq!(tip.parent_id(0).unwrap(), f.second);
-    assert_eq!(tip.summary(), Some("add a"));
+    assert_eq!(tip.summary().unwrap(), Some("add a"));
 }
 
 #[tokio::test]
@@ -2747,12 +2755,12 @@ async fn rebase_keeps_each_commits_author_and_date() {
         .find_commit(git2::Oid::from_str(&tip).unwrap())
         .unwrap();
     let author = written.author();
-    assert_eq!(author.name(), Some("Original Author"));
-    assert_eq!(author.email(), Some("original@example.invalid"));
+    assert_eq!(author.name().ok(), Some("Original Author"));
+    assert_eq!(author.email().ok(), Some("original@example.invalid"));
     assert_eq!(author.when().seconds(), 1_600_000_000);
     assert_eq!(author.when().offset_minutes(), 120);
-    assert_eq!(written.committer().name(), Some("Merger"));
-    assert_eq!(written.summary(), Some("Add a"));
+    assert_eq!(written.committer().name().ok(), Some("Merger"));
+    assert_eq!(written.summary().unwrap(), Some("Add a"));
 }
 
 #[tokio::test]
@@ -2893,7 +2901,7 @@ async fn rebase_refuses_a_commit_that_would_outgrow_the_object_limit() {
         .repo
         .find_commit(git2::Oid::from_str(&tip).unwrap())
         .unwrap();
-    assert_eq!(written.committer().name(), Some(name.as_str()));
+    assert_eq!(written.committer().name().ok(), Some(name.as_str()));
 }
 
 #[tokio::test]

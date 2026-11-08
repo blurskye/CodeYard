@@ -24,7 +24,7 @@ async fn patch_atomicity(pg: bool) {
     assert!(row.is_template);
     assert!(row.is_private);
     assert_eq!(row.default_branch, "dev");
-    assert_eq!(git.head().unwrap().name(), Some("refs/heads/dev"));
+    assert_eq!(git.head().unwrap().name().ok(), Some("refs/heads/dev"));
     checked(&router,"repos/update","PATCH","/api/v3/repos/alice/renamed",Some(&writer),json!({"archived":false,"name":"patch","default_branch":"main","description":"Restored","homepage":"https://original.test"}),StatusCode::OK).await;
     checked(
         &router,
@@ -47,13 +47,13 @@ async fn patch_atomicity(pg: bool) {
         assert_eq!(row.default_branch, "main");
     };
     unchanged(&f.repository(id).await);
-    assert_eq!(git.head().unwrap().name(), Some("refs/heads/main"));
+    assert_eq!(git.head().unwrap().name().ok(), Some("refs/heads/main"));
     let lock = std::path::Path::new(&repo.disk_path).join("HEAD.lock");
     std::fs::write(&lock, b"fixture lock").unwrap();
     checked(&router,"repos/update","PATCH","/api/v3/repos/alice/patch",Some(&writer),json!({"name":"failed","description":"Must not commit","default_branch":"dev","archived":true}),StatusCode::SERVICE_UNAVAILABLE).await;
     std::fs::remove_file(lock).unwrap();
     unchanged(&f.repository(id).await);
-    assert_eq!(git.head().unwrap().name(), Some("refs/heads/main"));
+    assert_eq!(git.head().unwrap().name().ok(), Some("refs/heads/main"));
     let oid = git.head().unwrap().target().unwrap();
     git.set_head_detached(oid).unwrap();
     checked(

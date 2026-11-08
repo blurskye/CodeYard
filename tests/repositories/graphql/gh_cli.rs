@@ -640,10 +640,10 @@ async fn merge_and_revert(
     let commit = git
         .find_commit(merged.merge_commit_sha.as_ref().unwrap().parse().unwrap())
         .unwrap();
-    assert_eq!(commit.author().email(), Some("chosen@example.test"));
-    assert_ne!(commit.committer().email(), Some("chosen@example.test"));
+    assert_eq!(commit.author().email().ok(), Some("chosen@example.test"));
+    assert_ne!(commit.committer().email().ok(), Some("chosen@example.test"));
     assert_eq!(
-        commit.message(),
+        commit.message().ok(),
         Some("CLI merge headline\n\nCLI merge body")
     );
     assert!(

@@ -200,7 +200,10 @@ async fn a_repository_on_a_storage_node_moves_from_its_primary() {
         refs[MAIN]
     );
     assert_eq!(
-        copy.find_reference("HEAD").unwrap().symbolic_target(),
+        copy.find_reference("HEAD")
+            .unwrap()
+            .symbolic_target()
+            .unwrap(),
         Some(MAIN)
     );
     drop(copy);

@@ -111,7 +111,7 @@ fn read_tag(repo: &Repository, oid: Oid) -> Result<(PublicationRecord, Option<Oi
     );
     checked_reference(&publication.reference)?;
     ensure!(
-        tag.name() == Some(format!("codeyard-publication-{}", publication.id).as_str()),
+        tag.name().ok() == Some(format!("codeyard-publication-{}", publication.id).as_str()),
         "Publication metadata identity differs from its tag"
     );
     let previous = match tag.target_type() {
@@ -136,7 +136,7 @@ fn matching(
     head: Option<Oid>,
 ) -> Result<Option<PublicationRecord>> {
     let Some(slot) = slot else { return Ok(None) };
-    let expected = head.unwrap_or_else(Oid::zero).to_string();
+    let expected = head.unwrap_or(Oid::ZERO_SHA1).to_string();
     let (record, previous) = read_tag(repo, slot)?;
     if record.publication.repository_id != repository_id
         || record.publication.reference != reference
@@ -169,7 +169,7 @@ fn matching(
 fn remove_absent_branches(repo: &Repository, apply: bool) -> Result<Vec<PublicationUpdate>> {
     let mut active = HashSet::new();
     for reference in repo.references_glob("refs/heads/*")? {
-        if let Some(name) = reference?.name() {
+        if let Ok(name) = reference?.name() {
             active.insert(metadata_ref(name));
         }
     }
@@ -179,7 +179,7 @@ fn remove_absent_branches(repo: &Repository, apply: bool) -> Result<Vec<Publicat
     let mut deletes = String::from("start\n");
     let mut changes = Vec::new();
     for reference in candidates {
-        let Some(name) = reference.name() else {
+        let Ok(name) = reference.name() else {
             continue;
         };
         let Some(suffix) = name.strip_prefix("refs/codeyard/publications/") else {
@@ -390,8 +390,8 @@ fn prepare_object(
         repository_id,
         actor,
         reference: reference.to_owned(),
-        old: old.unwrap_or_else(Oid::zero).to_string(),
-        new: new.unwrap_or_else(Oid::zero).to_string(),
+        old: old.unwrap_or(Oid::ZERO_SHA1).to_string(),
+        new: new.unwrap_or(Oid::ZERO_SHA1).to_string(),
     };
     let payload = serde_json::to_string(&publication)?;
     ensure!(
@@ -422,7 +422,7 @@ fn prepare_object(
             &name,
             oid,
             true,
-            old_slot.unwrap_or_else(Oid::zero),
+            old_slot.unwrap_or(Oid::ZERO_SHA1),
             "Prepare native branch publication",
         )?;
     }

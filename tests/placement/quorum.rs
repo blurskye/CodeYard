@@ -327,6 +327,7 @@ impl Stores {
                     .unwrap()
                     .symbolic_target()
                     .unwrap()
+                    .unwrap()
                     .to_owned()
             })
             .collect()

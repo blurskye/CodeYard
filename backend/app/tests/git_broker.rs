@@ -1604,8 +1604,8 @@ impl PushFixture {
         );
         let bare = git2::Repository::open_bare(&self.repo.disk_path).unwrap();
         assert_eq!(
-            bare.head().unwrap().name(),
-            Some(format!("refs/heads/{branch}").as_str())
+            bare.head().unwrap().name().unwrap(),
+            format!("refs/heads/{branch}")
         );
         assert_eq!(bare.head().unwrap().target(), Some(self.oid));
     }
@@ -1689,7 +1689,8 @@ async fn concurrent_first_pushes(pool: DbPool) {
             .unwrap()
             .find_reference("HEAD")
             .unwrap()
-            .symbolic_target(),
+            .symbolic_target()
+            .unwrap(),
         Some("refs/heads/main")
     );
 

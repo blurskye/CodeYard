@@ -1242,6 +1242,8 @@ impl Gateway {
                 let head = repository.find_reference("HEAD")?;
                 let mut branch = head
                     .symbolic_target()
+                    .ok()
+                    .flatten()
                     .and_then(|name| name.strip_prefix("refs/heads/"))
                     .map(str::to_owned)
                     .unwrap_or(fallback);
@@ -1257,7 +1259,11 @@ impl Gateway {
                             head_change = Some(codeyard_database::models::RefChange {
                                 name: "HEAD".into(),
                                 kind: "symbolic".into(),
-                                old_target: head.symbolic_target().map(str::to_owned),
+                                old_target: head
+                                    .symbolic_target()
+                                    .ok()
+                                    .flatten()
+                                    .map(str::to_owned),
                                 new_target: Some(target),
                             });
                         } else {

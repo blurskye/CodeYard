@@ -529,7 +529,7 @@ pub async fn retain_write(path: &Path, write: &WriteRecord, limits: WriteLimits)
                             repo.references_glob(&format!("{}/*", change.name))?.take(2)
                         {
                             ensure!(
-                                reference?.name().is_some_and(|name| renamed == Some(name)),
+                                reference?.name().is_ok_and(|name| renamed == Some(name)),
                                 "reference namespace conflict"
                             );
                         }
@@ -798,7 +798,7 @@ impl NodeContext {
 fn reference_target(reference: &git2::Reference<'_>, kind: &str) -> Result<String> {
     if kind == "symbolic" {
         Ok(reference
-            .symbolic_target()
+            .symbolic_target()?
             .context("expected symbolic ref")?
             .to_owned())
     } else {

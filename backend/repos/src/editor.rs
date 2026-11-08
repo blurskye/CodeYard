@@ -1443,7 +1443,8 @@ mod tests {
             repository
                 .find_reference("refs/heads/main")
                 .unwrap()
-                .symbolic_target(),
+                .symbolic_target()
+                .unwrap(),
             Some("refs/heads/other")
         );
         assert!(repository.find_reference("refs/heads/other").is_err());

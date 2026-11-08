@@ -329,7 +329,10 @@ impl Fixture {
         assert_eq!(git.references().unwrap().count(), 0);
         assert!(matches!(git.head(), Err(error) if error.code() == git2::ErrorCode::UnbornBranch));
         assert_eq!(
-            git.find_reference("HEAD").unwrap().symbolic_target(),
+            git.find_reference("HEAD")
+                .unwrap()
+                .symbolic_target()
+                .unwrap(),
             Some("refs/heads/main")
         );
         repository

@@ -267,7 +267,7 @@ async fn repacks_loose_git_history_and_tags_without_source_configuration() {
         b"original file\n"
     );
     assert_eq!(
-        restored.find_tag(tag).unwrap().message(),
+        restored.find_tag(tag).unwrap().message().unwrap(),
         Some("original annotated tag")
     );
     assert!(restored

@@ -101,7 +101,7 @@ fn refs_of(path: &str) -> Vec<(String, String)> {
         .filter_map(|reference| {
             let reference = reference.ok()?;
             Some((
-                reference.name()?.to_owned(),
+                reference.name().ok()?.to_owned(),
                 reference.target()?.to_string(),
             ))
         })
@@ -228,7 +228,7 @@ async fn restack_moves_each_layer_onto_the_one_below_contract(pg: bool) {
     let replayed = git.find_commit(oid(&two2)).unwrap();
     assert_eq!(replayed.author().name().unwrap(), two_author);
     assert_eq!(replayed.author().when().seconds(), two_when);
-    assert_eq!(replayed.summary(), Some("Add two.txt"));
+    assert_eq!(replayed.summary().unwrap(), Some("Add two.txt"));
 
     assert_eq!(app.alice.pull(2).await["head_sha"], two2);
     assert_eq!(app.alice.pull(3).await["head_sha"], three2);

@@ -27,7 +27,7 @@ pub fn candidates(path: &Path) -> Result<HashMap<String, String>> {
         .take(MAX_RETAINED_OBJECT_REFS)
     {
         let reference = reference?;
-        if let (Some(name), Some(oid)) = (reference.name(), reference.target()) {
+        if let (Ok(name), Some(oid)) = (reference.name(), reference.target()) {
             if name == format!("refs/codeyard/objects/{oid}") {
                 refs.insert(oid.to_string(), name.to_owned());
             }

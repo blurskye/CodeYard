@@ -1485,7 +1485,7 @@ impl Refs {
         let head = tokio::task::spawn_blocking(move || -> Result<Option<String>> {
             let repository = git2::Repository::open_bare(&path)?;
             let head = repository.find_reference("HEAD")?;
-            Ok(head.symbolic_target().map(str::to_owned))
+            Ok(head.symbolic_target()?.map(str::to_owned))
         })
         .await??;
         Ok(Self { refs, head })

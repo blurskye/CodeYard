@@ -400,7 +400,10 @@ async fn provision_contract(mut database: Database) {
     assert!(path.starts_with(root.path()));
     let git = git2::Repository::open_bare(path).expect("a real bare repository");
     assert_eq!(
-        git.find_reference("HEAD").unwrap().symbolic_target(),
+        git.find_reference("HEAD")
+            .unwrap()
+            .symbolic_target()
+            .unwrap(),
         Some("refs/heads/main")
     );
     // A duplicate name leaves no directory behind.

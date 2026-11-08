@@ -1009,7 +1009,7 @@ async fn default_branch_contract(pg: bool) {
             .unwrap();
     assert_eq!(repository.default_branch, "topic");
     let bare = git2::Repository::open_bare(&repository.disk_path).unwrap();
-    assert_eq!(bare.head().unwrap().name(), Some("refs/heads/topic"));
+    assert_eq!(bare.head().unwrap().name().ok(), Some("refs/heads/topic"));
     let branches = client
         .expect(
             "GET",
@@ -1070,7 +1070,7 @@ async fn default_branch_contract(pg: bool) {
             .unwrap()
             .unwrap();
     assert_eq!(stored.default_branch, "topic");
-    assert_eq!(bare.head().unwrap().name(), Some("refs/heads/topic"));
+    assert_eq!(bare.head().unwrap().name().ok(), Some("refs/heads/topic"));
 
     // Branch creation from a tag-only repository is another first-branch write.
     let oid = git2::Oid::from_str(&tip).unwrap();
@@ -1100,7 +1100,7 @@ async fn default_branch_contract(pg: bool) {
             .unwrap()
             .unwrap();
     assert_eq!(stored.default_branch, "trunk");
-    assert_eq!(bare.head().unwrap().name(), Some("refs/heads/trunk"));
+    assert_eq!(bare.head().unwrap().name().ok(), Some("refs/heads/trunk"));
     client
         .expect(
             "DELETE",

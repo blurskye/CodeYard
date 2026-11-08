@@ -1564,7 +1564,7 @@ fn collect_refs(
 
     for reference_result in repo.references()? {
         let reference = reference_result?;
-        let Some(name) = reference.name() else {
+        let Ok(name) = reference.name() else {
             continue;
         };
 
@@ -2316,6 +2316,8 @@ fn commit_message(commit: &git2::Commit<'_>) -> String {
 fn decode_commit_text(commit: &git2::Commit<'_>, bytes: &[u8]) -> String {
     let encoding = commit
         .message_encoding()
+        .ok()
+        .flatten()
         .and_then(|label| encoding_rs::Encoding::for_label(label.as_bytes()))
         .unwrap_or(encoding_rs::UTF_8);
     encoding.decode(bytes).0.into_owned()
@@ -2478,7 +2480,7 @@ pub fn list_tags(repo_path: &Path) -> Result<Vec<TagInfo>> {
         let (message, date) = if kind == ObjectType::Tag {
             let tag = repo.find_tag(oid)?;
             let date = tag.tagger().map(|tagger| tagger.when().seconds());
-            let message = tag.message().filter(|message| {
+            let message = tag.message().ok().flatten().filter(|message| {
                 if message.len() <= MAX_TAG_RESPONSE_BYTES - message_bytes {
                     message_bytes += message.len();
                     true

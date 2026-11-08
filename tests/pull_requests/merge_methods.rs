@@ -262,9 +262,9 @@ async fn squash_contract(pg: bool) {
         git.find_commit(oid(&head)).unwrap().tree_id()
     );
     // The pull request's author wrote the change, and the merger committed it.
-    assert_eq!(commit.author().name(), Some("alice"));
-    assert_eq!(commit.author().email(), Some("alice@users.noreply"));
-    assert_eq!(commit.committer().name(), Some("merger"));
+    assert_eq!(commit.author().name().ok(), Some("alice"));
+    assert_eq!(commit.author().email().ok(), Some("alice@users.noreply"));
+    assert_eq!(commit.committer().name().ok(), Some("merger"));
     let odb = git.odb().unwrap();
     let raw = odb.read(commit.id()).unwrap();
     assert!(
@@ -272,7 +272,7 @@ async fn squash_contract(pg: bool) {
         "the squash commit publishes the account email"
     );
     assert_eq!(
-        commit.message(),
+        commit.message().ok(),
         Some("Two files (#1)\n\n* Add one.txt\n* Add two.txt\n")
     );
     assert_eq!(main_tip(&path), sha);
@@ -313,12 +313,12 @@ async fn rebase_contract(pg: bool) {
         let original = git.find_commit(oid(original)).unwrap();
         assert_ne!(written.id(), original.id());
         assert_eq!(written.summary(), original.summary());
-        assert_eq!(written.author().name(), Some("alice"));
+        assert_eq!(written.author().name().ok(), Some("alice"));
         assert_eq!(
             written.author().when().seconds(),
             original.author().when().seconds()
         );
-        assert_eq!(written.committer().name(), Some("merger"));
+        assert_eq!(written.committer().name().ok(), Some("merger"));
     }
     assert_eq!(main_tip(&path), sha);
     let pull = app.alice.pull(number).await;
@@ -492,7 +492,7 @@ async fn native_contract(pg: bool) {
         assert_eq!(tip.parent_count(), expected_parents, "{method}");
         if method != "rebase" {
             assert_eq!(
-                tip.message(),
+                tip.message().ok(),
                 Some("Custom native merge\n\nNative description")
             );
         }
@@ -519,7 +519,7 @@ async fn default_method_contract(pg: bool) {
     let commit = git.find_commit(oid(text(&merged, "sha"))).unwrap();
     assert_eq!(commit.parent_count(), 2);
     assert_eq!(
-        commit.summary(),
+        commit.summary().unwrap(),
         Some(format!("Merge pull request #{number} from feature").as_str())
     );
     f.finish().await;

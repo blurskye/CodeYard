@@ -1033,7 +1033,10 @@ async fn exercise(pool: &DbPool, url: &str) {
         ));
         let bare = git2::Repository::open_bare(&repository.disk_path).unwrap();
         assert_eq!(
-            bare.find_reference("HEAD").unwrap().symbolic_target(),
+            bare.find_reference("HEAD")
+                .unwrap()
+                .symbolic_target()
+                .unwrap(),
             Some(format!("refs/heads/{branch}").as_str())
         );
         success(git(
