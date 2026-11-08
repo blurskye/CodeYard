@@ -267,7 +267,7 @@ rsa = { version = "=0.9.10", features = ["sha2", "pem"] }
 tower = { version = "0.5", features = ["util"] }
 jsonschema = { version = "=0.60.1", default-features = false }
 aho-corasick = "=1.1.5"
-fancy-regex = "=0.16.2"
+fancy-regex = "=0.20.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies.codeyard-types]
 workspace = true

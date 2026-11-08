@@ -8,6 +8,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 
+/// Compiled program size limit, in VM instructions, for one matcher regexp.
+const MAX_PROGRAM: usize = 100_000;
 const FIELDS: [&str; 7] = [
     "file", "line", "column", "severity", "code", "message", "fromPath",
 ];
@@ -62,17 +64,19 @@ fn severity(value: &str) -> Option<&'static str> {
     }
 }
 
-/// Whether every successful match consumes input. Backreferences and subroutines may be
-/// empty, so they cannot establish this guarantee without a separate capture analysis.
+/// Whether every successful match consumes input. Backreferences may be empty, so they cannot
+/// establish this guarantee without a separate capture analysis.
 fn consumes(expr: &fancy_regex::Expr) -> bool {
     use fancy_regex::Expr;
     match expr {
         Expr::Literal { val, .. } => !val.is_empty(),
-        Expr::Any { .. } => true,
-        Expr::Delegate { size, .. } => *size > 0,
+        Expr::LiteralBytes { bytes } => !bytes.is_empty(),
+        // A delegate always matches exactly one character.
+        Expr::Any { .. } | Expr::Delegate { .. } | Expr::GeneralNewline { .. } => true,
         Expr::Concat(children) => children.iter().any(consumes),
         Expr::Alt(children) => !children.is_empty() && children.iter().all(consumes),
-        Expr::Group(child) | Expr::AtomicGroup(child) => consumes(child),
+        Expr::Group(child) => consumes(child),
+        Expr::AtomicGroup(child) => consumes(child),
         Expr::Repeat { child, lo, .. } => *lo > 0 && consumes(child),
         Expr::Conditional {
             true_branch,
@@ -83,35 +87,29 @@ fn consumes(expr: &fancy_regex::Expr) -> bool {
     }
 }
 
-fn validate_repetitions(expr: &fancy_regex::Expr) -> Result<()> {
+/// Matchers use the .NET syntax that actions/runner accepts, which has no subroutine calls,
+/// absent operators, DEFINE groups or backtracking verbs. Subroutine calls are also inlined
+/// when compiled, so they could grow a short pattern into a very large program.
+fn validate(expr: &fancy_regex::Expr) -> Result<()> {
     use fancy_regex::Expr;
     match expr {
+        Expr::SubroutineCall(_)
+        | Expr::Absent(_)
+        | Expr::DefineGroup { .. }
+        | Expr::BacktrackingControlVerb(_) => {
+            anyhow::bail!("Unsupported matcher regexp construct")
+        }
         Expr::Repeat { child, lo, hi, .. } => {
             // The VM's backtrack counter does not charge successful zero-width iterations.
             ensure!(
                 consumes(child) || (*lo <= 1 && (*hi == usize::MAX || *hi <= 1)),
                 "Counted repetition of a possibly empty matcher expression is unsupported"
             );
-            validate_repetitions(child)?;
-        }
-        Expr::Concat(children) | Expr::Alt(children) => {
-            for child in children {
-                validate_repetitions(child)?;
-            }
-        }
-        Expr::Group(child) | Expr::AtomicGroup(child) | Expr::LookAround(child, _) => {
-            validate_repetitions(child)?
-        }
-        Expr::Conditional {
-            condition,
-            true_branch,
-            false_branch,
-        } => {
-            validate_repetitions(condition)?;
-            validate_repetitions(true_branch)?;
-            validate_repetitions(false_branch)?;
         }
         _ => {}
+    }
+    for child in expr.children_iter() {
+        validate(child)?;
     }
     Ok(())
 }
@@ -145,9 +143,14 @@ impl Matcher {
             );
             let tree =
                 fancy_regex::Expr::parse_tree(&pattern.regexp).context("Invalid matcher regexp")?;
-            validate_repetitions(&tree.expr)?;
+            ensure!(
+                !tree.contains_subroutines,
+                "Unsupported matcher regexp construct"
+            );
+            validate(&tree.expr)?;
             let regex = RegexBuilder::new(&pattern.regexp)
                 .backtrack_limit(100_000)
+                .max_prog_size(MAX_PROGRAM)
                 .build()
                 .context("Invalid matcher regexp")?;
             for (field, group) in &pattern.groups {
@@ -457,6 +460,35 @@ mod tests {
         assert_eq!(
             matcher.matches("error error: detail").unwrap().unwrap().0["message"],
             "detail"
+        );
+    }
+
+    #[test]
+    fn rejects_constructs_the_runner_syntax_lacks_and_empty_counted_repeats() {
+        for regexp in [
+            r"(?<a>x\g<a>?)",
+            r"(a)\g<1>",
+            r"(?~abc)",
+            r"(?(DEFINE)(?<d>x))",
+            r"a(*FAIL)|b",
+            r"(?:a?){2,9}",
+            r"(?:a|\b){2,}",
+            r"(?:(?=x)){3,}",
+        ] {
+            let definition = serde_json::json!({"owner":"test", "pattern":[
+                {"regexp": regexp, "message":0}
+            ]});
+            assert!(
+                Matcher::new(serde_json::from_value(definition).unwrap()).is_err(),
+                "{regexp} was accepted"
+            );
+        }
+        let mut matcher = matcher(serde_json::json!({"owner":"test", "pattern":[
+            {"regexp":r"^([a-z]+):(\d{1,3})$", "file":1, "message":2}
+        ]}));
+        assert_eq!(
+            matcher.matches("src:42").unwrap().unwrap().0["message"],
+            "42"
         );
     }
 
