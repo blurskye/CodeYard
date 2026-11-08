@@ -63,7 +63,7 @@ async fn apply(
         sqlx::query("INSERT INTO _gitserv_migrations (version, name, sha256) VALUES ($1, $2, $3)")
             .bind(version)
             .bind(name)
-            .bind(format!("{:x}", Sha256::digest(sql.as_bytes())))
+            .bind(hex::encode(Sha256::digest(sql.as_bytes())))
             .execute(&mut *tx)
             .await?;
     }
@@ -92,9 +92,7 @@ fn validate_history_for(applied: &[(i64, String)], migrations: &[(i64, &str, &st
         let Some((expected_version, _, sql)) = migrations.get(index) else {
             bail!("database has migrations newer than this application; downgrade refused");
         };
-        if version != expected_version
-            || checksum != &format!("{:x}", Sha256::digest(sql.as_bytes()))
-        {
+        if version != expected_version || checksum != &hex::encode(Sha256::digest(sql.as_bytes())) {
             bail!("unexpected baseline history/checksum mismatch for migration {version}: the recorded history differs from this build; no changes applied");
         }
     }

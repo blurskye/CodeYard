@@ -207,7 +207,7 @@ native_operation!(crate::postgres::secret_scanning::heartbeat, crate::sqlite::se
 /// SHA-256 of a location's path, the key that stands in for the path in the uniqueness index.
 pub(super) fn path_digest(path: &str) -> String {
     use sha2::{Digest, Sha256};
-    format!("{:x}", Sha256::digest(path.as_bytes()))
+    hex::encode(Sha256::digest(path.as_bytes()))
 }
 
 use codeyard_database::queries::secret_scanning::Settings;

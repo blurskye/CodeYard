@@ -24,7 +24,7 @@ pub struct SigningKeys {
 }
 
 struct SigningKey {
-    signer: rsa::pkcs1v15::SigningKey<sha2::Sha256>,
+    signer: rsa::pkcs1v15::SigningKey<rsa::sha2::Sha256>,
     kid: String,
     jwks: Value,
 }

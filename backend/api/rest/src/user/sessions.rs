@@ -26,7 +26,7 @@ use std::sync::Arc;
 /// The form value that names a session. The session id is the sign-in secret, so pages show
 /// only its SHA-256 digest, and the server finds the session by digesting its own rows.
 fn session_key(id: &str) -> String {
-    format!("{:x}", Sha256::digest(id.as_bytes()))
+    hex::encode(Sha256::digest(id.as_bytes()))
 }
 
 #[derive(Default)]

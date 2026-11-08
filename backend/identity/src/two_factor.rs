@@ -18,8 +18,8 @@ use codeyard_database::DbPool;
 use codeyard_db_identity::users::two_factor::FactorAuthority;
 use codeyard_db_identity::users::two_factor::StoredTwoFactor;
 use data_encoding::BASE32_NOPAD;
-use hmac::{Hmac, Mac};
-use rand::{seq::SliceRandom, RngCore};
+use hmac::{Hmac, KeyInit, Mac};
+use rand::{seq::IndexedRandom, Rng};
 use sha1::Sha1;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -112,13 +112,13 @@ pub fn recovery_code_hash(code: &str) -> String {
 
 fn new_secret() -> Vec<u8> {
     let mut secret = vec![0u8; 20];
-    rand::thread_rng().fill_bytes(&mut secret);
+    rand::rng().fill_bytes(&mut secret);
     secret
 }
 
 /// Ten recovery codes, each shown once as four groups of four characters.
 fn new_recovery_codes() -> Vec<String> {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     (0..RECOVERY_CODE_COUNT)
         .map(|_| {
             let chars: Vec<char> = (0..16)

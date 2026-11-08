@@ -280,7 +280,7 @@ async fn contract(pg: bool) {
         .unwrap()
         .unwrap();
     assert_eq!(headers["x-github-event"], "issues");
-    use hmac::Mac;
+    use hmac::{KeyInit, Mac};
     let mut mac = hmac::Hmac::<sha2::Sha256>::new_from_slice(
         converted["webhook_secret"].as_str().unwrap().as_bytes(),
     )

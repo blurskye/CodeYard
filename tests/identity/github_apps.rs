@@ -44,7 +44,7 @@ pub(super) fn jwt(key: &RsaPrivateKey, issuer: Value, expires: i64) -> String {
         json!({"iss":issuer,"iat":chrono::Utc::now().timestamp()-10,"exp":expires}).to_string(),
     );
     let signed = format!("{header}.{body}");
-    let signature = SigningKey::<sha2::Sha256>::new(key.clone()).sign(signed.as_bytes());
+    let signature = SigningKey::<rsa::sha2::Sha256>::new(key.clone()).sign(signed.as_bytes());
     format!(
         "Bearer {signed}.{}",
         URL_SAFE_NO_PAD.encode(signature.to_vec())

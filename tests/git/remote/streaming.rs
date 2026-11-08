@@ -1,7 +1,7 @@
 //! Large and multi-round Git transfers through real HTTP and built-in SSH servers.
 use super::*;
 use codeyard_db_identity::users::tokens;
-use rand::{RngCore, SeedableRng};
+use rand::{Rng, SeedableRng};
 use std::io::Write;
 
 fn commits(path: &Path, count: usize) {

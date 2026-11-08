@@ -415,7 +415,7 @@ fn verify(
         "unsupported OIDC key size"
     );
     let signature = Signature::try_from(URL_SAFE_NO_PAD.decode(pieces[2])?.as_slice())?;
-    VerifyingKey::<Sha256>::new(key).verify(
+    VerifyingKey::<rsa::sha2::Sha256>::new(key).verify(
         format!("{}.{}", pieces[0], pieces[1]).as_bytes(),
         &signature,
     )?;
@@ -465,14 +465,14 @@ mod tests {
 
     fn key() -> &'static rsa::RsaPrivateKey {
         static KEY: std::sync::OnceLock<rsa::RsaPrivateKey> = std::sync::OnceLock::new();
-        KEY.get_or_init(|| rsa::RsaPrivateKey::new(&mut rand::thread_rng(), 2048).unwrap())
+        KEY.get_or_init(|| rsa::RsaPrivateKey::new(&mut rsa::rand_core::OsRng, 2048).unwrap())
     }
     fn token(claims: &Value) -> String {
         let header = URL_SAFE_NO_PAD.encode(br#"{"alg":"RS256","kid":"fixture"}"#);
         let body = URL_SAFE_NO_PAD.encode(serde_json::to_vec(claims).unwrap());
         let data = format!("{header}.{body}");
-        let signature =
-            rsa::pkcs1v15::SigningKey::<Sha256>::new(key().clone()).sign(data.as_bytes());
+        let signature = rsa::pkcs1v15::SigningKey::<rsa::sha2::Sha256>::new(key().clone())
+            .sign(data.as_bytes());
         format!("{data}.{}", URL_SAFE_NO_PAD.encode(signature.to_bytes()))
     }
     #[test]

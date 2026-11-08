@@ -381,7 +381,7 @@ async fn comment_tasks_check_scope_and_original_body(pg: bool) {
     let pull = alice.open_pull("Tasks", "topic", "main").await;
     let original = "- [ ] A\n- [ ] B";
     use sha2::{Digest, Sha256};
-    let revision = format!("{:x}", Sha256::digest(original));
+    let revision = hex::encode(Sha256::digest(original));
     for (family, number) in [
         ("issues", issue["number"].as_i64().unwrap()),
         ("pulls", pull["number"].as_i64().unwrap()),

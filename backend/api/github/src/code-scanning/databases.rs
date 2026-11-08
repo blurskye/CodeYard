@@ -259,7 +259,7 @@ pub(crate) async fn upload(
         }
         other => Error::unavailable(other),
     })?;
-    let sha256 = format!("{:x}", Sha256::digest(&bytes));
+    let sha256 = hex::encode(Sha256::digest(&bytes));
     let key = format!("codeql/{}", uuid::Uuid::new_v4());
     codeyard_db_security::codeql::stage(&state.pool, actor.clone(), repo.id, &key)
         .await

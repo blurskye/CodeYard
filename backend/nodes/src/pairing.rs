@@ -31,7 +31,7 @@ use iroh::endpoint::Connection;
 use iroh::protocol::AcceptError;
 use iroh::protocol::ProtocolHandler;
 use iroh::PublicKey;
-use rand::RngCore;
+use rand::TryRng;
 use serde::Deserialize;
 use serde::Serialize;
 use sha2::Digest;
@@ -155,7 +155,9 @@ impl JoinTicket {
     /// A ticket for the core node `node`, with a fresh random secret.
     pub fn new(node: PublicKey, address: NodeAddress) -> Result<Self> {
         let mut secret = [0u8; 32];
-        rand::rngs::OsRng.fill_bytes(&mut secret);
+        rand::rngs::SysRng
+            .try_fill_bytes(&mut secret)
+            .context("operating system random source")?;
         let ticket = Self {
             node,
             address,

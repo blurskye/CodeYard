@@ -55,7 +55,7 @@ fn verify(value: &Value, jwks: &Value) -> Value {
     let n = BigUint::from_bytes_be(&URL_SAFE_NO_PAD.decode(key["n"].as_str().unwrap()).unwrap());
     let e = BigUint::from_bytes_be(&URL_SAFE_NO_PAD.decode(key["e"].as_str().unwrap()).unwrap());
     let key = RsaPublicKey::new(n, e).unwrap();
-    VerifyingKey::<sha2::Sha256>::new(key)
+    VerifyingKey::<rsa::sha2::Sha256>::new(key)
         .verify(
             format!("{}.{}", parts[0], parts[1]).as_bytes(),
             &Signature::try_from(URL_SAFE_NO_PAD.decode(parts[2]).unwrap().as_slice()).unwrap(),

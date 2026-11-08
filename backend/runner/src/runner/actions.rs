@@ -324,10 +324,9 @@ impl Job {
         token: Option<&str>,
     ) -> Result<(PathBuf, String)> {
         // The source URL participates in immutable cache identity, including forge base paths.
-        let encoded = format!(
-            "{:x}",
-            <sha2::Sha256 as sha2::Digest>::digest(format!("{source}\0{version}"))
-        );
+        let encoded = hex::encode(<sha2::Sha256 as sha2::Digest>::digest(format!(
+            "{source}\0{version}"
+        )));
         let directory = self
             .cache
             .join("actions")
@@ -490,10 +489,10 @@ impl Job {
         let (directory, commit) = resolved.ok_or_else(|| {
             last.unwrap_or_else(|| anyhow::anyhow!("Action source is unavailable"))
         })?;
-        let checkout_key = format!(
-            "{:x}",
-            <sha2::Sha256 as sha2::Digest>::digest(format!("{}\0{commit}", directory.display()))
-        );
+        let checkout_key = hex::encode(<sha2::Sha256 as sha2::Digest>::digest(format!(
+            "{}\0{commit}",
+            directory.display()
+        )));
         let checkout = self.temp.path().join(format!("action-{checkout_key}"));
         if let Ok(info) = std::fs::symlink_metadata(&checkout) {
             ensure!(info.is_dir(), "Action checkout is not a directory");

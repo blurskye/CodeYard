@@ -194,7 +194,7 @@ pub fn release_revision(release: &Release) -> String {
         release.is_latest,
     ))
     .expect("release fields serialize");
-    format!("{:x}", Sha256::digest(fields))
+    hex::encode(Sha256::digest(fields))
 }
 
 native_operation!(crate::postgres::releases::create_release,

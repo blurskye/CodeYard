@@ -116,10 +116,9 @@ pub fn owner_key(user: Option<i64>, org: Option<i64>) -> String {
 
 pub fn revision(attribute: &Attribute) -> Result<String> {
     use sha2::Digest;
-    Ok(format!(
-        "{:x}",
-        sha2::Sha256::digest(serde_json::to_vec(attribute)?)
-    ))
+    Ok(hex::encode(sha2::Sha256::digest(serde_json::to_vec(
+        attribute,
+    )?)))
 }
 
 pub struct Definition {

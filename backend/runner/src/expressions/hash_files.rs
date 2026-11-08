@@ -403,7 +403,7 @@ pub(super) fn hash_files(workspace: &str, arguments: &[String]) -> Result<String
         }
     }
     Ok(if has_match {
-        format!("{:x}", result.finalize())
+        hex::encode(result.finalize())
     } else {
         String::new()
     })
@@ -425,7 +425,7 @@ mod tests {
         for content in contents {
             hash.update(Sha256::digest(content));
         }
-        format!("{:x}", hash.finalize())
+        hex::encode(hash.finalize())
     }
     fn fixture() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();

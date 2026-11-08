@@ -968,7 +968,7 @@ fn cache_action(
     let cached = workspace
         .join("cache/codeyard-actions/actions")
         .join(repository)
-        .join(format!("{digest:x}"));
+        .join(hex::encode(digest));
     for (name, contents) in files {
         let file = cached.join(name);
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();

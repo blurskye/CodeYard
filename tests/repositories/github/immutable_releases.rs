@@ -219,7 +219,7 @@ async fn immutable_contract(pg: bool) {
     assert_eq!(signed["predicate"]["assets"][0]["name"], "bundle.txt");
     assert_eq!(
         signed["predicate"]["assets"][0]["sha256"],
-        format!("{:x}", sha2::Sha256::digest(b"release artifact\n"))
+        hex::encode(sha2::Sha256::digest(b"release artifact\n"))
     );
     checked(
         &router,

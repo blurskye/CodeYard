@@ -8,6 +8,7 @@ description = "Disposable content cache with a bounded local tier"
 [dependencies]
 anyhow.workspace = true
 futures-util.workspace = true
+hex.workspace = true
 sha2.workspace = true
 tokio.workspace = true
 rustls = { version = "0.23", default-features = false, features = ["std", "aws_lc_rs", "tls12"] }

@@ -301,8 +301,8 @@ impl<'a> Resolver<'a> {
                     target_ref.as_ref().map_or("", |(name, _)| name.as_str())
                 );
                 let file_name = format!(
-                    ".github/workflows/codeyard-call-{:x}.yml",
-                    Sha256::digest(key.as_bytes())
+                    ".github/workflows/codeyard-call-{}.yml",
+                    hex::encode(Sha256::digest(key.as_bytes()))
                 );
                 let mut snapshot = if let Some((snapshot, height)) = self.snapshots.get(&key) {
                     if self.active.contains(&key)

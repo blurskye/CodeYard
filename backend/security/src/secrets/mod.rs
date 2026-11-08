@@ -11,7 +11,7 @@ use aes_gcm::{
     aead::{Aead, KeyInit},
     Aes256Gcm, Nonce,
 };
-use rand::RngCore;
+use rand::Rng;
 
 pub struct SecretEncryptor {
     cipher: Aes256Gcm,
@@ -43,19 +43,19 @@ impl SecretEncryptor {
 
     pub fn encrypt(&self, plaintext: &[u8]) -> Result<(Vec<u8>, [u8; 12]), SecretError> {
         let mut nonce_bytes = [0u8; 12];
-        rand::thread_rng().fill_bytes(&mut nonce_bytes);
+        rand::rng().fill_bytes(&mut nonce_bytes);
 
-        let nonce = Nonce::from_slice(&nonce_bytes);
+        let nonce = Nonce::from(nonce_bytes);
         let ciphertext = self
             .cipher
-            .encrypt(nonce, plaintext)
+            .encrypt(&nonce, plaintext)
             .map_err(|_| SecretError::EncryptionFailed)?;
 
         Ok((ciphertext, nonce_bytes))
     }
 
     pub fn generate_sealed_box_key(&self) -> Result<(Vec<u8>, [u8; 12]), SecretError> {
-        let key = crypto_box::SecretKey::generate(&mut rand::thread_rng());
+        let key = crypto_box::SecretKey::generate(&mut crypto_box::aead::OsRng);
         self.encrypt(&key.to_bytes())
     }
 
@@ -76,9 +76,9 @@ impl SecretEncryptor {
             return Err(SecretError::InvalidNonce);
         }
 
-        let nonce = Nonce::from_slice(nonce);
+        let nonce = Nonce::try_from(nonce).map_err(|_| SecretError::InvalidNonce)?;
         self.cipher
-            .decrypt(nonce, ciphertext)
+            .decrypt(&nonce, ciphertext)
             .map_err(|_| SecretError::DecryptionFailed)
     }
 }

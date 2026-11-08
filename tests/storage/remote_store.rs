@@ -37,7 +37,7 @@ use codeyard_repos::editor::MAX_EDITOR_BYTES;
 use codeyard_storage::range::ByteRange as BlobRange;
 use codeyard_storage::ObjectStore;
 use codeyard_types::ci::MAX_CI_WORKFLOW_BYTES;
-use rand::RngCore;
+use rand::Rng;
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::{path::Path, sync::Arc, time::Duration};
@@ -1912,7 +1912,7 @@ async fn remote_web_contract() {
 
     // Local and remote reads inspect the object/output bound before collecting it.
     let mut oversized_blob = vec![0u8; MAX_BLOB_RESPONSE_BYTES + 1];
-    rand::rngs::OsRng.fill_bytes(&mut oversized_blob);
+    rand::rng().fill_bytes(&mut oversized_blob);
     let range_start = MAX_BLOB_RESPONSE_BYTES as u64 - 15;
     let expected_range = oversized_blob[range_start as usize..range_start as usize + 16].to_vec();
     let (wide_tree, large_diff, large_commit) = {

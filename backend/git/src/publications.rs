@@ -63,8 +63,8 @@ pub struct PublicationUpdate {
 
 fn metadata_ref(reference: &str) -> String {
     format!(
-        "refs/codeyard/publications/{:x}",
-        Sha256::digest(reference.as_bytes())
+        "refs/codeyard/publications/{}",
+        hex::encode(Sha256::digest(reference.as_bytes()))
     )
 }
 

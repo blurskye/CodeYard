@@ -148,11 +148,11 @@ pub(super) async fn run(router: &Router, base: &str, writer: &str, sha: &str) {
         .primary_user_id("Alice <alice@users.noreply>".into())
         .build()
         .unwrap()
-        .generate(rand::thread_rng())
+        .generate(rsa::rand_core::OsRng)
         .unwrap();
     let gpg_sign = |text: &str| {
         pgp::composed::DetachedSignature::sign_binary_data(
-            rand::thread_rng(),
+            rsa::rand_core::OsRng,
             &gpg.primary_key,
             &pgp::types::Password::empty(),
             pgp::crypto::hash::HashAlgorithm::Sha256,

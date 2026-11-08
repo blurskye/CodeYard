@@ -11,7 +11,6 @@ use rsa::{
     RsaPublicKey,
 };
 use serde_json::{Map, Value};
-use sha2::Sha256;
 
 /// The stored form of an App name: trimmed, not empty and at most 100 bytes.
 pub fn valid_name(name: &str) -> Option<&str> {
@@ -36,7 +35,7 @@ pub async fn generate_key() -> anyhow::Result<(String, String)> {
     tokio::task::spawn_blocking(move || {
         let _permit = permit;
         use rsa::pkcs8::{EncodePrivateKey, EncodePublicKey, LineEnding};
-        let key = rsa::RsaPrivateKey::new(&mut rand::rngs::OsRng, 2048)?;
+        let key = rsa::RsaPrivateKey::new(&mut rsa::rand_core::OsRng, 2048)?;
         Ok((
             key.to_pkcs8_pem(LineEnding::LF)?.to_string(),
             key.to_public_key().to_public_key_pem(LineEnding::LF)?,
@@ -319,7 +318,7 @@ pub async fn authenticate(pool: &DbPool, value: &str) -> anyhow::Result<Option<A
         return Ok(None);
     }
     let key = RsaPublicKey::from_public_key_pem(&app.public_key)?;
-    if VerifyingKey::<Sha256>::new(key)
+    if VerifyingKey::<rsa::sha2::Sha256>::new(key)
         .verify(
             format!(
                 "{header}.{claims}",

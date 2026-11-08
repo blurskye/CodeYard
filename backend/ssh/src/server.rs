@@ -6,8 +6,8 @@ use anyhow::Context;
 use anyhow::Result;
 use codeyard_ci::runs::CiRuns;
 use codeyard_database::DbPool;
-use rand::rngs::OsRng;
-use rand::RngCore;
+use rand::rngs::SysRng;
+use rand::TryRng;
 use russh::keys::ssh_key::private::Ed25519Keypair;
 use russh::keys::PrivateKey;
 use russh::server::Config;
@@ -32,7 +32,9 @@ use tracing::warn;
 /// A new Ed25519 host key from the operating system's random source.
 fn new_host_key() -> PrivateKey {
     let mut seed = [0u8; 32];
-    OsRng.fill_bytes(&mut seed);
+    SysRng
+        .try_fill_bytes(&mut seed)
+        .expect("operating system random source");
     PrivateKey::from(Ed25519Keypair::from_seed(&seed))
 }
 

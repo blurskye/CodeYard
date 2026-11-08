@@ -73,7 +73,7 @@ async fn apply_migrations(connection: &mut SqliteConnection) -> Result<()> {
         )
         .bind(version)
         .bind(name)
-        .bind(format!("{:x}", Sha256::digest(sql.as_bytes())))
+        .bind(hex::encode(Sha256::digest(sql.as_bytes())))
         .execute(&mut *tx)
         .await?;
     }
@@ -92,7 +92,7 @@ pub fn validate_history(applied: &[(i64, String)]) -> Result<()> {
         let Some((expected, _, sql)) = MIGRATIONS.get(index) else {
             bail!("SQLite database history is newer than this application; downgrade refused");
         };
-        if version != expected || checksum != &format!("{:x}", Sha256::digest(sql.as_bytes())) {
+        if version != expected || checksum != &hex::encode(Sha256::digest(sql.as_bytes())) {
             bail!("unexpected SQLite baseline history/checksum mismatch: the recorded history differs from this build; no changes applied");
         }
     }

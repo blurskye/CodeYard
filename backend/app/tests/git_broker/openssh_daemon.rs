@@ -62,7 +62,7 @@ async fn real_openssh_push_ci_outlives_helper() {
         std::env::var("GITSERV_TEST_ACT_BINARY").expect("verified act fixture required"),
     );
     assert_eq!(
-        format!("{:x}", sha2::Sha256::digest(std::fs::read(&act).unwrap())),
+        hex::encode(sha2::Sha256::digest(std::fs::read(&act).unwrap())),
         "6be37b104430efc210d5130495bedcff2dc7cd6780a38d88f3d205e7f1185cc1"
     );
     real_fixture(Some(act)).await;
@@ -241,14 +241,14 @@ async fn real_fixture(act: Option<PathBuf>) {
     options.bare(false);
     let local = git2::Repository::init_opts(&source_path, &options).unwrap();
     let mut binary = vec![0; 4 * 1024 * 1024];
-    rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut binary);
+    rand::fill(&mut binary[..]);
     std::fs::write(source_path.join("binary.dat"), &binary).unwrap();
     let mut index = local.index().unwrap();
     index.add_path(Path::new("binary.dat")).unwrap();
     let release = broker.directory.path().join("release-ci-after-ssh-exit");
     if run_ci {
         use sha2::Digest;
-        let digest = format!("{:x}", sha2::Sha256::digest(&binary));
+        let digest = hex::encode(sha2::Sha256::digest(&binary));
         std::fs::create_dir_all(source_path.join(".github/workflows")).unwrap();
         std::fs::write(source_path.join(".github/workflows/ci.yml"), format!(
             "name: Owned SSH push\non:\n  push:\n    branches: [main]\njobs:\n  proof:\n    runs-on: gitserv-owned-fixture\n    steps:\n      - shell: bash\n        run: |\n          set -eu\n          n=0\n          while [ ! -f '{0}' ] && [ \"$n\" -lt 300 ]; do n=$((n + 1)); sleep 0.1; done\n          test -f '{0}'\n          git clone -q --no-local -- '{1}' verified\n          git -C verified checkout --detach \"$GITHUB_SHA\"\n          test \"$(git -C verified rev-parse HEAD)\" = \"$GITHUB_SHA\"\n          printf '%s  verified/binary.dat\\n' '{digest}' | sha256sum -c -\n          printf 'OPENSSH_PUSH_CI_PASSED HEAD=%s\\n' \"$GITHUB_SHA\"\n", release.display(), bare_path.display())).unwrap();

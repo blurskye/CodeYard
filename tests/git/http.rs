@@ -13,7 +13,7 @@ use codeyard_git::MAX_PULL_HEAD_REF_BYTES;
 use codeyard_git::MAX_REPOSITORY_REFS;
 use codeyard_git::MAX_REPOSITORY_REF_BYTES;
 use git_server::{git, success, Server};
-use rand::RngCore;
+use rand::Rng;
 use reqwest::{Client, StatusCode};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -936,7 +936,7 @@ async fn exercise(pool: &DbPool, url: &str) {
     ));
     // An incompressible pack above Axum's default body limit, sent chunked.
     let mut blob = vec![0u8; 3 * 1024 * 1024];
-    rand::rngs::OsRng.fill_bytes(&mut blob);
+    rand::rng().fill_bytes(&mut blob);
     std::fs::write(root.path().join("reader/blob"), blob).unwrap();
     success(git(root.path(), &["-C", "reader", "add", "blob"], None));
     success(git(

@@ -155,7 +155,7 @@ pub async fn asset(uri: Uri, headers: HeaderMap) -> Response {
     if let Some(file) = EMBEDDED.iter().find(|file| file.path == uri.path()) {
         let etag = file
             .etag
-            .get_or_init(|| format!("W/\"{:x}\"", Sha256::digest(file.bytes)));
+            .get_or_init(|| format!("W/\"{}\"", hex::encode(Sha256::digest(file.bytes))));
         return asset_response(Body::from(file.bytes), file.mime, etag, &headers);
     }
     match runtime() {

@@ -35,7 +35,7 @@ pub(super) fn key(email: &str) -> SignedSecretKey {
         .subkeys(vec![sign, encrypt])
         .build()
         .unwrap()
-        .generate(rand::thread_rng())
+        .generate(rsa::rand_core::OsRng)
         .unwrap()
 }
 pub(super) fn armor(key: &SignedSecretKey) -> String {

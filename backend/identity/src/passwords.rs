@@ -1,10 +1,9 @@
 //! Native password work: fixed reviewed cost, bounded PHC acceptance and no async-worker KDF.
 
 use argon2::{
-    password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
+    password_hash::{phc::PasswordHash, PasswordHasher, PasswordVerifier},
     Algorithm, Argon2, Params, Version,
 };
-use rand::rngs::OsRng;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tokio::sync::Semaphore;
@@ -47,7 +46,7 @@ fn engine() -> Argon2<'static> {
     )
 }
 
-fn accepted_phc(stored: &str) -> Option<PasswordHash<'_>> {
+fn accepted_phc(stored: &str) -> Option<PasswordHash> {
     if stored.len() > 255 {
         return None;
     }
@@ -62,7 +61,7 @@ fn accepted_phc(stored: &str) -> Option<PasswordHash<'_>> {
             .iter()
             .any(|(name, _)| !matches!(name.as_str(), "m" | "t" | "p"))
         || hash.hash.as_ref()?.len() != 32
-        || hash.salt.as_ref()?.as_str().len() > 64
+        || hash.salt.as_ref()?.len() > 48
     {
         return None;
     }
@@ -76,7 +75,7 @@ fn accepted_phc(stored: &str) -> Option<PasswordHash<'_>> {
     Some(hash)
 }
 
-fn is_current_cost(hash: &PasswordHash<'_>) -> bool {
+fn is_current_cost(hash: &PasswordHash) -> bool {
     Params::try_from(hash).is_ok_and(|params| {
         params.m_cost() == MEMORY_KIB
             && params.t_cost() == ITERATIONS
@@ -121,9 +120,9 @@ pub async fn hash_password(password: &str) -> Result<String, PasswordError> {
     }
     let password = password.as_bytes().to_vec();
     blocking(move || {
-        let salt = SaltString::generate(&mut OsRng);
+        // A fresh 16-byte salt from the operating system's random source.
         engine()
-            .hash_password(&password, &salt)
+            .hash_password(&password)
             .map(|hash| hash.to_string())
             .map_err(|_| PasswordError::Failed)
     })
@@ -220,6 +219,16 @@ mod tests {
         assert!(is_current_cost(&accepted_phc(&a).unwrap()));
         let older = a.replace("t=2", "t=3");
         assert!(!is_current_cost(&accepted_phc(&older).unwrap()));
+        // A reference Argon2id hash made by another implementation still verifies.
+        let reference = "$argon2id$v=19$m=65536,t=2,p=1$c29tZXNhbHQ$CTFhFdXPJO1aFaMaO6Mm5c8y7cJHAph8ArZWb2GRPPc";
+        let checked = verify_password("password", Some(reference)).await.unwrap();
+        assert!(checked.valid && checked.outdated);
+        assert!(
+            !verify_password("sassword", Some(reference))
+                .await
+                .unwrap()
+                .valid
+        );
         assert!(!verify_password("wrong", None).await.unwrap().valid);
         assert!(
             !verify_password("wrong", Some("malformed"))

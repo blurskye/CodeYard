@@ -117,7 +117,7 @@ pub fn stylesheets() -> &'static [Stylesheet] {
         .map(|(name, text)| Stylesheet {
             name,
             text,
-            version: format!("{:x}", Sha256::digest(text.as_bytes()))[..16].to_owned(),
+            version: hex::encode(Sha256::digest(text.as_bytes()))[..16].to_owned(),
         })
         .collect()
     })

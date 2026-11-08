@@ -60,8 +60,8 @@ pub fn archive_prefix(repo: &str, reference: &str) -> String {
         prefix.truncate(180);
         prefix.push_str(
             &format!(
-                "-{:x}",
-                Sha256::digest(format!("{repo}-{short}").as_bytes())
+                "-{}",
+                hex::encode(Sha256::digest(format!("{repo}-{short}").as_bytes()))
             )[..13],
         );
     }

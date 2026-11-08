@@ -1379,7 +1379,7 @@ async fn admit(
         return Some(cancel);
     };
     let digest = <sha2::Sha256 as sha2::Digest>::digest(concurrency.group.to_lowercase());
-    let group = format!("{digest:x}");
+    let group = hex::encode(digest);
     log.emit(Update::Concurrency {
         group,
         cancel_in_progress: concurrency.cancel_in_progress,

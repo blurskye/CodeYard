@@ -12,7 +12,7 @@ use serde_json::json;
 use serde_json::Value;
 pub(crate) fn manifest_digest(manifest: &str) -> String {
     use sha2::{Digest, Sha256};
-    format!("{:x}", Sha256::digest(manifest.as_bytes()))
+    hex::encode(Sha256::digest(manifest.as_bytes()))
 }
 
 #[derive(Clone, Debug, sqlx::FromRow)]

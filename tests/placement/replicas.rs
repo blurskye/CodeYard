@@ -36,7 +36,7 @@ use codeyard_git_storage::store_types::GitSession;
 use codeyard_git_storage::store_types::GitStreams;
 use codeyard_repos::editor::FileWrite;
 use codeyard_storage::ObjectStore;
-use rand::RngCore;
+use rand::Rng;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -951,7 +951,7 @@ async fn empty_repositories_and_large_files_copy() {
     // 20 MiB of random bytes in one commit. An editor save is capped at 1 MiB, so the
     // commit is written with Git and then counted as a push would be.
     let mut content = vec![0u8; 20 * 1024 * 1024];
-    rand::rngs::OsRng.fill_bytes(&mut content);
+    rand::rng().fill_bytes(&mut content);
     let git = git2::Repository::open_bare(primary_path(&primary, uuid)).unwrap();
     let blob = git.blob(&content).unwrap();
     let mut tree = git.treebuilder(None).unwrap();

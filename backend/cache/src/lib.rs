@@ -172,10 +172,10 @@ impl Cache {
         }
         Key {
             text: format!(
-                "{}{}:{:x}",
+                "{}{}:{}",
                 self.namespace,
                 family.name(),
-                digest.finalize()
+                hex::encode(digest.finalize())
             ),
             family,
         }

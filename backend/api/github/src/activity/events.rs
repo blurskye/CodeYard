@@ -219,8 +219,10 @@ async fn list(
         )
         .await?;
         let etag = format!(
-            "\"{:x}\"",
-            Sha256::digest(serde_json::to_vec(&values).map_err(Error::unavailable)?)
+            "\"{}\"",
+            hex::encode(Sha256::digest(
+                serde_json::to_vec(&values).map_err(Error::unavailable)?
+            ))
         );
         let unchanged = codeyard_api_http::static_files::not_modified(&headers, &etag);
         let mut response = if unchanged {

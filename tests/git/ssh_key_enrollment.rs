@@ -211,7 +211,8 @@ async fn contract(pg: bool) {
 
     // Serialize enrollment even when several users submit a new key simultaneously.
     let private =
-        ssh_key::PrivateKey::random(&mut rand::rngs::OsRng, ssh_key::Algorithm::Ed25519).unwrap();
+        ssh_key::PrivateKey::random(&mut ssh_key::rand_core::OsRng, ssh_key::Algorithm::Ed25519)
+            .unwrap();
     let public = private.public_key().to_openssh().unwrap();
     let fingerprint =
         codeyard_db_identity::users::ssh_keys::calculate_fingerprint(&public).unwrap();
@@ -338,9 +339,11 @@ async fn contract(pg: bool) {
     ] {
         let user = f.actor(name).await;
         let client = Client::login(&router, f.pool(), user).await;
-        let existing_private =
-            ssh_key::PrivateKey::random(&mut rand::rngs::OsRng, ssh_key::Algorithm::Ed25519)
-                .unwrap();
+        let existing_private = ssh_key::PrivateKey::random(
+            &mut ssh_key::rand_core::OsRng,
+            ssh_key::Algorithm::Ed25519,
+        )
+        .unwrap();
         let existing_public = existing_private.public_key().to_openssh().unwrap();
         let existing = codeyard_identity::keys::enroll(
             f.pool(),
@@ -357,9 +360,11 @@ async fn contract(pg: bool) {
         )
         .await;
 
-        let refused_private =
-            ssh_key::PrivateKey::random(&mut rand::rngs::OsRng, ssh_key::Algorithm::Ed25519)
-                .unwrap();
+        let refused_private = ssh_key::PrivateKey::random(
+            &mut ssh_key::rand_core::OsRng,
+            ssh_key::Algorithm::Ed25519,
+        )
+        .unwrap();
         let refused_public = refused_private.public_key().to_openssh().unwrap();
         let error = codeyard_db_identity::users::ssh_keys::add_ssh_key(
             f.pool(),
@@ -646,12 +651,14 @@ async fn postgres_enrollment_locks_accounts_before_rows_and_fingerprints() {
     .unwrap();
     let raw = f.pg();
     for deploy in [false, true] {
-        let public =
-            ssh_key::PrivateKey::random(&mut rand::rngs::OsRng, ssh_key::Algorithm::Ed25519)
-                .unwrap()
-                .public_key()
-                .to_openssh()
-                .unwrap();
+        let public = ssh_key::PrivateKey::random(
+            &mut ssh_key::rand_core::OsRng,
+            ssh_key::Algorithm::Ed25519,
+        )
+        .unwrap()
+        .public_key()
+        .to_openssh()
+        .unwrap();
         let fingerprint =
             codeyard_db_identity::users::ssh_keys::calculate_fingerprint(&public).unwrap();
         let mut gate = raw.begin().await.unwrap();

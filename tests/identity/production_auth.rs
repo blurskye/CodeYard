@@ -1645,10 +1645,7 @@ async fn identity_login_owns_alias_admission_and_anonymous_csrf_rotation() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn identity_login_rehashes_a_password_stored_at_an_older_cost() {
-    use argon2::{
-        password_hash::{PasswordHasher, SaltString},
-        Algorithm, Argon2, Params, Version,
-    };
+    use argon2::{password_hash::PasswordHasher, Algorithm, Argon2, Params, Version};
     let _password_work = PASSWORD_FIXTURE_WORK.lock().await;
     let fixture = Database::new().await;
     fixture.setup("public").await;
@@ -1659,10 +1656,7 @@ async fn identity_login_rehashes_a_password_stored_at_an_older_cost() {
     );
     let older_hash = || {
         cheaper
-            .hash_password(
-                b"older-cost-password",
-                &SaltString::generate(&mut rand::rngs::OsRng),
-            )
+            .hash_password(b"older-cost-password")
             .unwrap()
             .to_string()
     };

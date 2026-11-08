@@ -431,7 +431,7 @@ fn oversized_history() -> &'static (tempfile::TempDir, String, String, String) {
             compressed.write_all(&chunk).unwrap();
         }
         let mut file = compressed.finish().unwrap();
-        let id = format!("{:x}", hash.finalize());
+        let id = hex::encode(hash.finalize());
         let objects = directory.path().join("objects").join(&id[..2]);
         std::fs::create_dir_all(&objects).unwrap();
         use std::io::{Seek, SeekFrom};

@@ -7,7 +7,7 @@ use codeyard_database::DbPool;
 /// A comment form's content revision, shared by display and transactional mutation.
 pub fn comment_revision(body: &str) -> String {
     use sha2::{Digest, Sha256};
-    format!("{:x}", Sha256::digest(body.as_bytes()))
+    hex::encode(Sha256::digest(body.as_bytes()))
 }
 
 // The last number each repository has allocated to an issue or pull request. A repository

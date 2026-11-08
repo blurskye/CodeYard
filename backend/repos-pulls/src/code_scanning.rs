@@ -564,10 +564,12 @@ pub fn parse(upload: &Upload) -> Result<Vec<Run>> {
                     .map(|guid| guid.to_string())
                     .unwrap_or_else(|| component.name.clone())
             });
-            let fingerprint = format!(
-                "{:x}",
-                Sha256::digest(serde_json::to_vec(&(component_key, id, &path, stable))?)
-            );
+            let fingerprint = hex::encode(Sha256::digest(serde_json::to_vec(&(
+                component_key,
+                id,
+                &path,
+                stable,
+            ))?));
             if !fingerprints.insert(fingerprint.clone()) {
                 continue;
             }

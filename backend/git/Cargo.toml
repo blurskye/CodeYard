@@ -17,6 +17,7 @@ libc.workspace = true
 libgit2-sys.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+hex.workspace = true
 sha2.workspace = true
 sqlx.workspace = true
 tempfile.workspace = true

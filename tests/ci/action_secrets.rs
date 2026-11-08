@@ -153,7 +153,7 @@ pub(super) fn sealed(key: &Value, value: &[u8]) -> Value {
         .try_into()
         .unwrap();
     let key_bytes = crypto_box::PublicKey::from(bytes);
-    json!({"key_id":key["key_id"], "encrypted_value":STANDARD.encode(key_bytes.seal(&mut rand::thread_rng(), value).unwrap())})
+    json!({"key_id":key["key_id"], "encrypted_value":STANDARD.encode(key_bytes.seal(&mut crypto_box::aead::OsRng, value).unwrap())})
 }
 
 async fn contract(pg: bool) {

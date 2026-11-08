@@ -186,7 +186,7 @@ tower-http = { version = "0.7", features = ["cors", "trace", "limit", "compressi
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = { version = "1", features = ["arbitrary_precision"] }
 sqlx = { version = "0.9", features = ["runtime-tokio", "tls-rustls-aws-lc-rs", "postgres", "sqlite", "regexp", "migrate", "chrono", "uuid"] }
-sha2 = "0.10"
+sha2 = "0.11"
 hex = "0.4"
 anyhow = "1"
 thiserror = "2"
@@ -226,7 +226,7 @@ async-graphql-derive = "=7.2.1"
 async-graphql-parser = "=7.2.1"
 async-graphql-value = "=7.2.1"
 subtle = "2.6"
-argon2 = { version = "=0.5.3", features = ["std"] }
+argon2 = "0.6"
 tokio-util = { version = "0.7", features = ["io", "rt"] }
 http-body-util = "0.1"
 http-body = "1"
@@ -241,16 +241,16 @@ tar = "=0.4.46"
 zip = { version = "=9.1.1", default-features = false, features = ["deflate"] }
 quick-xml = "=0.42.0"
 regex = "=1.13.1"
-md-5 = "0.10"
+md-5 = "0.11"
 pgp = { version = "0.21", default-features = false }
 base64 = "=0.23.1"
-hmac = "0.12"
-sha1 = "0.10"
+hmac = "0.13"
+sha1 = "0.11"
 data-encoding = "2"
 encoding_rs = "0.8"
 dotenvy = "=0.15.7"
-rand = "0.8"
-aes-gcm = "0.10"
+rand = "0.10"
+aes-gcm = "0.11"
 crypto_box = { version = "0.9.1", features = ["seal"] }
 aws-credential-types = "1"
 aws-smithy-types = "1"
@@ -263,7 +263,7 @@ toml = "0.9"
 semver = "1"
 croner = "4"
 iroh = { version = "=1.4.1", default-features = false, features = ["tls-aws-lc-rs"] }
-rsa = { version = "=0.9.10", features = ["sha2", "pem"] }
+rsa = { version = "=0.9.10", features = ["sha2", "pem", "getrandom"] }
 tower = { version = "0.5", features = ["util"] }
 jsonschema = { version = "=0.60.1", default-features = false }
 aho-corasick = "=1.1.5"

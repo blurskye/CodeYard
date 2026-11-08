@@ -21,7 +21,7 @@ pub(crate) fn identities(authors: &[(String, String)]) -> Vec<(String, &str, &st
         digest.update(name.as_bytes());
         digest.update(email.as_bytes());
         rows.insert(
-            format!("{:x}", digest.finalize()),
+            hex::encode(digest.finalize()),
             (name.as_str(), email.as_str()),
         );
     }

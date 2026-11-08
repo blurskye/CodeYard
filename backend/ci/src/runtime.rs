@@ -1,6 +1,6 @@
 //! Credentials shared by today's act worker and future runners.
 use base64::Engine;
-use rand::RngCore;
+use rand::TryRng;
 
 use anyhow::Result;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -17,7 +17,9 @@ pub struct RuntimeCredentials {
 
 pub fn secret() -> String {
     let mut bytes = [0; codeyard_types::tokens::TOKEN_BYTES];
-    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    rand::rngs::SysRng
+        .try_fill_bytes(&mut bytes)
+        .expect("operating system random source");
     URL_SAFE_NO_PAD.encode(bytes)
 }
 

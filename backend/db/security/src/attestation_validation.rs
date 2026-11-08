@@ -161,7 +161,7 @@ pub async fn create(
     use sha2::{Digest, Sha256};
     let actor = actor.into();
     let bundle = crate::attestations::Bundle {
-        hash: format!("{:x}", Sha256::digest(bundle.bundle.as_bytes())),
+        hash: hex::encode(Sha256::digest(bundle.bundle.as_bytes())),
         json: bundle.bundle.clone(),
         predicate: bundle.predicate_type.clone(),
         subjects: bundle.subjects.iter().cloned().collect(),

@@ -21,6 +21,7 @@ pulldown-cmark.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 # Text revisions used by native forms must also be computed after hydration.
+hex.workspace = true
 sha2.workspace = true
 syntect.workspace = true
 unicase.workspace = true

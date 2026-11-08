@@ -71,8 +71,8 @@ async fn token(
     let header = URL_SAFE_NO_PAD.encode(br#"{"alg":"RS256","kid":"org-fixture"}"#);
     let body = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims).unwrap());
     let signed = format!("{header}.{body}");
-    let signature =
-        rsa::pkcs1v15::SigningKey::<Sha256>::new(provider.key.clone()).sign(signed.as_bytes());
+    let signature = rsa::pkcs1v15::SigningKey::<rsa::sha2::Sha256>::new(provider.key.clone())
+        .sign(signed.as_bytes());
     Json(
         json!({"access_token":"unused-provider-access","token_type":"Bearer",
         "id_token":format!("{signed}.{}",URL_SAFE_NO_PAD.encode(signature.to_bytes()))}),
@@ -89,7 +89,7 @@ async fn provider() -> (String, String, tokio_util::task::AbortOnDropHandle<()>)
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let issuer = format!("http://{}", listener.local_addr().unwrap());
     let key = tokio::task::spawn_blocking(|| {
-        rsa::RsaPrivateKey::new(&mut rand::thread_rng(), 2048).unwrap()
+        rsa::RsaPrivateKey::new(&mut rsa::rand_core::OsRng, 2048).unwrap()
     })
     .await
     .unwrap();
