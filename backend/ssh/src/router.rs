@@ -189,14 +189,23 @@ impl russh::server::Server for Handler {
 }
 impl russh::server::Handler for Handler {
     type Error = anyhow::Error;
-    async fn auth_publickey_offered(&mut self, _user: &str, key: &PublicKey) -> Result<Auth> {
-        Ok(if self.known(key).await?.is_some() {
+    async fn auth_publickey_offered(
+        &mut self,
+        _user: &str,
+        offer: russh::server::PublicKeyOffer<'_>,
+    ) -> Result<Auth> {
+        Ok(if self.known(offer.public_key).await?.is_some() {
             Auth::Accept
         } else {
             Auth::reject()
         })
     }
-    async fn auth_publickey(&mut self, _user: &str, key: &PublicKey) -> Result<Auth> {
+    async fn auth_publickey(
+        &mut self,
+        _user: &str,
+        verified: russh::server::VerifiedPublicKey<'_>,
+    ) -> Result<Auth> {
+        let key = verified.public_key;
         self.key = None;
         self.fingerprint = None;
         if let Some(fingerprint) = self.known(key).await? {

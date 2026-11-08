@@ -245,6 +245,49 @@ async fn database_authentication_errors_do_not_ban_the_client() {
     f.finish().await;
 }
 
+#[tokio::test]
+async fn rsa_keys_authenticate_with_sha2_signatures_and_unknown_keys_do_not() {
+    let f = Fixture::new().await;
+    let path = f._root.path().join("rsa");
+    let made = tokio::process::Command::new("ssh-keygen")
+        .args(["-q", "-t", "rsa", "-b", "2048", "-N", "", "-f"])
+        .arg(&path)
+        .output()
+        .await
+        .unwrap();
+    assert!(made.status.success(), "{made:?}");
+    let rsa = Arc::new(russh::keys::load_secret_key(&path, None).unwrap());
+    let alice = codeyard_db_identity::users::accounts::get_user_by_username(&f.pool, "alice")
+        .await
+        .unwrap()
+        .unwrap();
+    codeyard_db_identity::users::ssh_keys::add_ssh_key(
+        &f.pool,
+        alice.id,
+        "rsa",
+        &rsa.public_key().to_openssh().unwrap(),
+    )
+    .await
+    .unwrap();
+    for hash in [russh::keys::HashAlg::Sha256, russh::keys::HashAlg::Sha512] {
+        let mut client = f.connect().await;
+        assert!(client
+            .authenticate_publickey("git", PrivateKeyWithHashAlg::new(rsa.clone(), Some(hash)))
+            .await
+            .unwrap()
+            .success());
+    }
+    let stranger = Arc::new(PrivateKey::from(Ed25519Keypair::from_seed(&[99; 32])));
+    let mut client = f.connect().await;
+    assert!(!client
+        .authenticate_publickey("git", PrivateKeyWithHashAlg::new(stranger, None))
+        .await
+        .unwrap()
+        .success());
+    drop(client);
+    f.finish().await;
+}
+
 struct RouterAuthorization {
     key: PublicKey,
     enabled: Arc<std::sync::atomic::AtomicBool>,

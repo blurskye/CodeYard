@@ -331,54 +331,9 @@ impl GitSshHandler {
             }
         )
     }
-}
 
-impl russh::server::Server for GitSshHandler {
-    type Handler = Self;
-
-    fn new_client(&mut self, addr: Option<std::net::SocketAddr>) -> Self {
-        self.id = self.id.wrapping_add(1);
-        // Only server resources are shared. Identity and channels start fresh,
-        // even if this server handler itself has authenticated/channel state.
-        let mut client = Self::new(
-            self.pool.clone(),
-            self.rate_limiter.clone(),
-            self.ci_service.clone(),
-        );
-        client.git_tasks = self.git_tasks.clone();
-        client.router_authorization = self.router_authorization.clone();
-        client.id = self.id;
-        client.client_ip = addr.map(|address| address.ip());
-        client
-    }
-
-    fn handle_session_error(&mut self, error: <Self::Handler as russh::server::Handler>::Error) {
-        error!("Session error: {:?}", error);
-    }
-}
-
-impl russh::server::Handler for GitSshHandler {
-    type Error = anyhow::Error;
-
-    /// Only public keys authenticate. A password attempt still counts as a failure.
-    async fn auth_password(&mut self, _user: &str, _password: &str) -> Result<Auth, Self::Error> {
-        self.reject_key().await
-    }
-
-    async fn auth_keyboard_interactive<'a>(
-        &'a mut self,
-        _user: &str,
-        _submethods: &str,
-        _response: Option<russh::server::Response<'a>>,
-    ) -> Result<Auth, Self::Error> {
-        self.reject_key().await
-    }
-
-    async fn auth_publickey_offered(
-        &mut self,
-        user: &str,
-        public_key: &PublicKey,
-    ) -> Result<Auth, Self::Error> {
+    /// Answers an unsigned key offer; it grants nothing until the signature is verified.
+    async fn key_offered(&mut self, user: &str, public_key: &PublicKey) -> Result<Auth> {
         if user == "codeyard-router" {
             return Ok(if self.router_live(public_key).await? {
                 Auth::Accept
@@ -403,11 +358,8 @@ impl russh::server::Handler for GitSshHandler {
         }
     }
 
-    async fn auth_publickey(
-        &mut self,
-        user: &str,
-        public_key: &PublicKey,
-    ) -> Result<Auth, Self::Error> {
+    /// Authenticates a key whose signature russh has verified.
+    async fn key_verified(&mut self, user: &str, public_key: &PublicKey) -> Result<Auth> {
         self.router_peer = None;
         self.router_client_key = None;
         self.foreign_key = None;
@@ -459,6 +411,64 @@ impl russh::server::Handler for GitSshHandler {
             let _ = signal.send(AuthOutcome::Accepted);
         }
         Ok(Auth::Accept)
+    }
+}
+
+impl russh::server::Server for GitSshHandler {
+    type Handler = Self;
+
+    fn new_client(&mut self, addr: Option<std::net::SocketAddr>) -> Self {
+        self.id = self.id.wrapping_add(1);
+        // Only server resources are shared. Identity and channels start fresh,
+        // even if this server handler itself has authenticated/channel state.
+        let mut client = Self::new(
+            self.pool.clone(),
+            self.rate_limiter.clone(),
+            self.ci_service.clone(),
+        );
+        client.git_tasks = self.git_tasks.clone();
+        client.router_authorization = self.router_authorization.clone();
+        client.id = self.id;
+        client.client_ip = addr.map(|address| address.ip());
+        client
+    }
+
+    fn handle_session_error(&mut self, error: <Self::Handler as russh::server::Handler>::Error) {
+        error!("Session error: {:?}", error);
+    }
+}
+
+impl russh::server::Handler for GitSshHandler {
+    type Error = anyhow::Error;
+
+    /// Only public keys authenticate. A password attempt still counts as a failure.
+    async fn auth_password(&mut self, _user: &str, _password: &str) -> Result<Auth, Self::Error> {
+        self.reject_key().await
+    }
+
+    async fn auth_keyboard_interactive<'a>(
+        &'a mut self,
+        _user: &str,
+        _submethods: &str,
+        _response: Option<russh::server::Response<'a>>,
+    ) -> Result<Auth, Self::Error> {
+        self.reject_key().await
+    }
+
+    async fn auth_publickey_offered(
+        &mut self,
+        user: &str,
+        offer: russh::server::PublicKeyOffer<'_>,
+    ) -> Result<Auth, Self::Error> {
+        self.key_offered(user, offer.public_key).await
+    }
+
+    async fn auth_publickey(
+        &mut self,
+        user: &str,
+        verified: russh::server::VerifiedPublicKey<'_>,
+    ) -> Result<Auth, Self::Error> {
+        self.key_verified(user, verified.public_key).await
     }
 
     async fn channel_open_session(
@@ -949,7 +959,6 @@ mod tests {
 
     #[tokio::test]
     async fn builtin_auth_rechecks_account_and_key_state() {
-        use russh::server::Handler;
         let native = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
             .connect("sqlite::memory:")
@@ -988,14 +997,14 @@ mod tests {
         .unwrap();
         assert!(matches!(
             handler
-                .auth_publickey("git", &PublicKey::from_openssh(security_key).unwrap())
+                .key_verified("git", &PublicKey::from_openssh(security_key).unwrap())
                 .await
                 .unwrap(),
             Auth::Reject { .. }
         ));
         assert!(handler.user.is_none() && handler.key_id.is_none());
         assert!(matches!(
-            handler.auth_publickey("git", &public).await.unwrap(),
+            handler.key_verified("git", &public).await.unwrap(),
             Auth::Accept
         ));
         assert_eq!(handler.user.as_ref().unwrap().id, owner.id);
@@ -1008,7 +1017,7 @@ mod tests {
             .await
             .unwrap();
             assert!(matches!(
-                handler.auth_publickey("git", &public).await.unwrap(),
+                handler.key_verified("git", &public).await.unwrap(),
                 Auth::Reject { .. }
             ));
             assert!(handler.user.is_none() && handler.key_id.is_none());
@@ -1024,7 +1033,7 @@ mod tests {
             .await
             .unwrap();
         assert!(matches!(
-            handler.auth_publickey("git", &public).await.unwrap(),
+            handler.key_verified("git", &public).await.unwrap(),
             Auth::Reject { .. }
         ));
         assert!(handler.user.is_none() && handler.key_id.is_none());
@@ -1034,7 +1043,6 @@ mod tests {
     #[tokio::test]
     async fn rejected_keys_do_not_end_or_charge_a_successful_connection() {
         use russh::keys::{ssh_key::private::Ed25519Keypair, PrivateKey};
-        use russh::server::Handler;
         let native = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
             .connect("sqlite::memory:")
@@ -1071,16 +1079,13 @@ mod tests {
         handler.set_client_ip(ip);
         for _ in 0..6 {
             assert!(matches!(
-                handler
-                    .auth_publickey_offered("git", &unknown)
-                    .await
-                    .unwrap(),
+                handler.key_offered("git", &unknown).await.unwrap(),
                 Auth::Reject { .. }
             ));
         }
         assert!(!limiter.is_blocked(ip).await);
         assert!(matches!(
-            handler.auth_publickey("git", &public).await.unwrap(),
+            handler.key_verified("git", &public).await.unwrap(),
             Auth::Accept
         ));
 
@@ -1089,10 +1094,7 @@ mod tests {
             let mut failed = GitSshHandler::new(pool.clone(), limiter.clone(), ci.clone());
             failed.set_client_ip(ip);
             assert!(matches!(
-                failed
-                    .auth_publickey_offered("git", &unknown)
-                    .await
-                    .unwrap(),
+                failed.key_offered("git", &unknown).await.unwrap(),
                 Auth::Reject { .. }
             ));
         }
