@@ -71,7 +71,7 @@ pub async fn list_managed_webhooks(
         "SELECT {COLUMNS} FROM webhooks WHERE {}=$1 ORDER BY id LIMIT $2 OFFSET $3",
         owner.column()
     );
-    let rows = sqlx::query_as(&sql)
+    let rows = sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(owner.id())
         .bind(limit)
         .bind(offset)
@@ -89,7 +89,7 @@ pub async fn list_webhooks<'e>(
         "SELECT {COLUMNS} FROM webhooks WHERE {} = $1 ORDER BY id",
         owner.column()
     );
-    Ok(sqlx::query_as(&sql)
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(owner.id())
         .fetch_all(pool)
         .await?)
@@ -107,7 +107,7 @@ pub async fn list_webhook_summaries<'e>(
          WHERE h.{} = $1 AND h.id > $2 ORDER BY h.id LIMIT 31",
         owner.column()
     );
-    Ok(sqlx::query_as(&sql)
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(owner.id())
         .bind(after)
         .fetch_all(pool)
@@ -123,7 +123,7 @@ pub async fn get_webhook<'e>(
         "SELECT {COLUMNS} FROM webhooks WHERE id = $1 AND {} = $2",
         owner.column()
     );
-    Ok(sqlx::query_as(&sql)
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(id)
         .bind(owner.id())
         .fetch_optional(pool)
@@ -241,7 +241,7 @@ pub async fn insert_webhook(
         "INSERT INTO webhooks ({}, payload_url, content_type, encrypted_secret, secret_nonce, events, active, ssl_verify, created_by_id, username, encrypted_password, password_nonce) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id",
         owner.column()
     );
-    let id = sqlx::query_scalar(&sql)
+    let id = sqlx::query_scalar(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(owner.id())
         .bind(&fields.payload_url)
         .bind(&fields.content_type)
@@ -301,10 +301,10 @@ pub async fn patch_webhook(
         .bind(format!("webhooks:{}:{}", owner.column(), owner.id()))
         .execute(&mut *tx)
         .await?;
-    let current: Option<String> = sqlx::query_scalar(&format!(
+    let current: Option<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT events FROM webhooks WHERE id=$1 AND {}=$2 FOR UPDATE",
         owner.column()
-    ))
+    )))
     .bind(id)
     .bind(owner.id())
     .fetch_optional(&mut *tx)
@@ -328,7 +328,7 @@ pub async fn patch_webhook(
          updated_at = GREATEST(clock_timestamp(),updated_at+interval '1 microsecond') WHERE id = $1 AND {} = $2 AND ($15::timestamptz IS NULL OR updated_at=$15)",
         owner.column()
     );
-    let result = sqlx::query(&sql)
+    let result = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(id)
         .bind(owner.id())
         .bind(&fields.payload_url)
@@ -367,7 +367,7 @@ pub async fn delete_webhook(
         "DELETE FROM webhooks WHERE id = $1 AND {} = $2",
         owner.column()
     );
-    let result = sqlx::query(&sql)
+    let result = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(id)
         .bind(owner.id())
         .execute(&mut *tx)
@@ -447,7 +447,7 @@ pub async fn list_delivery_window<'e>(
     let sql = format!(
         "SELECT {columns} FROM webhook_deliveries WHERE webhook_id = $1 AND ($2::bigint IS NULL OR id < $2){outcome} ORDER BY id DESC LIMIT $3"
     );
-    Ok(sqlx::query_as(&sql)
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(webhook_id)
         .bind(window.before)
         .bind(window.limit.clamp(1, 101))
@@ -482,7 +482,7 @@ pub async fn get_delivery<'e>(
     let sql = format!(
         "SELECT {DELIVERY_COLUMNS} FROM webhook_deliveries WHERE id = $1 AND webhook_id = $2"
     );
-    Ok(sqlx::query_as(&sql)
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(delivery_id)
         .bind(webhook_id)
         .fetch_optional(pool)

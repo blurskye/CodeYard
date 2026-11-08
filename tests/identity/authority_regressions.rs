@@ -123,12 +123,12 @@ async fn administration(pg: bool) {
     let sql =
         "SELECT action,target_id FROM audit_log WHERE actor_id=$1 AND org_id IS NULL ORDER BY id";
     let rows: Vec<(String, i64)> = match f.pool() {
-        codeyard_database::DbPool::Postgres(pool) => sqlx::query_as(sql)
+        codeyard_database::DbPool::Postgres(pool) => sqlx::query_as(sqlx::AssertSqlSafe(sql))
             .bind(actor)
             .fetch_all(pool)
             .await
             .unwrap(),
-        codeyard_database::DbPool::Sqlite(pool) => sqlx::query_as(sql)
+        codeyard_database::DbPool::Sqlite(pool) => sqlx::query_as(sqlx::AssertSqlSafe(sql))
             .bind(actor)
             .fetch_all(pool)
             .await
@@ -274,7 +274,7 @@ async fn postgres_credential_enrollment_holds_the_original_session_until_commit(
     sqlx::raw_sql("CREATE FUNCTION wait_enrollment() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_advisory_xact_lock(hashtext(current_schema()),737701); RETURN NEW; END $$;")
         .execute(raw).await.unwrap();
     for table in ["personal_access_tokens", "ssh_keys"] {
-        sqlx::query(&format!("CREATE TRIGGER wait_enrollment BEFORE INSERT ON {table} FOR EACH ROW EXECUTE FUNCTION wait_enrollment()"))
+        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE TRIGGER wait_enrollment BEFORE INSERT ON {table} FOR EACH ROW EXECUTE FUNCTION wait_enrollment()")))
             .execute(raw).await.unwrap();
         let session = token();
         codeyard_db_identity::users::sessions::create_session(
@@ -336,10 +336,12 @@ async fn postgres_credential_enrollment_holds_the_original_session_until_commit(
         gate.commit().await.unwrap();
         enrollment.await.unwrap();
         revocation.await.unwrap();
-        sqlx::query(&format!("DROP TRIGGER wait_enrollment ON {table}"))
-            .execute(raw)
-            .await
-            .unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DROP TRIGGER wait_enrollment ON {table}"
+        )))
+        .execute(raw)
+        .await
+        .unwrap();
     }
     f.finish().await;
 }

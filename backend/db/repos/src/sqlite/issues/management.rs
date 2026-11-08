@@ -22,12 +22,12 @@ pub async fn closing_candidates(
     number: i32,
     before: i64,
 ) -> Result<Vec<codeyard_database::models::PullRequest>> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT p.* FROM pull_requests p JOIN repositories r ON r.id=p.repo_id LEFT JOIN users u ON u.id=$1
          WHERE (p.body LIKE $2 OR p.body LIKE $5) AND (p.repo_id=$3 OR p.body LIKE $4) AND p.base_branch=r.default_branch AND ($6<=0 OR p.id<$6) AND {}
          ORDER BY p.id DESC LIMIT 100",
         codeyard_database::queries::sqlite::repositories::access::readable_condition()
-    ))
+    )))
     .bind(viewer)
     .bind(format!("%#{number}%"))
     .bind(repo)
@@ -284,7 +284,7 @@ pub async fn close_duplicate_with_previous(
         .fetch_optional(&mut *tx)
         .await?
         .ok_or(Refusal::Missing)?;
-    let visible: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=$1 WHERE r.id=$2 AND {})",codeyard_database::queries::sqlite::repositories::access::readable_condition())).bind(actor).bind(target_repo).fetch_one(&mut *tx).await?;
+    let visible: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=$1 WHERE r.id=$2 AND {})",codeyard_database::queries::sqlite::repositories::access::readable_condition()))).bind(actor).bind(target_repo).fetch_one(&mut *tx).await?;
     ensure!(visible, Refusal::Missing);
     issue(&mut tx, target_repo, duplicate).await?;
     let next = codeyard_database::queries::sqlite::time::next_revision(existing.updated_at)?;

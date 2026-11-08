@@ -59,13 +59,13 @@ pub async fn create_notification(
             _ => None,
         };
         for scope in [Some(repo), fork].into_iter().flatten() {
-            let readable: bool = sqlx::query_scalar(&format!(
+            let readable: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
                 "SELECT EXISTS(
                     SELECT 1 FROM repositories r
                     JOIN users u ON u.id=?1 AND NOT u.is_banned AND NOT u.must_change_password
                     WHERE r.id=?2 AND {})",
                 scope_readable_condition()
-            ))
+            )))
             .bind(input.user_id)
             .bind(scope)
             .fetch_one(&mut *tx)
@@ -100,9 +100,9 @@ pub async fn create_notification(
         let fork = input.metadata["fork_repository_id"]
             .as_i64()
             .ok_or(NotificationSuppressed)?;
-        let readable: bool = sqlx::query_scalar(&format!(
+        let readable: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=?1 AND NOT u.is_banned AND NOT u.must_change_password WHERE r.id=?2 AND {})", scope_readable_condition()
-        )).bind(input.user_id).bind(fork).fetch_one(&mut *tx).await?;
+        ))).bind(input.user_id).bind(fork).fetch_one(&mut *tx).await?;
         anyhow::ensure!(readable, NotificationSuppressed);
     }
     if matches!(
@@ -243,7 +243,7 @@ async fn decide_scopes(
     notification_id: Option<i64>,
 ) -> Result<NotificationScopes> {
     let readable = scope_readable_condition();
-    let decided: Vec<(i64, bool)> = sqlx::query_as(&format!(
+    let decided: Vec<(i64, bool)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT s.scope, EXISTS(
             SELECT 1 FROM repositories r
             JOIN users u ON u.id=?1 AND NOT u.is_banned AND NOT u.must_change_password
@@ -251,7 +251,7 @@ async fn decide_scopes(
          FROM (SELECT DISTINCT scope_repository_id AS scope FROM notifications
                WHERE user_id=?1 AND scope_repository_id>0
                  AND (NOT ?2 OR (read_at IS NULL AND done_at IS NULL) OR id=?3)) s"
-    ))
+    )))
     .bind(user_id)
     .bind(unread_only)
     .bind(notification_id)
@@ -337,7 +337,7 @@ async fn notification_candidates(
            AND (?9 IS NULL OR (created_at,id) < (?9,?10))
          ORDER BY created_at DESC,id DESC LIMIT 100"
     );
-    Ok(sqlx::query_as(&sql)
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(user_id)
         .bind(high_water)
         .bind(filter.unread_only)
@@ -577,7 +577,7 @@ pub async fn count_unread_notifications(pool: &SqlitePool, user_id: i64) -> Resu
 /// The native badge remains lock-free. Foreign candidates need live source checks too.
 pub async fn count_header_unread(pool: &SqlitePool, user_id: i64) -> Result<i64> {
     let readable = scope_readable_condition();
-    let native: i64 = sqlx::query_scalar(&format!(
+    let native: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT COUNT(*) FROM notifications WHERE user_id=?1 AND read_at IS NULL AND done_at IS NULL
          AND EXISTS(SELECT 1 FROM users WHERE id=?1 AND NOT is_banned AND NOT must_change_password)
          AND (scope_repository_id=0 OR scope_repository_id IN (
@@ -586,7 +586,7 @@ pub async fn count_header_unread(pool: &SqlitePool, user_id: i64) -> Result<i64>
                             WHERE user_id=?1 AND read_at IS NULL AND done_at IS NULL
                               AND scope_repository_id>0)
                AND NOT r.is_stub AND {readable}))"
-    ))
+    )))
     .bind(user_id)
     .fetch_one(pool)
     .await?;
@@ -613,10 +613,10 @@ async fn fork_readable(
     else {
         return Ok(false);
     };
-    Ok(sqlx::query_scalar(&format!(
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=?1 WHERE r.id=?2 AND NOT r.is_stub AND {})",
         scope_readable_condition()
-    ))
+    )))
     .bind(user)
     .bind(fork)
     .fetch_one(connection)
@@ -720,9 +720,9 @@ pub async fn notification_email_allowed(pool: &SqlitePool, notification_id: i64)
         return Ok(false);
     }
     let readable = scope_readable_condition();
-    Ok(sqlx::query_scalar(&format!(
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=?1 WHERE r.id=?2 AND {readable})"
-    ))
+    )))
     .bind(user_id)
     .bind(scope)
     .fetch_one(&mut *connection)
@@ -832,19 +832,19 @@ async fn notification_mark(
     on: bool,
 ) -> Result<(Option<Notification>, u64)> {
     let column = mark.column();
-    let scope: Option<(i64, bool)> = sqlx::query_as(&format!(
+    let scope: Option<(i64, bool)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT scope_repository_id,{column} IS NOT NULL FROM notifications WHERE id=?1 AND user_id=?2"
-    ))
+    )))
     .bind(notification_id)
     .bind(user_id)
     .fetch_optional(&mut *connection)
     .await?;
     if let Some((scope_repository_id, was_set)) = scope {
         if scope_readable(scopes, scope_repository_id) {
-            let notification = sqlx::query_as::<_, Notification>(&format!(
+            let notification = sqlx::query_as::<_, Notification>(sqlx::AssertSqlSafe(format!(
                 "UPDATE notifications SET {column}=CASE WHEN ?3 THEN COALESCE({column},strftime('%Y-%m-%dT%H:%M:%f000Z','now')) ELSE NULL END
                  WHERE id=?1 AND user_id=?2 AND scope_repository_id=?4 RETURNING *"
-            ))
+            )))
             .bind(notification_id)
             .bind(user_id)
             .bind(on)
@@ -905,7 +905,7 @@ async fn notification_done_all(
         notification_scope_counts(connection, user_id, scopes.high_water).await?
     {
         if scope_readable(scopes, scope) {
-            count += sqlx::query(&sql)
+            count += sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
                 .bind(user_id)
                 .bind(scopes.high_water)
                 .bind(filter.unread_only)

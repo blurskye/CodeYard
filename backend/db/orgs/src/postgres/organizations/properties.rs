@@ -406,7 +406,7 @@ async fn change_repository_values(
 }
 
 fn query_predicates(
-    builder: &mut sqlx::QueryBuilder<'_, sqlx::Postgres>,
+    builder: &mut sqlx::QueryBuilder<sqlx::Postgres>,
     query: &query::RepositoryQuery,
 ) {
     use query::Kind;

@@ -336,7 +336,7 @@ async fn release_upload_cleanup(pg: bool) {
     let insert = "INSERT INTO files(id,user_id,filename,original_name,content_type,file_size,sha256_hex,object_key,reason,visibility,is_active,confirmed_at,upload_expires_at) VALUES($1,$2,'asset.bin','asset.bin','application/octet-stream',12,$3,$4,'release_asset','owner',FALSE,'2026-01-01T00:00:00.000000Z','2099-01-01T00:00:00.000000Z')";
     match f.pool() {
         codeyard_database::DbPool::Postgres(raw) => {
-            sqlx::query(insert)
+            sqlx::query(sqlx::AssertSqlSafe(insert))
                 .bind(id)
                 .bind(owner)
                 .bind("aa".repeat(32))
@@ -346,7 +346,7 @@ async fn release_upload_cleanup(pg: bool) {
                 .unwrap();
         }
         codeyard_database::DbPool::Sqlite(raw) => {
-            sqlx::query(insert)
+            sqlx::query(sqlx::AssertSqlSafe(insert))
                 .bind(id)
                 .bind(owner)
                 .bind("aa".repeat(32))
@@ -401,13 +401,13 @@ async fn release_upload_cleanup(pg: bool) {
     );
     let check = "SELECT (SELECT COUNT(*) FROM files WHERE id=$1), (SELECT COUNT(*) FROM pending_object_deletions WHERE object_key=$2)";
     let counts: (i64, i64) = match f.pool() {
-        codeyard_database::DbPool::Postgres(raw) => sqlx::query_as(check)
+        codeyard_database::DbPool::Postgres(raw) => sqlx::query_as(sqlx::AssertSqlSafe(check))
             .bind(id)
             .bind(&key)
             .fetch_one(raw)
             .await
             .unwrap(),
-        codeyard_database::DbPool::Sqlite(raw) => sqlx::query_as(check)
+        codeyard_database::DbPool::Sqlite(raw) => sqlx::query_as(sqlx::AssertSqlSafe(check))
             .bind(id)
             .bind(&key)
             .fetch_one(raw)

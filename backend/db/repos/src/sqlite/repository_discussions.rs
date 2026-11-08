@@ -100,7 +100,8 @@ pub async fn list(
     )?;
     let mut connection = pool.begin().await?;
     let count_sql = format!("SELECT COUNT(*) {}", statement.prefix);
-    let mut count = sqlx::query_scalar::<_, i64>(&count_sql).bind(viewer);
+    let mut count =
+        sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(count_sql.as_str())).bind(viewer);
     for value in &statement.args {
         count = count.bind(value);
     }
@@ -116,7 +117,7 @@ pub async fn list(
         statement.placeholder(statement.args.len() + 2),
         statement.placeholder(statement.args.len() + 3)
     );
-    let mut rows = sqlx::query_as(&sql).bind(viewer);
+    let mut rows = sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str())).bind(viewer);
     for value in &statement.args {
         rows = rows.bind(value);
     }
@@ -147,7 +148,7 @@ async fn credential_authority(
         Refusal::Denied
     );
     let reader = Reader::authenticated(actor, credential);
-    let allowed: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=$1 WHERE r.id=$2 AND ({}))", repository_condition(false, scope, Access::Write, "$3", "$4", "$5")))
+    let allowed: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=$1 WHERE r.id=$2 AND ({}))", repository_condition(false, scope, Access::Write, "$3", "$4", "$5"))))
         .bind(actor).bind(repo).bind(reader.token()).bind(reader.session()).bind(reader.hash()).fetch_one(&mut **tx).await?;
     anyhow::ensure!(allowed, Refusal::Denied);
     Ok(())

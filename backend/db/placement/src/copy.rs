@@ -294,11 +294,13 @@ async fn copy_table(source: &mut Tx, destination: &mut Tx, from: &Table, to: &Ta
     let sql = read_sql(source, from);
     match source {
         Tx::Sqlite(tx) => {
-            let rows = sqlx::query_scalar::<_, String>(&sql).fetch(&mut **tx);
+            let rows =
+                sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql.as_str())).fetch(&mut **tx);
             load_rows(destination, to, rows).await
         }
         Tx::Postgres(tx) => {
-            let rows = sqlx::query_scalar::<_, String>(&sql).fetch(&mut **tx);
+            let rows =
+                sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql.as_str())).fetch(&mut **tx);
             load_rows(destination, to, rows).await
         }
     }
@@ -344,12 +346,12 @@ fn insert_sql(destination: &Tx, table: &Table) -> String {
 
 async fn insert_chunk(destination: &mut Tx, sql: &str, chunk: &str) -> Result<()> {
     match destination {
-        Tx::Sqlite(tx) => sqlx::query(sql)
+        Tx::Sqlite(tx) => sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(chunk)
             .execute(&mut **tx)
             .await
             .map(drop)?,
-        Tx::Postgres(tx) => sqlx::query(sql)
+        Tx::Postgres(tx) => sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(chunk)
             .execute(&mut **tx)
             .await
@@ -360,18 +362,24 @@ async fn insert_chunk(destination: &mut Tx, sql: &str, chunk: &str) -> Result<()
 
 async fn execute(tx: &mut Tx, sql: &str) -> Result<()> {
     match tx {
-        Tx::Sqlite(tx) => sqlx::query(sql).execute(&mut **tx).await.map(drop)?,
-        Tx::Postgres(tx) => sqlx::query(sql).execute(&mut **tx).await.map(drop)?,
+        Tx::Sqlite(tx) => sqlx::query(sqlx::AssertSqlSafe(sql))
+            .execute(&mut **tx)
+            .await
+            .map(drop)?,
+        Tx::Postgres(tx) => sqlx::query(sqlx::AssertSqlSafe(sql))
+            .execute(&mut **tx)
+            .await
+            .map(drop)?,
     }
     Ok(())
 }
 
 async fn scalar(tx: &mut Tx, sql: &str) -> Result<i64> {
     match tx {
-        Tx::Sqlite(tx) => Ok(sqlx::query_scalar::<_, i64>(sql)
+        Tx::Sqlite(tx) => Ok(sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(sql))
             .fetch_one(&mut **tx)
             .await?),
-        Tx::Postgres(tx) => Ok(sqlx::query_scalar::<_, i64>(sql)
+        Tx::Postgres(tx) => Ok(sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(sql))
             .fetch_one(&mut **tx)
             .await?),
     }

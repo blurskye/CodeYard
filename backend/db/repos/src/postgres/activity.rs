@@ -35,9 +35,8 @@ pub async fn list_user_activity(
 ) -> Result<ActivityBatch> {
     let (limit, offset, prefix) = crate::activity::scan_window(limit, offset);
     let readable = codeyard_database::queries::postgres::repositories::access::readable_condition();
-    let rows = sqlx::query_as::<_, ScannedActivity>(&crate::activity::activity_sql(
-        &readable,
-        "s.expires_at>NOW()",
+    let rows = sqlx::query_as::<_, ScannedActivity>(sqlx::AssertSqlSafe(
+        crate::activity::activity_sql(&readable, "s.expires_at>NOW()"),
     ))
     .bind(user_id)
     .bind(limit)

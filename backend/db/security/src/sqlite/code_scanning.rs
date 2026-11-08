@@ -204,7 +204,7 @@ async fn instance_on(
         "Invalid pull request"
     );
     let condition = instance_condition("$2", "$3", "i.ref_name");
-    Ok(sqlx::query_as(&format!("SELECT i.* FROM code_scanning_instances i WHERE i.alert_id=$1 AND {condition} ORDER BY CASE WHEN i.state='open' THEN 0 ELSE 1 END,i.upload_sequence DESC,i.ref_name,i.category LIMIT 1")).bind(alert).bind(reference).bind(pull_request).fetch_optional(connection).await?)
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT i.* FROM code_scanning_instances i WHERE i.alert_id=$1 AND {condition} ORDER BY CASE WHEN i.state='open' THEN 0 ELSE 1 END,i.upload_sequence DESC,i.ref_name,i.category LIMIT 1"))).bind(alert).bind(reference).bind(pull_request).fetch_optional(connection).await?)
 }
 
 pub async fn organization_alert_page(
@@ -293,7 +293,7 @@ pub async fn instances_filtered(
         "Invalid instance page"
     );
     let condition = instance_condition("$2", "$5", "i.ref_name");
-    Ok(sqlx::query_as(&format!("SELECT i.* FROM code_scanning_instances i WHERE i.alert_id=$1 AND {condition} ORDER BY i.upload_sequence DESC,i.ref_name,i.category LIMIT $3 OFFSET $4")).bind(alert).bind(reference).bind(limit).bind(offset).bind(pull_request).fetch_all(pool).await?)
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT i.* FROM code_scanning_instances i WHERE i.alert_id=$1 AND {condition} ORDER BY i.upload_sequence DESC,i.ref_name,i.category LIMIT $3 OFFSET $4"))).bind(alert).bind(reference).bind(limit).bind(offset).bind(pull_request).fetch_all(pool).await?)
 }
 
 pub async fn dismiss(
@@ -372,9 +372,9 @@ pub async fn delete_analysis(
             .await?,
         Refusal::Denied
     );
-    let analysis: Analysis = sqlx::query_as(&format!(
+    let analysis: Analysis = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {ANALYSIS_COLUMNS} FROM code_scanning_analyses a WHERE a.repo_id=$1 AND a.id=$2"
-    ))
+    )))
     .bind(repo)
     .bind(id)
     .fetch_optional(&mut *tx)

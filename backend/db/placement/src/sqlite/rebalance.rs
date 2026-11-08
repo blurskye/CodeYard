@@ -54,12 +54,12 @@ pub async fn plan(pool: &SqlitePool, node: i64) -> Result<Option<Move>> {
     let pending = crate::sqlite::objects::pending(&mut tx).await?;
     for repository in candidates {
         let family = crate::sqlite::cluster::FORK_FAMILY;
-        let rows: Vec<Repository> = sqlx::query_as(&format!("WITH family AS ({family}) SELECT r.id,r.forked_from_id AS parent,r.storage_node_id AS primary_id,r.write_version AS version,r.size_bytes AS size,(SELECT COUNT(*) FROM repository_voters v WHERE v.repository_id=r.id) AS voters FROM repositories r JOIN family f ON f.id=r.id ORDER BY r.id LIMIT $2"))
+        let rows: Vec<Repository> = sqlx::query_as(sqlx::AssertSqlSafe(format!("WITH family AS ({family}) SELECT r.id,r.forked_from_id AS parent,r.storage_node_id AS primary_id,r.write_version AS version,r.size_bytes AS size,(SELECT COUNT(*) FROM repository_voters v WHERE v.repository_id=r.id) AS voters FROM repositories r JOIN family f ON f.id=r.id ORDER BY r.id LIMIT $2")))
             .bind(repository).bind(limit+1).fetch_all(&mut *tx).await?;
         if rows.len() as i64 > limit || rows.iter().any(|row| row.primary_id != node) {
             continue;
         }
-        let copies: Vec<(i64,i64,i64)> = sqlx::query_as(&format!("WITH family AS ({family}) SELECT repository_id,node_id,MAX(applied_version) FROM (SELECT rr.repository_id,rr.node_id,rr.applied_version FROM repository_replicas rr JOIN family f ON f.id=rr.repository_id UNION ALL SELECT v.repository_id,v.node_id,v.applied_version FROM repository_voters v JOIN family f ON f.id=v.repository_id) copies GROUP BY repository_id,node_id ORDER BY repository_id,node_id LIMIT $2"))
+        let copies: Vec<(i64,i64,i64)> = sqlx::query_as(sqlx::AssertSqlSafe(format!("WITH family AS ({family}) SELECT repository_id,node_id,MAX(applied_version) FROM (SELECT rr.repository_id,rr.node_id,rr.applied_version FROM repository_replicas rr JOIN family f ON f.id=rr.repository_id UNION ALL SELECT v.repository_id,v.node_id,v.applied_version FROM repository_voters v JOIN family f ON f.id=v.repository_id) copies GROUP BY repository_id,node_id ORDER BY repository_id,node_id LIMIT $2")))
             .bind(repository).bind(limit.saturating_mul(1000)+1).fetch_all(&mut *tx).await?;
         ensure!(
             copies.len() as i64 <= limit.saturating_mul(1000),
@@ -90,7 +90,7 @@ pub async fn plan(pool: &SqlitePool, node: i64) -> Result<Option<Move>> {
         else {
             continue;
         };
-        let terms: Vec<(i64,i64)> = sqlx::query_as(&format!("WITH family AS ({family}) SELECT r.id,COALESCE(c.term,0) FROM repositories r JOIN family f ON f.id=r.id LEFT JOIN repository_write_control c ON c.repository_id=r.id ORDER BY r.id LIMIT $2"))
+        let terms: Vec<(i64,i64)> = sqlx::query_as(sqlx::AssertSqlSafe(format!("WITH family AS ({family}) SELECT r.id,COALESCE(c.term,0) FROM repositories r JOIN family f ON f.id=r.id LEFT JOIN repository_write_control c ON c.repository_id=r.id ORDER BY r.id LIMIT $2")))
             .bind(repository).bind(limit+1).fetch_all(&mut *tx).await?;
         sqlx::query("INSERT INTO repository_moves(repository_id,source_node_id,target_node_id,targets,terms) VALUES($1,$2,$3,$4,$5)")
             .bind(repository).bind(node).bind(target).bind(serde_json::to_string(&targets)?).bind(serde_json::to_string(&terms)?).execute(&mut *tx).await?;

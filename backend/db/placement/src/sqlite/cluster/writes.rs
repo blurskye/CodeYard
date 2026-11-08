@@ -447,11 +447,11 @@ async fn lock_family(
     repo: i64,
     terms: &[(i64, i64)],
 ) -> Result<Option<Vec<(i64, Control)>>> {
-    let family: Vec<(i64, Option<i64>, i64)> = sqlx::query_as(&format!(
+    let family: Vec<(i64, Option<i64>, i64)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{} LIMIT {}",
         crate::sqlite::cluster::FORK_FAMILY,
         MAX_FAMILY + 1
-    ))
+    )))
     .bind(repo)
     .fetch_all(&mut *conn)
     .await?;
@@ -474,11 +474,11 @@ async fn lock_family(
 }
 
 pub async fn write_family(pool: &SqlitePool, repo: i64) -> Result<Vec<(i64, Option<i64>, i64)>> {
-    let family: Vec<(i64, Option<i64>, i64)> = sqlx::query_as(&format!(
+    let family: Vec<(i64, Option<i64>, i64)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{} LIMIT {}",
         crate::sqlite::cluster::FORK_FAMILY,
         MAX_FAMILY + 1
-    ))
+    )))
     .bind(repo)
     .fetch_all(pool)
     .await?;
@@ -652,11 +652,11 @@ pub async fn held_voters(
 }
 
 pub async fn write_family_terms(pool: &SqlitePool, repo: i64) -> Result<Vec<(i64, i64)>> {
-    let rows: Vec<(i64, i64)> = sqlx::query_as(&format!(
+    let rows: Vec<(i64, i64)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "WITH family AS ({}) SELECT r.id,c.term FROM family f JOIN repositories r ON r.id=f.id
          JOIN repository_write_control c ON c.repository_id=r.id ORDER BY r.id LIMIT $2",
         crate::sqlite::cluster::FORK_FAMILY,
-    ))
+    )))
     .bind(repo)
     .bind((MAX_FAMILY + 1) as i64)
     .fetch_all(pool)

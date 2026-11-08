@@ -20,15 +20,15 @@ pub async fn set_cache_limit(
         CachePolicyError::Denied
     );
     let column = kind.column();
-    let maximum: i32 = sqlx::query_scalar(&format!(
+    let maximum: i32 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT MIN(COALESCE((SELECT {column} FROM actions_settings WHERE id=1),{}),COALESCE((SELECT s.{column} FROM org_actions_settings s JOIN repositories r ON r.owner_org_id=s.org_id AND r.owner_kind='org' WHERE r.id=$1),2147483647))",
         kind.default_value()
-    ))
+    )))
     .bind(repo)
     .fetch_one(&mut *tx)
     .await?;
     anyhow::ensure!(value > 0 && value <= maximum, CachePolicyError::Limit);
-    sqlx::query(&format!("INSERT INTO repo_actions_settings(repo_id,{column}) VALUES($1,$2) ON CONFLICT(repo_id) DO UPDATE SET {column}=excluded.{column},updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now')"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("INSERT INTO repo_actions_settings(repo_id,{column}) VALUES($1,$2) ON CONFLICT(repo_id) DO UPDATE SET {column}=excluded.{column},updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now')")))
         .bind(repo).bind(value).execute(&mut *tx).await?;
     match kind {
         CacheLimit::Storage => {

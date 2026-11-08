@@ -26,23 +26,25 @@ pub async fn request_page(
         .execute(&mut *tx)
         .await?;
     let total = if window.count {
-        sqlx::query_scalar(&format!("SELECT COUNT(*) FROM ({sql}) visible"))
-            .bind(window.repo)
-            .bind(window.viewer)
-            .bind(window.pull)
-            .bind(window.target.map(|target| target.0))
-            .bind(window.target.map(|target| target.1))
-            .fetch_one(&mut *tx)
-            .await?
+        sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT COUNT(*) FROM ({sql}) visible"
+        )))
+        .bind(window.repo)
+        .bind(window.viewer)
+        .bind(window.pull)
+        .bind(window.target.map(|target| target.0))
+        .bind(window.target.map(|target| target.1))
+        .fetch_one(&mut *tx)
+        .await?
     } else {
         0
     };
     let rows = if window.limit == 0 {
         Vec::new()
     } else {
-        sqlx::query_as(&format!(
+        sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "{sql} ORDER BY kind,sort_name,COALESCE(user_id,team_id) LIMIT $6 OFFSET $7"
-        ))
+        )))
         .bind(window.repo)
         .bind(window.viewer)
         .bind(window.pull)
@@ -65,7 +67,7 @@ pub async fn by_ids(
 ) -> Result<Vec<Team>> {
     ensure!(ids.len() <= 100, InvalidReviewTeam);
     let readable = codeyard_database::queries::postgres::repositories::access::readable_condition();
-    Ok(sqlx::query_as(&format!("{SCOPED} AND t.id=ANY($3) AND EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=$2 WHERE r.id=$1 AND {readable})")).bind(repo).bind(viewer).bind(ids).fetch_all(pool).await?)
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!("{SCOPED} AND t.id=ANY($3) AND EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=$2 WHERE r.id=$1 AND {readable})"))).bind(repo).bind(viewer).bind(ids).fetch_all(pool).await?)
 }
 
 pub async fn list(
@@ -74,7 +76,7 @@ pub async fn list(
     pull: Option<i64>,
     viewer: Option<i64>,
 ) -> Result<Vec<crate::repositories::push_teams::TeamAccess>> {
-    Ok(sqlx::query_as(&format!("{SCOPED} AND ($3::bigint IS NOT NULL OR a.permission BETWEEN 3 AND 5) AND ($3::bigint IS NULL OR EXISTS(SELECT 1 FROM pr_team_reviewers p WHERE p.pull_request_id=$3 AND p.team_id=t.id)) ORDER BY t.slug,t.id"))
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!("{SCOPED} AND ($3::bigint IS NOT NULL OR a.permission BETWEEN 3 AND 5) AND ($3::bigint IS NULL OR EXISTS(SELECT 1 FROM pr_team_reviewers p WHERE p.pull_request_id=$3 AND p.team_id=t.id)) ORDER BY t.slug,t.id")))
         .bind(repo).bind(viewer).bind(pull).fetch_all(pool).await?)
 }
 
@@ -85,7 +87,7 @@ pub async fn members(
     after: i64,
 ) -> Result<Vec<codeyard_database::models::User>> {
     let access = codeyard_database::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL;
-    Ok(sqlx::query_as(&format!("SELECT DISTINCT u.* FROM effective_team_memberships m JOIN teams t ON t.id=m.team_id JOIN org_memberships o ON o.org_id=t.org_id AND o.user_id=m.user_id JOIN users u ON u.id=m.user_id JOIN repositories r ON r.owner_kind='org' AND r.owner_org_id=t.org_id AND r.owner_user_id IS NULL WHERE r.id=$1 AND t.id=ANY($2) AND u.id>$3 AND t.notifications_enabled AND m.role IN ('member','maintainer') AND o.role IN ('owner','admin','member') AND NOT r.is_archived AND NOT EXISTS(SELECT 1 FROM repository_migration_locks WHERE repo_id=r.id) AND ({access})>=3 AND EXISTS(SELECT 1 FROM effective_team_repo_access a WHERE a.team_id=t.id AND a.repo_id=r.id AND a.permission BETWEEN 3 AND 5) ORDER BY u.id LIMIT 100"))
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT DISTINCT u.* FROM effective_team_memberships m JOIN teams t ON t.id=m.team_id JOIN org_memberships o ON o.org_id=t.org_id AND o.user_id=m.user_id JOIN users u ON u.id=m.user_id JOIN repositories r ON r.owner_kind='org' AND r.owner_org_id=t.org_id AND r.owner_user_id IS NULL WHERE r.id=$1 AND t.id=ANY($2) AND u.id>$3 AND t.notifications_enabled AND m.role IN ('member','maintainer') AND o.role IN ('owner','admin','member') AND NOT r.is_archived AND NOT EXISTS(SELECT 1 FROM repository_migration_locks WHERE repo_id=r.id) AND ({access})>=3 AND EXISTS(SELECT 1 FROM effective_team_repo_access a WHERE a.team_id=t.id AND a.repo_id=r.id AND a.permission BETWEEN 3 AND 5) ORDER BY u.id LIMIT 100")))
         .bind(repo).bind(teams).bind(after).fetch_all(pool).await?)
 }
 
@@ -160,9 +162,9 @@ pub async fn set_requests(
             continue;
         }
         teams.push(
-            sqlx::query_as(&format!(
+            sqlx::query_as(sqlx::AssertSqlSafe(format!(
                 "{SCOPED} AND t.id=$3 AND a.permission BETWEEN 3 AND 5 FOR SHARE OF t"
-            ))
+            )))
             .bind(repo)
             .bind(actor)
             .bind(id)
@@ -179,7 +181,7 @@ pub async fn set_requests(
             .execute(&mut *tx)
             .await?;
         // Replacement changes only the roster the actor can see, including stale visible grants.
-        sqlx::query(&format!("DELETE FROM pr_team_reviewers WHERE pull_request_id=$3 AND team_id IN (SELECT id FROM ({SCOPED}) visible) AND NOT team_id=ANY($4)")).bind(repo).bind(actor).bind(pull).bind(input.teams).execute(&mut *tx).await?;
+        sqlx::query(sqlx::AssertSqlSafe(format!("DELETE FROM pr_team_reviewers WHERE pull_request_id=$3 AND team_id IN (SELECT id FROM ({SCOPED}) visible) AND NOT team_id=ANY($4)"))).bind(repo).bind(actor).bind(pull).bind(input.teams).execute(&mut *tx).await?;
     }
     let mut added_users = Vec::new();
     for user in users {
@@ -253,7 +255,7 @@ pub async fn change(
     }
     let mut changed = Vec::new();
     for slug in slugs {
-        let team: Team = sqlx::query_as(&format!("{SCOPED} AND LOWER(t.slug)=LOWER($3) AND ($4 OR a.permission BETWEEN 3 AND 5) FOR SHARE OF t"))
+        let team: Team = sqlx::query_as(sqlx::AssertSqlSafe(format!("{SCOPED} AND LOWER(t.slug)=LOWER($3) AND ($4 OR a.permission BETWEEN 3 AND 5) FOR SHARE OF t")))
             .bind(repo).bind(actor).bind(slug).bind(remove).fetch_optional(&mut *tx).await?.ok_or(InvalidReviewTeam)?;
         if changed.iter().any(|previous: &Team| previous.id == team.id) {
             continue;
@@ -297,5 +299,8 @@ pub async fn request_key(pool: &PgPool, team: bool, id: i64) -> Result<Option<(i
     } else {
         "SELECT pull_request_id,user_id FROM pr_reviewers WHERE id=$1"
     };
-    Ok(sqlx::query_as(sql).bind(id).fetch_optional(pool).await?)
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(sql))
+        .bind(id)
+        .fetch_optional(pool)
+        .await?)
 }

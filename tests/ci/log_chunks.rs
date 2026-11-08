@@ -666,10 +666,16 @@ impl codeyard_database::ci_logs::LogObjects for FaultingObjects {
                 };
                 match &self.pool {
                     codeyard_database::DbPool::Postgres(pool) => {
-                        sqlx::query(statement).bind(self.run).execute(pool).await?;
+                        sqlx::query(sqlx::AssertSqlSafe(statement))
+                            .bind(self.run)
+                            .execute(pool)
+                            .await?;
                     }
                     codeyard_database::DbPool::Sqlite(pool) => {
-                        sqlx::query(statement).bind(self.run).execute(pool).await?;
+                        sqlx::query(sqlx::AssertSqlSafe(statement))
+                            .bind(self.run)
+                            .execute(pool)
+                            .await?;
                     }
                 }
             }

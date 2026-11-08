@@ -97,14 +97,14 @@ impl Database {
     async fn history(&self, repo: i64, actor: i64) -> i64 {
         let sql = "INSERT INTO ci_runs(run_id,repo_id,triggered_by_id,mode,pipeline,event,branch,workflow_path,status) VALUES($1,$2,$3,'local','ci','push','main','.github/workflows/ci.yml','success') RETURNING id";
         match self {
-            Self::Postgres(f) => sqlx::query_scalar(sql)
+            Self::Postgres(f) => sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
                 .bind(Uuid::new_v4())
                 .bind(repo)
                 .bind(actor)
                 .fetch_one(&f.raw)
                 .await
                 .unwrap(),
-            Self::Sqlite(f) => sqlx::query_scalar(sql)
+            Self::Sqlite(f) => sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
                 .bind(Uuid::new_v4())
                 .bind(repo)
                 .bind(actor)
@@ -2625,13 +2625,13 @@ async fn ci_lookup_indexes_and_one_deployment_per_run(db: &Database) {
     let sql =
         "INSERT INTO ci_deployments(run_id, repo_id, environment, environment_key) VALUES ($1, $2, 'production', 'production')";
     let duplicate = match db {
-        Database::Postgres(f) => sqlx::query(sql)
+        Database::Postgres(f) => sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(run.id)
             .bind(w.repo)
             .execute(&f.raw)
             .await
             .map(|_| ()),
-        Database::Sqlite(f) => sqlx::query(sql)
+        Database::Sqlite(f) => sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(run.id)
             .bind(w.repo)
             .execute(&f.raw)

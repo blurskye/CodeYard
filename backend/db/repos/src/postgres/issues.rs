@@ -224,7 +224,7 @@ pub async fn issue_ids_by_numbers(
     numbers: &[i32],
 ) -> Result<Vec<(i64, i32)>> {
     anyhow::ensure!(numbers.len() <= 500, "Too many issue numbers");
-    Ok(sqlx::query_as(&format!("SELECT i.id,i.number FROM issues i JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id=$3 WHERE i.repo_id=$1 AND i.number=ANY($2) AND {} ORDER BY i.number,i.id", codeyard_database::queries::postgres::repositories::access::readable_condition())).bind(repo).bind(numbers).bind(viewer).fetch_all(pool).await?)
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT i.id,i.number FROM issues i JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id=$3 WHERE i.repo_id=$1 AND i.number=ANY($2) AND {} ORDER BY i.number,i.id", codeyard_database::queries::postgres::repositories::access::readable_condition()))).bind(repo).bind(numbers).bind(viewer).fetch_all(pool).await?)
 }
 
 pub async fn get_issues_by_ids(pool: &PgPool, repo_id: i64, ids: &[i64]) -> Result<Vec<Issue>> {
@@ -261,7 +261,7 @@ pub async fn list_repo_issues(
     let (milestone_mode, milestone_id) = filter.milestone.binding();
     let labels = crate::postgres::discussions::label_names_array(filter.labels);
     let order = filter.sort.order_by("issue_comments", "issue_id", "");
-    let issues = sqlx::query_as::<_, IssueListEntry>(&format!(
+    let issues = sqlx::query_as::<_, IssueListEntry>(sqlx::AssertSqlSafe(format!(
         r#"SELECT i.*, {columns} FROM issues i JOIN users u ON u.id=i.author_id
         WHERE i.repo_id = $1 AND ($2::TEXT IS NULL OR i.state = $2)
             AND ($3::TEXT IS NULL OR i.title ILIKE $3::TEXT ESCAPE '\' OR i.body ILIKE $3::TEXT ESCAPE '\')
@@ -273,7 +273,7 @@ pub async fn list_repo_issues(
                 WHERE il.issue_id = i.id AND LOWER(l.name COLLATE "C") = ANY(SELECT LOWER(n COLLATE "C") FROM unnest($10::TEXT[]) AS n))
                 = (SELECT COUNT(DISTINCT LOWER(n COLLATE "C")) FROM unnest($10::TEXT[]) AS n))
         ORDER BY {order}, i.id DESC LIMIT $4 OFFSET $11"#
-    ))
+    )))
     .bind(repo_id)
     .bind(filter.state)
     .bind(filter.search.map(contains_pattern))
@@ -324,7 +324,7 @@ pub async fn list_repository_items(
             crate::discussion_search::escape(v)
         )
     });
-    Ok(sqlx::query_as(&format!(r"WITH items AS (
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(r"WITH items AS (
         SELECT id, number, author_id, state, milestone_id, created_at, updated_at, body, false AS pull_request,
             (SELECT COUNT(*) FROM issue_comments c WHERE c.issue_id=issues.id) AS comments FROM issues WHERE repo_id=$1
         UNION ALL
@@ -354,7 +354,7 @@ pub async fn list_repository_items(
         AND ($9::TIMESTAMPTZ IS NULL OR i.updated_at>$9)
         AND ($12=0 OR (NOT i.pull_request AND (($12=1 AND NOT EXISTS(SELECT 1 FROM item_types t WHERE t.issue_id=i.id)) OR ($12=2 AND EXISTS(SELECT 1 FROM item_types t WHERE t.issue_id=i.id AND t.attribute_id=$13)) OR ($12=3 AND EXISTS(SELECT 1 FROM item_types t WHERE t.issue_id=i.id)))))
         AND ($14::TEXT IS NULL OR i.body ~ $14 OR EXISTS(SELECT 1 FROM discussion_comments c WHERE c.item_id=i.id AND c.pull_request=i.pull_request AND c.body ~ $14))
-        ORDER BY {order}, i.number DESC LIMIT $10 OFFSET $11"))
+        ORDER BY {order}, i.number DESC LIMIT $10 OFFSET $11")))
         .bind(repo_id).bind(filter.state).bind(filter.author_id).bind(assignee_mode).bind(assignee_id).bind(milestone_mode).bind(milestone_id).bind(labels)
         .bind(options.since).bind(limit).bind(filter.offset).bind(type_mode).bind(type_id).bind(mentioned).fetch_all(pool).await?)
 }
@@ -556,7 +556,7 @@ pub async fn list_issue_comments_ordered(
     let direction = if descending { "DESC" } else { "ASC" };
     let columns = codeyard_db_identity::postgres::users::accounts::AUTHOR_DISPLAY_COLUMNS;
     let comments = sqlx::query_as::<_, IssueCommentEntry>(
-        &format!("SELECT i.*, {columns} FROM issue_comments i JOIN users u ON u.id=i.author_id WHERE i.issue_id = $1 ORDER BY i.{order} {direction}, i.id {direction} LIMIT $2 OFFSET $3"),
+        sqlx::AssertSqlSafe(format!("SELECT i.*, {columns} FROM issue_comments i JOIN users u ON u.id=i.author_id WHERE i.issue_id = $1 ORDER BY i.{order} {direction}, i.id {direction} LIMIT $2 OFFSET $3")),
     )
     .bind(issue_id)
     .bind(limit)
@@ -626,7 +626,7 @@ pub async fn list_viewer_issues(
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         .execute(&mut *tx)
         .await?;
-    let mut issues = sqlx::query_as::<_, ViewerIssueEntry>(&format!(
+    let mut issues = sqlx::query_as::<_, ViewerIssueEntry>(sqlx::AssertSqlSafe(format!(
         r"SELECT i.id, i.number, i.title, i.state, i.created_at,
             (SELECT COUNT(*) FROM issue_comments c WHERE c.issue_id = i.id) AS comments,
             r.name AS repo_name, COALESCE(ou.username, og.name) AS repo_owner
@@ -639,7 +639,7 @@ pub async fn list_viewer_issues(
             AND NOT u.is_banned AND NOT u.must_change_password
             AND ((r.owner_kind = 'user' AND u.is_admin) OR ({access}) >= 1)
         ORDER BY i.created_at DESC, i.id DESC LIMIT $3"
-    ))
+    )))
     .bind(viewer_id)
     .bind(open)
     .bind(limit)
@@ -671,7 +671,7 @@ pub async fn count_viewer_issues(
 ) -> Result<StateCounts> {
     let access = codeyard_database::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL;
     let relation_sql = viewer_issue_sql(relation);
-    let rows = sqlx::query_as::<_, (String, i64)>(&format!(
+    let rows = sqlx::query_as::<_, (String, i64)>(sqlx::AssertSqlSafe(format!(
         r"SELECT CASE WHEN i.state = 'open' THEN 'open' ELSE 'closed' END AS bucket, COUNT(*)
         FROM issues i
         JOIN repositories r ON r.id = i.repo_id
@@ -679,7 +679,7 @@ pub async fn count_viewer_issues(
         WHERE {relation_sql} AND NOT u.is_banned AND NOT u.must_change_password
             AND ((r.owner_kind = 'user' AND u.is_admin) OR ({access}) >= 1)
         GROUP BY bucket"
-    ))
+    )))
     .bind(viewer_id)
     .fetch_all(pool)
     .await?;
@@ -844,11 +844,11 @@ pub async fn list_repository_comments(
         "Invalid conversation comment page"
     );
     let order = crate::issues::repository_item_order(filter.sort);
-    Ok(sqlx::query_as(&format!(r"WITH comments AS (
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(r"WITH comments AS (
         SELECT c.id,false AS pull_request,i.id AS item_id,i.number,c.author_id,c.created_at,c.updated_at FROM issue_comments c JOIN issues i ON i.id=c.issue_id WHERE i.repo_id=$1
         UNION ALL SELECT c.id,true,p.id,p.number,c.author_id,c.created_at,c.updated_at FROM pr_comments c JOIN pull_requests p ON p.id=c.pull_request_id WHERE p.repo_id=$1 AND c.path IS NULL AND c.review_id IS NULL
         ), page AS (SELECT i.* FROM comments i WHERE ($2::INTEGER IS NULL OR i.number=$2) AND ($3::TIMESTAMPTZ IS NULL OR i.updated_at>$3) ORDER BY {order},i.id,i.pull_request LIMIT $4 OFFSET $5)
-        SELECT i.*,CASE WHEN i.pull_request THEN pc.body ELSE ic.body END AS body FROM page i LEFT JOIN issue_comments ic ON NOT i.pull_request AND ic.id=i.id LEFT JOIN pr_comments pc ON i.pull_request AND pc.id=i.id ORDER BY {order},i.id,i.pull_request"))
+        SELECT i.*,CASE WHEN i.pull_request THEN pc.body ELSE ic.body END AS body FROM page i LEFT JOIN issue_comments ic ON NOT i.pull_request AND ic.id=i.id LEFT JOIN pr_comments pc ON i.pull_request AND pc.id=i.id ORDER BY {order},i.id,i.pull_request")))
         .bind(repo_id).bind(filter.number).bind(filter.since).bind(filter.limit).bind(filter.offset).fetch_all(pool).await?)
 }
 

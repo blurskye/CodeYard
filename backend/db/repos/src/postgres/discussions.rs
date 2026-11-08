@@ -180,8 +180,8 @@ pub async fn set_lock(
             .await?,
         LockRefusal::Denied
     );
-    let (previous, previous_reason): (bool, Option<String>) = sqlx::query_as(&format!(
-        "SELECT locked,lock_reason FROM {table} WHERE id=$1 AND repo_id=$2 FOR UPDATE"
+    let (previous, previous_reason): (bool, Option<String>) = sqlx::query_as(sqlx::AssertSqlSafe(
+        format!("SELECT locked,lock_reason FROM {table} WHERE id=$1 AND repo_id=$2 FOR UPDATE"),
     ))
     .bind(id)
     .bind(repo_id)
@@ -189,7 +189,7 @@ pub async fn set_lock(
     .await?
     .ok_or(LockRefusal::Missing)?;
     if previous != locked || previous_reason.as_deref() != reason {
-        sqlx::query(&format!("UPDATE {table} SET locked=$2,lock_reason=$3,updated_at=GREATEST(clock_timestamp(),updated_at+INTERVAL '1 microsecond') WHERE id=$1")).bind(id).bind(locked).bind(reason).execute(&mut *tx).await?;
+        sqlx::query(sqlx::AssertSqlSafe(format!("UPDATE {table} SET locked=$2,lock_reason=$3,updated_at=GREATEST(clock_timestamp(),updated_at+INTERVAL '1 microsecond') WHERE id=$1"))).bind(id).bind(locked).bind(reason).execute(&mut *tx).await?;
         crate::postgres::timeline::append(
             &mut tx,
             repo_id,
@@ -344,11 +344,13 @@ pub async fn list_repo_authors(
     selected: Option<i64>,
 ) -> Result<Vec<String>> {
     Ok(
-        sqlx::query_scalar(&crate::discussions::author_choices_sql(true))
-            .bind(repo_id)
-            .bind(selected)
-            .fetch_all(pool)
-            .await?,
+        sqlx::query_scalar(sqlx::AssertSqlSafe(crate::discussions::author_choices_sql(
+            true,
+        )))
+        .bind(repo_id)
+        .bind(selected)
+        .fetch_all(pool)
+        .await?,
     )
 }
 

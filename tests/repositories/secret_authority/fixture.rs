@@ -47,12 +47,12 @@ impl Database {
     pub async fn snapshot(&self, repo: i64) -> Vec<SecretSnapshot> {
         let sql = "SELECT id,repo_id,name,encrypted_value,nonce,created_by_id,created_at,updated_at FROM repo_secrets WHERE repo_id=$1 ORDER BY name";
         match self {
-            Self::Postgres(f) => sqlx::query_as(sql)
+            Self::Postgres(f) => sqlx::query_as(sqlx::AssertSqlSafe(sql))
                 .bind(repo)
                 .fetch_all(&f.raw)
                 .await
                 .unwrap(),
-            Self::Sqlite(f) => sqlx::query_as(sql)
+            Self::Sqlite(f) => sqlx::query_as(sqlx::AssertSqlSafe(sql))
                 .bind(repo)
                 .fetch_all(&f.raw)
                 .await

@@ -99,7 +99,7 @@ pub async fn values(
 ) -> Result<Vec<FieldValue>> {
     let mut tx = pool.begin().await?;
     // Repository privacy can change after the caller's access check; read it in this snapshot.
-    let readable: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=?2 WHERE r.id=?1 AND {})", codeyard_database::queries::sqlite::repositories::access::readable_condition()))
+    let readable: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=?2 WHERE r.id=?1 AND {})", codeyard_database::queries::sqlite::repositories::access::readable_condition())))
         .bind(repo)
         .bind(viewer)
         .fetch_one(&mut *tx)

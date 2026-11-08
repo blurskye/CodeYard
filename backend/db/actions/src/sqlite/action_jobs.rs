@@ -226,15 +226,15 @@ pub async fn list(
     );
     let mut tx = pool.begin().await?;
     let filter="c.repo_id=$1 AND (($3 AND COALESCE(c.workflow_run_id,c.id)=$2) OR (NOT $3 AND c.id=$2)) AND (j.started_at IS NOT NULL OR j.status='completed')";
-    let total = sqlx::query_scalar(&format!(
+    let total = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT COUNT(*) FROM actions_jobs j JOIN ci_runs c ON c.id=j.run_id WHERE {filter}"
-    ))
+    )))
     .bind(repo)
     .bind(run)
     .bind(all)
     .fetch_one(&mut *tx)
     .await?;
-    let jobs=sqlx::query_as(&format!("SELECT j.* FROM actions_jobs j JOIN ci_runs c ON c.id=j.run_id WHERE {filter} ORDER BY j.id LIMIT $4 OFFSET $5")).bind(repo).bind(run).bind(all).bind(limit).bind(offset).fetch_all(&mut *tx).await?;
+    let jobs=sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT j.* FROM actions_jobs j JOIN ci_runs c ON c.id=j.run_id WHERE {filter} ORDER BY j.id LIMIT $4 OFFSET $5"))).bind(repo).bind(run).bind(all).bind(limit).bind(offset).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok(Page { total, jobs })
 }

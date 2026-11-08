@@ -192,7 +192,7 @@ async fn cluster_backup_cli_restores_into_an_empty_cluster_and_resumes_an_interr
     let mut names = Vec::new();
     for _ in 0..2 {
         let name = format!("codeyard_backup_{}", uuid::Uuid::new_v4().simple());
-        sqlx::query(&format!("CREATE DATABASE {name}"))
+        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE {name}")))
             .execute(&admin)
             .await
             .unwrap();
@@ -588,10 +588,12 @@ async fn cluster_backup_cli_restores_into_an_empty_cluster_and_resumes_an_interr
     restored.close().await;
     drop(stores);
     for name in names {
-        sqlx::query(&format!("DROP DATABASE {name} WITH (FORCE)"))
-            .execute(&admin)
-            .await
-            .unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DROP DATABASE {name} WITH (FORCE)"
+        )))
+        .execute(&admin)
+        .await
+        .unwrap();
     }
     admin.close().await;
 }

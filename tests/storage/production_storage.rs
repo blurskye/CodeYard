@@ -1785,11 +1785,13 @@ async fn downloads_are_owner_only_unless_the_file_is_a_public_avatar() {
 async fn pg_upload_admission_rechecks_committed_ban_and_password_reset() {
     let db = database().await;
     for restriction in ["is_banned", "must_change_password"] {
-        sqlx::query(&format!("UPDATE users SET {restriction}=true WHERE id=$1"))
-            .bind(db.user)
-            .execute(&db.raw)
-            .await
-            .unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "UPDATE users SET {restriction}=true WHERE id=$1"
+        )))
+        .bind(db.user)
+        .execute(&db.raw)
+        .await
+        .unwrap();
         assert!(matches!(
             reserve(&db, 7).await,
             Err(AdmissionError::Invalid)
@@ -1801,11 +1803,13 @@ async fn pg_upload_admission_rechecks_committed_ban_and_password_reset() {
         .await
         .unwrap();
         assert_eq!(counts, (0, 0));
-        sqlx::query(&format!("UPDATE users SET {restriction}=false WHERE id=$1"))
-            .bind(db.user)
-            .execute(&db.raw)
-            .await
-            .unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "UPDATE users SET {restriction}=false WHERE id=$1"
+        )))
+        .bind(db.user)
+        .execute(&db.raw)
+        .await
+        .unwrap();
     }
     reserve(&db, 7).await.unwrap();
 }

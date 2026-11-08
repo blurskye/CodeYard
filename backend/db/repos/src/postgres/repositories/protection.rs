@@ -553,7 +553,7 @@ pub async fn commit_status_page(
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         .execute(&mut *tx)
         .await?;
-    let visible: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=$2 WHERE r.id=$1 AND NOT r.is_gist AND (NOT r.is_private OR (r.owner_kind='user' AND (u.is_admin OR r.owner_user_id=u.id)) OR ({})>=1))", codeyard_database::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL))
+    let visible: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=$2 WHERE r.id=$1 AND NOT r.is_gist AND (NOT r.is_private OR (r.owner_kind='user' AND (u.is_admin OR r.owner_user_id=u.id)) OR ({})>=1))", codeyard_database::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL)))
         .bind(repo).bind(viewer).fetch_one(&mut *tx).await?;
     if !visible {
         return Ok(None);
@@ -579,7 +579,7 @@ pub async fn commit_status_page(
         "commit_statuses_latest"
     };
     let updated = if history { "created_at" } else { "updated_at" };
-    let statuses = sqlx::query_as(&format!("SELECT id,repo_id,sha,context,state,substr(description,1,1024) AS description,substr(target_url,1,2048) AS target_url,creator_id,created_at,{updated} AS updated_at FROM {table} WHERE repo_id=$1 AND sha=$2 ORDER BY id DESC LIMIT $3 OFFSET $4"))
+    let statuses = sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT id,repo_id,sha,context,state,substr(description,1,1024) AS description,substr(target_url,1,2048) AS target_url,creator_id,created_at,{updated} AS updated_at FROM {table} WHERE repo_id=$1 AND sha=$2 ORDER BY id DESC LIMIT $3 OFFSET $4")))
         .bind(repo).bind(sha).bind(limit).bind(offset).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok(Some(crate::repositories::protection::CommitStatusPage {

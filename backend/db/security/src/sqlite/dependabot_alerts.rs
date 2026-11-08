@@ -25,7 +25,8 @@ pub async fn global_page(
         crate::dependabot_alerts::catalogue_statement(false, query);
     let mut selected = crate::dependabot_alerts::CatalogueSelection::new(query, offset_applied);
     {
-        let mut candidates = sqlx::query_as::<_, (String, String)>(&statement);
+        let mut candidates =
+            sqlx::query_as::<_, (String, String)>(sqlx::AssertSqlSafe(statement.as_str()));
         for value in &args {
             candidates = candidates.bind(value);
         }

@@ -110,9 +110,9 @@ async fn postgres_notification_operations_wait_for_recipient_row_then_recheck() 
             ("repositories", repo),
             ("notifications", notice),
         ] {
-            sqlx::query(&format!(
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 "SELECT id FROM {table} WHERE id=$1 FOR UPDATE NOWAIT"
-            ))
+            )))
             .bind(id)
             .fetch_one(&mut *revoker)
             .await

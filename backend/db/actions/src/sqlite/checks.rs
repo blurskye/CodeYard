@@ -138,7 +138,7 @@ pub async fn suite_details(pool: &SqlitePool, repo: i64, ids: &[i64]) -> Result<
     }
     // A run held by an approval or a deployment protection rule shows as waiting, as its run does.
     let waiting = crate::deployment_protection::waiting_sql(false, "c");
-    Ok(sqlx::query_as(&format!("SELECT s.id AS suite_id,(SELECT COUNT(DISTINCT r.name) FROM check_runs r WHERE r.suite_id=s.id AND r.repo_id=s.repo_id) AS run_count,c.status AS ci_status,(COALESCE(c.approval_required,FALSE) OR COALESCE({waiting},FALSE)) AS ci_approval_required FROM check_suites s LEFT JOIN ci_runs c ON c.id=s.ci_run_id AND c.repo_id=s.repo_id WHERE s.repo_id=?1 AND s.id IN (SELECT value FROM json_each(?2))")).bind(repo).bind(serde_json::to_string(ids)?).fetch_all(pool).await?)
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT s.id AS suite_id,(SELECT COUNT(DISTINCT r.name) FROM check_runs r WHERE r.suite_id=s.id AND r.repo_id=s.repo_id) AS run_count,c.status AS ci_status,(COALESCE(c.approval_required,FALSE) OR COALESCE({waiting},FALSE)) AS ci_approval_required FROM check_suites s LEFT JOIN ci_runs c ON c.id=s.ci_run_id AND c.repo_id=s.repo_id WHERE s.repo_id=?1 AND s.id IN (SELECT value FROM json_each(?2))"))).bind(repo).bind(serde_json::to_string(ids)?).fetch_all(pool).await?)
 }
 
 pub async fn pulls_many(
@@ -229,7 +229,7 @@ pub async fn automatic_suites(
         return Ok(page);
     }
     let access = codeyard_database::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
-    let mut apps: Vec<i64> = sqlx::query_scalar(&format!("SELECT a.id FROM github_app_installations i JOIN github_apps a ON a.id=i.app_id JOIN oauth_applications o ON o.client_id=a.client_id JOIN users owner ON owner.id=a.owner_id JOIN users u ON u.id=a.bot_id JOIN repositories r ON r.id=?1 LEFT JOIN check_suite_preferences p ON p.repo_id=r.id AND p.app_id=a.id WHERE a.id>?2 AND COALESCE(p.setting,1) AND i.suspended_at IS NULL AND NOT owner.is_banned AND NOT owner.must_change_password AND NOT u.is_banned AND NOT u.must_change_password AND json_extract(a.permissions,'$.checks') IN ('write','admin') AND (r.owner_user_id=i.user_id OR r.owner_org_id=i.org_id) AND (i.all_repos OR EXISTS(SELECT 1 FROM github_app_repositories ar WHERE ar.installation_id=i.id AND ar.repo_id=r.id)) AND ({access})>=3 ORDER BY a.id LIMIT 101"))
+    let mut apps: Vec<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT a.id FROM github_app_installations i JOIN github_apps a ON a.id=i.app_id JOIN oauth_applications o ON o.client_id=a.client_id JOIN users owner ON owner.id=a.owner_id JOIN users u ON u.id=a.bot_id JOIN repositories r ON r.id=?1 LEFT JOIN check_suite_preferences p ON p.repo_id=r.id AND p.app_id=a.id WHERE a.id>?2 AND COALESCE(p.setting,1) AND i.suspended_at IS NULL AND NOT owner.is_banned AND NOT owner.must_change_password AND NOT u.is_banned AND NOT u.must_change_password AND json_extract(a.permissions,'$.checks') IN ('write','admin') AND (r.owner_user_id=i.user_id OR r.owner_org_id=i.org_id) AND (i.all_repos OR EXISTS(SELECT 1 FROM github_app_repositories ar WHERE ar.installation_id=i.id AND ar.repo_id=r.id)) AND ({access})>=3 ORDER BY a.id LIMIT 101")))
         .bind(repo.id).bind(after).fetch_all(&mut *tx).await?;
     page.has_next = apps.len() > 100;
     apps.truncate(100);
@@ -424,11 +424,11 @@ pub async fn rollup_runs(
     limit: i64,
 ) -> Result<Vec<Run>> {
     anyhow::ensure!(offset >= 0 && (0..=100).contains(&limit), Refusal::Invalid);
-    Ok(sqlx::query_as(&format!("SELECT r.id,r.repo_id,r.suite_id,r.name,r.status,r.conclusion,json_object('details_url',json_extract(r.data,'$.details_url'),'external_id',json_extract(r.data,'$.external_id'),'started_at',json_extract(r.data,'$.started_at'),'completed_at',json_extract(r.data,'$.completed_at'),'title',json_extract(r.data,'$.title'),'images',json('[]'),'actions',json('[]')) AS data,r.created_at,r.updated_at{RUNS} ORDER BY r.id DESC LIMIT ?8 OFFSET ?9"))
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT r.id,r.repo_id,r.suite_id,r.name,r.status,r.conclusion,json_object('details_url',json_extract(r.data,'$.details_url'),'external_id',json_extract(r.data,'$.external_id'),'started_at',json_extract(r.data,'$.started_at'),'completed_at',json_extract(r.data,'$.completed_at'),'title',json_extract(r.data,'$.title'),'images',json('[]'),'actions',json('[]')) AS data,r.created_at,r.updated_at{RUNS} ORDER BY r.id DESC LIMIT ?8 OFFSET ?9")))
         .bind(repo).bind(None::<i64>).bind(sha).bind(None::<String>).bind(None::<String>).bind(None::<i64>).bind(false).bind(limit).bind(offset).fetch_all(pool).await?)
 }
 pub async fn rollup_counts(pool: &SqlitePool, repo: i64, sha: &str) -> Result<Vec<(String, i64)>> {
-    Ok(sqlx::query_as(&format!("SELECT UPPER(CASE WHEN r.status='completed' THEN COALESCE(r.conclusion,r.status) ELSE r.status END),COUNT(*){RUNS} GROUP BY 1 ORDER BY 1"))
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT UPPER(CASE WHEN r.status='completed' THEN COALESCE(r.conclusion,r.status) ELSE r.status END),COUNT(*){RUNS} GROUP BY 1 ORDER BY 1")))
         .bind(repo).bind(None::<i64>).bind(sha).bind(None::<String>).bind(None::<String>).bind(None::<i64>).bind(false).fetch_all(pool).await?)
 }
 pub async fn workflow_metadata(
@@ -446,9 +446,9 @@ pub async fn runs(
     offset: i64,
     limit: i64,
 ) -> Result<Vec<Run>> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT r.*{RUNS} ORDER BY r.id DESC LIMIT ?8 OFFSET ?9"
-    ))
+    )))
     .bind(repo)
     .bind(filter.suite_id)
     .bind(&filter.head_sha)
@@ -466,22 +466,24 @@ pub async fn summary(
     repo: i64,
     sha: &str,
 ) -> Result<crate::checks::CheckSummary> {
-    Ok(sqlx::query_as(&format!("SELECT COUNT(*) AS total, COALESCE(SUM(CASE WHEN r.status='completed' AND (r.conclusion IS NULL OR r.conclusion NOT IN ('success','neutral','skipped')) THEN 1 ELSE 0 END),0) AS failed, COALESCE(SUM(CASE WHEN r.status<>'completed' THEN 1 ELSE 0 END),0) AS pending{RUNS}"))
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) AS total, COALESCE(SUM(CASE WHEN r.status='completed' AND (r.conclusion IS NULL OR r.conclusion NOT IN ('success','neutral','skipped')) THEN 1 ELSE 0 END),0) AS failed, COALESCE(SUM(CASE WHEN r.status<>'completed' THEN 1 ELSE 0 END),0) AS pending{RUNS}")))
         .bind(repo).bind(None::<i64>).bind(sha).bind(None::<&str>).bind(None::<&str>)
         .bind(None::<i64>).bind(false).fetch_one(pool).await?)
 }
 
 pub async fn run_count(pool: &SqlitePool, repo: i64, filter: &Filter) -> Result<i64> {
-    Ok(sqlx::query_scalar(&format!("SELECT COUNT(*){RUNS}"))
-        .bind(repo)
-        .bind(filter.suite_id)
-        .bind(&filter.head_sha)
-        .bind(&filter.name)
-        .bind(&filter.status)
-        .bind(filter.app_id)
-        .bind(filter.all)
-        .fetch_one(pool)
-        .await?)
+    Ok(
+        sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*){RUNS}")))
+            .bind(repo)
+            .bind(filter.suite_id)
+            .bind(&filter.head_sha)
+            .bind(&filter.name)
+            .bind(&filter.status)
+            .bind(filter.app_id)
+            .bind(filter.all)
+            .fetch_one(pool)
+            .await?,
+    )
 }
 const SUITES: &str = " FROM check_suites s WHERE s.repo_id=?1 AND (?2 IS NULL OR s.head_sha=?2) AND (?3 IS NULL OR CASE WHEN s.ci_run_id IS NOT NULL THEN 15368 ELSE s.app_id END=?3) AND (?4 IS NULL OR EXISTS(SELECT 1 FROM check_runs r WHERE r.suite_id=s.id AND r.name=?4))";
 pub async fn suites(
@@ -491,9 +493,9 @@ pub async fn suites(
     offset: i64,
     limit: i64,
 ) -> Result<Vec<Suite>> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT s.*{SUITES} ORDER BY s.id DESC LIMIT ?5 OFFSET ?6"
-    ))
+    )))
     .bind(repo)
     .bind(&filter.head_sha)
     .bind(filter.app_id)
@@ -504,13 +506,15 @@ pub async fn suites(
     .await?)
 }
 pub async fn suite_count(pool: &SqlitePool, repo: i64, filter: &Filter) -> Result<i64> {
-    Ok(sqlx::query_scalar(&format!("SELECT COUNT(*){SUITES}"))
-        .bind(repo)
-        .bind(&filter.head_sha)
-        .bind(filter.app_id)
-        .bind(&filter.name)
-        .fetch_one(pool)
-        .await?)
+    Ok(
+        sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*){SUITES}")))
+            .bind(repo)
+            .bind(&filter.head_sha)
+            .bind(filter.app_id)
+            .bind(&filter.name)
+            .fetch_one(pool)
+            .await?,
+    )
 }
 pub async fn annotations(
     pool: &SqlitePool,

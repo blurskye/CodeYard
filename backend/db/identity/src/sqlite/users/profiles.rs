@@ -12,7 +12,7 @@ pub async fn account_statistics(
     token: i64,
 ) -> Result<Option<crate::users::profiles::AccountStatistics>> {
     let readable = codeyard_database::queries::sqlite::repositories::access::readable_condition();
-    Ok(sqlx::query_as(&format!("SELECT
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT
         (SELECT COUNT(*) FROM gists g JOIN repositories r ON r.id=g.repo_id WHERE r.owner_user_id=?1 AND g.ready AND g.is_public) AS public_gists,
         (SELECT COUNT(*) FROM gists g JOIN repositories r ON r.id=g.repo_id WHERE r.owner_user_id=?1 AND g.ready AND NOT g.is_public) AS private_gists,
         (SELECT COUNT(*) FROM repositories WHERE owner_kind='user' AND owner_user_id=?1 AND is_private) AS owned_private_repos,
@@ -28,7 +28,7 @@ pub async fn account_statistics(
             AND NOT EXISTS(SELECT 1 FROM oauth_app_tokens o WHERE o.token_id=t.id
                 AND ((instr(','||o.scopes||',',',user,')=0 AND instr(','||o.scopes||',',',read:user,')=0)
                     OR (o.client_id<>?3 AND NOT EXISTS(SELECT 1 FROM oauth_applications a WHERE a.client_id=o.client_id))
-                    OR EXISTS(SELECT 1 FROM oauth_applications a WHERE a.client_id=o.client_id AND a.is_github_app))))"))
+                    OR EXISTS(SELECT 1 FROM oauth_applications a WHERE a.client_id=o.client_id AND a.is_github_app))))")))
         .bind(user).bind(token).bind(codeyard_types::identity::CLI_CLIENT).fetch_optional(pool).await?)
 }
 

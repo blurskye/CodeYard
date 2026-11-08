@@ -157,7 +157,7 @@ pub async fn save_verification(
 }
 
 pub async fn verification_valid(pool: &PgPool, hash: &str) -> Result<bool> {
-    Ok(sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM user_emails e JOIN users u ON u.id=e.user_id WHERE e.verification_hash=$1 AND {})", secondary_link_condition(true)))
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT EXISTS(SELECT 1 FROM user_emails e JOIN users u ON u.id=e.user_id WHERE e.verification_hash=$1 AND {})", secondary_link_condition(true))))
         .bind(hash).fetch_one(pool).await?)
 }
 

@@ -20,9 +20,9 @@ pub async fn create_forked_repository(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     // Read source policy and insert in one statement. Visibility-floor triggers
     // preserve/narrow descendants after source changes; no HTTP backend branch.
-    let result = sqlx::query_as::<_, Repository>(&format!(r#"INSERT INTO repositories(home_cell,owner_kind,owner_user_id,name,description,is_private,disk_path,is_fork,forked_from_id,default_branch,created_by_id)
+    let result = sqlx::query_as::<_, Repository>(sqlx::AssertSqlSafe(format!(r#"INSERT INTO repositories(home_cell,owner_kind,owner_user_id,name,description,is_private,disk_path,is_fork,forked_from_id,default_branch,created_by_id)
         SELECT {cell_home},'user',?1,?2,?3,(?4 OR source.is_private OR source.visibility_locked),?5,1,?6,?7,?1
-        FROM repositories source WHERE source.id=?6 AND NOT source.is_gist RETURNING *"#, cell_home = codeyard_database::cells::LOCAL_HOME_SQL))
+        FROM repositories source WHERE source.id=?6 AND NOT source.is_gist RETURNING *"#, cell_home = codeyard_database::cells::LOCAL_HOME_SQL)))
         .bind(input.owner_id).bind(input.name).bind(input.description).bind(input.is_private)
         .bind(input.disk_path).bind(input.forked_from).bind(input.default_branch).fetch_one(&mut *tx).await?;
     codeyard_database::cells::directory::sqlite::repository(pool, &mut tx, &result).await?;
@@ -94,10 +94,10 @@ pub async fn visible_fork_counts(
     if ids.is_empty() {
         return Ok(std::collections::HashMap::new());
     }
-    let rows = sqlx::query_as::<_, (i64, i32)>(&format!(
+    let rows = sqlx::query_as::<_, (i64, i32)>(sqlx::AssertSqlSafe(format!(
         "SELECT r.forked_from_id, COUNT(*) FROM repositories r {FORK_VIEWER_JOIN} WHERE r.forked_from_id IN (SELECT value FROM json_each(?3)) AND {} GROUP BY r.forked_from_id",
         readable_condition(),
-    )).bind(viewer).bind(session).bind(serde_json::to_string(ids)?).fetch_all(pool).await?;
+    ))).bind(viewer).bind(session).bind(serde_json::to_string(ids)?).fetch_all(pool).await?;
     Ok(rows.into_iter().collect())
 }
 
@@ -110,10 +110,10 @@ pub async fn list_visible_forks(
     offset: i64,
 ) -> Result<Vec<Repository>> {
     ensure!(offset >= 0, "Page offset must be nonnegative");
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT r.* FROM repositories r {FORK_VIEWER_JOIN} WHERE r.forked_from_id=?3 AND {} ORDER BY r.created_at DESC, r.id DESC LIMIT ?4 OFFSET ?5",
         readable_condition(),
-    )).bind(viewer).bind(session).bind(repo).bind(limit.clamp(1, 101)).bind(offset).fetch_all(pool).await?)
+    ))).bind(viewer).bind(session).bind(repo).bind(limit.clamp(1, 101)).bind(offset).fetch_all(pool).await?)
 }
 
 /// Joins the owner of `r` and the viewer, which the access projection reads as `u`. `?1` is the
@@ -160,7 +160,7 @@ pub async fn search_repositories(
         repository_match(&search),
         repository_order_by(sort)
     );
-    let statement = sqlx::query_as::<_, Repository>(&sql).bind(viewer);
+    let statement = sqlx::query_as::<_, Repository>(sqlx::AssertSqlSafe(sql.as_str())).bind(viewer);
     let statement = match search {
         RepositorySearch::Text(text) => statement.bind(contains(text)),
         RepositorySearch::Owned { owner, name } => statement.bind(owner).bind(contains(name)),
@@ -190,7 +190,7 @@ pub async fn search_repository_ids(
         repository_order_by(RepositorySort::Updated)
     );
     let mut connection = search_connection(pool).await?;
-    let statement = sqlx::query_scalar::<_, i64>(&sql).bind(viewer);
+    let statement = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(sql.as_str())).bind(viewer);
     let statement = match search {
         RepositorySearch::Text(text) => statement.bind(contains(text)),
         RepositorySearch::Owned { owner, name } => statement.bind(owner).bind(contains(name)),
@@ -219,7 +219,7 @@ pub async fn count_repositories(
         readable_condition(),
         repository_match(&search)
     );
-    let statement = sqlx::query_scalar::<_, i64>(&sql).bind(viewer);
+    let statement = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(sql.as_str())).bind(viewer);
     let statement = match search {
         RepositorySearch::Text(text) => statement.bind(contains(text)),
         RepositorySearch::Owned { owner, name } => statement.bind(owner).bind(contains(name)),
@@ -287,7 +287,7 @@ pub async fn search_issues(
         readable_condition(),
         sort.order_by("i")
     );
-    let result = sqlx::query_as::<_, Issue>(&sql)
+    let result = sqlx::query_as::<_, Issue>(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(viewer)
         .bind(contains(query))
         .bind(limit)
@@ -312,7 +312,7 @@ pub async fn count_issues(
          WHERE {} AND (i.title REGEXP ?2 OR i.body REGEXP ?2) LIMIT ?3) AS matches",
         readable_condition()
     );
-    let result = sqlx::query_scalar::<_, i64>(&sql)
+    let result = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(viewer)
         .bind(contains(query))
         .bind(cap)
@@ -341,7 +341,7 @@ pub async fn search_pull_requests(
         readable_condition(),
         sort.order_by("p")
     );
-    let result = sqlx::query_as::<_, PullRequest>(&sql)
+    let result = sqlx::query_as::<_, PullRequest>(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(viewer)
         .bind(contains(query))
         .bind(limit)
@@ -366,7 +366,7 @@ pub async fn count_pull_requests(
          WHERE {} AND (p.title REGEXP ?2 OR p.body REGEXP ?2) LIMIT ?3) AS matches",
         readable_condition()
     );
-    let result = sqlx::query_scalar::<_, i64>(&sql)
+    let result = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(viewer)
         .bind(contains(query))
         .bind(cap)

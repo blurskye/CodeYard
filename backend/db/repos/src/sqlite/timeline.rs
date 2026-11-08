@@ -30,7 +30,10 @@ pub async fn list_entries(
         Some(AssignedItem::PullRequest(id)) => (Some("pull_request"), Some(id)),
         None => (None, None),
     };
-    Ok(sqlx::query_as(&crate::timeline::entries_query(descending))
+    Ok(
+        sqlx::query_as(sqlx::AssertSqlSafe(crate::timeline::entries_query(
+            descending,
+        )))
         .bind(repo_id)
         .bind(subject)
         .bind(id)
@@ -38,7 +41,8 @@ pub async fn list_entries(
         .bind(limit)
         .bind(offset)
         .fetch_all(pool)
-        .await?)
+        .await?,
+    )
 }
 
 #[expect(

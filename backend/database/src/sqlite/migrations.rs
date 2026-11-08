@@ -35,7 +35,7 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<()> {
         .execute(&mut **guard.0)
         .await?;
     let result = apply_migrations(guard.0).await;
-    sqlx::query(&format!("PRAGMA busy_timeout = {busy}"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("PRAGMA busy_timeout = {busy}")))
         .execute(&mut **guard.0)
         .await?;
     sqlx::query("PRAGMA foreign_keys = ON")

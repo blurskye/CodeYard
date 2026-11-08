@@ -75,7 +75,7 @@ pub async fn pending_team_membership(
     }
     let recipient = RECIPIENT.replace("?1", "?3");
     let sql=format!("SELECT ti.role FROM team_invitations ti JOIN organization_invitations i ON i.id=ti.invitation_id JOIN users u ON u.id=?3 WHERE ti.team_id=?1 AND i.org_id=?2 AND {recipient} AND {LIVE} AND NOT u.is_banned AND NOT u.must_change_password AND NOT EXISTS(SELECT 1 FROM organization_blocks b WHERE b.org_id=i.org_id AND b.user_id=u.id) AND ti.role IN ('member','maintainer') AND i.role IN ('member','admin','owner') ORDER BY i.id LIMIT 1");
-    let role = sqlx::query_scalar(&sql)
+    let role = sqlx::query_scalar(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(team)
         .bind(org)
         .bind(target)
@@ -101,7 +101,7 @@ pub async fn list_team_invitations(
         return Ok(Missing);
     }
     let sql=format!("SELECT i.*,(SELECT COUNT(*) FROM team_invitations x JOIN teams t ON t.id=x.team_id WHERE x.invitation_id=i.id AND t.org_id=i.org_id) AS team_count FROM organization_invitations i JOIN team_invitations ti ON ti.invitation_id=i.id WHERE ti.team_id=?1 AND i.org_id=?2 AND i.id>?3 AND {LIVE} ORDER BY i.id LIMIT ?4");
-    let rows = sqlx::query_as(&sql)
+    let rows = sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(team)
         .bind(org)
         .bind(page.after)

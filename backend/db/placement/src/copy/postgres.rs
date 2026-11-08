@@ -77,10 +77,11 @@ pub(super) async fn read_sequences(
         let Some(name) = name else {
             continue;
         };
-        let (last, called): (i64, bool) =
-            sqlx::query_as(&format!("SELECT last_value, is_called FROM {name}"))
-                .fetch_one(&mut **tx)
-                .await?;
+        let (last, called): (i64, bool) = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT last_value, is_called FROM {name}"
+        )))
+        .fetch_one(&mut **tx)
+        .await?;
         sequences.push(Sequence {
             table,
             next: if called { last + 1 } else { last },
@@ -214,11 +215,11 @@ pub(super) async fn prepare_load(
     .fetch_all(&mut **tx)
     .await?;
     for (name, table, definition) in constraints {
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "ALTER TABLE {} DROP CONSTRAINT {}",
             quote(&table),
             quote(&name)
-        ))
+        )))
         .execute(&mut **tx)
         .await?;
         restore.push(format!(
@@ -228,10 +229,10 @@ pub(super) async fn prepare_load(
         ));
     }
     for table in tables {
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "ALTER TABLE {} DISABLE TRIGGER USER",
             quote(&table.name)
-        ))
+        )))
         .execute(&mut **tx)
         .await?;
         restore.push(format!(

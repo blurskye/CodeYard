@@ -345,12 +345,12 @@ impl Stores {
 async fn last_write(pool: &DbPool, repo: i64) -> codeyard_database::models::WriteRecord {
     let query = "SELECT id FROM repository_writes WHERE repository_id=$1 ORDER BY base_version DESC LIMIT 1";
     let id: String = match pool {
-        DbPool::Postgres(raw) => sqlx::query_scalar(query)
+        DbPool::Postgres(raw) => sqlx::query_scalar(sqlx::AssertSqlSafe(query))
             .bind(repo)
             .fetch_one(raw)
             .await
             .unwrap(),
-        DbPool::Sqlite(raw) => sqlx::query_scalar(query)
+        DbPool::Sqlite(raw) => sqlx::query_scalar(sqlx::AssertSqlSafe(query))
             .bind(repo)
             .fetch_one(raw)
             .await

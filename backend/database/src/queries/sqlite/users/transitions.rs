@@ -47,7 +47,7 @@ pub async fn credential_live(
         AccountCredential::Token(id, hash) => {
             // A token issued to an OAuth app ends with that app's availability.
             let issuer = crate::queries::oauth_apps::token_issuer_condition("t", "?5");
-            sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM personal_access_tokens t WHERE t.id=?1 AND t.user_id=?2 AND (NOT ?4 OR t.scope='write') AND t.token_hash=?3 AND (t.expires_at IS NULL OR t.expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now')) AND {issuer})"))
+            sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT EXISTS(SELECT 1 FROM personal_access_tokens t WHERE t.id=?1 AND t.user_id=?2 AND (NOT ?4 OR t.scope='write') AND t.token_hash=?3 AND (t.expires_at IS NULL OR t.expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now')) AND {issuer})")))
                 .bind(id).bind(actor).bind(hash).bind(write).bind(codeyard_types::identity::CLI_CLIENT).fetch_one(&mut *tx).await?
         }
     })

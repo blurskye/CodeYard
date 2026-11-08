@@ -30,7 +30,7 @@ pub async fn issue_type_repositories(
     after: i64,
     viewer: i64,
 ) -> Result<Vec<i64>> {
-    Ok(sqlx::query_scalar(&format!("SELECT r.id FROM repositories r JOIN issue_attributes a ON a.owner_user_id=r.owner_user_id OR a.owner_org_id=r.owner_org_id LEFT JOIN users u ON u.id=?3 WHERE a.id=?1 AND a.kind='type' AND r.id>?2 AND ({}) ORDER BY r.id LIMIT 100", codeyard_database::queries::sqlite::repositories::access::readable_condition()))
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT r.id FROM repositories r JOIN issue_attributes a ON a.owner_user_id=r.owner_user_id OR a.owner_org_id=r.owner_org_id LEFT JOIN users u ON u.id=?3 WHERE a.id=?1 AND a.kind='type' AND r.id>?2 AND ({}) ORDER BY r.id LIMIT 100", codeyard_database::queries::sqlite::repositories::access::readable_condition())))
         .bind(id).bind(after).bind(viewer).fetch_all(pool).await?)
 }
 
@@ -44,7 +44,9 @@ pub async fn node_root_matches(pool: &SqlitePool, kind: &str, id: i64, root: i64
     let Some(sql) = crate::graphql::node_root_sql(kind) else {
         return Ok(false);
     };
-    let mut query = sqlx::query_scalar(&sql).bind(id).bind(root);
+    let mut query = sqlx::query_scalar(sqlx::AssertSqlSafe(sql.as_str()))
+        .bind(id)
+        .bind(root);
     if kind == "ART" {
         query = query.bind(chrono::Utc::now().timestamp());
     }
@@ -54,7 +56,7 @@ pub async fn node_owner(pool: &SqlitePool, kind: &str, id: i64) -> Result<Option
     let Some(sql) = crate::graphql::node_owner_sql(kind) else {
         return Ok(None);
     };
-    let mut query = sqlx::query_scalar(sql).bind(id);
+    let mut query = sqlx::query_scalar(sqlx::AssertSqlSafe(sql)).bind(id);
     if kind == "ART" {
         query = query.bind(chrono::Utc::now().timestamp());
     }

@@ -16,7 +16,6 @@ codeyard-db-orgs.workspace = true
 subtle.workspace = true
 anyhow.workspace = true
 axum.workspace = true
-base64.workspace = true
 bytes.workspace = true
 chrono.workspace = true
 codeyard-runner.workspace = true

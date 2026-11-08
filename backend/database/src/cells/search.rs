@@ -471,7 +471,7 @@ pub async fn access(pool: &PgPool, repository: i64) -> Result<Access> {
         "SELECT u.id FROM repositories r JOIN users u ON u.id IN (SELECT a.user_id FROM repo_access a WHERE a.repo_id=r.id UNION SELECT m.user_id FROM org_memberships m WHERE m.org_id=r.owner_org_id UNION SELECT r.owner_user_id) WHERE r.id=$1 AND r.is_private AND NOT u.is_banned AND NOT u.must_change_password AND {} ORDER BY u.id LIMIT $2",
         crate::queries::postgres::repositories::access::readable_condition()
     );
-    let readers: Vec<i64> = sqlx::query_scalar(&sql)
+    let readers: Vec<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(repository)
         .bind(MAXIMUM_READERS as i64 + 1)
         .fetch_all(pool)
@@ -499,7 +499,7 @@ pub async fn item_repository(pool: &PgPool, item: Item) -> Result<Option<i64>> {
         Item::Issue { id } => ("SELECT repo_id FROM issues WHERE id=$1", id),
         Item::Pull { id } => ("SELECT repo_id FROM pull_requests WHERE id=$1", id),
     };
-    Ok(sqlx::query_scalar(sql)
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
         .bind(id)
         .fetch_optional(pool)
         .await?)
@@ -519,7 +519,7 @@ pub async fn comment_text(pool: &PgPool, item: Item) -> Result<String> {
             id,
         ),
     };
-    let rows: Vec<String> = sqlx::query_scalar(sql)
+    let rows: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
         .bind(id)
         .bind(MAXIMUM_COMMENT_CHARS as i32)
         .bind(MAXIMUM_COMMENTS)

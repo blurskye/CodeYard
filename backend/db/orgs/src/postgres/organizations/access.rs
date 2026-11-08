@@ -28,7 +28,7 @@ pub async fn list_organization_profile_repositories(
     page: OrganizationPage,
 ) -> Result<Vec<Repository>> {
     let readable = codeyard_database::queries::postgres::repositories::access::readable_condition();
-    Ok(sqlx::query_as(&format!("SELECT r.* FROM repositories r LEFT JOIN users u ON u.id=$2 WHERE r.owner_kind='org' AND r.owner_user_id IS NULL AND r.owner_org_id=$1 AND {readable} ORDER BY r.name, r.id LIMIT $4 OFFSET $3"))
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT r.* FROM repositories r LEFT JOIN users u ON u.id=$2 WHERE r.owner_kind='org' AND r.owner_user_id IS NULL AND r.owner_org_id=$1 AND {readable} ORDER BY r.name, r.id LIMIT $4 OFFSET $3")))
         .bind(org).bind(viewer).bind(page.after).bind(page.limit).fetch_all(pool).await?)
 }
 
@@ -38,7 +38,7 @@ pub async fn count_organization_profile_repositories(
     viewer: Option<i64>,
 ) -> Result<i64> {
     let readable = codeyard_database::queries::postgres::repositories::access::readable_condition();
-    Ok(sqlx::query_scalar(&format!("SELECT COUNT(*) FROM repositories r LEFT JOIN users u ON u.id=$2 WHERE r.owner_kind='org' AND r.owner_user_id IS NULL AND r.owner_org_id=$1 AND {readable}"))
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM repositories r LEFT JOIN users u ON u.id=$2 WHERE r.owner_kind='org' AND r.owner_user_id IS NULL AND r.owner_org_id=$1 AND {readable}")))
         .bind(org).bind(viewer).fetch_one(pool).await?)
 }
 pub async fn list_organization_repositories(
@@ -50,7 +50,7 @@ pub async fn list_organization_repositories(
     let mut tx = begin_read(pool).await?;
     require_read_org_postgres!(tx, actor, org);
     let readable = codeyard_database::queries::postgres::repositories::access::readable_condition();
-    let rows = sqlx::query_as(&format!("SELECT r.id, o.name AS owner, r.name FROM repositories r JOIN organizations o ON o.id=r.owner_org_id JOIN users u ON u.id=$3 WHERE r.owner_kind='org' AND r.owner_user_id IS NULL AND r.owner_org_id=$1 AND r.id>$2 AND {readable} ORDER BY r.id LIMIT $4"))
+    let rows = sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT r.id, o.name AS owner, r.name FROM repositories r JOIN organizations o ON o.id=r.owner_org_id JOIN users u ON u.id=$3 WHERE r.owner_kind='org' AND r.owner_user_id IS NULL AND r.owner_org_id=$1 AND r.id>$2 AND {readable} ORDER BY r.id LIMIT $4")))
         .bind(org)
         .bind(page.after)
         .bind(actor)

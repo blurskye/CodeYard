@@ -141,7 +141,7 @@ pub async fn move_open_pull_request_head(
     if changed == 1 && old_head != new_head {
         let access =
             codeyard_database::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL;
-        sqlx::query(&format!("DELETE FROM pull_request_auto_merges WHERE pull_request_id=$1 AND NOT EXISTS(SELECT 1 FROM pull_requests p JOIN repositories r ON r.id=p.repo_id JOIN users u ON u.id=$2 WHERE p.id=$1 AND ({access})>=3)"))
+        sqlx::query(sqlx::AssertSqlSafe(format!("DELETE FROM pull_request_auto_merges WHERE pull_request_id=$1 AND NOT EXISTS(SELECT 1 FROM pull_requests p JOIN repositories r ON r.id=p.repo_id JOIN users u ON u.id=$2 WHERE p.id=$1 AND ({access})>=3)")))
             .bind(pull_request_id).bind(pusher).execute(&mut *tx).await?;
     }
     tx.commit().await?;
@@ -562,7 +562,7 @@ pub async fn list_filtered_pull_requests(
     limit: i64,
 ) -> Result<Vec<PullRequest>> {
     let readable = codeyard_database::queries::postgres::repositories::access::readable_condition();
-    let rows = sqlx::query_as::<_, PullRequest>(&format!(
+    let rows = sqlx::query_as::<_, PullRequest>(sqlx::AssertSqlSafe(format!(
         "SELECT p.* FROM pull_requests p LEFT JOIN repositories h ON h.id = p.head_repo_id
          LEFT JOIN users u ON u.id = h.owner_user_id LEFT JOIN organizations o ON o.id = h.owner_org_id
          WHERE p.repo_id = $1 AND ($2::text IS NULL OR p.state = $2 OR ($2 = 'closed' AND p.state = 'merged'))
@@ -571,7 +571,7 @@ pub async fn list_filtered_pull_requests(
          AND (p.head_repo_id IS NULL OR EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=$10 WHERE r.id=p.head_repo_id AND {readable}))
          AND (NOT $6 OR (p.state = 'open' AND p.created_at < $7 AND p.updated_at >= $7))
          ORDER BY {} LIMIT $8 OFFSET $9", filter.order()
-    ))
+    )))
     .bind(repo_id).bind(filter.state).bind(filter.base).bind(filter.head_owner).bind(filter.head_branch)
     .bind(filter.sort == "long-running").bind(filter.month_ago).bind(limit).bind(offset).bind(filter.viewer_id)
     .fetch_all(pool).await?;
@@ -591,7 +591,7 @@ pub async fn list_repo_pull_requests(
     let order = filter
         .sort
         .order_by("pr_comments", "pull_request_id", SHOWN_PR_COMMENT);
-    let prs = sqlx::query_as::<_, PullRequestListEntry>(&format!(
+    let prs = sqlx::query_as::<_, PullRequestListEntry>(sqlx::AssertSqlSafe(format!(
         r#"SELECT i.*, {columns}, h.id AS head_display_id, h.name AS head_display_name, CASE WHEN h.owner_kind='user' AND h.owner_org_id IS NULL THEN hu.username WHEN h.owner_kind='org' AND h.owner_user_id IS NULL THEN ho.name END AS head_display_owner FROM pull_requests i JOIN users u ON u.id=i.author_id LEFT JOIN repositories h ON h.id=i.head_repo_id LEFT JOIN users hu ON h.owner_kind='user' AND h.owner_user_id=hu.id LEFT JOIN organizations ho ON h.owner_kind='org' AND h.owner_org_id=ho.id
         WHERE i.repo_id = $1 AND ($2::TEXT IS NULL OR i.state = $2 OR ($11 AND $2 = 'closed' AND i.state = 'merged'))
             AND ($3::TEXT IS NULL OR i.title ILIKE $3::TEXT ESCAPE '\' OR i.body ILIKE $3::TEXT ESCAPE '\')
@@ -604,7 +604,7 @@ pub async fn list_repo_pull_requests(
                 = (SELECT COUNT(DISTINCT LOWER(n COLLATE "C")) FROM unnest($10::TEXT[]) AS n))
             AND ($13::text IS NULL OR i.head_branch = $13)
         ORDER BY {order}, i.id DESC LIMIT $4 OFFSET $12"#
-    ))
+    )))
     .bind(repo_id)
     .bind(filter.state)
     .bind(filter.search.map(contains_pattern))
@@ -648,7 +648,7 @@ pub async fn list_viewer_pull_requests(
     anyhow::ensure!(limit >= 0, "Result limit must be nonnegative");
     let access = codeyard_database::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL;
     let relation_sql = viewer_pull_request_sql(relation);
-    let prs = sqlx::query_as::<_, ViewerPullRequestEntry>(&format!(
+    let prs = sqlx::query_as::<_, ViewerPullRequestEntry>(sqlx::AssertSqlSafe(format!(
         r"SELECT p.number, p.title, p.state, p.created_at,
             r.name AS repo_name, COALESCE(ou.username, og.name) AS repo_owner
         FROM pull_requests p
@@ -660,7 +660,7 @@ pub async fn list_viewer_pull_requests(
             AND NOT u.is_banned AND NOT u.must_change_password
             AND ((r.owner_kind = 'user' AND u.is_admin) OR ({access}) >= 1)
         ORDER BY p.created_at DESC, p.id DESC LIMIT $3"
-    ))
+    )))
     .bind(viewer_id)
     .bind(open)
     .bind(limit)
@@ -677,7 +677,7 @@ pub async fn count_viewer_pull_requests(
 ) -> Result<StateCounts> {
     let access = codeyard_database::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL;
     let relation_sql = viewer_pull_request_sql(relation);
-    let rows = sqlx::query_as::<_, (String, i64)>(&format!(
+    let rows = sqlx::query_as::<_, (String, i64)>(sqlx::AssertSqlSafe(format!(
         r"SELECT CASE WHEN p.state = 'open' THEN 'open' ELSE 'closed' END AS bucket, COUNT(*)
         FROM pull_requests p
         JOIN repositories r ON r.id = p.repo_id
@@ -685,7 +685,7 @@ pub async fn count_viewer_pull_requests(
         WHERE {relation_sql} AND NOT u.is_banned AND NOT u.must_change_password
             AND ((r.owner_kind = 'user' AND u.is_admin) OR ({access}) >= 1)
         GROUP BY bucket"
-    ))
+    )))
     .bind(viewer_id)
     .fetch_all(pool)
     .await?;

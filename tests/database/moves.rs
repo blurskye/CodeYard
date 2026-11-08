@@ -78,7 +78,7 @@ fn refused_as_moving(error: sqlx::Error) {
 }
 
 async fn count(pool: &PgPool, sql: &str, id: i64) -> i64 {
-    sqlx::query_scalar(sql)
+    sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
         .bind(id)
         .fetch_one(pool)
         .await

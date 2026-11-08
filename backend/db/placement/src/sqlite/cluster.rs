@@ -79,10 +79,10 @@ pub async fn create_join_token(pool: &SqlitePool, token: NewJoinToken<'_>) -> Re
 }
 
 pub async fn list_join_tokens(pool: &SqlitePool) -> Result<Vec<JoinInvite>> {
-    Ok(sqlx::query_as::<_, JoinInvite>(&format!(
+    Ok(sqlx::query_as::<_, JoinInvite>(sqlx::AssertSqlSafe(format!(
         "SELECT id, roles, reusable, requires_approval, expires_at, uses, created_at
          FROM join_tokens WHERE expires_at > {NOW} AND (reusable OR uses = 0) AND (max_uses IS NULL OR uses<max_uses) ORDER BY id"
-    ))
+    )))
     .fetch_all(pool)
     .await?)
 }
@@ -150,9 +150,9 @@ pub async fn join_with_token(pool: &SqlitePool, request: JoinRequest<'_>) -> Res
     // SQLite has a single writer, so BEGIN IMMEDIATE keeps two joins apart. Every
     // early return below drops the transaction, which rolls it back.
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let known = sqlx::query_as::<_, ClusterNode>(&format!(
+    let known = sqlx::query_as::<_, ClusterNode>(sqlx::AssertSqlSafe(format!(
         "SELECT *, {NOW} AS observed_at FROM nodes WHERE public_key = ?1"
-    ))
+    )))
     .bind(request.public_key)
     .fetch_optional(&mut *tx)
     .await?;
@@ -171,11 +171,11 @@ pub async fn join_with_token(pool: &SqlitePool, request: JoinRequest<'_>) -> Res
             return Ok(JoinOutcome::InvalidToken);
         }
     }
-    let token = sqlx::query_as::<_, (String, bool)>(&format!(
+    let token = sqlx::query_as::<_, (String, bool)>(sqlx::AssertSqlSafe(format!(
         "UPDATE join_tokens SET uses = uses + 1
          WHERE token_hash = ?1 AND expires_at > {NOW} AND (reusable OR uses = 0) AND (max_uses IS NULL OR uses<max_uses)
          RETURNING roles, requires_approval"
-    ))
+    )))
     .bind(request.token_hash)
     .fetch_optional(&mut *tx)
     .await?;
@@ -202,12 +202,12 @@ pub async fn join_with_token(pool: &SqlitePool, request: JoinRequest<'_>) -> Res
         request.name
     };
     // A joined node is not live until it has published itself, so no last_seen here.
-    let inserted = sqlx::query_as::<_, ClusterNode>(&format!(
+    let inserted = sqlx::query_as::<_, ClusterNode>(sqlx::AssertSqlSafe(format!(
         "INSERT INTO nodes (public_key, name, roles, status, version)
          VALUES (?1, ?2, ?3, ?4, ?5)
          ON CONFLICT DO NOTHING
          RETURNING *, {NOW} AS observed_at"
-    ))
+    )))
     .bind(request.public_key)
     .bind(node_name)
     .bind(serde_json::to_string(&roles)?)
@@ -226,9 +226,9 @@ pub async fn join_with_token(pool: &SqlitePool, request: JoinRequest<'_>) -> Res
         tx.commit().await?;
         return Ok(JoinOutcome::Joined(node));
     }
-    let raced = sqlx::query_as::<_, ClusterNode>(&format!(
+    let raced = sqlx::query_as::<_, ClusterNode>(sqlx::AssertSqlSafe(format!(
         "SELECT *, {NOW} AS observed_at FROM nodes WHERE public_key = ?1"
-    ))
+    )))
     .bind(request.public_key)
     .fetch_optional(&mut *tx)
     .await?;
@@ -245,12 +245,12 @@ pub async fn register_own_node(
     roles: &[String],
     version: &str,
 ) -> Result<ClusterNode> {
-    sqlx::query_as::<_, ClusterNode>(&format!(
+    sqlx::query_as::<_, ClusterNode>(sqlx::AssertSqlSafe(format!(
         "INSERT INTO nodes (public_key, name, roles, status, version)
          VALUES (?1, ?2, ?3, 'active', ?4)
          ON CONFLICT (public_key) DO UPDATE SET version = excluded.version
          RETURNING *, {NOW} AS observed_at"
-    ))
+    )))
     .bind(public_key)
     .bind(name)
     .bind(serde_json::to_string(roles)?)
@@ -281,7 +281,7 @@ pub async fn upsert_declared_nodes(
     }
     let mut rows = Vec::with_capacity(nodes.len());
     for node in nodes {
-        let row = sqlx::query_as::<_, ClusterNode>(&format!(
+        let row = sqlx::query_as::<_, ClusterNode>(sqlx::AssertSqlSafe(format!(
             "INSERT INTO nodes (public_key, name, roles, status)
              VALUES (?1, ?2, ?3, 'active')
              ON CONFLICT (public_key) DO UPDATE SET
@@ -289,7 +289,7 @@ pub async fn upsert_declared_nodes(
                  roles = excluded.roles,
                  status = CASE WHEN nodes.status = 'revoked' THEN 'revoked' ELSE 'active' END
              RETURNING *, {NOW} AS observed_at"
-        ))
+        )))
         .bind(node.public_key.as_str())
         .bind(node.name.as_str())
         .bind(serde_json::to_string(&node.roles)?)
@@ -306,21 +306,25 @@ pub async fn get_node_by_public_key(
     pool: &SqlitePool,
     public_key: &str,
 ) -> Result<Option<ClusterNode>> {
-    Ok(sqlx::query_as::<_, ClusterNode>(&format!(
-        "SELECT *, {NOW} AS observed_at FROM nodes WHERE public_key = ?1"
-    ))
-    .bind(public_key)
-    .fetch_optional(pool)
-    .await?)
+    Ok(
+        sqlx::query_as::<_, ClusterNode>(sqlx::AssertSqlSafe(format!(
+            "SELECT *, {NOW} AS observed_at FROM nodes WHERE public_key = ?1"
+        )))
+        .bind(public_key)
+        .fetch_optional(pool)
+        .await?,
+    )
 }
 
 pub async fn get_node_by_name(pool: &SqlitePool, name: &str) -> Result<Option<ClusterNode>> {
-    Ok(sqlx::query_as::<_, ClusterNode>(&format!(
-        "SELECT *, {NOW} AS observed_at FROM nodes WHERE name = ?1"
-    ))
-    .bind(name)
-    .fetch_optional(pool)
-    .await?)
+    Ok(
+        sqlx::query_as::<_, ClusterNode>(sqlx::AssertSqlSafe(format!(
+            "SELECT *, {NOW} AS observed_at FROM nodes WHERE name = ?1"
+        )))
+        .bind(name)
+        .fetch_optional(pool)
+        .await?,
+    )
 }
 
 pub async fn admin_node_page(
@@ -337,9 +341,9 @@ pub async fn admin_node_page(
         .await?,
         codeyard_types::credentials::AccountRestricted
     );
-    let rows = sqlx::query_as(&format!(
+    let rows = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT *,{NOW} AS observed_at FROM nodes WHERE name>?1 ORDER BY name LIMIT 101"
-    ))
+    )))
     .bind(after)
     .fetch_all(&mut *tx)
     .await?;
@@ -348,11 +352,13 @@ pub async fn admin_node_page(
 }
 
 pub async fn list_nodes(pool: &SqlitePool) -> Result<Vec<ClusterNode>> {
-    Ok(sqlx::query_as::<_, ClusterNode>(&format!(
-        "SELECT *, {NOW} AS observed_at FROM nodes ORDER BY name"
-    ))
-    .fetch_all(pool)
-    .await?)
+    Ok(
+        sqlx::query_as::<_, ClusterNode>(sqlx::AssertSqlSafe(format!(
+            "SELECT *, {NOW} AS observed_at FROM nodes ORDER BY name"
+        )))
+        .fetch_all(pool)
+        .await?,
+    )
 }
 
 pub async fn is_active_node(pool: &SqlitePool, public_key: &str) -> Result<bool> {
@@ -386,9 +392,9 @@ pub async fn set_node_status(
     let Some(before) = before else {
         return Ok(NodeStatusChange::Missing);
     };
-    let node = sqlx::query_as::<_, ClusterNode>(&format!(
+    let node = sqlx::query_as::<_, ClusterNode>(sqlx::AssertSqlSafe(format!(
         "UPDATE nodes SET status = ?2 WHERE name = ?1 RETURNING *, {NOW} AS observed_at"
-    ))
+    )))
     .bind(name)
     .bind(status)
     .fetch_one(&mut *tx)
@@ -416,9 +422,9 @@ pub async fn record_node_heartbeat(
     addr_hint: &str,
     disk_free: Option<i64>,
 ) -> Result<bool> {
-    let result = sqlx::query(&format!(
+    let result = sqlx::query(sqlx::AssertSqlSafe(format!(
         "UPDATE nodes SET last_seen = {NOW}, version = ?2, addr_hint = ?3, disk_free = ?4 WHERE public_key = ?1"
-    ))
+    )))
     .bind(public_key)
     .bind(version)
     .bind(addr_hint)
@@ -429,9 +435,9 @@ pub async fn record_node_heartbeat(
 }
 
 pub async fn touch_node(pool: &SqlitePool, public_key: &str) -> Result<()> {
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "UPDATE nodes SET last_seen = {NOW} WHERE public_key = ?1 AND status = 'active' AND json_array_length(roles)=1 AND json_extract(roles,'$[0]')='runner'"
-    ))
+    )))
     .bind(public_key)
     .execute(pool)
     .await?;
@@ -447,9 +453,9 @@ pub async fn clear_node_heartbeat(pool: &SqlitePool, public_key: &str) -> Result
 }
 
 pub async fn get_node_by_id(pool: &SqlitePool, id: i64) -> Result<Option<ClusterNode>> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT *, {NOW} AS observed_at FROM nodes WHERE id = ?1"
-    ))
+    )))
     .bind(id)
     .fetch_optional(pool)
     .await?)
@@ -570,9 +576,9 @@ pub async fn get_replicas(pool: &SqlitePool) -> Result<String> {
 }
 
 pub async fn set_replicas(pool: &SqlitePool, value: &str) -> Result<bool> {
-    Ok(sqlx::query(&format!(
+    Ok(sqlx::query(sqlx::AssertSqlSafe(format!(
         "UPDATE node_configuration SET replicas = ?1, updated_at = {NOW} WHERE id = 1"
-    ))
+    )))
     .bind(value)
     .execute(pool)
     .await?
@@ -665,9 +671,9 @@ pub async fn assign_replica_family(
     if draining {
         return Ok(ids);
     }
-    let mut storage: Vec<ClusterNode> = sqlx::query_as(&format!(
+    let mut storage: Vec<ClusterNode> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT *,{NOW} AS observed_at FROM nodes ORDER BY id"
-    ))
+    )))
     .fetch_all(&mut *tx)
     .await?;
     storage.retain(|node| {
@@ -676,7 +682,7 @@ pub async fn assign_replica_family(
             && node.roles.iter().any(|role| role == "storage")
     });
     let reservations = crate::sqlite::objects::pending(&mut tx).await?;
-    let rows: Vec<PrimaryReplicaRow> = sqlx::query_as(&format!("WITH family AS ({FORK_FAMILY}) SELECT r.id,r.disk_path,rr.node_id,rr.applied_version,r.size_bytes,rr.synced_at IS NOT NULL FROM repositories r JOIN family f ON f.id=r.id LEFT JOIN repository_replicas rr ON rr.repository_id=r.id ORDER BY r.id,rr.node_id"))
+    let rows: Vec<PrimaryReplicaRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!("WITH family AS ({FORK_FAMILY}) SELECT r.id,r.disk_path,rr.node_id,rr.applied_version,r.size_bytes,rr.synced_at IS NOT NULL FROM repositories r JOIN family f ON f.id=r.id LEFT JOIN repository_replicas rr ON rr.repository_id=r.id ORDER BY r.id,rr.node_id")))
         .bind(repository).fetch_all(&mut *tx).await?;
     for (repository, change) in
         crate::cluster::replicas::family_plan(setting, primary, &mut storage, &rows, &reservations)?
@@ -792,12 +798,12 @@ pub async fn set_applied_version(
     primary_id: i64,
     version: i64,
 ) -> Result<bool> {
-    Ok(sqlx::query(&format!(
+    Ok(sqlx::query(sqlx::AssertSqlSafe(format!(
         "UPDATE repository_replicas SET applied_version = ?4, synced_at = CASE WHEN ?4 >= 0 THEN {NOW} ELSE synced_at END
          WHERE repository_id = ?1 AND node_id = ?2
            AND EXISTS (SELECT 1 FROM repositories r
                        WHERE r.id = ?1 AND r.storage_node_id = ?3)"
-    ))
+    )))
     .bind(repo_id)
     .bind(node_id)
     .bind(primary_id)
@@ -825,12 +831,14 @@ pub async fn replica_counts(pool: &SqlitePool) -> Result<Vec<NodeReplicaCounts>>
 /// The node as the database sees it now, with its heartbeat read against the database clock,
 /// which is the clock that records it.
 async fn node_at_db_time(conn: &mut SqliteConnection, node: i64) -> Result<Option<ClusterNode>> {
-    Ok(sqlx::query_as::<_, ClusterNode>(&format!(
-        "SELECT *, {NOW} AS observed_at FROM nodes WHERE id = ?1"
-    ))
-    .bind(node)
-    .fetch_optional(&mut *conn)
-    .await?)
+    Ok(
+        sqlx::query_as::<_, ClusterNode>(sqlx::AssertSqlSafe(format!(
+            "SELECT *, {NOW} AS observed_at FROM nodes WHERE id = ?1"
+        )))
+        .bind(node)
+        .fetch_optional(&mut *conn)
+        .await?,
+    )
 }
 
 pub async fn promote_repository(

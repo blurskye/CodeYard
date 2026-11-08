@@ -276,9 +276,9 @@ async fn remove_member(
     sqlx::query("UPDATE repository_invitations SET state='cancelled' WHERE invitee_id=?1 AND state='pending' AND repo_id IN (SELECT id FROM repositories WHERE owner_kind='org' AND owner_org_id=?2)")
         .bind(target).bind(org).execute(&mut *tx).await?;
     let recipient = crate::sqlite::organizations::invitations::RECIPIENT;
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "DELETE FROM organization_invitations AS i WHERE {recipient} AND i.org_id=?2"
-    ))
+    )))
     .bind(target)
     .bind(org)
     .execute(&mut *tx)

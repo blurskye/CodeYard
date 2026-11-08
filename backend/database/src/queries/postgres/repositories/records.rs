@@ -25,12 +25,12 @@ pub async fn lock_fork_ancestors(
             WHERE owner_kind = 'org' AND id IN ({ANCESTORS})
         ) ORDER BY id FOR SHARE"
     );
-    let _: Vec<i64> = sqlx::query_scalar(&sql)
+    let _: Vec<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(repo_id)
         .fetch_all(&mut *connection)
         .await?;
     let sql = format!("SELECT id FROM repositories WHERE id IN ({ANCESTORS}) ORDER BY id {lock}");
-    let _: Vec<i64> = sqlx::query_scalar(&sql)
+    let _: Vec<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(repo_id)
         .fetch_all(connection)
         .await?;
@@ -78,7 +78,7 @@ pub async fn leave_former_owner(
         "DELETE FROM pr_team_reviewers WHERE pull_request_id IN (SELECT id FROM pull_requests WHERE repo_id=$1)",
         "DELETE FROM team_repo_access WHERE repo_id=$1",
     ] {
-        sqlx::query(statement)
+        sqlx::query(sqlx::AssertSqlSafe(statement))
             .bind(repo_id)
             .execute(&mut *connection)
             .await?;

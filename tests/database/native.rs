@@ -1486,12 +1486,12 @@ async fn file_activation_is_atomic_happens_once_and_survives_reopen() {
 
 async fn execute_sql(pool: &codeyard_database::DbPool, sql: &str) {
     match pool {
-        codeyard_database::DbPool::Postgres(raw) => sqlx::raw_sql(sql)
+        codeyard_database::DbPool::Postgres(raw) => sqlx::raw_sql(sqlx::AssertSqlSafe(sql))
             .execute(raw)
             .await
             .unwrap()
             .rows_affected(),
-        codeyard_database::DbPool::Sqlite(raw) => sqlx::raw_sql(sql)
+        codeyard_database::DbPool::Sqlite(raw) => sqlx::raw_sql(sqlx::AssertSqlSafe(sql))
             .execute(raw)
             .await
             .unwrap()
@@ -1512,7 +1512,7 @@ pub(crate) async fn assert_indexed_plan(
                 .execute(&mut *conn)
                 .await
                 .unwrap();
-            sqlx::query(&format!("EXPLAIN QUERY PLAN {sql}"))
+            sqlx::query(sqlx::AssertSqlSafe(format!("EXPLAIN QUERY PLAN {sql}")))
                 .fetch_all(&mut *conn)
                 .await
                 .unwrap()
@@ -1529,10 +1529,11 @@ pub(crate) async fn assert_indexed_plan(
                 .execute(&mut *tx)
                 .await
                 .unwrap();
-            let lines: Vec<String> = sqlx::query_scalar(&format!("EXPLAIN (COSTS OFF) {sql}"))
-                .fetch_all(&mut *tx)
-                .await
-                .unwrap();
+            let lines: Vec<String> =
+                sqlx::query_scalar(sqlx::AssertSqlSafe(format!("EXPLAIN (COSTS OFF) {sql}")))
+                    .fetch_all(&mut *tx)
+                    .await
+                    .unwrap();
             tx.rollback().await.unwrap();
             lines.join("\n")
         }
@@ -3920,10 +3921,10 @@ async fn insert_transfer_rows(
         };
         match pool {
             codeyard_database::DbPool::Postgres(raw) => {
-                sqlx::query(&format!(
+                sqlx::query(sqlx::AssertSqlSafe(format!(
                     "INSERT INTO {table} (user_id, file_id, reason, {column}{size})
                      SELECT $1, $2, 'other', $3::timestamptz{bytes} FROM generate_series(1::bigint, $4::bigint)"
-                ))
+                )))
                 .bind(user_id)
                 .bind(file_id)
                 .bind(at)
@@ -3933,11 +3934,11 @@ async fn insert_transfer_rows(
                 .unwrap();
             }
             codeyard_database::DbPool::Sqlite(raw) => {
-                sqlx::query(&format!(
+                sqlx::query(sqlx::AssertSqlSafe(format!(
                     "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ?4)
                      INSERT INTO {table} (user_id, file_id, reason, {column}{size})
                      SELECT ?1, ?2, 'other', ?3{bytes} FROM n"
-                ))
+                )))
                 .bind(user_id)
                 .bind(file_id)
                 .bind(timestamp(at))
@@ -3953,10 +3954,14 @@ async fn insert_transfer_rows(
 async fn transfer_row_counts(pool: &codeyard_database::DbPool) -> (i64, i64) {
     let sql = "SELECT (SELECT COUNT(*) FROM upload_rate_limit), (SELECT COUNT(*) FROM download_rate_limit)";
     match pool {
-        codeyard_database::DbPool::Postgres(raw) => {
-            sqlx::query_as(sql).fetch_one(raw).await.unwrap()
-        }
-        codeyard_database::DbPool::Sqlite(raw) => sqlx::query_as(sql).fetch_one(raw).await.unwrap(),
+        codeyard_database::DbPool::Postgres(raw) => sqlx::query_as(sqlx::AssertSqlSafe(sql))
+            .fetch_one(raw)
+            .await
+            .unwrap(),
+        codeyard_database::DbPool::Sqlite(raw) => sqlx::query_as(sqlx::AssertSqlSafe(sql))
+            .fetch_one(raw)
+            .await
+            .unwrap(),
     }
 }
 
@@ -4650,11 +4655,13 @@ async fn postgres_identity_cleanup_uses_expiry_index_bounds() {
     for expired in [true, false] {
         for sql in &statements {
             let mut tx = raw.begin().await.unwrap();
-            let plan: Value = sqlx::query_scalar(&format!("EXPLAIN (ANALYZE, FORMAT JSON) {sql}"))
-                .bind(500_i64)
-                .fetch_one(&mut *tx)
-                .await
-                .unwrap();
+            let plan: Value = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+                "EXPLAIN (ANALYZE, FORMAT JSON) {sql}"
+            )))
+            .bind(500_i64)
+            .fetch_one(&mut *tx)
+            .await
+            .unwrap();
             tx.rollback().await.unwrap();
             let nodes = postgres_plan_nodes(&plan);
             assert!(
@@ -4902,20 +4909,24 @@ async fn set_created_at(
 ) {
     match pool {
         codeyard_database::DbPool::Sqlite(raw) => {
-            sqlx::query(&format!("UPDATE {table} SET created_at = ?1 WHERE id = ?2"))
-                .bind(timestamp(created_at))
-                .bind(id)
-                .execute(raw)
-                .await
-                .unwrap();
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "UPDATE {table} SET created_at = ?1 WHERE id = ?2"
+            )))
+            .bind(timestamp(created_at))
+            .bind(id)
+            .execute(raw)
+            .await
+            .unwrap();
         }
         codeyard_database::DbPool::Postgres(raw) => {
-            sqlx::query(&format!("UPDATE {table} SET created_at = $1 WHERE id = $2"))
-                .bind(created_at)
-                .bind(id)
-                .execute(raw)
-                .await
-                .unwrap();
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "UPDATE {table} SET created_at = $1 WHERE id = $2"
+            )))
+            .bind(created_at)
+            .bind(id)
+            .execute(raw)
+            .await
+            .unwrap();
         }
     }
 }
@@ -5062,11 +5073,13 @@ async fn check_activity_baselines_use_per_repository_lookups(pool: &codeyard_dat
                 .execute(raw)
                 .await
                 .unwrap();
-            let plan: Value = sqlx::query_scalar(&format!("EXPLAIN (ANALYZE, FORMAT JSON) {sql}"))
-                .bind(7_i32)
-                .fetch_one(raw)
-                .await
-                .unwrap();
+            let plan: Value = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+                "EXPLAIN (ANALYZE, FORMAT JSON) {sql}"
+            )))
+            .bind(7_i32)
+            .fetch_one(raw)
+            .await
+            .unwrap();
             let nodes = postgres_plan_nodes(&plan);
             let history: Vec<_> = nodes
                 .iter()
@@ -5104,7 +5117,7 @@ async fn check_activity_baselines_use_per_repository_lookups(pool: &codeyard_dat
                 .await
                 .unwrap();
             let plan: Vec<(i64, i64, i64, String)> =
-                sqlx::query_as(&format!("EXPLAIN QUERY PLAN {sql}"))
+                sqlx::query_as(sqlx::AssertSqlSafe(format!("EXPLAIN QUERY PLAN {sql}")))
                     .bind(7_i32)
                     .fetch_all(raw)
                     .await

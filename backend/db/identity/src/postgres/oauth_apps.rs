@@ -63,10 +63,10 @@ pub async fn register(
 }
 
 pub async fn application(pool: &PgPool, client_id: &str) -> Result<Option<Application>> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT * FROM oauth_applications WHERE client_id=$1 AND {}",
         codeyard_database::queries::oauth_apps::client_condition("$1")
-    ))
+    )))
     .bind(client_id)
     .fetch_optional(pool)
     .await?)
@@ -160,10 +160,10 @@ pub async fn exchange(
     .await?
     .flatten();
     lock_client_accounts(&mut tx, client_id, candidate, false).await?;
-    let active: bool = sqlx::query_scalar(&format!(
+    let active: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT $1=$2 OR {}",
         codeyard_database::queries::oauth_apps::client_condition("$1")
-    ))
+    )))
     .bind(client_id)
     .bind(codeyard_types::identity::CLI_CLIENT)
     .fetch_one(&mut *tx)
@@ -253,7 +253,7 @@ pub async fn owned_token(
     hash: &str,
 ) -> Result<Option<codeyard_database::models::PersonalAccessToken>> {
     let issuer = codeyard_database::queries::oauth_apps::token_issuer_condition("t", "$3");
-    Ok(sqlx::query_as(&format!("SELECT t.id,t.user_id,t.name,t.scope,t.expires_at,t.created_at FROM personal_access_tokens t JOIN oauth_app_tokens o ON o.token_id=t.id JOIN users u ON u.id=t.user_id WHERE o.client_id=$1 AND t.token_hash=$2 AND (t.expires_at IS NULL OR t.expires_at>clock_timestamp()) AND NOT u.is_banned AND NOT u.must_change_password AND {issuer}"))
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT t.id,t.user_id,t.name,t.scope,t.expires_at,t.created_at FROM personal_access_tokens t JOIN oauth_app_tokens o ON o.token_id=t.id JOIN users u ON u.id=t.user_id WHERE o.client_id=$1 AND t.token_hash=$2 AND (t.expires_at IS NULL OR t.expires_at>clock_timestamp()) AND NOT u.is_banned AND NOT u.must_change_password AND {issuer}")))
         .bind(client).bind(hash).bind(codeyard_types::identity::CLI_CLIENT).fetch_optional(pool).await?)
 }
 
@@ -269,7 +269,7 @@ pub async fn reset_token(
     lock_client_accounts(&mut tx, client, user, false).await?;
     // A token from an app that is no longer available is not refreshed.
     let issuer = codeyard_database::queries::oauth_apps::token_issuer_condition("t", "$3");
-    let old: Option<codeyard_database::models::PersonalAccessToken> = sqlx::query_as(&format!("SELECT t.id,t.user_id,t.name,t.scope,t.expires_at,t.created_at FROM personal_access_tokens t JOIN oauth_app_tokens o ON o.token_id=t.id JOIN users u ON u.id=t.user_id WHERE o.client_id=$1 AND t.token_hash=$2 AND (t.expires_at IS NULL OR t.expires_at>clock_timestamp()) AND NOT u.is_banned AND NOT u.must_change_password AND {issuer} FOR UPDATE OF t"))
+    let old: Option<codeyard_database::models::PersonalAccessToken> = sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT t.id,t.user_id,t.name,t.scope,t.expires_at,t.created_at FROM personal_access_tokens t JOIN oauth_app_tokens o ON o.token_id=t.id JOIN users u ON u.id=t.user_id WHERE o.client_id=$1 AND t.token_hash=$2 AND (t.expires_at IS NULL OR t.expires_at>clock_timestamp()) AND NOT u.is_banned AND NOT u.must_change_password AND {issuer} FOR UPDATE OF t")))
         .bind(client).bind(hash).bind(codeyard_types::identity::CLI_CLIENT).fetch_optional(&mut *tx).await?;
     let Some(old) = old else {
         return Ok(None);
@@ -293,10 +293,10 @@ pub async fn revoke(pool: &PgPool, client: &str, hash: &str, authorization: bool
     let candidate: Option<i64> = sqlx::query_scalar("SELECT t.user_id FROM personal_access_tokens t JOIN oauth_app_tokens o ON o.token_id=t.id WHERE o.client_id=$1 AND t.token_hash=$2")
         .bind(client).bind(hash).fetch_optional(&mut *tx).await?;
     lock_client_accounts(&mut tx, client, candidate, true).await?;
-    let active: bool = sqlx::query_scalar(&format!(
+    let active: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT $1=$2 OR {}",
         codeyard_database::queries::oauth_apps::client_condition("$1")
-    ))
+    )))
     .bind(client)
     .bind(codeyard_types::identity::CLI_CLIENT)
     .fetch_one(&mut *tx)

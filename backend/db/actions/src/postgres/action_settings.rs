@@ -52,9 +52,9 @@ async fn settings_once(
     )
     .await?;
     let locking = if update.is_some() { " FOR UPDATE" } else { "" };
-    let stored: Option<String> = sqlx::query_scalar(&format!(
+    let stored: Option<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT rest_settings FROM {table} WHERE {column}=$1{locking}"
-    ))
+    )))
     .bind(id)
     .fetch_optional(&mut *tx)
     .await?;
@@ -78,7 +78,7 @@ async fn settings_once(
     }
     if let Some(input) = update {
         setting.update(&mut stored, input, maximum)?;
-        sqlx::query(&format!("INSERT INTO {table}({column},rest_settings) VALUES($1,$2) ON CONFLICT({column}) DO UPDATE SET rest_settings=EXCLUDED.rest_settings,updated_at=NOW()")).bind(id).bind(stored.to_string()).execute(&mut *tx).await?;
+        sqlx::query(sqlx::AssertSqlSafe(format!("INSERT INTO {table}({column},rest_settings) VALUES($1,$2) ON CONFLICT({column}) DO UPDATE SET rest_settings=EXCLUDED.rest_settings,updated_at=NOW()"))).bind(id).bind(stored.to_string()).execute(&mut *tx).await?;
     }
     let stored = crate::action_settings::resolved(stored, &parent, &site, private, maximum);
     tx.commit().await?;
@@ -151,7 +151,7 @@ async fn policies_page_once(
         let mut budget = codeyard_types::workflow_glob::WorkflowMatchBudget::new();
         let (mut after, mut total, mut ids) = (0_i64, 0_i64, Vec::new());
         loop {
-            let selectors: Vec<PolicySelector> = sqlx::query_as(&format!("SELECT p.id,COALESCE(p.{column}=$1,FALSE) AS own,CASE WHEN p.{column}=$1 THEN NULL ELSE (p.data::jsonb->'conditions')::text END AS conditions FROM actions_policies p WHERE (p.{column}=$1 OR p.org_id=$2) AND p.id>$3 ORDER BY p.id LIMIT 100")).bind(scope_id).bind(org).bind(after).fetch_all(&mut *tx).await?;
+            let selectors: Vec<PolicySelector> = sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT p.id,COALESCE(p.{column}=$1,FALSE) AS own,CASE WHEN p.{column}=$1 THEN NULL ELSE (p.data::jsonb->'conditions')::text END AS conditions FROM actions_policies p WHERE (p.{column}=$1 OR p.org_id=$2) AND p.id>$3 ORDER BY p.id LIMIT 100"))).bind(scope_id).bind(org).bind(after).fetch_all(&mut *tx).await?;
             let finished = selectors.len() < 100;
             for selector in selectors {
                 after = selector.id;
@@ -172,21 +172,23 @@ async fn policies_page_once(
     };
     let select = "SELECT p.id,COALESCE(p.repo_id,p.org_id) AS owner_id,p.data,p.created_at,p.updated_at,o.name AS organization FROM actions_policies p LEFT JOIN organizations o ON o.id=p.org_id";
     let (total, rows) = if let Some((total, ids)) = selected {
-        let rows = sqlx::query_as(&format!("{select} WHERE p.id=ANY($1) ORDER BY p.id"))
-            .bind(&ids)
-            .fetch_all(&mut *tx)
-            .await?;
+        let rows = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "{select} WHERE p.id=ANY($1) ORDER BY p.id"
+        )))
+        .bind(&ids)
+        .fetch_all(&mut *tx)
+        .await?;
         (total, rows)
     } else {
-        let total = sqlx::query_scalar(&format!(
+        let total = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT COUNT(*) FROM actions_policies WHERE {column}=$1"
-        ))
+        )))
         .bind(scope_id)
         .fetch_one(&mut *tx)
         .await?;
-        let rows = sqlx::query_as(&format!(
+        let rows = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "{select} WHERE p.{column}=$1 ORDER BY p.id LIMIT $2 OFFSET $3"
-        ))
+        )))
         .bind(scope_id)
         .bind(limit)
         .bind(offset)
@@ -218,7 +220,7 @@ pub async fn policies(
     ensure!(id.is_some() || change.is_some(), Refusal::Invalid);
     let mut rows: Vec<Policy> = if let Some(id) = id {
         let lock = if change.is_some() { "FOR UPDATE" } else { "" };
-        sqlx::query_as(&format!("SELECT id,COALESCE(repo_id,org_id) AS owner_id,data,created_at,updated_at FROM actions_policies WHERE {column}=$1 AND id=$2 {lock}")).bind(scope_id).bind(id).fetch_all(&mut *tx).await?
+        sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT id,COALESCE(repo_id,org_id) AS owner_id,data,created_at,updated_at FROM actions_policies WHERE {column}=$1 AND id=$2 {lock}"))).bind(scope_id).bind(id).fetch_all(&mut *tx).await?
     } else {
         Vec::new()
     };
@@ -232,7 +234,7 @@ pub async fn policies(
             let row = if let Some(id) = id {
                 sqlx::query_as("UPDATE actions_policies SET data=$2,updated_at=NOW() WHERE id=$1 RETURNING id,COALESCE(repo_id,org_id) AS owner_id,data,created_at,updated_at").bind(id).bind(data.to_string()).fetch_one(&mut *tx).await?
             } else {
-                sqlx::query_as(&format!("INSERT INTO actions_policies({column},data) VALUES($1,$2) RETURNING id,COALESCE(repo_id,org_id) AS owner_id,data,created_at,updated_at")).bind(scope_id).bind(data.to_string()).fetch_one(&mut *tx).await?
+                sqlx::query_as(sqlx::AssertSqlSafe(format!("INSERT INTO actions_policies({column},data) VALUES($1,$2) RETURNING id,COALESCE(repo_id,org_id) AS owner_id,data,created_at,updated_at"))).bind(scope_id).bind(data.to_string()).fetch_one(&mut *tx).await?
             };
             rows = vec![row];
         } else {

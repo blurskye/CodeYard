@@ -118,23 +118,23 @@ pub async fn change(
     }
     let repositories = "SELECT id FROM repositories WHERE owner_kind='org' AND owner_org_id=?1";
     for table in ["stars", "watches", "repo_access"] {
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "DELETE FROM {table} WHERE user_id=?2 AND repo_id IN ({repositories})"
-        ))
+        )))
         .bind(org)
         .bind(target)
         .execute(&mut *tx)
         .await?;
     }
-    sqlx::query(&format!("DELETE FROM issue_assignees WHERE user_id=?2 AND issue_id IN (SELECT id FROM issues WHERE repo_id IN ({repositories}))"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DELETE FROM issue_assignees WHERE user_id=?2 AND issue_id IN (SELECT id FROM issues WHERE repo_id IN ({repositories}))")))
         .bind(org).bind(target).execute(&mut *tx).await?;
     for table in ["pr_assignees", "pr_reviewers"] {
-        sqlx::query(&format!("DELETE FROM {table} WHERE user_id=?2 AND pull_request_id IN (SELECT id FROM pull_requests WHERE repo_id IN ({repositories}))"))
+        sqlx::query(sqlx::AssertSqlSafe(format!("DELETE FROM {table} WHERE user_id=?2 AND pull_request_id IN (SELECT id FROM pull_requests WHERE repo_id IN ({repositories}))")))
             .bind(org).bind(target).execute(&mut *tx).await?;
     }
-    sqlx::query(&format!("DELETE FROM notifications WHERE (user_id=?2 OR actor_id=?2) AND repo_id IN ({repositories})"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DELETE FROM notifications WHERE (user_id=?2 OR actor_id=?2) AND repo_id IN ({repositories})")))
         .bind(org).bind(target).execute(&mut *tx).await?;
-    sqlx::query(&format!("UPDATE repository_invitations SET state='cancelled' WHERE invitee_id=?2 AND state='pending' AND repo_id IN ({repositories})"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("UPDATE repository_invitations SET state='cancelled' WHERE invitee_id=?2 AND state='pending' AND repo_id IN ({repositories})")))
         .bind(org).bind(target).execute(&mut *tx).await?;
     cancel_actor(&mut tx, org, target).await?;
     tx.commit().await?;

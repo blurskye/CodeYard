@@ -358,10 +358,18 @@ async fn near_budget_http_clone(root: &Path, disk_path: &str, url: &str) {
 async fn update(pool: &DbPool, sql: &str, id: i64) {
     match pool {
         DbPool::Postgres(raw) => {
-            sqlx::query(sql).bind(id).execute(raw).await.unwrap();
+            sqlx::query(sqlx::AssertSqlSafe(sql))
+                .bind(id)
+                .execute(raw)
+                .await
+                .unwrap();
         }
         DbPool::Sqlite(raw) => {
-            sqlx::query(sql).bind(id).execute(raw).await.unwrap();
+            sqlx::query(sqlx::AssertSqlSafe(sql))
+                .bind(id)
+                .execute(raw)
+                .await
+                .unwrap();
         }
     };
 }

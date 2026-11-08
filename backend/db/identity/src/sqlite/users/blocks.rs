@@ -88,23 +88,23 @@ pub async fn change_block(
     let repositories = "SELECT id FROM repositories WHERE owner_kind='user' AND owner_user_id=?1";
     for (owner, actor) in [(user, target), (target, user)] {
         for table in ["stars", "watches", "repo_access", "gist_stars"] {
-            sqlx::query(&format!(
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 "DELETE FROM {table} WHERE user_id=?2 AND repo_id IN ({repositories})"
-            ))
+            )))
             .bind(owner)
             .bind(actor)
             .execute(&mut *tx)
             .await?;
         }
-        sqlx::query(&format!("DELETE FROM issue_assignees WHERE user_id=?2 AND issue_id IN (SELECT id FROM issues WHERE repo_id IN ({repositories}))"))
+        sqlx::query(sqlx::AssertSqlSafe(format!("DELETE FROM issue_assignees WHERE user_id=?2 AND issue_id IN (SELECT id FROM issues WHERE repo_id IN ({repositories}))")))
             .bind(owner).bind(actor).execute(&mut *tx).await?;
         for table in ["pr_assignees", "pr_reviewers"] {
-            sqlx::query(&format!("DELETE FROM {table} WHERE user_id=?2 AND pull_request_id IN (SELECT id FROM pull_requests WHERE repo_id IN ({repositories}))"))
+            sqlx::query(sqlx::AssertSqlSafe(format!("DELETE FROM {table} WHERE user_id=?2 AND pull_request_id IN (SELECT id FROM pull_requests WHERE repo_id IN ({repositories}))")))
                 .bind(owner).bind(actor).execute(&mut *tx).await?;
         }
-        sqlx::query(&format!("UPDATE repository_invitations SET state='cancelled' WHERE invitee_id=?2 AND state='pending' AND repo_id IN ({repositories})"))
+        sqlx::query(sqlx::AssertSqlSafe(format!("UPDATE repository_invitations SET state='cancelled' WHERE invitee_id=?2 AND state='pending' AND repo_id IN ({repositories})")))
             .bind(owner).bind(actor).execute(&mut *tx).await?;
-        let runs: Vec<i64> = sqlx::query_scalar(&format!("SELECT id FROM ci_runs WHERE triggered_by_id=?2 AND repo_id IN ({repositories}) AND (status IN ('queued','running') OR completed_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now','-1 hour'))"))
+        let runs: Vec<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT id FROM ci_runs WHERE triggered_by_id=?2 AND repo_id IN ({repositories}) AND (status IN ('queued','running') OR completed_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now','-1 hour'))")))
             .bind(owner).bind(actor).fetch_all(&mut *tx).await?;
         codeyard_database::queries::sqlite::ci::stop_ci_runs(&mut tx, &runs).await?;
     }

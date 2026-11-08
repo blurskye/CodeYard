@@ -114,15 +114,17 @@ pub async fn repository_choices(
     crate::postgres::users::transitions::require_account(&mut tx, actor, credential).await?;
     let access = codeyard_database::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL;
     let projection = format!("SELECT r.id,r.name FROM repositories r JOIN users u ON u.id=$1 WHERE NOT r.is_gist AND (($2::BIGINT IS NULL AND r.owner_kind='user' AND r.owner_user_id=u.id) OR ($2::BIGINT IS NOT NULL AND r.owner_kind='org' AND r.owner_org_id=$2)) AND ({access})>=1");
-    let kept = sqlx::query_as(&format!("{projection} AND r.id=ANY($3) ORDER BY r.id"))
-        .bind(actor)
-        .bind(org)
-        .bind(selected)
-        .fetch_all(&mut *tx)
-        .await?;
-    let matching = sqlx::query_as(&format!(
+    let kept = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{projection} AND r.id=ANY($3) ORDER BY r.id"
+    )))
+    .bind(actor)
+    .bind(org)
+    .bind(selected)
+    .fetch_all(&mut *tx)
+    .await?;
+    let matching = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{projection} AND LOWER(r.name) LIKE $3 ESCAPE '\\' ORDER BY r.name,r.id LIMIT 101"
-    ))
+    )))
     .bind(actor)
     .bind(org)
     .bind(codeyard_database::queries::discussions::contains_pattern(
@@ -138,14 +140,16 @@ pub async fn repository_choices(
 }
 
 pub async fn get(pool: &PgPool, token: i64) -> Result<Option<Token>> {
-    Ok(sqlx::query_as(&format!("{TOKEN} WHERE f.token_id=$1"))
-        .bind(token)
-        .fetch_optional(pool)
-        .await?)
+    Ok(
+        sqlx::query_as(sqlx::AssertSqlSafe(format!("{TOKEN} WHERE f.token_id=$1")))
+            .bind(token)
+            .fetch_optional(pool)
+            .await?,
+    )
 }
 
 pub async fn list_before(pool: &PgPool, user: i64, before: Option<i64>) -> Result<Vec<Token>> {
-    Ok(sqlx::query_as(&format!("{TOKEN} WHERE t.user_id=$1 AND (CAST($2 AS BIGINT) IS NULL OR f.token_id<$2) ORDER BY f.token_id DESC LIMIT 100"))
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!("{TOKEN} WHERE t.user_id=$1 AND (CAST($2 AS BIGINT) IS NULL OR f.token_id<$2) ORDER BY f.token_id DESC LIMIT 100")))
         .bind(user).bind(before).fetch_all(pool).await?)
 }
 
@@ -200,7 +204,7 @@ async fn tokens_page(
     let (permission, level) = filter
         .permission
         .map_or((None, None), |(key, level)| (Some(key), level));
-    Ok(sqlx::query_as(&format!("{TOKEN} JOIN users u ON u.id=t.user_id WHERE f.owner_org_id=$1 AND f.status=$2 AND EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=$1 AND m.user_id=t.user_id) AND (cardinality($3::text[])=0 OR u.username=ANY($3)) AND (cardinality($4::bigint[])=0 OR f.token_id=ANY($4)) AND ($5::bigint IS NULL OR f.repository_access='all' OR (f.repository_access='selected' AND EXISTS(SELECT 1 FROM fine_grained_token_repositories s WHERE s.token_id=f.token_id AND s.repo_id=$5))) AND ($6::text IS NULL OR ((f.permissions::jsonb->>$6) IS NOT NULL AND ($7::text IS NULL OR (f.permissions::jsonb->>$6)=$7))) AND ($8::timestamptz IS NULL OR t.last_used_at<$8) AND ($9::timestamptz IS NULL OR t.last_used_at>$9) AND ($12::bigint IS NULL OR f.token_id<$12) ORDER BY f.token_id {order} LIMIT $10 OFFSET $11"))
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!("{TOKEN} JOIN users u ON u.id=t.user_id WHERE f.owner_org_id=$1 AND f.status=$2 AND EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=$1 AND m.user_id=t.user_id) AND (cardinality($3::text[])=0 OR u.username=ANY($3)) AND (cardinality($4::bigint[])=0 OR f.token_id=ANY($4)) AND ($5::bigint IS NULL OR f.repository_access='all' OR (f.repository_access='selected' AND EXISTS(SELECT 1 FROM fine_grained_token_repositories s WHERE s.token_id=f.token_id AND s.repo_id=$5))) AND ($6::text IS NULL OR ((f.permissions::jsonb->>$6) IS NOT NULL AND ($7::text IS NULL OR (f.permissions::jsonb->>$6)=$7))) AND ($8::timestamptz IS NULL OR t.last_used_at<$8) AND ($9::timestamptz IS NULL OR t.last_used_at>$9) AND ($12::bigint IS NULL OR f.token_id<$12) ORDER BY f.token_id {order} LIMIT $10 OFFSET $11")))
         .bind(org).bind(filter.status).bind(filter.owners).bind(filter.token_ids).bind(filter.repository).bind(permission).bind(level)
         .bind(filter.last_used_before).bind(filter.last_used_after).bind(limit).bind(offset).bind(filter.before)
         .fetch_all(connection).await?)
@@ -250,11 +254,11 @@ pub async fn owner_tokens(
         .map(|token| token.token_id)
         .collect();
     let readable = codeyard_database::queries::postgres::repositories::access::readable_condition();
-    let repositories: Vec<(i64, String)> = sqlx::query_as(&format!("SELECT token_id,name FROM (SELECT selected.token_id,r.name,ROW_NUMBER() OVER (PARTITION BY selected.token_id ORDER BY r.name,r.id) AS row_position
+    let repositories: Vec<(i64, String)> = sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT token_id,name FROM (SELECT selected.token_id,r.name,ROW_NUMBER() OVER (PARTITION BY selected.token_id ORDER BY r.name,r.id) AS row_position
         FROM fine_grained_token_repositories selected JOIN fine_grained_tokens g ON g.token_id=selected.token_id
         JOIN repositories r ON r.id=selected.repo_id JOIN users u ON u.id=$2
         WHERE selected.token_id=ANY($1) AND g.owner_org_id=$3
-        AND r.owner_kind='org' AND r.owner_org_id=$3 AND {readable}) listed WHERE row_position<=100 ORDER BY token_id,row_position"))
+        AND r.owner_kind='org' AND r.owner_org_id=$3 AND {readable}) listed WHERE row_position<=100 ORDER BY token_id,row_position")))
         .bind(ids.as_slice()).bind(actor).bind(org).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok(Some(OwnerTokens {
@@ -330,11 +334,13 @@ pub async fn review_all(
 pub async fn classic_refused(pool: &PgPool, token: i64, org: i64) -> Result<bool> {
     let allowed =
         codeyard_database::queries::fine_grained_tokens::classic_allowed_condition("$1", "$2");
-    Ok(sqlx::query_scalar(&format!("SELECT NOT ({allowed})"))
-        .bind(token)
-        .bind(org)
-        .fetch_one(pool)
-        .await?)
+    Ok(
+        sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT NOT ({allowed})")))
+            .bind(token)
+            .bind(org)
+            .fetch_one(pool)
+            .await?,
+    )
 }
 
 pub async fn classic_refused_repository(pool: &PgPool, token: i64, repo: i64) -> Result<bool> {
@@ -342,9 +348,9 @@ pub async fn classic_refused_repository(pool: &PgPool, token: i64, repo: i64) ->
         "$1",
         "r.owner_org_id",
     );
-    Ok(sqlx::query_scalar(&format!(
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT EXISTS(SELECT 1 FROM repositories r WHERE r.id=$2 AND NOT ({allowed}))"
-    ))
+    )))
     .bind(token)
     .bind(repo)
     .fetch_one(pool)

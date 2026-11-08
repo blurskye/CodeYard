@@ -16,7 +16,7 @@ use sqlx::Postgres;
 use sqlx::Transaction;
 
 async fn permission(c: &mut PgConnection, repo: i64, actor: i64, triage: bool) -> Result<bool> {
-    let allowed:bool=sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=$2 WHERE r.id=$1 AND NOT u.is_banned AND NOT u.must_change_password AND ((NOT $3 AND ({})) OR (({})>=2) OR (r.owner_kind='user' AND u.is_admin)))",codeyard_database::queries::postgres::repositories::access::readable_condition(),codeyard_database::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL)).bind(repo).bind(actor).bind(triage).fetch_one(&mut *c).await?;
+    let allowed:bool=sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=$2 WHERE r.id=$1 AND NOT u.is_banned AND NOT u.must_change_password AND ((NOT $3 AND ({})) OR (({})>=2) OR (r.owner_kind='user' AND u.is_admin)))",codeyard_database::queries::postgres::repositories::access::readable_condition(),codeyard_database::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL))).bind(repo).bind(actor).bind(triage).fetch_one(&mut *c).await?;
     if !allowed {
         return Ok(false);
     }
@@ -87,7 +87,7 @@ pub async fn list(
         crate::postgres::issue_attributes::catalog_connection(&mut tx, repo, Some(actor), "field")
             .await?;
     let ids = serde_json::to_string(&fields.iter().map(|f| f.id).collect::<Vec<_>>())?;
-    let rows=sqlx::query_as(&format!("SELECT s.* FROM issue_suggestions s WHERE s.issue_id=$1 AND ($3='all' OR s.state=$3) AND ($4::TEXT IS NULL OR s.action=$4) AND (NOT $5 OR s.actor_id=$2) AND (s.action<>'add_field' OR s.target_id IN(SELECT CAST(value AS BIGINT) FROM jsonb_array_elements_text($6::jsonb))) AND (s.action<>'close_issue' OR s.target_id IS NULL OR EXISTS(SELECT 1 FROM issues target JOIN repositories r ON r.id=target.repo_id LEFT JOIN users u ON u.id=$2 WHERE target.id=s.target_id AND ({}) AND (COALESCE(u.username,'')<>$10 OR r.id=$9))) ORDER BY s.created_at {order},s.id {order} LIMIT $7 OFFSET $8",codeyard_database::queries::postgres::repositories::access::readable_condition(),order=if filter.descending{"DESC"}else{"ASC"})).bind(issue).bind(actor).bind(filter.state).bind(filter.action).bind(filter.own).bind(ids).bind(filter.limit).bind(filter.offset).bind(repo).bind(codeyard_database::queries::ci_tokens::BOT).fetch_all(&mut *tx).await?;
+    let rows=sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT s.* FROM issue_suggestions s WHERE s.issue_id=$1 AND ($3='all' OR s.state=$3) AND ($4::TEXT IS NULL OR s.action=$4) AND (NOT $5 OR s.actor_id=$2) AND (s.action<>'add_field' OR s.target_id IN(SELECT CAST(value AS BIGINT) FROM jsonb_array_elements_text($6::jsonb))) AND (s.action<>'close_issue' OR s.target_id IS NULL OR EXISTS(SELECT 1 FROM issues target JOIN repositories r ON r.id=target.repo_id LEFT JOIN users u ON u.id=$2 WHERE target.id=s.target_id AND ({}) AND (COALESCE(u.username,'')<>$10 OR r.id=$9))) ORDER BY s.created_at {order},s.id {order} LIMIT $7 OFFSET $8",codeyard_database::queries::postgres::repositories::access::readable_condition(),order=if filter.descending{"DESC"}else{"ASC"}))).bind(issue).bind(actor).bind(filter.state).bind(filter.action).bind(filter.own).bind(ids).bind(filter.limit).bind(filter.offset).bind(repo).bind(codeyard_database::queries::ci_tokens::BOT).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok(rows)
 }
@@ -217,7 +217,7 @@ async fn prepare(
             );
             let name = if let Some(id) = target {
                 anyhow::ensure!(id != issue.id, Refusal::Invalid);
-                let title:Option<String>=sqlx::query_scalar(&format!("SELECT i.title FROM issues i JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id=$1 WHERE i.id=$2 AND ({}) AND (COALESCE(u.username,'')<>$4 OR r.id=$3)",codeyard_database::queries::postgres::repositories::access::readable_condition())).bind(actor).bind(id).bind(repo).bind(codeyard_database::queries::ci_tokens::BOT).fetch_optional(&mut **tx).await?;
+                let title:Option<String>=sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT i.title FROM issues i JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id=$1 WHERE i.id=$2 AND ({}) AND (COALESCE(u.username,'')<>$4 OR r.id=$3)",codeyard_database::queries::postgres::repositories::access::readable_condition()))).bind(actor).bind(id).bind(repo).bind(codeyard_database::queries::ci_tokens::BOT).fetch_optional(&mut **tx).await?;
                 title.ok_or(Refusal::Invalid)?
             } else {
                 reason.into()
@@ -517,7 +517,7 @@ pub async fn resolve(
         );
     }
     if s.action == "close_issue" && s.target_id.is_some() {
-        let visible:bool=sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM issues i JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id=$1 WHERE i.id=$2 AND ({}) AND (COALESCE(u.username,'')<>$4 OR r.id=$3))",codeyard_database::queries::postgres::repositories::access::readable_condition())).bind(actor).bind(s.target_id).bind(repo).bind(codeyard_database::queries::ci_tokens::BOT).fetch_one(&mut *tx).await?;
+        let visible:bool=sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT EXISTS(SELECT 1 FROM issues i JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id=$1 WHERE i.id=$2 AND ({}) AND (COALESCE(u.username,'')<>$4 OR r.id=$3))",codeyard_database::queries::postgres::repositories::access::readable_condition()))).bind(actor).bind(s.target_id).bind(repo).bind(codeyard_database::queries::ci_tokens::BOT).fetch_one(&mut *tx).await?;
         anyhow::ensure!(visible, Refusal::Missing);
     }
     anyhow::ensure!(s.state == "pending", Refusal::NotPending);

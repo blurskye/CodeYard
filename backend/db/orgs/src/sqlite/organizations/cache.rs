@@ -56,10 +56,10 @@ pub async fn set_cache_limit(
         return Ok(OrganizationOutcome::Denied);
     }
     let column = kind.column();
-    let maximum: i32 = sqlx::query_scalar(&format!(
+    let maximum: i32 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT COALESCE({column},{}) FROM actions_settings WHERE id=1",
         kind.default_value()
-    ))
+    )))
     .fetch_optional(&mut *tx)
     .await?
     .unwrap_or(kind.default_value());
@@ -70,7 +70,7 @@ pub async fn set_cache_limit(
     .bind(org)
     .fetch_all(&mut *tx)
     .await?;
-    sqlx::query(&format!("INSERT INTO org_actions_settings(org_id,{column}) VALUES($1,$2) ON CONFLICT(org_id) DO UPDATE SET {column}=EXCLUDED.{column},updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now')")).bind(org).bind(value).execute(&mut *tx).await?;
+    sqlx::query(sqlx::AssertSqlSafe(format!("INSERT INTO org_actions_settings(org_id,{column}) VALUES($1,$2) ON CONFLICT(org_id) DO UPDATE SET {column}=EXCLUDED.{column},updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now')"))).bind(org).bind(value).execute(&mut *tx).await?;
     for repo in repos {
         let (bytes, days) =
             codeyard_database::queries::sqlite::action_objects::cache_policy(&mut tx, repo).await?;

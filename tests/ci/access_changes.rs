@@ -462,7 +462,11 @@ async fn postgres_cancellation_retains_admin_authority_while_waiting() {
         } else {
             ("SELECT id FROM ci_runs WHERE id=$1 FOR UPDATE", queued.id)
         };
-        sqlx::query(sql).bind(id).execute(&mut *gate).await.unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(sql))
+            .bind(id)
+            .execute(&mut *gate)
+            .await
+            .unwrap();
         let run_id = queued.run_id;
         let pool = fixture.pool.clone();
         let cancelling = tokio::spawn(async move {
@@ -540,11 +544,13 @@ async fn postgres_cancellation_rechecks_admin_after_waiting() {
             .unwrap();
         // Keep the old snapshot readable, but make both old and new cancellation
         // paths wait until the account restriction commits.
-        sqlx::query(&format!("UPDATE users SET {restriction} WHERE id=$1"))
-            .bind(admin)
-            .execute(&mut *gate)
-            .await
-            .unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "UPDATE users SET {restriction} WHERE id=$1"
+        )))
+        .bind(admin)
+        .execute(&mut *gate)
+        .await
+        .unwrap();
         sqlx::query("SELECT id FROM repositories WHERE id=$1 FOR UPDATE")
             .bind(repo)
             .execute(&mut *gate)
@@ -598,10 +604,18 @@ async fn cancellation_after_access_loss(pool: &codeyard_database::DbPool) {
     let archive = "UPDATE repositories SET is_archived=TRUE WHERE id=$1";
     match pool {
         codeyard_database::DbPool::Postgres(raw) => {
-            sqlx::query(archive).bind(repo).execute(raw).await.unwrap();
+            sqlx::query(sqlx::AssertSqlSafe(archive))
+                .bind(repo)
+                .execute(raw)
+                .await
+                .unwrap();
         }
         codeyard_database::DbPool::Sqlite(raw) => {
-            sqlx::query(archive).bind(repo).execute(raw).await.unwrap();
+            sqlx::query(sqlx::AssertSqlSafe(archive))
+                .bind(repo)
+                .execute(raw)
+                .await
+                .unwrap();
         }
     };
     assert_eq!(

@@ -302,16 +302,20 @@ async fn contract(pg: bool) {
         let sql =
             "SELECT payload FROM cell_outbox WHERE topic='pointer' AND root_id=$1 ORDER BY id";
         match f.pool() {
-            codeyard_database::DbPool::Postgres(pool) => sqlx::query_scalar::<_, String>(sql)
-                .bind(repository.id)
-                .fetch_all(pool)
-                .await
-                .unwrap(),
-            codeyard_database::DbPool::Sqlite(pool) => sqlx::query_scalar::<_, String>(sql)
-                .bind(repository.id)
-                .fetch_all(pool)
-                .await
-                .unwrap(),
+            codeyard_database::DbPool::Postgres(pool) => {
+                sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql))
+                    .bind(repository.id)
+                    .fetch_all(pool)
+                    .await
+                    .unwrap()
+            }
+            codeyard_database::DbPool::Sqlite(pool) => {
+                sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql))
+                    .bind(repository.id)
+                    .fetch_all(pool)
+                    .await
+                    .unwrap()
+            }
         }
     }
     .await;

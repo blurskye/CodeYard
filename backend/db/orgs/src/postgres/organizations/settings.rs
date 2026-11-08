@@ -71,7 +71,7 @@ pub async fn change(
     if settings.default_repository_permission < previous {
         let access =
             codeyard_database::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL;
-        let runs:Vec<i64>=sqlx::query_scalar(&format!("SELECT c.id FROM ci_runs c JOIN repositories r ON r.id=c.repo_id JOIN users u ON u.id=c.triggered_by_id JOIN org_memberships m ON m.org_id=r.owner_org_id AND m.user_id=u.id AND m.role='member' WHERE r.owner_kind='org' AND r.owner_org_id=$1 AND r.owner_user_id IS NULL AND (c.status IN ('queued','running') OR c.completed_at > NOW() - INTERVAL '1 hour') AND ({access}) < CASE WHEN c.pipeline IN ('cd','full') OR c.environment IS NOT NULL THEN 5 ELSE 3 END ORDER BY c.id")).bind(org).fetch_all(&mut *tx).await?;
+        let runs:Vec<i64>=sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT c.id FROM ci_runs c JOIN repositories r ON r.id=c.repo_id JOIN users u ON u.id=c.triggered_by_id JOIN org_memberships m ON m.org_id=r.owner_org_id AND m.user_id=u.id AND m.role='member' WHERE r.owner_kind='org' AND r.owner_org_id=$1 AND r.owner_user_id IS NULL AND (c.status IN ('queued','running') OR c.completed_at > NOW() - INTERVAL '1 hour') AND ({access}) < CASE WHEN c.pipeline IN ('cd','full') OR c.environment IS NOT NULL THEN 5 ELSE 3 END ORDER BY c.id"))).bind(org).fetch_all(&mut *tx).await?;
         codeyard_database::queries::postgres::ci::stop_ci_runs(&mut tx, &runs).await?;
     }
     tx.commit().await?;

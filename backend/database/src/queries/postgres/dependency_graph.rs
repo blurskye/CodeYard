@@ -4,10 +4,10 @@ pub async fn enabled_in(
     connection: &mut sqlx::PgConnection,
     repo: i64,
 ) -> Result<bool, sqlx::Error> {
-    sqlx::query_scalar(&format!(
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT {}",
         crate::queries::dependency_graph::enabled_sql(true, "$1")
-    ))
+    )))
     .bind(repo)
     .fetch_one(connection)
     .await
@@ -20,17 +20,18 @@ pub async fn bounded_snapshot_ids(
     reference: Option<&str>,
     sha: Option<&str>,
 ) -> Result<Vec<i64>, GraphError> {
-    let rows: Vec<(i64, i64)> =
-        sqlx::query_as(&crate::queries::dependency_graph::snapshot_candidates_sql(
+    let rows: Vec<(i64, i64)> = sqlx::query_as(sqlx::AssertSqlSafe(
+        crate::queries::dependency_graph::snapshot_candidates_sql(
             true,
             reference.is_some(),
             sha.is_some(),
-        ))
-        .bind(repo)
-        .bind(reference)
-        .bind(sha)
-        .fetch_all(connection)
-        .await?;
+        ),
+    ))
+    .bind(repo)
+    .bind(reference)
+    .bind(sha)
+    .fetch_all(connection)
+    .await?;
     crate::queries::dependency_graph::snapshot_ids(rows)
 }
 

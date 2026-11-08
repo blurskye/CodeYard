@@ -1169,12 +1169,12 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
     drain(&one.pool).await;
     drain(&zero.pool).await;
     let pending = "SELECT topic||' '||root_id FROM cell_outbox WHERE delivered_at IS NULL AND topic IN ('repository.push','pull.refresh')";
-    let mut left: Vec<String> = sqlx::query_scalar(pending)
+    let mut left: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(pending))
         .fetch_all(&one.raw)
         .await
         .unwrap();
     left.extend(
-        sqlx::query_scalar::<_, String>(pending)
+        sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(pending))
             .fetch_all(&zero.raw)
             .await
             .unwrap(),

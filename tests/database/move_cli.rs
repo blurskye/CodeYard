@@ -711,10 +711,11 @@ async fn cli_move_rolls_back_a_failed_load_then_preserves_git_and_resource_ids()
         "package_version_blobs",
         "package_tags",
     ] {
-        let remaining: i64 = sqlx::query_scalar(&format!("SELECT count(*) FROM {table}"))
-            .fetch_one(&source.raw)
-            .await
-            .unwrap();
+        let remaining: i64 =
+            sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT count(*) FROM {table}")))
+                .fetch_one(&source.raw)
+                .await
+                .unwrap();
         assert_eq!(remaining, 0, "{table} was not released from the source");
     }
     listener.stop().await;

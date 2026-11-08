@@ -177,11 +177,13 @@ pub async fn claim_due_email(
 }
 
 pub async fn delivery_allowed(pool: &SqlitePool, id: i64, attempt: i32) -> Result<bool> {
-    Ok(sqlx::query_scalar(&delivery_allowed_sql(false))
-        .bind(id)
-        .bind(attempt)
-        .fetch_one(pool)
-        .await?)
+    Ok(
+        sqlx::query_scalar(sqlx::AssertSqlSafe(delivery_allowed_sql(false)))
+            .bind(id)
+            .bind(attempt)
+            .fetch_one(pool)
+            .await?,
+    )
 }
 
 pub async fn mark_email_sent(pool: &SqlitePool, id: i64, attempt: i32) -> Result<()> {
@@ -348,10 +350,10 @@ pub async fn email_token_is_valid(
     purpose: &str,
     token_hash: &str,
 ) -> Result<bool> {
-    Ok(sqlx::query_scalar(&format!(
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT EXISTS(SELECT 1 FROM email_tokens t JOIN users u ON u.id=t.user_id WHERE t.purpose=?1 AND t.token_hash=?2 AND {})",
         primary_link_condition(false),
-    ))
+    )))
     .bind(purpose)
     .bind(token_hash)
     .fetch_one(pool)

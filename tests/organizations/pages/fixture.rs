@@ -28,12 +28,12 @@ pub const INDEX: &str = "/settings/organizations";
 impl Database {
     pub async fn count_rows(&self, sql: &str, id: i64) -> i64 {
         match self {
-            Self::Sqlite(db) => sqlx::query_scalar(sql)
+            Self::Sqlite(db) => sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
                 .bind(id)
                 .fetch_one(&db.raw)
                 .await
                 .unwrap(),
-            Self::Postgres(db) => sqlx::query_scalar(sql)
+            Self::Postgres(db) => sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
                 .bind(id)
                 .fetch_one(&db.raw)
                 .await
@@ -43,12 +43,12 @@ impl Database {
     pub async fn audit_metadata(&self, org: i64) -> serde_json::Value {
         let sql = "SELECT CAST(metadata AS TEXT) FROM audit_log WHERE org_id=$1 AND action='org.governance.recover_owner'";
         let value: String = match self {
-            Self::Sqlite(db) => sqlx::query_scalar(sql)
+            Self::Sqlite(db) => sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
                 .bind(org)
                 .fetch_one(&db.raw)
                 .await
                 .unwrap(),
-            Self::Postgres(db) => sqlx::query_scalar(sql)
+            Self::Postgres(db) => sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
                 .bind(org)
                 .fetch_one(&db.raw)
                 .await
@@ -66,7 +66,7 @@ impl Database {
         let path = root.join(format!("{}.git", uuid::Uuid::new_v4()));
         let sql = "INSERT INTO repositories(owner_kind,owner_org_id,name,is_private,disk_path) VALUES('org',$1,$2,$3,$4) RETURNING id";
         match self {
-            Self::Sqlite(db) => sqlx::query_scalar(sql)
+            Self::Sqlite(db) => sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
                 .bind(org)
                 .bind(name)
                 .bind(private)
@@ -74,7 +74,7 @@ impl Database {
                 .fetch_one(&db.raw)
                 .await
                 .unwrap(),
-            Self::Postgres(db) => sqlx::query_scalar(sql)
+            Self::Postgres(db) => sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
                 .bind(org)
                 .bind(name)
                 .bind(private)

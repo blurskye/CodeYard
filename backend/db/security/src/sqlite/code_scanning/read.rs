@@ -10,9 +10,9 @@ use codeyard_database::queries::sqlite::repositories::access::USER_REPO_ACCESS_S
 use sqlx::SqliteConnection;
 
 async fn allowed(c: &mut SqliteConnection, actor: i64, session: &str, repo: i64) -> Result<bool> {
-    let authority: Option<(Option<i64>, bool)> = sqlx::query_as(&format!(
+    let authority: Option<(Option<i64>, bool)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT r.owner_org_id,COALESCE((r.owner_kind='user' AND u.is_admin) OR ({USER_REPO_ACCESS_SQL})>=3,0) FROM repositories r JOIN users u ON u.id=$1 AND NOT u.is_banned AND NOT u.must_change_password WHERE r.id=$2 AND NOT r.is_gist AND EXISTS(SELECT 1 FROM sessions s WHERE s.id=$3 AND s.user_id=u.id AND s.expires_at>$4)"
-    )).bind(actor).bind(repo).bind(session).bind(chrono::Utc::now()).fetch_optional(&mut *c).await?;
+    ))).bind(actor).bind(repo).bind(session).bind(chrono::Utc::now()).fetch_optional(&mut *c).await?;
     match authority {
         Some((_, true)) => Ok(true),
         Some((Some(org), false)) => {
@@ -140,7 +140,7 @@ pub async fn pull_snapshot(
         return Ok(PullSnapshot::default());
     }
     let merges = serde_json::to_string(selection.merge_commits)?;
-    let analyses: Vec<Analysis> = sqlx::query_as(&format!("SELECT * FROM (SELECT {ANALYSIS_COLUMNS},ROW_NUMBER() OVER(PARTITION BY tool_key,category ORDER BY upload_sequence DESC,id DESC) AS newest FROM code_scanning_analyses a WHERE repo_id=$1 AND ((commit_sha=$2 AND (ref_name='refs/pull/' || CAST($3 AS TEXT) || '/head' OR ref_name=$4)) OR (ref_name='refs/pull/' || CAST($3 AS TEXT) || '/merge' AND commit_sha IN (SELECT value FROM json_each($5))))) revisions WHERE newest=1 ORDER BY id DESC LIMIT 101"))
+    let analyses: Vec<Analysis> = sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT * FROM (SELECT {ANALYSIS_COLUMNS},ROW_NUMBER() OVER(PARTITION BY tool_key,category ORDER BY upload_sequence DESC,id DESC) AS newest FROM code_scanning_analyses a WHERE repo_id=$1 AND ((commit_sha=$2 AND (ref_name='refs/pull/' || CAST($3 AS TEXT) || '/head' OR ref_name=$4)) OR (ref_name='refs/pull/' || CAST($3 AS TEXT) || '/merge' AND commit_sha IN (SELECT value FROM json_each($5))))) revisions WHERE newest=1 ORDER BY id DESC LIMIT 101")))
         .bind(selection.repo).bind(selection.head).bind(selection.number).bind(selection.branch).bind(&merges).fetch_all(&mut *tx).await?;
     let mut snapshot = PullSnapshot {
         more: analyses.len() > 100,
@@ -168,15 +168,16 @@ pub async fn pull_snapshot(
         }
         let baseline = baseline.map(|(id, _)| id);
         let predicate = "FROM code_scanning_analysis_findings f JOIN code_scanning_alerts a ON a.id=f.alert_id WHERE f.analysis_id=$1 AND a.state<>'dismissed' AND (CAST($2 AS BIGINT) IS NULL OR NOT EXISTS(SELECT 1 FROM code_scanning_analysis_findings b WHERE b.analysis_id=$2 AND b.alert_id=f.alert_id))";
-        let total: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) {predicate}"))
-            .bind(analysis.id)
-            .bind(baseline)
-            .fetch_one(&mut *tx)
-            .await?;
+        let total: i64 =
+            sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) {predicate}")))
+                .bind(analysis.id)
+                .bind(baseline)
+                .fetch_one(&mut *tx)
+                .await?;
         let findings: Vec<NewFinding> = if remaining == 0 {
             Vec::new()
         } else {
-            sqlx::query_as(&format!("SELECT a.number,json_object('id',substr(json_extract(f.rule,'$.id'),1,256)) AS rule,substr(f.message,1,1024) AS message,json_object('path',substr(json_extract(f.location,'$.path'),1,4097),'start_line',json_extract(f.location,'$.start_line')) AS location,COUNT(*) OVER() AS total_count {predicate} ORDER BY a.number LIMIT $3"))
+            sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT a.number,json_object('id',substr(json_extract(f.rule,'$.id'),1,256)) AS rule,substr(f.message,1,1024) AS message,json_object('path',substr(json_extract(f.location,'$.path'),1,4097),'start_line',json_extract(f.location,'$.start_line')) AS location,COUNT(*) OVER() AS total_count {predicate} ORDER BY a.number LIMIT $3")))
                 .bind(analysis.id).bind(baseline).bind(remaining).fetch_all(&mut *tx).await?
         };
         remaining -= findings.len() as i64;

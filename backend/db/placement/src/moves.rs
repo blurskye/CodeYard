@@ -126,10 +126,10 @@ pub async fn transfer(
         ObjectKind::parse(&kind).ok_or_else(|| anyhow::anyhow!("Invalid owner kind"))?,
         id,
     )?;
-    let taken: bool = sqlx::query_scalar(&format!(
+    let taken: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT EXISTS(SELECT 1 FROM repositories WHERE {} AND lower(name)=lower($2) AND id<>$3)",
         owner.repositories()
-    ))
+    )))
     .bind(owner.id)
     .bind(&name)
     .bind(repository.id)
@@ -139,10 +139,10 @@ pub async fn transfer(
         !taken,
         "The new owner already has a repository named {name}"
     );
-    let owner_row: String = sqlx::query_scalar(&format!(
+    let owner_row: String = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT COALESCE(json_agg(to_jsonb(t)),'[]')::text FROM {} t WHERE id=$1",
         owner.table()
-    ))
+    )))
     .bind(owner.id)
     .fetch_one(target)
     .await?;
@@ -191,10 +191,10 @@ pub async fn cell(pool: &PgPool) -> Result<i32> {
 }
 
 async fn set_lock_timeout(tx: &mut Tx, wait: Duration) -> Result<()> {
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "SET LOCAL lock_timeout = '{}ms'",
         wait.as_millis().max(1)
-    ))
+    )))
     .execute(&mut **tx)
     .await?;
     Ok(())
@@ -227,10 +227,10 @@ pub async fn begin(pool: &PgPool, account: Account, target: i32, wait: Duration)
     } else {
         // A successful move may be repeated after its final reply was lost. A stub
         // pointing at this destination proves completion, not a new move to start.
-        let released: bool = sqlx::query_scalar(&format!(
+        let released: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT EXISTS(SELECT 1 FROM {} WHERE id=$1 AND is_stub AND home_cell=$2)",
             account.table()
-        ))
+        )))
         .bind(account.id)
         .bind(target)
         .fetch_one(&mut *tx)
@@ -239,10 +239,10 @@ pub async fn begin(pool: &PgPool, account: Account, target: i32, wait: Duration)
             tx.commit().await?;
             return Ok(State::Released);
         }
-        let native: bool = sqlx::query_scalar(&format!(
+        let native: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT EXISTS(SELECT 1 FROM {} WHERE id=$1 AND NOT is_stub AND home_cell=$2)",
             account.table()
-        ))
+        )))
         .bind(account.id)
         .bind(cell)
         .fetch_one(&mut *tx)
@@ -254,10 +254,10 @@ pub async fn begin(pool: &PgPool, account: Account, target: i32, wait: Duration)
             .bind(target)
             .execute(&mut *tx)
             .await?;
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "UPDATE ci_runs SET cancel_requested=TRUE WHERE status IN ('queued','running') AND repo_id IN (SELECT id FROM repositories WHERE NOT is_stub AND {})",
             account.repositories()
-        ))
+        )))
         .bind(account.id)
         .execute(&mut *tx)
         .await?;
@@ -306,7 +306,7 @@ pub async fn freeze(pool: &PgPool, account: Account, hold: Duration, wait: Durat
     );
     let running = running.as_str();
     wait_until(wait, "CI runs are still draining", move || async move {
-        let count: i64 = sqlx::query_scalar(running)
+        let count: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(running))
             .bind(account.id)
             .fetch_one(pool)
             .await?;
@@ -330,7 +330,7 @@ pub async fn freeze(pool: &PgPool, account: Account, hold: Duration, wait: Durat
             // The exclusive move-row lock has now drained every writer admitted since
             // begin. A CI claim racing the first check either finished before this check
             // or waits for the freeze and is refused by the same write guard.
-            let count: i64 = sqlx::query_scalar(running)
+            let count: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(running))
                 .bind(account.id)
                 .fetch_one(&mut *tx)
                 .await?;
@@ -356,7 +356,7 @@ pub async fn freeze(pool: &PgPool, account: Account, hold: Duration, wait: Durat
         wait,
         "Cross-cell notices of the account are still waiting",
         move || async move {
-            let count: i64 = sqlx::query_scalar(undelivered)
+            let count: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(undelivered))
                 .bind(account.kind.as_str())
                 .bind(account.id)
                 .fetch_one(pool)
@@ -388,11 +388,11 @@ pub async fn repositories(pool: &PgPool, account: Account) -> Result<Vec<Reposit
     if let Some(paths) = released {
         return Ok(serde_json::from_str(&paths)?);
     }
-    let rows: Vec<(i64, String, Option<i64>)> = sqlx::query_as(&format!(
+    let rows: Vec<(i64, String, Option<i64>)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT id,disk_path,storage_node_id FROM repositories WHERE NOT is_stub AND {} ORDER BY id LIMIT {}",
         account.repositories(),
         MAX_REPOSITORIES + 1
-    ))
+    )))
     .bind(account.id)
     .fetch_all(pool)
     .await?;
@@ -516,7 +516,7 @@ async fn missing(
         quote(table),
         parts.join(" AND ")
     );
-    Ok(sqlx::query_scalar(&sql)
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(keys)
         .fetch_all(&mut **tx)
         .await?)
@@ -531,7 +531,7 @@ async fn copy_rows(
     bind: Binding<'_>,
     insert: &str,
 ) -> Result<(u64, u64)> {
-    let query = sqlx::query_scalar::<_, String>(read);
+    let query = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(read));
     let query = match bind {
         Binding::Id(id) => query.bind(id),
         Binding::Keys(keys) => query.bind(keys),
@@ -548,7 +548,7 @@ async fn copy_rows(
         }
         if !chunk.is_empty() && (row.is_none() || chunk.len() >= CHUNK_BYTES) {
             chunk.push(']');
-            written += sqlx::query(insert)
+            written += sqlx::query(sqlx::AssertSqlSafe(insert))
                 .bind(&chunk)
                 .execute(&mut **to)
                 .await?
@@ -617,21 +617,21 @@ async fn place(
     } else if key.on_delete == "n" && key.columns.len() == 1 && owned.is_some() {
         let ty = column_type(tables, &key.child, &key.columns[0])?;
         let column = quote(&key.columns[0]);
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "UPDATE {} t0 SET {column}=NULL WHERE ({}) AND t0.{column}=ANY(CAST($2::text[] AS {ty}[]))",
             quote(&key.child),
             owned.unwrap_or("FALSE")
-        ))
+        )))
         .bind(account.id)
         .bind(&absent)
         .execute(&mut **to)
         .await?;
     } else if let (ObjectKind::Repository, Some(owned)) = (account.kind, owned) {
-        needed.dropped += sqlx::query(&format!(
+        needed.dropped += sqlx::query(sqlx::AssertSqlSafe(format!(
             "DELETE FROM {} t0 WHERE ({owned}) AND {}=ANY($2::text[])",
             quote(&key.child),
             key_text("t0", &key.columns)
-        ))
+        )))
         .bind(account.id)
         .bind(&absent)
         .execute(&mut **to)
@@ -676,9 +676,9 @@ async fn add_stubs(from: &mut Tx, to: &mut Tx, target: i32, needed: &mut Needed)
             .collect();
         for ids in ids.chunks(1000) {
             // Owners added for repository stubs may already be in the target.
-            let ids: Vec<i64> = sqlx::query_scalar(&format!(
+            let ids: Vec<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
                 "SELECT x FROM unnest($1::bigint[]) x WHERE NOT EXISTS(SELECT 1 FROM {table} t WHERE t.id=x)"
-            ))
+            )))
             .bind(ids)
             .fetch_all(&mut **to)
             .await?;
@@ -686,9 +686,9 @@ async fn add_stubs(from: &mut Tx, to: &mut Tx, target: i32, needed: &mut Needed)
                 continue;
             }
             let ids = ids.as_slice();
-            let local: i64 = sqlx::query_scalar(&format!(
+            let local: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
                 "SELECT count(*) FROM {table} WHERE id=ANY($1) AND home_cell=$2"
-            ))
+            )))
             .bind(ids)
             .bind(target)
             .fetch_one(&mut **from)
@@ -697,13 +697,13 @@ async fn add_stubs(from: &mut Tx, to: &mut Tx, target: i32, needed: &mut Needed)
                 local == 0,
                 "Rows reference {table} of the target cell that the target does not have"
             );
-            let rows: String = sqlx::query_scalar(&format!(
+            let rows: String = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
                 "SELECT COALESCE(json_agg(to_jsonb(t)),'[]')::text FROM {table} t WHERE id=ANY($1)"
-            ))
+            )))
             .bind(ids)
             .fetch_one(&mut **from)
             .await?;
-            added += sqlx::query(stub_insert(table))
+            added += sqlx::query(sqlx::AssertSqlSafe(stub_insert(table)))
                 .bind(&rows)
                 .execute(&mut **to)
                 .await?
@@ -737,12 +737,12 @@ async fn add_stubs(from: &mut Tx, to: &mut Tx, target: i32, needed: &mut Needed)
 /// holds the destination cell's move lease until it finishes; `copy` repeats this check
 /// under row locks before loading data.
 pub async fn check_target(target: &PgPool, account: Account, source_cell: i32) -> Result<()> {
-    let allowed: bool = sqlx::query_scalar(&format!(
+    let allowed: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT NOT EXISTS(SELECT 1 FROM {table} WHERE id=$2 AND NOT is_stub) \
          AND NOT EXISTS(SELECT 1 FROM account_moves WHERE account_kind=$1 AND account_id=$2) \
          OR EXISTS(SELECT 1 FROM account_moves WHERE account_kind=$1 AND account_id=$2 AND state='receiving' AND target_cell=$3)",
         table = account.table()
-    ))
+    )))
     .bind(account.kind.as_str())
     .bind(account.id)
     .bind(source_cell)
@@ -789,10 +789,10 @@ pub async fn place_repositories(
         receiving == Some(source_cell),
         "The target cell is not receiving the account"
     );
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "UPDATE repositories SET storage_node_id=$2,write_version=0 WHERE NOT is_stub AND storage_node_id IS DISTINCT FROM $2 AND {}",
         account.repositories()
-    ))
+    )))
     .bind(account.id)
     .bind(node)
     .execute(&mut *tx)
@@ -871,7 +871,9 @@ pub async fn copy(
         "SET LOCAL codeyard.move = 'load'",
         "SET LOCAL lock_timeout = '15s'",
     ] {
-        sqlx::query(statement).execute(&mut *to).await?;
+        sqlx::query(sqlx::AssertSqlSafe(statement))
+            .execute(&mut *to)
+            .await?;
     }
     ensure!(
         cell_id(&mut to).await? == target_cell,
@@ -887,10 +889,10 @@ pub async fn copy(
         "The two cells run different schema versions"
     );
     let tables = &target_catalog.tables;
-    let earlier: bool = sqlx::query_scalar(&format!(
+    let earlier: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT EXISTS(SELECT 1 FROM {} WHERE id=$1 AND NOT is_stub)",
         account.table()
-    ))
+    )))
     .bind(account.id)
     .fetch_one(&mut *to)
     .await?;
@@ -980,10 +982,10 @@ pub async fn copy(
         );
         copied.rows += written;
     }
-    let repositories: Vec<i64> = sqlx::query_scalar(&format!(
+    let repositories: Vec<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT id FROM repositories WHERE NOT is_stub AND {} ORDER BY id",
         account.repositories()
-    ))
+    )))
     .bind(account.id)
     .fetch_all(&mut *to)
     .await?;
@@ -1025,12 +1027,12 @@ pub async fn copy(
             ),
             None => String::new(),
         };
-        let found: Vec<String> = sqlx::query_scalar(&format!(
+        let found: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT DISTINCT {} FROM {} t0 WHERE ({owned}) AND {present}{outside} LIMIT {}",
             key_text("t0", &key.columns),
             quote(&key.child),
             MAX_REFERENCED + 1
-        ))
+        )))
         .bind(account.id)
         .fetch_all(&mut *from)
         .await?;
@@ -1074,12 +1076,12 @@ pub async fn copy(
                     .map(|column| format!("t0.{} IS NOT NULL", quote(column)))
                     .collect::<Vec<_>>()
                     .join(" AND ");
-                let found: Vec<String> = sqlx::query_scalar(&format!(
+                let found: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
                     "SELECT DISTINCT {} FROM {} t0 WHERE {selection} AND {present} LIMIT {}",
                     key_text("t0", &key.columns),
                     quote(&table),
                     MAX_REFERENCED + 1
-                ))
+                )))
                 .bind(&values)
                 .fetch_all(&mut *from)
                 .await?;
@@ -1127,9 +1129,9 @@ pub async fn copy(
             "SELECT count(*) FROM watches w WHERE w.repo_id=r.id AND w.level IN ('watching','custom')",
         ),
     ] {
-        copied.counters_fixed += sqlx::query(&format!(
+        copied.counters_fixed += sqlx::query(sqlx::AssertSqlSafe(format!(
             "UPDATE repositories r SET {counter}=({rows}) WHERE r.id=ANY($1) AND r.{counter}<>({rows})"
-        ))
+        )))
         .bind(&repositories)
         .execute(&mut *to)
         .await?
@@ -1141,7 +1143,7 @@ pub async fn copy(
         .execute(&mut *to)
         .await?;
     for (table, item) in [("issues", "issue"), ("pull_requests", "pull")] {
-        sqlx::query(&format!("SELECT queue_search(i.repo_id,'{item}',i.id) FROM {table} i WHERE i.repo_id=ANY($1) AND COALESCE((SELECT search_index FROM node_configuration WHERE id=1),FALSE)"))
+        sqlx::query(sqlx::AssertSqlSafe(format!("SELECT queue_search(i.repo_id,'{item}',i.id) FROM {table} i WHERE i.repo_id=ANY($1) AND COALESCE((SELECT search_index FROM node_configuration WHERE id=1),FALSE)")))
             .bind(&repositories)
             .execute(&mut *to)
             .await?;
@@ -1196,10 +1198,10 @@ pub async fn activate(source: &PgPool, target: &PgPool, account: Account) -> Res
             .is_none_or(|(state, cell)| state == "receiving" && *cell == source_cell),
         "Another move owns the target account"
     );
-    let native: bool = sqlx::query_scalar(&format!(
+    let native: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT EXISTS(SELECT 1 FROM {} WHERE id=$1 AND NOT is_stub AND home_cell=$2)",
         account.table()
-    ))
+    )))
     .bind(account.id)
     .bind(target_cell)
     .fetch_one(&mut *to)
@@ -1260,12 +1262,14 @@ pub async fn discard(
         "SET LOCAL codeyard.move = 'release'",
         "SET LOCAL lock_timeout = '15s'",
     ] {
-        sqlx::query(statement).execute(&mut *tx).await?;
+        sqlx::query(sqlx::AssertSqlSafe(statement))
+            .execute(&mut *tx)
+            .await?;
     }
-    let copied: bool = sqlx::query_scalar(&format!(
+    let copied: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT EXISTS(SELECT 1 FROM {} WHERE id=$1 AND NOT is_stub)",
         account.table()
-    ))
+    )))
     .bind(account.id)
     .fetch_one(&mut *tx)
     .await?;
@@ -1313,7 +1317,9 @@ pub async fn release(pool: &PgPool, account: Account, transfer: Option<&Transfer
         "SET LOCAL codeyard.move = 'release'",
         "SET LOCAL lock_timeout = '15s'",
     ] {
-        sqlx::query(statement).execute(&mut *tx).await?;
+        sqlx::query(sqlx::AssertSqlSafe(statement))
+            .execute(&mut *tx)
+            .await?;
     }
     let current: Option<(String, i32)> = sqlx::query_as(
         "SELECT state,target_cell FROM account_moves WHERE account_kind=$1 AND account_id=$2 FOR UPDATE",
@@ -1323,10 +1329,10 @@ pub async fn release(pool: &PgPool, account: Account, transfer: Option<&Transfer
     .fetch_optional(&mut *tx)
     .await?;
     let Some((value, target)) = current else {
-        let released: bool = sqlx::query_scalar(&format!(
+        let released: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT EXISTS(SELECT 1 FROM {} WHERE id=$1 AND is_stub)",
             account.table()
-        ))
+        )))
         .bind(account.id)
         .fetch_one(&mut *tx)
         .await?;
@@ -1361,13 +1367,13 @@ pub async fn release(pool: &PgPool, account: Account, transfer: Option<&Transfer
         };
         let child =
             ownership::owned_rows(&key.child, account.kind).unwrap_or_else(|| "FALSE".to_owned());
-        let outside: bool = sqlx::query_scalar(&format!(
+        let outside: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT EXISTS(SELECT 1 FROM {} t0 WHERE ({}) IN (SELECT {} FROM {} t0 WHERE {parent}) AND NOT ({child}))",
             quote(&key.child),
             column_list("t0", &key.columns),
             column_list("t0", &key.parent_columns),
             quote(&key.parent)
-        ))
+        )))
         .bind(account.id)
         .fetch_one(&mut *tx)
         .await?;
@@ -1380,11 +1386,11 @@ pub async fn release(pool: &PgPool, account: Account, transfer: Option<&Transfer
     }
     // Keep source paths in the same transaction that clears the rows. The CLI can
     // then resume filesystem cleanup after release, even though the stubs have no path.
-    let paths: Vec<(i64, String, Option<i64>)> = sqlx::query_as(&format!(
+    let paths: Vec<(i64, String, Option<i64>)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT id,disk_path,storage_node_id FROM repositories WHERE NOT is_stub AND {} ORDER BY id LIMIT {}",
         account.repositories(),
         MAX_REPOSITORIES + 1
-    ))
+    )))
     .bind(account.id)
     .fetch_all(&mut *tx)
     .await?;
@@ -1407,7 +1413,7 @@ pub async fn release(pool: &PgPool, account: Account, transfer: Option<&Transfer
         .execute(&mut *tx)
         .await?;
     if let Some(transfer) = transfer {
-        sqlx::query(stub_insert(transfer.owner.table()))
+        sqlx::query(sqlx::AssertSqlSafe(stub_insert(transfer.owner.table())))
             .bind(&transfer.owner_row)
             .execute(&mut *tx)
             .await?;
@@ -1417,10 +1423,10 @@ pub async fn release(pool: &PgPool, account: Account, transfer: Option<&Transfer
             .execute(&mut *tx)
             .await?;
         let [kind, ..] = transfer.former.owner_values();
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "INSERT INTO repository_redirects(owner_kind,owner_id,name_key,repo_id) VALUES({kind},$1,lower($2),$3) \
              ON CONFLICT(owner_kind,owner_id,name_key) DO UPDATE SET repo_id=EXCLUDED.repo_id"
-        ))
+        )))
         .bind(transfer.former.id)
         .bind(&transfer.name)
         .bind(account.id)
@@ -1534,10 +1540,10 @@ pub async fn objects(
     after: &str,
     limit: i64,
 ) -> Result<Vec<StoredObject>> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT object_key,bytes,sha256,content_type FROM ({}) o WHERE object_key>$2 ORDER BY object_key LIMIT $3",
         stored_objects(account.kind, false)
-    ))
+    )))
     .bind(account.id)
     .bind(after)
     .bind(limit)
@@ -1562,11 +1568,11 @@ pub async fn retire_objects(pool: &PgPool, account: Account) -> Result<u64> {
         current.as_deref() == Some("switched"),
         "Stored objects are retired only between the switch and the release"
     );
-    let queued = sqlx::query(&format!(
+    let queued = sqlx::query(sqlx::AssertSqlSafe(format!(
         "INSERT INTO pending_object_deletions(object_key,delete_after) \
          SELECT object_key,clock_timestamp()+make_interval(secs=>$2) FROM ({}) o ON CONFLICT(object_key) DO NOTHING",
         stored_objects(account.kind, true)
-    ))
+    )))
     .bind(account.id)
     .bind(codeyard_database::queries::files::RESTORE_WINDOW_SECONDS as f64)
     .execute(&mut *tx)
@@ -1624,10 +1630,10 @@ async fn clear(
         .collect();
     owned.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(b.1)));
     for (_, table, condition) in owned {
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "DELETE FROM {} t0 WHERE {condition}",
             quote(table)
-        ))
+        )))
         .bind(account.id)
         .execute(&mut **tx)
         .await?;
@@ -1643,10 +1649,10 @@ async fn clear(
         "repository_moves",
         "node_drain_repositories",
     ] {
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "DELETE FROM {table} WHERE repository_id IN (SELECT id FROM repositories WHERE NOT is_stub AND {})",
             account.repositories()
-        ))
+        )))
         .bind(account.id)
         .execute(&mut **tx)
         .await?;
@@ -1657,10 +1663,10 @@ async fn clear(
             format!(",owner_kind={kind},owner_user_id={user},owner_org_id={organization}")
         })
         .unwrap_or_default();
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "UPDATE repositories SET is_stub=TRUE,home_cell=$2,disk_path='',storage_node_id=NULL,size_bytes=0{owner} WHERE NOT is_stub AND {}",
         account.repositories()
-    ))
+    )))
     .bind(account.id)
     .bind(home)
     .execute(&mut **tx)
@@ -1670,7 +1676,7 @@ async fn clear(
         ObjectKind::Repository => return Ok(()),
         ObjectKind::User => "UPDATE users SET is_stub=TRUE,home_cell=$2,password_hash=NULL,email=NULL,avatar_file_id=NULL,is_admin=FALSE,email_verified=FALSE WHERE id=$1",
     };
-    sqlx::query(root)
+    sqlx::query(sqlx::AssertSqlSafe(root))
         .bind(account.id)
         .bind(home)
         .execute(&mut **tx)

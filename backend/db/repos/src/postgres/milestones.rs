@@ -177,7 +177,7 @@ async fn save_milestone_in(
     );
     let mut tx = begin_write(pool, credential, repo_id).await?;
     let existing = match number {
-        Some(number) => Some(sqlx::query_as::<_, Milestone>(&format!("SELECT {MILESTONE_COLUMNS} FROM milestones WHERE repo_id=$1 AND number=$2 FOR UPDATE"))
+        Some(number) => Some(sqlx::query_as::<_, Milestone>(sqlx::AssertSqlSafe(format!("SELECT {MILESTONE_COLUMNS} FROM milestones WHERE repo_id=$1 AND number=$2 FOR UPDATE")))
             .bind(repo_id).bind(number).fetch_optional(&mut *tx).await?.ok_or(MilestoneWriteRefusal::NotFound)?),
         None => None,
     };
@@ -225,7 +225,7 @@ async fn save_milestone_in(
     } else {
         format!("UPDATE milestones SET title=$3,description=$4,due_date=$5,due_on=$6,state=COALESCE($7::TEXT,state),updated_at=NOW(),closed_at=CASE WHEN $7::TEXT='closed' THEN COALESCE(closed_at,NOW()) WHEN $7::TEXT='open' THEN NULL ELSE closed_at END WHERE repo_id=$1 AND number=$2 RETURNING {MILESTONE_COLUMNS}")
     };
-    let mut query = sqlx::query_as(&sql)
+    let mut query = sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(repo_id)
         .bind(number)
         .bind(title)
@@ -256,11 +256,11 @@ pub async fn set_milestone_state(
         "Milestone state must be open or closed"
     );
     let mut tx = begin_write(pool, actor, repo_id).await?;
-    let milestone = sqlx::query_as::<_, Milestone>(&format!(
+    let milestone = sqlx::query_as::<_, Milestone>(sqlx::AssertSqlSafe(format!(
         r#"UPDATE milestones SET state = $3::TEXT, updated_at = NOW(),
             closed_at = CASE WHEN $3::TEXT = 'closed' THEN COALESCE(closed_at, NOW()) END
         WHERE repo_id = $1 AND number = $2 RETURNING {MILESTONE_COLUMNS}"#
-    ))
+    )))
     .bind(repo_id)
     .bind(number)
     .bind(state)
@@ -320,7 +320,7 @@ pub async fn read_milestones(
 ) -> Result<Vec<MilestoneSummary>> {
     let order = crate::milestones::milestone_order(sort);
     let readable = codeyard_database::queries::postgres::repositories::access::readable_condition();
-    Ok(sqlx::query_as(&format!("SELECT * FROM ({SUMMARY_SELECT} WHERE m.repo_id=$1 AND ($3::INTEGER IS NULL OR m.number=$3) AND ($4::TEXT IS NULL OR m.state=$4) AND EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=$2 WHERE r.id=m.repo_id AND {readable})) summaries ORDER BY {order} LIMIT $5 OFFSET $6"))
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT * FROM ({SUMMARY_SELECT} WHERE m.repo_id=$1 AND ($3::INTEGER IS NULL OR m.number=$3) AND ($4::TEXT IS NULL OR m.state=$4) AND EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=$2 WHERE r.id=m.repo_id AND {readable})) summaries ORDER BY {order} LIMIT $5 OFFSET $6")))
         .bind(repo).bind(viewer).bind(number).bind(state).bind(limit).bind(offset).fetch_all(pool).await?)
 }
 
@@ -329,13 +329,15 @@ pub async fn get_milestone(
     repo_id: i64,
     number: i32,
 ) -> Result<Option<MilestoneSummary>> {
-    Ok(sqlx::query_as::<_, MilestoneSummary>(&format!(
-        "{SUMMARY_SELECT} WHERE m.repo_id = $1 AND m.number = $2"
-    ))
-    .bind(repo_id)
-    .bind(number)
-    .fetch_optional(pool)
-    .await?)
+    Ok(
+        sqlx::query_as::<_, MilestoneSummary>(sqlx::AssertSqlSafe(format!(
+            "{SUMMARY_SELECT} WHERE m.repo_id = $1 AND m.number = $2"
+        )))
+        .bind(repo_id)
+        .bind(number)
+        .fetch_optional(pool)
+        .await?,
+    )
 }
 
 pub async fn get_milestone_by_id(
@@ -343,13 +345,15 @@ pub async fn get_milestone_by_id(
     repo_id: i64,
     id: i64,
 ) -> Result<Option<MilestoneSummary>> {
-    Ok(sqlx::query_as::<_, MilestoneSummary>(&format!(
-        "{SUMMARY_SELECT} WHERE m.repo_id = $1 AND m.id = $2"
-    ))
-    .bind(repo_id)
-    .bind(id)
-    .fetch_optional(pool)
-    .await?)
+    Ok(
+        sqlx::query_as::<_, MilestoneSummary>(sqlx::AssertSqlSafe(format!(
+            "{SUMMARY_SELECT} WHERE m.repo_id = $1 AND m.id = $2"
+        )))
+        .bind(repo_id)
+        .bind(id)
+        .fetch_optional(pool)
+        .await?,
+    )
 }
 
 pub async fn get_milestones_by_ids(
@@ -361,13 +365,15 @@ pub async fn get_milestones_by_ids(
     if ids.is_empty() {
         return Ok(Vec::new());
     }
-    Ok(sqlx::query_as::<_, MilestoneSummary>(&format!(
-        "{SUMMARY_SELECT} WHERE m.repo_id = $1 AND m.id IN (SELECT unnest($2::BIGINT[]))"
-    ))
-    .bind(repo_id)
-    .bind(ids)
-    .fetch_all(pool)
-    .await?)
+    Ok(
+        sqlx::query_as::<_, MilestoneSummary>(sqlx::AssertSqlSafe(format!(
+            "{SUMMARY_SELECT} WHERE m.repo_id = $1 AND m.id IN (SELECT unnest($2::BIGINT[]))"
+        )))
+        .bind(repo_id)
+        .bind(ids)
+        .fetch_all(pool)
+        .await?,
+    )
 }
 
 pub async fn list_repo_milestones(
@@ -375,9 +381,9 @@ pub async fn list_repo_milestones(
     repo_id: i64,
     state: Option<&str>,
 ) -> Result<Vec<MilestoneSummary>> {
-    Ok(sqlx::query_as::<_, MilestoneSummary>(&format!(
+    Ok(sqlx::query_as::<_, MilestoneSummary>(sqlx::AssertSqlSafe(format!(
         "{SUMMARY_SELECT} WHERE m.repo_id = $1 AND ($2::TEXT IS NULL OR m.state = $2) ORDER BY m.due_date IS NULL, m.due_date, m.number"
-    ))
+    )))
     .bind(repo_id)
     .bind(state)
     .fetch_all(pool)
@@ -406,7 +412,7 @@ pub async fn search_milestones_page(
 ) -> Result<Vec<MilestoneSummary>> {
     let filter = crate::milestones::milestone_search_where(true);
     let order = crate::milestones::milestone_order(sort);
-    Ok(sqlx::query_as(&format!("SELECT * FROM ({SUMMARY_SELECT} WHERE {filter}) summaries ORDER BY {order} LIMIT $4 OFFSET $5")).bind(repo_id).bind(state).bind(query).bind(limit).bind(offset).fetch_all(pool).await?)
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT * FROM ({SUMMARY_SELECT} WHERE {filter}) summaries ORDER BY {order} LIMIT $4 OFFSET $5"))).bind(repo_id).bind(state).bind(query).bind(limit).bind(offset).fetch_all(pool).await?)
 }
 pub async fn count_matching_milestones(
     pool: &PgPool,
@@ -415,14 +421,14 @@ pub async fn count_matching_milestones(
     query: &str,
 ) -> Result<i64> {
     let filter = crate::milestones::milestone_search_where(true);
-    Ok(
-        sqlx::query_scalar(&format!("SELECT COUNT(*) FROM milestones m WHERE {filter}"))
-            .bind(repo_id)
-            .bind(state)
-            .bind(query)
-            .fetch_one(pool)
-            .await?,
-    )
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT COUNT(*) FROM milestones m WHERE {filter}"
+    )))
+    .bind(repo_id)
+    .bind(state)
+    .bind(query)
+    .fetch_one(pool)
+    .await?)
 }
 pub async fn count_milestones(pool: &PgPool, repo_id: i64) -> Result<(i64, i64)> {
     Ok(sqlx::query_as("SELECT COUNT(*) FILTER (WHERE state='open'), COUNT(*) FILTER (WHERE state='closed') FROM milestones WHERE repo_id=$1").bind(repo_id).fetch_one(pool).await?)
@@ -431,9 +437,9 @@ pub async fn count_milestones(pool: &PgPool, repo_id: i64) -> Result<(i64, i64)>
 /// Issue/PR list filters keep counts and dates, but never load description bodies.
 pub async fn list_milestone_filters(pool: &PgPool, repo_id: i64) -> Result<Vec<MilestoneSummary>> {
     let select = SUMMARY_SELECT.replace("m.description", "NULL::text AS description");
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{select} WHERE m.repo_id=$1 ORDER BY m.due_date IS NULL, m.due_date, m.number LIMIT 1000"
-    ))
+    )))
     .bind(repo_id)
     .fetch_all(pool)
     .await?)
@@ -441,10 +447,10 @@ pub async fn list_milestone_filters(pool: &PgPool, repo_id: i64) -> Result<Vec<M
 
 /// Picker rows need no descriptions or discussion counts.
 pub async fn list_milestone_choices(pool: &PgPool, repo_id: i64) -> Result<Vec<Milestone>> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {} FROM milestones WHERE repo_id=$1 ORDER BY state DESC, due_date IS NULL, due_date, number LIMIT $2",
         MILESTONE_COLUMNS.replace("description", "NULL::TEXT AS description")
-    )).bind(repo_id).bind(crate::milestones::MAX_MILESTONE_CHOICES).fetch_all(pool).await?)
+    ))).bind(repo_id).bind(crate::milestones::MAX_MILESTONE_CHOICES).fetch_all(pool).await?)
 }
 
 pub async fn milestone_choice_by_title(
@@ -452,10 +458,10 @@ pub async fn milestone_choice_by_title(
     repo_id: i64,
     title: &str,
 ) -> Result<Option<Milestone>> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {} FROM milestones WHERE repo_id=$1 AND LOWER(title COLLATE \"C\")=LOWER($2::TEXT COLLATE \"C\") ORDER BY number LIMIT 1",
         MILESTONE_COLUMNS.replace("description", "NULL::TEXT AS description")
-    ))
+    )))
     .bind(repo_id)
     .bind(title)
     .fetch_optional(pool)
@@ -468,10 +474,10 @@ pub async fn milestone_choices_by_ids(
     ids: &[i64],
 ) -> Result<Vec<Milestone>> {
     anyhow::ensure!(ids.len() <= 101, "Milestone page exceeds its limit");
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {} FROM milestones WHERE repo_id=$1 AND id=ANY($2)",
         MILESTONE_COLUMNS.replace("description", "NULL::TEXT AS description")
-    ))
+    )))
     .bind(repo_id)
     .bind(ids)
     .fetch_all(pool)
@@ -535,9 +541,9 @@ pub(crate) async fn set_item_milestone_in_transaction(
     item_id: i64,
     milestone_number: Option<i32>,
 ) -> Result<()> {
-    let item: Option<Option<i64>> = sqlx::query_scalar(&format!(
+    let item: Option<Option<i64>> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT milestone_id FROM {table} WHERE id = $1 AND repo_id = $2 FOR UPDATE"
-    ))
+    )))
     .bind(item_id)
     .bind(repo_id)
     .fetch_optional(&mut **tx)
@@ -579,9 +585,9 @@ pub(crate) async fn set_item_milestone_in_transaction(
             .await?;
         }
     }
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "UPDATE {table} SET milestone_id = $2, updated_at = GREATEST(clock_timestamp(), updated_at + INTERVAL '1 microsecond') WHERE id = $1"
-    ))
+    )))
     .bind(item_id)
     .bind(milestone_id)
     .execute(&mut **tx)

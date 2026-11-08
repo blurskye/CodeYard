@@ -116,9 +116,9 @@ pub async fn repositories(
     readable(&mut tx, actor, org).await?;
     configuration(&mut tx, org, id).await?;
     let direction = if before < i64::MAX { "DESC" } else { "ASC" };
-    let rows = sqlx::query_as(&format!(
+    let rows = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT r.* FROM repositories r JOIN repository_security_settings s ON s.repo_id=r.id WHERE r.owner_org_id=$1 AND s.configuration_id=$2 AND r.id>$3 AND r.id<$4 ORDER BY r.id {direction} LIMIT $5"
-    ))
+    )))
     .bind(org)
     .bind(id)
     .bind(after)

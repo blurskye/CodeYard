@@ -77,10 +77,10 @@ async fn readable_at(
     id: i64,
     include_deleted: bool,
 ) -> Result<()> {
-    let visible: bool = sqlx::query_scalar(&format!(
+    let visible: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT EXISTS(SELECT 1 FROM projects p WHERE p.id=?1 AND (?3 OR p.deleted_at IS NULL) AND {})",
         crate::projects::readable_owner_condition("?2")
-    ))
+    )))
     .bind(id)
     .bind(viewer)
     .bind(include_deleted)
@@ -172,7 +172,8 @@ pub async fn list(
     let statement = filter.statement(false);
     let mut tx = pool.begin().await?;
     let count_sql = format!("SELECT COUNT(*) {}", statement.prefix);
-    let mut count = sqlx::query_scalar::<_, i64>(&count_sql).bind(viewer);
+    let mut count =
+        sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(count_sql.as_str())).bind(viewer);
     for arg in &statement.args {
         count = count.bind(arg);
     }
@@ -185,7 +186,7 @@ pub async fn list(
         statement.placeholder(statement.args.len() + 2),
         statement.placeholder(statement.args.len() + 3)
     );
-    let mut rows = sqlx::query_as(&query).bind(viewer);
+    let mut rows = sqlx::query_as(sqlx::AssertSqlSafe(query.as_str())).bind(viewer);
     for arg in &statement.args {
         rows = rows.bind(arg);
     }
@@ -255,10 +256,12 @@ pub async fn delete(
         "project_repositories",
         "project_teams",
     ] {
-        sqlx::query(&format!("DELETE FROM {table} WHERE project_id=$1"))
-            .bind(project)
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DELETE FROM {table} WHERE project_id=$1"
+        )))
+        .bind(project)
+        .execute(&mut *tx)
+        .await?;
     }
     sqlx::query("UPDATE projects SET title='',description=NULL,readme='',public=FALSE,deleted_at=$2,updated_at=$2 WHERE id=$1")
         .bind(project)

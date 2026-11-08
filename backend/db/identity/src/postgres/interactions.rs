@@ -13,7 +13,7 @@ use sqlx::PgConnection;
 
 const FIELDS: &str = "restriction AS \"limit\",CASE WHEN user_id IS NOT NULL THEN 'user' WHEN org_id IS NOT NULL THEN 'organization' ELSE 'repository' END AS origin,expires_at";
 async fn effective(connection: &mut PgConnection, repo: i64) -> Result<Option<Restriction>> {
-    Ok(sqlx::query_as(&format!("SELECT {FIELDS} FROM interaction_limits l WHERE expires_at>clock_timestamp() AND EXISTS(SELECT 1 FROM repositories r WHERE r.id=$1 AND (l.repo_id=r.id OR (NOT r.is_private AND ((r.owner_kind='user' AND l.user_id=r.owner_user_id) OR (r.owner_kind='org' AND l.org_id=r.owner_org_id))))) ORDER BY (repo_id IS NOT NULL) LIMIT 1")).bind(repo).fetch_optional(connection).await?)
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT {FIELDS} FROM interaction_limits l WHERE expires_at>clock_timestamp() AND EXISTS(SELECT 1 FROM repositories r WHERE r.id=$1 AND (l.repo_id=r.id OR (NOT r.is_private AND ((r.owner_kind='user' AND l.user_id=r.owner_user_id) OR (r.owner_kind='org' AND l.org_id=r.owner_org_id))))) ORDER BY (repo_id IS NOT NULL) LIMIT 1"))).bind(repo).fetch_optional(connection).await?)
 }
 pub async fn source(pool: &PgPool, repo: i64) -> Result<Option<ContributorSource>> {
     Ok(sqlx::query_as("SELECT id AS repo_id,default_branch,storage_node_id,contribution_version AS write_version FROM repositories WHERE id=$1").bind(repo).fetch_optional(pool).await?)
@@ -28,10 +28,10 @@ async fn scoped(
     if let InteractionScope::Repository(repo) = scope {
         return effective(connection, repo).await;
     }
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {FIELDS} FROM interaction_limits WHERE {}=$1 AND expires_at>clock_timestamp()",
         scope.column()
-    ))
+    )))
     .bind(scope.id())
     .fetch_optional(connection)
     .await?)
@@ -101,10 +101,10 @@ pub async fn set_restriction(
         let overridden: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM interaction_limits l JOIN repositories r ON (r.owner_kind='user' AND r.owner_user_id=l.user_id) OR (r.owner_kind='org' AND r.owner_org_id=l.org_id) WHERE r.id=$1 AND NOT r.is_private AND l.repo_id IS NULL AND l.expires_at>clock_timestamp())").bind(repo).fetch_one(&mut *tx).await?;
         anyhow::ensure!(!overridden, InteractionRefusal::Conflict);
     }
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "DELETE FROM interaction_limits WHERE {}=$1",
         scope.column()
-    ))
+    )))
     .bind(scope.id())
     .execute(&mut *tx)
     .await?;
@@ -120,7 +120,7 @@ pub async fn set_restriction(
         }
     }
     if let Some(input) = input {
-        sqlx::query(&format!("INSERT INTO interaction_limits({},restriction,expires_at) VALUES($1,$2,clock_timestamp()+$3::double precision*INTERVAL '1 second')",scope.column())).bind(scope.id()).bind(input.limit.as_str()).bind(input.expiry.seconds() as f64).execute(&mut *tx).await?;
+        sqlx::query(sqlx::AssertSqlSafe(format!("INSERT INTO interaction_limits({},restriction,expires_at) VALUES($1,$2,clock_timestamp()+$3::double precision*INTERVAL '1 second')",scope.column()))).bind(scope.id()).bind(input.limit.as_str()).bind(input.expiry.seconds() as f64).execute(&mut *tx).await?;
     }
     let result = scoped(&mut tx, scope).await?;
     tx.commit().await?;

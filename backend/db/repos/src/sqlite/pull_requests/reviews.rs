@@ -191,14 +191,14 @@ pub async fn list_pull_request_comments(
     // A path over the budget reads as absent, so it cannot expand a discussion page.
     let max_path_bytes = crate::pull_requests::reviews::MAX_COMMENT_PATH_BYTES;
     let comments = sqlx::query_as::<_, PullRequestCommentEntry>(
-        &format!("SELECT i.id, i.pull_request_id, i.author_id, i.body,
+        sqlx::AssertSqlSafe(format!("SELECT i.id, i.pull_request_id, i.author_id, i.body,
             CASE WHEN length(CAST(i.path AS BLOB)) <= {max_path_bytes} THEN i.path END AS path,
             i.line, i.side, i.commit_sha, i.in_reply_to_comment_id, i.created_at, i.updated_at,
             i.resolved_at, i.resolved_by_id, i.review_id,
             i.start_line,i.start_side,{columns} FROM pr_comments i JOIN users u ON u.id=i.author_id
             WHERE i.pull_request_id = ?1
               AND NOT EXISTS (SELECT 1 FROM pr_reviews v WHERE v.id = i.review_id AND v.state = 'pending')
-            ORDER BY i.created_at, i.id LIMIT ?2 OFFSET ?3"),
+            ORDER BY i.created_at, i.id LIMIT ?2 OFFSET ?3")),
     )
     .bind(pr_id)
     .bind(limit)
@@ -236,14 +236,14 @@ pub async fn list_pull_request_conversation_comments_ordered(
     // A path over the budget reads as absent, so it cannot expand a discussion page.
     let max_path_bytes = crate::pull_requests::reviews::MAX_COMMENT_PATH_BYTES;
     let comments = sqlx::query_as::<_, PullRequestCommentEntry>(
-        &format!("SELECT i.id, i.pull_request_id, i.author_id, i.body,
+        sqlx::AssertSqlSafe(format!("SELECT i.id, i.pull_request_id, i.author_id, i.body,
             CASE WHEN length(CAST(i.path AS BLOB)) <= {max_path_bytes} THEN i.path END AS path,
             i.line, i.side, i.commit_sha, i.in_reply_to_comment_id, i.created_at, i.updated_at,
             i.resolved_at, i.resolved_by_id, i.review_id,
             i.start_line,i.start_side,{columns} FROM pr_comments i JOIN users u ON u.id=i.author_id
             WHERE i.pull_request_id = ?1 AND i.path IS NULL
               AND NOT EXISTS (SELECT 1 FROM pr_reviews v WHERE v.id = i.review_id AND v.state = 'pending')
-            ORDER BY i.{order} {direction}, i.id {direction} LIMIT ?2 OFFSET ?3"),
+            ORDER BY i.{order} {direction}, i.id {direction} LIMIT ?2 OFFSET ?3")),
     )
     .bind(pr_id)
     .bind(limit)
@@ -1015,37 +1015,33 @@ pub async fn filter_reviews(
     limit: i64,
     offset: i64,
 ) -> Result<Vec<PullRequestReview>> {
-    Ok(
-        sqlx::query_as(&crate::pull_requests::reviews::ReviewQuery::sql(
-            false, false,
-        ))
-        .bind(query.pull_id)
-        .bind(query.viewer)
-        .bind(serde_json::to_string(&query.states)?)
-        .bind(&query.author)
-        .bind(query.latest)
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(pool)
-        .await?,
-    )
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(
+        crate::pull_requests::reviews::ReviewQuery::sql(false, false),
+    ))
+    .bind(query.pull_id)
+    .bind(query.viewer)
+    .bind(serde_json::to_string(&query.states)?)
+    .bind(&query.author)
+    .bind(query.latest)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?)
 }
 pub async fn count_filtered_reviews(
     pool: &SqlitePool,
     query: &crate::pull_requests::reviews::ReviewQuery,
 ) -> Result<i64> {
-    Ok(
-        sqlx::query_scalar(&crate::pull_requests::reviews::ReviewQuery::sql(
-            false, true,
-        ))
-        .bind(query.pull_id)
-        .bind(query.viewer)
-        .bind(serde_json::to_string(&query.states)?)
-        .bind(&query.author)
-        .bind(query.latest)
-        .fetch_one(pool)
-        .await?,
-    )
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(
+        crate::pull_requests::reviews::ReviewQuery::sql(false, true),
+    ))
+    .bind(query.pull_id)
+    .bind(query.viewer)
+    .bind(serde_json::to_string(&query.states)?)
+    .bind(&query.author)
+    .bind(query.latest)
+    .fetch_one(pool)
+    .await?)
 }
 pub async fn list_visible_pull_request_reviews(
     pool: &SqlitePool,
@@ -1075,7 +1071,7 @@ pub async fn list_pull_request_reviews(
 ) -> Result<Vec<PullRequestReviewEntry>> {
     let columns = codeyard_db_identity::sqlite::users::accounts::AUTHOR_DISPLAY_COLUMNS;
     let reviews = sqlx::query_as::<_, PullRequestReviewEntry>(
-        &format!("SELECT i.*, {columns} FROM pr_reviews i JOIN users u ON u.id=i.author_id WHERE i.pull_request_id = ?1 AND i.state <> 'pending' ORDER BY i.created_at, i.id LIMIT ?2 OFFSET ?3"),
+        sqlx::AssertSqlSafe(format!("SELECT i.*, {columns} FROM pr_reviews i JOIN users u ON u.id=i.author_id WHERE i.pull_request_id = ?1 AND i.state <> 'pending' ORDER BY i.created_at, i.id LIMIT ?2 OFFSET ?3")),
     )
     .bind(pr_id)
     .bind(limit)
@@ -1264,7 +1260,7 @@ pub async fn request_code_owner_reviews(
         "Too many code owners"
     );
     let access = codeyard_database::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
-    let added: Vec<i64> = sqlx::query_scalar(&format!(
+    let added: Vec<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "INSERT INTO pr_reviewers (pull_request_id, user_id, as_code_owner)
          SELECT ?1, u.id, 1 FROM repositories r CROSS JOIN users u
          WHERE r.id=?2 AND u.id IN (SELECT value FROM json_each(?3)) AND u.id<>?4
@@ -1272,7 +1268,7 @@ pub async fn request_code_owner_reviews(
            AND ((r.owner_kind='user' AND u.is_admin) OR ({access})>=3)
            AND NOT COALESCE((SELECT state IN ('approved','changes_requested') AND commit_sha=?5 FROM pr_reviews WHERE pull_request_id=?1 AND author_id=u.id AND state NOT IN ('commented','pending') ORDER BY created_at DESC,id DESC LIMIT 1),FALSE)
          ON CONFLICT DO NOTHING RETURNING user_id"
-    )).bind(pull.id).bind(pull.repo_id).bind(serde_json::to_string(owners)?).bind(current.author_id).bind(&current.head_sha)
+    ))).bind(pull.id).bind(pull.repo_id).bind(serde_json::to_string(owners)?).bind(current.author_id).bind(&current.head_sha)
         .fetch_all(&mut *tx).await?;
     let users = sqlx::query_as::<_, User>(
         "SELECT * FROM users WHERE id IN (SELECT value FROM json_each(?1))",

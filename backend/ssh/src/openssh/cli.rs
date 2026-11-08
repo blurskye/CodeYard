@@ -374,7 +374,8 @@ fn stdio(fd: BorrowedFd<'_>) -> Result<StandardIo> {
             file
         }
     };
-    Ok(StandardIo::Pollable(AsyncFd::new(file)?))
+    // SAFETY: the AsyncFd owns `file`, so its descriptor stays open and unchanged until drop.
+    Ok(StandardIo::Pollable(unsafe { AsyncFd::register(file) }?))
 }
 
 impl AsyncWrite for StandardIo {

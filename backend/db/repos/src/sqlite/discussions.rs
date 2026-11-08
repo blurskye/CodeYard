@@ -126,9 +126,9 @@ pub async fn set_lock(
         bool,
         Option<String>,
         chrono::DateTime<chrono::Utc>,
-    ) = sqlx::query_as(&format!(
+    ) = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT locked,lock_reason,updated_at FROM {table} WHERE id=?1 AND repo_id=?2"
-    ))
+    )))
     .bind(id)
     .bind(repo_id)
     .fetch_optional(&mut *tx)
@@ -136,9 +136,9 @@ pub async fn set_lock(
     .ok_or(LockRefusal::Missing)?;
     if previous != locked || previous_reason.as_deref() != reason {
         let next = codeyard_database::queries::sqlite::time::next_revision(updated)?;
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "UPDATE {table} SET locked=?2,lock_reason=?3,updated_at=?4 WHERE id=?1"
-        ))
+        )))
         .bind(id)
         .bind(locked)
         .bind(reason)
@@ -298,11 +298,13 @@ pub async fn list_repo_authors(
     selected: Option<i64>,
 ) -> Result<Vec<String>> {
     Ok(
-        sqlx::query_scalar(&crate::discussions::author_choices_sql(false))
-            .bind(repo_id)
-            .bind(selected)
-            .fetch_all(pool)
-            .await?,
+        sqlx::query_scalar(sqlx::AssertSqlSafe(crate::discussions::author_choices_sql(
+            false,
+        )))
+        .bind(repo_id)
+        .bind(selected)
+        .fetch_all(pool)
+        .await?,
     )
 }
 

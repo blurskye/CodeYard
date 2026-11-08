@@ -103,9 +103,9 @@ pub(crate) async fn lock_item_labels(
 ) -> Result<Vec<i64>> {
     let ids = bounded_label_ids(label_ids)?;
     let (table, _, _) = target.tables();
-    let item: Option<i64> = sqlx::query_scalar(&format!(
+    let item: Option<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT id FROM {table} WHERE id=?1 AND repo_id=?2"
-    ))
+    )))
     .bind(item_id)
     .bind(repo_id)
     .fetch_optional(&mut **tx)
@@ -208,7 +208,7 @@ pub async fn list_repo_labels_page(
         "most-used" => "((SELECT COUNT(*) FROM issue_labels il WHERE il.label_id=l.id) + (SELECT COUNT(*) FROM pr_labels pl WHERE pl.label_id=l.id)) DESC, LOWER(l.name), l.id",
         _ => "LOWER(l.name), l.id",
     };
-    Ok(sqlx::query_as(&format!(r"SELECT l.id,l.repo_id,l.name,l.color,substr(l.description,1,{PAGE_DESCRIPTION_CHARS}) AS description,l.created_at,l.updated_at FROM labels l WHERE l.repo_id=?1 AND (l.name REGEXP ?2 OR COALESCE(l.description,'') REGEXP ?2) ORDER BY {order} LIMIT ?3 OFFSET ?4"))
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(r"SELECT l.id,l.repo_id,l.name,l.color,substr(l.description,1,{PAGE_DESCRIPTION_CHARS}) AS description,l.created_at,l.updated_at FROM labels l WHERE l.repo_id=?1 AND (l.name REGEXP ?2 OR COALESCE(l.description,'') REGEXP ?2) ORDER BY {order} LIMIT ?3 OFFSET ?4")))
         .bind(repo_id).bind(codeyard_database::queries::sqlite::search::contains(query.trim())).bind(limit).bind(offset).fetch_all(pool).await?)
 }
 
@@ -223,7 +223,7 @@ pub async fn list_milestone_labels(
     limit: i64,
     offset: i64,
 ) -> Result<Vec<Label>> {
-    Ok(sqlx::query_as(&format!("SELECT l.* FROM labels l WHERE l.repo_id=?1 AND EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=?5 WHERE r.id=l.repo_id AND {}) AND (EXISTS (SELECT 1 FROM issue_labels il JOIN issues i ON i.id=il.issue_id WHERE il.label_id=l.id AND i.milestone_id=?2) OR EXISTS (SELECT 1 FROM pr_labels pl JOIN pull_requests p ON p.id=pl.pull_request_id WHERE pl.label_id=l.id AND p.milestone_id=?2)) ORDER BY lower(l.name),l.id LIMIT ?3 OFFSET ?4", codeyard_database::queries::sqlite::repositories::access::readable_condition()))
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT l.* FROM labels l WHERE l.repo_id=?1 AND EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=?5 WHERE r.id=l.repo_id AND {}) AND (EXISTS (SELECT 1 FROM issue_labels il JOIN issues i ON i.id=il.issue_id WHERE il.label_id=l.id AND i.milestone_id=?2) OR EXISTS (SELECT 1 FROM pr_labels pl JOIN pull_requests p ON p.id=pl.pull_request_id WHERE pl.label_id=l.id AND p.milestone_id=?2)) ORDER BY lower(l.name),l.id LIMIT ?3 OFFSET ?4", codeyard_database::queries::sqlite::repositories::access::readable_condition())))
         .bind(repo_id).bind(milestone_id).bind(limit).bind(offset).bind(viewer).fetch_all(pool).await?)
 }
 
@@ -346,7 +346,7 @@ pub async fn delete_label(
         ("issues", "issue_labels", "issue_id"),
         ("pull_requests", "pr_labels", "pull_request_id"),
     ] {
-        let items: Vec<i64> = sqlx::query_scalar(&format!("SELECT x.{column} FROM {links} x JOIN labels l ON l.id=x.label_id WHERE l.id=?1 AND l.repo_id=?2"))
+        let items: Vec<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT x.{column} FROM {links} x JOIN labels l ON l.id=x.label_id WHERE l.id=?1 AND l.repo_id=?2")))
             .bind(label_id)
             .bind(repo_id)
             .fetch_all(&mut *tx)
@@ -458,9 +458,9 @@ async fn remove_item_label(
     let mut tx = begin_item_label_write(pool, &actor, repo_id).await?;
     lock_item_labels(&mut tx, repo_id, target, item_id, &[label_id]).await?;
     let before = item_labels_snapshot(&mut tx, target, item_id).await?;
-    let result = sqlx::query(&format!(
+    let result = sqlx::query(sqlx::AssertSqlSafe(format!(
         "DELETE FROM {link} WHERE {column} = ?1 AND label_id = ?2"
-    ))
+    )))
     .bind(item_id)
     .bind(label_id)
     .execute(&mut *tx)
@@ -494,18 +494,22 @@ pub(crate) async fn touch_subject(
     table: &str,
     id: i64,
 ) -> Result<()> {
-    let stored: String = sqlx::query_scalar(&format!("SELECT updated_at FROM {table} WHERE id=?1"))
-        .bind(id)
-        .fetch_one(&mut **tx)
-        .await?;
+    let stored: String = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT updated_at FROM {table} WHERE id=?1"
+    )))
+    .bind(id)
+    .fetch_one(&mut **tx)
+    .await?;
     let next = codeyard_database::queries::sqlite::time::next_revision(
         codeyard_database::queries::sqlite::time::decode(&stored)?,
     )?;
-    sqlx::query(&format!("UPDATE {table} SET updated_at=?2 WHERE id=?1"))
-        .bind(id)
-        .bind(next)
-        .execute(&mut **tx)
-        .await?;
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "UPDATE {table} SET updated_at=?2 WHERE id=?1"
+    )))
+    .bind(id)
+    .bind(next)
+    .execute(&mut **tx)
+    .await?;
     Ok(())
 }
 
@@ -532,9 +536,9 @@ async fn get_item_labels(
     item_id: i64,
 ) -> Result<Vec<Label>> {
     let (_, link, column) = target.tables();
-    let labels = sqlx::query_as::<_, Label>(&format!(
+    let labels = sqlx::query_as::<_, Label>(sqlx::AssertSqlSafe(format!(
         "SELECT l.* FROM labels l INNER JOIN {link} il ON l.id = il.label_id WHERE il.{column} = ?1 AND l.repo_id = ?2 ORDER BY l.name"
-    ))
+    )))
     .bind(item_id)
     .bind(repo_id)
     .fetch_all(pool)
@@ -623,17 +627,19 @@ pub(crate) async fn write_item_labels_transaction(
     let before = item_labels_snapshot(tx, target, item_id).await?;
     let mut changed = false;
     if replace {
-        changed |= sqlx::query(&format!("DELETE FROM {link} WHERE {column}=?1"))
-            .bind(item_id)
-            .execute(&mut **tx)
-            .await?
-            .rows_affected()
+        changed |= sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DELETE FROM {link} WHERE {column}=?1"
+        )))
+        .bind(item_id)
+        .execute(&mut **tx)
+        .await?
+        .rows_affected()
             > 0;
     }
     for id in ids {
-        changed |= sqlx::query(&format!(
+        changed |= sqlx::query(sqlx::AssertSqlSafe(format!(
             "INSERT INTO {link}({column},label_id) VALUES (?1,?2) ON CONFLICT DO NOTHING"
-        ))
+        )))
         .bind(item_id)
         .bind(id)
         .execute(&mut **tx)
@@ -644,9 +650,9 @@ pub(crate) async fn write_item_labels_transaction(
     if changed {
         touch_subject(tx, subject, item_id).await?;
     }
-    let labels = sqlx::query_as::<_, Label>(&format!(
+    let labels = sqlx::query_as::<_, Label>(sqlx::AssertSqlSafe(format!(
         "SELECT l.* FROM labels l JOIN {link} il ON il.label_id=l.id WHERE il.{column}=?1 AND l.repo_id=?2 ORDER BY l.name"
-    ))
+    )))
     .bind(item_id)
     .bind(repo_id)
     .fetch_all(&mut **tx)
@@ -667,7 +673,7 @@ async fn item_labels_snapshot(
     item: i64,
 ) -> Result<Vec<Label>> {
     let (_, link, column) = target.tables();
-    Ok(sqlx::query_as(&format!("SELECT l.* FROM labels l JOIN {link} il ON il.label_id=l.id WHERE il.{column}=?1 ORDER BY l.id"))
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT l.* FROM labels l JOIN {link} il ON il.label_id=l.id WHERE il.{column}=?1 ORDER BY l.id")))
         .bind(item).fetch_all(&mut **tx).await?)
 }
 

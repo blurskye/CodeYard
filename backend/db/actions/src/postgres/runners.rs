@@ -118,15 +118,15 @@ pub async fn list_groups(
         matches!(role, OrganizationOutcome::Applied(role) if administers(role)),
         Refusal::Denied
     );
-    let total = sqlx::query_scalar(&format!(
+    let total = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT COUNT(*) FROM action_runner_groups g WHERE {GROUP_FILTER}"
-    ))
+    )))
     .bind(org)
     .bind(query.id)
     .bind(query.repository)
     .fetch_one(&mut *tx)
     .await?;
-    let mut rows: Vec<Group> = sqlx::query_as(&format!("SELECT g.* FROM action_runner_groups g WHERE {GROUP_FILTER} ORDER BY g.id LIMIT $4 OFFSET $5"))
+    let mut rows: Vec<Group> = sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT g.* FROM action_runner_groups g WHERE {GROUP_FILTER} ORDER BY g.id LIMIT $4 OFFSET $5")))
         .bind(org).bind(query.id).bind(query.repository).bind(query.page.limit).bind(query.page.offset).fetch_all(&mut *tx).await?;
     let ids: Vec<_> = rows.iter().map(|g| g.id).collect();
     let selections: Vec<(i64,i64)> = sqlx::query_as("SELECT s.group_id,s.repo_id FROM action_runner_group_repositories s JOIN repositories r ON r.id=s.repo_id JOIN action_runner_groups g ON g.id=s.group_id WHERE s.group_id=ANY($1) AND r.owner_kind='org' AND r.owner_org_id=g.org_id AND r.owner_user_id IS NULL ORDER BY s.group_id,s.repo_id")
@@ -376,9 +376,11 @@ pub async fn group_runners(
 async fn runner_rows(c: &mut Connection, scope: Scope, query: &RunnerQuery) -> Result<Vec<Runner>> {
     let (org, repo) = scope.ids();
     Ok(
-        sqlx::query_as::<_, codeyard_database::queries::runners::RunnerProjection>(&format!(
-            "{RUNNERS} WHERE {RUNNER_FILTER} ORDER BY a.id LIMIT $6 OFFSET $7"
-        ))
+        sqlx::query_as::<_, codeyard_database::queries::runners::RunnerProjection>(
+            sqlx::AssertSqlSafe(format!(
+                "{RUNNERS} WHERE {RUNNER_FILTER} ORDER BY a.id LIMIT $6 OFFSET $7"
+            )),
+        )
         .bind(org)
         .bind(repo)
         .bind(query.id)
@@ -403,9 +405,9 @@ pub async fn list_runners(
     let mut tx = pool.begin().await?;
     authorize(&mut tx, actor, scope).await?;
     let (org, repo) = scope.ids();
-    let total = sqlx::query_scalar(&format!(
+    let total = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT COUNT(*) FROM action_runners a WHERE {RUNNER_FILTER}"
-    ))
+    )))
     .bind(org)
     .bind(repo)
     .bind(query.id)

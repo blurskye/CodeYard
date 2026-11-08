@@ -191,14 +191,14 @@ pub async fn list_pull_request_comments(
     // A path over the budget reads as absent, so it cannot expand a discussion page.
     let max_path_bytes = crate::pull_requests::reviews::MAX_COMMENT_PATH_BYTES;
     let comments = sqlx::query_as::<_, PullRequestCommentEntry>(
-        &format!("SELECT i.id, i.pull_request_id, i.author_id, i.body,
+        sqlx::AssertSqlSafe(format!("SELECT i.id, i.pull_request_id, i.author_id, i.body,
             CASE WHEN octet_length(i.path) <= {max_path_bytes} THEN i.path END AS path,
             i.line, i.side, i.commit_sha, i.in_reply_to_comment_id, i.created_at, i.updated_at,
             i.resolved_at, i.resolved_by_id, i.review_id,
             i.start_line,i.start_side,{columns} FROM pr_comments i JOIN users u ON u.id=i.author_id
             WHERE i.pull_request_id = $1
               AND NOT EXISTS (SELECT 1 FROM pr_reviews v WHERE v.id = i.review_id AND v.state = 'pending')
-            ORDER BY i.created_at, i.id LIMIT $2 OFFSET $3"),
+            ORDER BY i.created_at, i.id LIMIT $2 OFFSET $3")),
     )
     .bind(pr_id)
     .bind(limit)
@@ -236,14 +236,14 @@ pub async fn list_pull_request_conversation_comments_ordered(
     // A path over the budget reads as absent, so it cannot expand a discussion page.
     let max_path_bytes = crate::pull_requests::reviews::MAX_COMMENT_PATH_BYTES;
     let comments = sqlx::query_as::<_, PullRequestCommentEntry>(
-        &format!("SELECT i.id, i.pull_request_id, i.author_id, i.body,
+        sqlx::AssertSqlSafe(format!("SELECT i.id, i.pull_request_id, i.author_id, i.body,
             CASE WHEN octet_length(i.path) <= {max_path_bytes} THEN i.path END AS path,
             i.line, i.side, i.commit_sha, i.in_reply_to_comment_id, i.created_at, i.updated_at,
             i.resolved_at, i.resolved_by_id, i.review_id,
             i.start_line,i.start_side,{columns} FROM pr_comments i JOIN users u ON u.id=i.author_id
             WHERE i.pull_request_id = $1 AND i.path IS NULL
               AND NOT EXISTS (SELECT 1 FROM pr_reviews v WHERE v.id = i.review_id AND v.state = 'pending')
-            ORDER BY i.{order} {direction}, i.id {direction} LIMIT $2 OFFSET $3"),
+            ORDER BY i.{order} {direction}, i.id {direction} LIMIT $2 OFFSET $3")),
     )
     .bind(pr_id)
     .bind(limit)
@@ -985,35 +985,33 @@ pub async fn filter_reviews(
     limit: i64,
     offset: i64,
 ) -> Result<Vec<PullRequestReview>> {
-    Ok(
-        sqlx::query_as(&crate::pull_requests::reviews::ReviewQuery::sql(
-            true, false,
-        ))
-        .bind(query.pull_id)
-        .bind(query.viewer)
-        .bind(serde_json::to_string(&query.states)?)
-        .bind(&query.author)
-        .bind(query.latest)
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(pool)
-        .await?,
-    )
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(
+        crate::pull_requests::reviews::ReviewQuery::sql(true, false),
+    ))
+    .bind(query.pull_id)
+    .bind(query.viewer)
+    .bind(serde_json::to_string(&query.states)?)
+    .bind(&query.author)
+    .bind(query.latest)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?)
 }
 pub async fn count_filtered_reviews(
     pool: &PgPool,
     query: &crate::pull_requests::reviews::ReviewQuery,
 ) -> Result<i64> {
-    Ok(
-        sqlx::query_scalar(&crate::pull_requests::reviews::ReviewQuery::sql(true, true))
-            .bind(query.pull_id)
-            .bind(query.viewer)
-            .bind(serde_json::to_string(&query.states)?)
-            .bind(&query.author)
-            .bind(query.latest)
-            .fetch_one(pool)
-            .await?,
-    )
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(
+        crate::pull_requests::reviews::ReviewQuery::sql(true, true),
+    ))
+    .bind(query.pull_id)
+    .bind(query.viewer)
+    .bind(serde_json::to_string(&query.states)?)
+    .bind(&query.author)
+    .bind(query.latest)
+    .fetch_one(pool)
+    .await?)
 }
 pub async fn list_visible_pull_request_reviews(
     pool: &PgPool,
@@ -1043,7 +1041,7 @@ pub async fn list_pull_request_reviews(
 ) -> Result<Vec<PullRequestReviewEntry>> {
     let columns = codeyard_db_identity::postgres::users::accounts::AUTHOR_DISPLAY_COLUMNS;
     let reviews = sqlx::query_as::<_, PullRequestReviewEntry>(
-        &format!("SELECT i.*, {columns} FROM pr_reviews i JOIN users u ON u.id=i.author_id WHERE i.pull_request_id = $1 AND i.state <> 'pending' ORDER BY i.created_at, i.id LIMIT $2 OFFSET $3"),
+        sqlx::AssertSqlSafe(format!("SELECT i.*, {columns} FROM pr_reviews i JOIN users u ON u.id=i.author_id WHERE i.pull_request_id = $1 AND i.state <> 'pending' ORDER BY i.created_at, i.id LIMIT $2 OFFSET $3")),
     )
     .bind(pr_id)
     .bind(limit)
@@ -1211,11 +1209,11 @@ pub async fn request_code_owner_reviews(
             .await?;
         sqlx::query("SELECT user_id FROM repo_access WHERE repo_id=$1 AND user_id=ANY($2) ORDER BY user_id FOR SHARE")
             .bind(pull.repo_id).bind(ids).execute(&mut *tx).await?;
-        let writers: Vec<i64> = sqlx::query_scalar(&format!(
+        let writers: Vec<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT u.id FROM repositories r CROSS JOIN users u WHERE r.id=$1 AND u.id=ANY($2) AND u.id<>$3
              AND NOT r.is_archived AND NOT u.is_banned AND NOT u.must_change_password
              AND ((r.owner_kind='user' AND u.is_admin) OR ({access})>=3)"
-        )).bind(pull.repo_id).bind(ids).bind(pull.author_id).fetch_all(&mut *tx).await?;
+        ))).bind(pull.repo_id).bind(ids).bind(pull.author_id).fetch_all(&mut *tx).await?;
         eligible.extend(writers);
     }
     let current: Option<PullRequest> =

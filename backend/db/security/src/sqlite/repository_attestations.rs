@@ -12,11 +12,11 @@ pub async fn list(
     page.validate()?;
     let digest = crate::attestation_validation::subject_digest(digest)?;
     let mut tx = pool.begin().await?;
-    let visible: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=$1 WHERE r.id=$2 AND {})",codeyard_database::queries::sqlite::repositories::access::readable_condition())).bind(actor).bind(repo).fetch_one(&mut *tx).await?;
+    let visible: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=$1 WHERE r.id=$2 AND {})",codeyard_database::queries::sqlite::repositories::access::readable_condition()))).bind(actor).bind(repo).fetch_one(&mut *tx).await?;
     if !visible {
         return Err(AttestationError::NotFound);
     }
-    let sizes: Vec<(i64, i64)> = sqlx::query_as(&format!(r#"
+    let sizes: Vec<(i64, i64)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(r#"
         SELECT a.id,6*length(CAST(a.bundle AS BLOB))+4096 FROM repo_attestations a
         JOIN attestation_subjects s ON s.attestation_id=a.id
         JOIN repositories r ON r.id=a.repo_id LEFT JOIN users u ON u.id=$1
@@ -29,7 +29,7 @@ pub async fn list(
             OR ($6='release' AND (a.predicate_type LIKE 'https://in-toto.io/attestation/release/%' OR a.predicate_type LIKE 'https://github.com/attestations/release/%')))
         ORDER BY CASE WHEN CAST($5 AS BIGINT) IS NULL THEN a.id END DESC,
             CASE WHEN CAST($5 AS BIGINT) IS NOT NULL THEN a.id END ASC LIMIT $7
-    "#,codeyard_database::queries::sqlite::repositories::access::readable_condition()))
+    "#,codeyard_database::queries::sqlite::repositories::access::readable_condition())))
         .bind(actor).bind(repo).bind(digest).bind(page.after).bind(page.before).bind(page.predicate_type).bind(page.limit+1).fetch_all(&mut *tx).await?;
     let ids = crate::attestation_validation::page_ids(&sizes, page.limit as usize)?;
     let more = ids.len() < sizes.len();
@@ -48,6 +48,6 @@ pub async fn get(
     repo: i64,
     id: i64,
 ) -> Result<Attestation, AttestationError> {
-    sqlx::query_as(&format!("SELECT a.id,a.bundle,a.initiator FROM repo_attestations a JOIN repositories r ON r.id=a.repo_id LEFT JOIN users u ON u.id=$1 WHERE a.repo_id=$2 AND a.id=$3 AND {}",codeyard_database::queries::sqlite::repositories::access::readable_condition()))
+    sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT a.id,a.bundle,a.initiator FROM repo_attestations a JOIN repositories r ON r.id=a.repo_id LEFT JOIN users u ON u.id=$1 WHERE a.repo_id=$2 AND a.id=$3 AND {}",codeyard_database::queries::sqlite::repositories::access::readable_condition())))
         .bind(actor).bind(repo).bind(id).fetch_optional(pool).await?.ok_or(AttestationError::NotFound)
 }

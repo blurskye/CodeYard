@@ -19,13 +19,13 @@ async fn organization(f: &Database, actor: i64, name: &str) -> i64 {
 }
 async fn refused(f: &Database, sql: &str, id: i64) -> String {
     match f {
-        Database::Postgres(f) => sqlx::query(sql)
+        Database::Postgres(f) => sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(id)
             .execute(&f.raw)
             .await
             .unwrap_err()
             .to_string(),
-        Database::Sqlite(f) => sqlx::query(sql)
+        Database::Sqlite(f) => sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(id)
             .execute(&f.raw)
             .await

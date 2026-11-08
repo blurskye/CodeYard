@@ -172,7 +172,7 @@ impl Directory {
         self.run(async {
             let mut tx = self.begin().await?;
             if let Some(peer) = peer { super::read_owner(&mut tx, peer).await?; }
-            let row: Option<Row> = sqlx::query_as(&format!("SELECT {COLUMNS} FROM directory_cells c JOIN directory_cell_prefixes p ON p.cell_id=c.id WHERE p.prefix=$1"))
+            let row: Option<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT {COLUMNS} FROM directory_cells c JOIN directory_cell_prefixes p ON p.cell_id=c.id WHERE p.prefix=$1")))
                 .bind(i32::from(prefix.get())).fetch_optional(&mut *tx).await?;
             let cell = row.map(Row::cell).transpose()?;
             tx.commit().await?;
@@ -184,9 +184,9 @@ impl Directory {
         self.run(async {
             ensure!((1..=100).contains(&limit), Refusal::Invalid);
             let mut tx = self.begin().await?;
-            let rows: Vec<Row> = sqlx::query_as(&format!(
+            let rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
                 "SELECT {COLUMNS} FROM directory_cells c WHERE c.id>$1 ORDER BY c.id LIMIT $2"
-            ))
+            )))
             .bind(after.map_or(-1, |prefix| i32::from(prefix.get())))
             .bind(limit)
             .fetch_all(&mut *tx)
@@ -210,7 +210,7 @@ impl Directory {
             codeyard_types::cells::validate_region(region).map_err(|_| Refusal::Invalid)?;
             let mut tx = self.begin().await?;
             if let Some(peer) = peer { super::read_owner(&mut tx, peer).await?; }
-            let row: Option<Row> = sqlx::query_as(&format!("SELECT {COLUMNS} FROM directory_cells c WHERE region=$1 AND state='open' AND database_bytes::numeric<maximum_database_bytes::numeric/2 AND write_rate::numeric<maximum_write_rate::numeric/2 AND observed_at>clock_timestamp()-$2::bigint*INTERVAL '1 second' ORDER BY database_bytes::numeric/maximum_database_bytes,id LIMIT 1"))
+            let row: Option<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT {COLUMNS} FROM directory_cells c WHERE region=$1 AND state='open' AND database_bytes::numeric<maximum_database_bytes::numeric/2 AND write_rate::numeric<maximum_write_rate::numeric/2 AND observed_at>clock_timestamp()-$2::bigint*INTERVAL '1 second' ORDER BY database_bytes::numeric/maximum_database_bytes,id LIMIT 1")))
                 .bind(region).bind(self.config.stale_seconds).fetch_optional(&mut *tx).await?;
             let cell = row.map(Row::cell).transpose()?;
             tx.commit().await?;

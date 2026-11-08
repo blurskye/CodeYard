@@ -45,7 +45,7 @@ async fn authorize(
     Ok(())
 }
 async fn cap(connection: &mut SqliteConnection, scope: PullCapScope) -> Result<PullCap> {
-    Ok(sqlx::query_as(&format!("SELECT enabled,max_open_pull_requests,include_drafts FROM interaction_pull_caps WHERE {}=?1",scope.column())).bind(scope.id()).fetch_optional(connection).await?.unwrap_or_default())
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT enabled,max_open_pull_requests,include_drafts FROM interaction_pull_caps WHERE {}=?1",scope.column()))).bind(scope.id()).fetch_optional(connection).await?.unwrap_or_default())
 }
 pub async fn get_cap(pool: &SqlitePool, actor: i64, scope: PullCapScope) -> Result<PullCap> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
@@ -67,7 +67,7 @@ pub async fn update_cap(
     codeyard_db_identity::sqlite::users::transitions::require_account(&mut tx, actor, credential)
         .await?;
     let result = input.apply(cap(&mut tx, scope).await?);
-    sqlx::query(&format!("INSERT INTO interaction_pull_caps({},enabled,max_open_pull_requests,include_drafts) VALUES(?1,?2,?3,?4) ON CONFLICT({}) DO UPDATE SET enabled=excluded.enabled,max_open_pull_requests=excluded.max_open_pull_requests,include_drafts=excluded.include_drafts",scope.column(),scope.column())).bind(scope.id()).bind(result.enabled).bind(result.max_open_pull_requests).bind(result.include_drafts).execute(&mut *tx).await?;
+    sqlx::query(sqlx::AssertSqlSafe(format!("INSERT INTO interaction_pull_caps({},enabled,max_open_pull_requests,include_drafts) VALUES(?1,?2,?3,?4) ON CONFLICT({}) DO UPDATE SET enabled=excluded.enabled,max_open_pull_requests=excluded.max_open_pull_requests,include_drafts=excluded.include_drafts",scope.column(),scope.column()))).bind(scope.id()).bind(result.enabled).bind(result.max_open_pull_requests).bind(result.include_drafts).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(result)
 }

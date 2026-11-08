@@ -725,7 +725,7 @@ async fn move_leased(
             OR (d.owner_kind='org' AND d.owner_id IN (SELECT id FROM organizations WHERE lower(name)=lower($1)))) \
             LIMIT 1",
     };
-    let id: i64 = sqlx::query_scalar(lookup)
+    let id: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(lookup))
         .bind(owner)
         .bind(name)
         .fetch_optional(source)

@@ -154,11 +154,13 @@ async fn postgres_privileged_node_and_crawler_writes_retain_their_session() {
         } else {
             ("nodes", node.id)
         };
-        sqlx::query(&format!("SELECT id FROM {table} WHERE id=$1 FOR UPDATE"))
-            .bind(id)
-            .execute(&mut *holder)
-            .await
-            .unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT id FROM {table} WHERE id=$1 FOR UPDATE"
+        )))
+        .bind(id)
+        .execute(&mut *holder)
+        .await
+        .unwrap();
         let pool = f.pool().clone();
         let session = original.clone();
         let mutation = tokio::spawn(async move {

@@ -36,11 +36,12 @@ async fn owner_authority(
         "organizations"
     };
     let lock = if allocate { "FOR UPDATE" } else { "FOR SHARE" };
-    let exists: Option<i64> =
-        sqlx::query_scalar(&format!("SELECT id FROM {table} WHERE id=$1 {lock}"))
-            .bind(id)
-            .fetch_optional(&mut **tx)
-            .await?;
+    let exists: Option<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT id FROM {table} WHERE id=$1 {lock}"
+    )))
+    .bind(id)
+    .fetch_optional(&mut **tx)
+    .await?;
     anyhow::ensure!(exists.is_some(), Refusal::Missing);
     let active: bool = sqlx::query_scalar(
         "SELECT NOT is_banned AND NOT must_change_password FROM users WHERE id=$1 FOR SHARE",
@@ -118,10 +119,10 @@ async fn readable_at(
         &viewer.into_iter().collect::<Vec<_>>(),
     )
     .await?;
-    let visible: Option<i64> = sqlx::query_scalar(&format!(
+    let visible: Option<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT p.id FROM projects p WHERE p.id=$1 AND ($3 OR p.deleted_at IS NULL) AND {} FOR SHARE",
         crate::projects::readable_owner_condition("$2")
-    ))
+    )))
     .bind(id)
     .bind(viewer)
     .bind(include_deleted)
@@ -216,7 +217,8 @@ pub async fn list(
         .execute(&mut *tx)
         .await?;
     let count_sql = format!("SELECT COUNT(*) {}", statement.prefix);
-    let mut count = sqlx::query_scalar::<_, i64>(&count_sql).bind(viewer);
+    let mut count =
+        sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(count_sql.as_str())).bind(viewer);
     for arg in &statement.args {
         count = count.bind(arg);
     }
@@ -229,7 +231,7 @@ pub async fn list(
         statement.placeholder(statement.args.len() + 2),
         statement.placeholder(statement.args.len() + 3)
     );
-    let mut rows = sqlx::query_as(&query).bind(viewer);
+    let mut rows = sqlx::query_as(sqlx::AssertSqlSafe(query.as_str())).bind(viewer);
     for arg in &statement.args {
         rows = rows.bind(arg);
     }
@@ -246,7 +248,7 @@ pub async fn get(pool: &PgPool, viewer: Option<i64>, owner: Owner, number: i64) 
         &viewer.into_iter().collect::<Vec<_>>(),
     )
     .await?;
-    let project: Project = sqlx::query_as(&format!("SELECT p.* FROM projects p WHERE p.owner_kind=$1 AND p.owner_id=$2 AND p.number=$3 AND {} FOR SHARE", crate::projects::readable_condition("$4")))
+    let project: Project = sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT p.* FROM projects p WHERE p.owner_kind=$1 AND p.owner_id=$2 AND p.number=$3 AND {} FOR SHARE", crate::projects::readable_condition("$4"))))
         .bind(kind).bind(id).bind(number).bind(viewer).fetch_optional(&mut *tx).await?.ok_or(Refusal::Missing)?;
     tx.commit().await?;
     Ok(project)
@@ -299,10 +301,12 @@ pub async fn delete(
         "project_repositories",
         "project_teams",
     ] {
-        sqlx::query(&format!("DELETE FROM {table} WHERE project_id=$1"))
-            .bind(project)
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DELETE FROM {table} WHERE project_id=$1"
+        )))
+        .bind(project)
+        .execute(&mut *tx)
+        .await?;
     }
     sqlx::query("UPDATE projects SET title='',description=NULL,readme='',public=FALSE,deleted_at=$2,updated_at=$2 WHERE id=$1")
         .bind(project)

@@ -9,7 +9,7 @@ use codeyard_database::queries::webhooks::WebhookPatch;
 
 const HOOK:&str="NULL AS username,NULL AS encrypted_password,NULL AS password_nonce,h.app_id AS id,h.app_id,NULL AS repo_id,NULL AS org_id,h.payload_url,h.content_type,h.encrypted_secret,h.secret_nonce,h.events,h.active,h.ssl_verify,a.owner_id AS created_by_id,h.created_at,h.updated_at";
 pub async fn hook(pool: &SqlitePool, app: i64) -> Result<Option<Webhook>> {
-    Ok(sqlx::query_as(&format!("SELECT {HOOK} FROM github_app_hooks h JOIN github_apps a ON a.id=h.app_id WHERE h.app_id=$1")).bind(app).fetch_optional(pool).await?)
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT {HOOK} FROM github_app_hooks h JOIN github_apps a ON a.id=h.app_id WHERE h.app_id=$1"))).bind(app).fetch_optional(pool).await?)
 }
 pub async fn save(
     pool: &SqlitePool,
@@ -81,7 +81,7 @@ async fn subscriptions(
     installation: Option<i64>,
     automatic: bool,
 ) -> Result<Vec<Subscription>> {
-    Ok(sqlx::query_as(&format!("SELECT {HOOK},i.id AS installation_id,a.permissions FROM github_app_hooks h JOIN github_apps a ON a.id=h.app_id JOIN users owner ON owner.id=a.owner_id JOIN users bot ON bot.id=a.bot_id JOIN github_app_installations i ON i.app_id=a.id JOIN repositories r ON r.id=$1 WHERE (NOT $4 OR h.active) AND ($2 IS NULL OR h.app_id=$2) AND ($3 IS NULL OR i.id=$3) AND i.suspended_at IS NULL AND NOT owner.is_banned AND NOT owner.must_change_password AND NOT bot.is_banned AND NOT bot.must_change_password AND NOT EXISTS(SELECT 1 FROM organization_blocks blocked WHERE blocked.org_id=r.owner_org_id AND blocked.user_id=a.bot_id) AND (r.owner_user_id=i.user_id OR r.owner_org_id=i.org_id) AND (i.all_repos OR EXISTS(SELECT 1 FROM github_app_repositories ar WHERE ar.installation_id=i.id AND ar.repo_id=r.id)) AND (r.owner_org_id IS NULL OR EXISTS(SELECT 1 FROM org_memberships m JOIN users u ON u.id=m.user_id WHERE m.org_id=r.owner_org_id AND m.role='owner' AND NOT u.is_banned AND NOT u.must_change_password)) ORDER BY h.app_id")).bind(repo).bind(app).bind(installation).bind(automatic).fetch_all(pool).await?)
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT {HOOK},i.id AS installation_id,a.permissions FROM github_app_hooks h JOIN github_apps a ON a.id=h.app_id JOIN users owner ON owner.id=a.owner_id JOIN users bot ON bot.id=a.bot_id JOIN github_app_installations i ON i.app_id=a.id JOIN repositories r ON r.id=$1 WHERE (NOT $4 OR h.active) AND ($2 IS NULL OR h.app_id=$2) AND ($3 IS NULL OR i.id=$3) AND i.suspended_at IS NULL AND NOT owner.is_banned AND NOT owner.must_change_password AND NOT bot.is_banned AND NOT bot.must_change_password AND NOT EXISTS(SELECT 1 FROM organization_blocks blocked WHERE blocked.org_id=r.owner_org_id AND blocked.user_id=a.bot_id) AND (r.owner_user_id=i.user_id OR r.owner_org_id=i.org_id) AND (i.all_repos OR EXISTS(SELECT 1 FROM github_app_repositories ar WHERE ar.installation_id=i.id AND ar.repo_id=r.id)) AND (r.owner_org_id IS NULL OR EXISTS(SELECT 1 FROM org_memberships m JOIN users u ON u.id=m.user_id WHERE m.org_id=r.owner_org_id AND m.role='owner' AND NOT u.is_banned AND NOT u.must_change_password)) ORDER BY h.app_id"))).bind(repo).bind(app).bind(installation).bind(automatic).fetch_all(pool).await?)
 }
 pub async fn insert_delivery(
     pool: &SqlitePool,

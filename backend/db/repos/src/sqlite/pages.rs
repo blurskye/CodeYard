@@ -18,7 +18,7 @@ async fn begin_read<'a>(
     repo: i64,
 ) -> Result<sqlx::Transaction<'a, sqlx::Sqlite>> {
     let mut tx = pool.begin().await?;
-    let allowed: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=$1 WHERE r.id=$2 AND ({}) AND ({}))", codeyard_database::queries::sqlite::repositories::access::readable_condition(), repository_condition(false, "pages", Access::PublicRead, "$3", "$4", "$5")))
+    let allowed: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=$1 WHERE r.id=$2 AND ({}) AND ({}))", codeyard_database::queries::sqlite::repositories::access::readable_condition(), repository_condition(false, "pages", Access::PublicRead, "$3", "$4", "$5"))))
         .bind(reader.user).bind(repo).bind(reader.token()).bind(reader.session()).bind(reader.hash()).fetch_one(&mut *tx).await?;
     anyhow::ensure!(allowed, Refusal::Missing);
     Ok(tx)

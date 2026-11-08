@@ -18,13 +18,15 @@ fn enforced_sql() -> String {
 }
 /// Whether the repository opts in, and whether its owner enforces immutable releases.
 pub async fn policy(pool: &SqlitePool, repo: i64) -> Result<(bool, bool)> {
-    Ok(sqlx::query_as(&format!("SELECT EXISTS(SELECT 1 FROM repository_immutable_releases WHERE repo_id=?1), {OWNER_ENFORCED_SQL}")).bind(repo).fetch_one(pool).await?)
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT EXISTS(SELECT 1 FROM repository_immutable_releases WHERE repo_id=?1), {OWNER_ENFORCED_SQL}"))).bind(repo).fetch_one(pool).await?)
 }
 pub async fn enabled(pool: &SqlitePool, repo: i64) -> Result<bool> {
-    Ok(sqlx::query_scalar(&format!("SELECT {}", enforced_sql()))
-        .bind(repo)
-        .fetch_one(pool)
-        .await?)
+    Ok(
+        sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT {}", enforced_sql())))
+            .bind(repo)
+            .fetch_one(pool)
+            .await?,
+    )
 }
 pub async fn set_enabled(
     pool: &SqlitePool,
@@ -112,10 +114,11 @@ pub(crate) async fn freeze(
     if !was_draft || release.is_draft || release.is_immutable {
         return Ok(());
     }
-    let enabled: bool = sqlx::query_scalar(&format!("SELECT {}", enforced_sql()))
-        .bind(release.repo_id)
-        .fetch_one(&mut **tx)
-        .await?;
+    let enabled: bool =
+        sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT {}", enforced_sql())))
+            .bind(release.repo_id)
+            .fetch_one(&mut **tx)
+            .await?;
     if !enabled {
         return Ok(());
     }

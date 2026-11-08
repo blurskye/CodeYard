@@ -89,9 +89,9 @@ async fn active_account_locked(
     } else {
         "FOR SHARE"
     };
-    Ok(sqlx::query_scalar(&format!(
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT NOT is_banned AND NOT must_change_password FROM users WHERE id=$1 {lock}"
-    ))
+    )))
     .bind(actor)
     .fetch_optional(connection)
     .await?
@@ -99,12 +99,12 @@ async fn active_account_locked(
 }
 
 pub async fn native_account(connection: &mut sqlx::PgConnection, actor: i64) -> Result<bool> {
-    Ok(
-        sqlx::query_scalar(&crate::users::transitions::native_account_sql())
-            .bind(actor)
-            .fetch_one(connection)
-            .await?,
-    )
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(
+        crate::users::transitions::native_account_sql(),
+    ))
+    .bind(actor)
+    .fetch_one(connection)
+    .await?)
 }
 
 pub(crate) async fn active_account(connection: &mut PgConnection, actor: i64) -> Result<bool> {
@@ -335,7 +335,7 @@ pub async fn complete_setup(
             tx.rollback().await?;
             return Ok(SetupClaim::ExistingAccounts);
         }
-        sqlx::query_as::<_, User>(&format!("INSERT INTO users (home_cell,username,email,password_hash,is_admin) VALUES ({cell_home},$1,$2,$3,TRUE) RETURNING *", cell_home = codeyard_database::cells::LOCAL_HOME_SQL))
+        sqlx::query_as::<_, User>(sqlx::AssertSqlSafe(format!("INSERT INTO users (home_cell,username,email,password_hash,is_admin) VALUES ({cell_home},$1,$2,$3,TRUE) RETURNING *", cell_home = codeyard_database::cells::LOCAL_HOME_SQL)))
             .bind(username).bind(email).bind(hash).fetch_one(&mut *tx).await?
     } else if let Some((id, expected_hash)) = recovery.filter(|_| count == 1) {
         // Complete setup for a sole active admin that was provisioned separately: the
@@ -384,10 +384,10 @@ pub async fn create_cli_user(
     if email_owned(&mut tx, email, -1).await? {
         return Ok(AccountAdmission::Conflict);
     }
-    let user = sqlx::query_as::<_, User>(&format!(
+    let user = sqlx::query_as::<_, User>(sqlx::AssertSqlSafe(format!(
         "INSERT INTO users (home_cell,username,email) VALUES ({cell_home},$1,$2) RETURNING *",
         cell_home = codeyard_database::cells::LOCAL_HOME_SQL
-    ))
+    )))
     .bind(username)
     .bind(email)
     .fetch_one(&mut *tx)
@@ -427,7 +427,7 @@ pub async fn bootstrap_admin(
         return Ok(SetupClaim::ExistingAccounts);
     }
     let user = sqlx::query_as::<_, User>(
-        &format!("INSERT INTO users (home_cell,username,password_hash,is_admin) VALUES ({cell_home},$1,$2,TRUE) RETURNING *", cell_home = codeyard_database::cells::LOCAL_HOME_SQL),
+        sqlx::AssertSqlSafe(format!("INSERT INTO users (home_cell,username,password_hash,is_admin) VALUES ({cell_home},$1,$2,TRUE) RETURNING *", cell_home = codeyard_database::cells::LOCAL_HOME_SQL)),
     )
     .bind(username)
     .bind(hash)
@@ -720,7 +720,7 @@ pub async fn register_password(
         tx.commit().await?;
         return Ok(AccountAdmission::Requested);
     }
-    let user = sqlx::query_as::<_, User>(&format!("INSERT INTO users (home_cell,username,email,password_hash,is_admin,must_change_password) VALUES ({cell_home},$1,$2,$3,$5,$4) RETURNING *", cell_home = codeyard_database::cells::LOCAL_HOME_SQL))
+    let user = sqlx::query_as::<_, User>(sqlx::AssertSqlSafe(format!("INSERT INTO users (home_cell,username,email,password_hash,is_admin,must_change_password) VALUES ({cell_home},$1,$2,$3,$5,$4) RETURNING *", cell_home = codeyard_database::cells::LOCAL_HOME_SQL)))
         .bind(username).bind(email).bind(hash).bind(administrator.is_some()).bind(administrator.is_some_and(|(_, _, admin)| admin)).fetch_one(&mut *tx).await?;
     if !codeyard_database::cells::directory::postgres::user(pool, &mut tx, &user).await? {
         return Ok(AccountAdmission::Conflict);
@@ -794,7 +794,7 @@ pub async fn admit_oauth_account(
         if organization_name_exists(&mut tx, &name).await? {
             continue;
         }
-        let user = sqlx::query_as::<_, User>(&format!("INSERT INTO users (home_cell,username,display_name) VALUES ({cell_home},$1,$2) ON CONFLICT DO NOTHING RETURNING *", cell_home = codeyard_database::cells::LOCAL_HOME_SQL))
+        let user = sqlx::query_as::<_, User>(sqlx::AssertSqlSafe(format!("INSERT INTO users (home_cell,username,display_name) VALUES ({cell_home},$1,$2) ON CONFLICT DO NOTHING RETURNING *", cell_home = codeyard_database::cells::LOCAL_HOME_SQL)))
             .bind(&name).bind(display_name).fetch_optional(&mut *tx).await?;
         if let Some(user) = user {
             if !codeyard_database::cells::directory::postgres::user(pool, &mut tx, &user).await? {

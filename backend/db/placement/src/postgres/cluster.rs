@@ -128,11 +128,12 @@ pub async fn place_fork_family(
     local: &[i64],
 ) -> Result<Vec<i64>> {
     let mut tx = pool.begin().await?;
-    let members: Vec<(i64, Option<i64>, i64)> =
-        sqlx::query_as(&format!("{FORK_FAMILY} FOR NO KEY UPDATE OF r"))
-            .bind(repo_id)
-            .fetch_all(&mut *tx)
-            .await?;
+    let members: Vec<(i64, Option<i64>, i64)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{FORK_FAMILY} FOR NO KEY UPDATE OF r"
+    )))
+    .bind(repo_id)
+    .fetch_all(&mut *tx)
+    .await?;
     if members.is_empty()
         || members
             .iter()
@@ -711,11 +712,12 @@ pub async fn assign_replica_family(
     sqlx::query("SELECT pg_advisory_xact_lock(37004)")
         .execute(&mut *tx)
         .await?;
-    let members: Vec<(i64, Option<i64>, i64)> =
-        sqlx::query_as(&format!("{FORK_FAMILY} FOR UPDATE OF r"))
-            .bind(repository)
-            .fetch_all(&mut *tx)
-            .await?;
+    let members: Vec<(i64, Option<i64>, i64)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{FORK_FAMILY} FOR UPDATE OF r"
+    )))
+    .bind(repository)
+    .fetch_all(&mut *tx)
+    .await?;
     let ids: Vec<i64> = members.iter().map(|row| row.0).collect();
     if members.is_empty() || members.iter().any(|row| row.1 != Some(primary)) {
         return Ok(ids);
@@ -1011,11 +1013,12 @@ async fn promote_family(
     let mut tx = pool.begin().await?;
     // The rows are locked in id order, so two transactions over one family never wait on each
     // other in turn.
-    let family: Vec<(i64, Option<i64>, i64)> =
-        sqlx::query_as(&format!("{FORK_FAMILY} FOR UPDATE OF r"))
-            .bind(repo_id)
-            .fetch_all(&mut *tx)
-            .await?;
+    let family: Vec<(i64, Option<i64>, i64)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{FORK_FAMILY} FOR UPDATE OF r"
+    )))
+    .bind(repo_id)
+    .fetch_all(&mut *tx)
+    .await?;
     let Some(members) = crate::cluster::members_to_move(&family, repo_id, from, automatic) else {
         return Ok(FamilyOutcome::Refused);
     };

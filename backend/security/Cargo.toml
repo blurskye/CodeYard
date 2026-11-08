@@ -38,9 +38,6 @@ workspace = true
 features = ["v4"]
 
 
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies.clap]
-workspace = true
-
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies.chrono]
 workspace = true
 

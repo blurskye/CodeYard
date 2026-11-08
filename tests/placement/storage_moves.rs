@@ -229,9 +229,9 @@ async fn a_repository_on_a_storage_node_moves_from_its_primary() {
         "repository_write_control",
         "repository_committed_refs",
     ] {
-        let left: i64 = sqlx::query_scalar(&format!(
+        let left: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT count(*) FROM {table} WHERE repository_id=$1"
-        ))
+        )))
         .bind(repo)
         .fetch_one(&source.raw)
         .await

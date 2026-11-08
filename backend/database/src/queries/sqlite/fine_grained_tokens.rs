@@ -26,7 +26,7 @@ pub async fn repositories(
     };
     let issuer = crate::queries::oauth_apps::token_issuer_condition("t", "?6");
     let readable = crate::queries::sqlite::repositories::access::readable_condition();
-    Ok(sqlx::query_as(&format!("SELECT r.id,r.name FROM fine_grained_token_repositories selected
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT r.id,r.name FROM fine_grained_token_repositories selected
         JOIN fine_grained_tokens g ON g.token_id=selected.token_id JOIN personal_access_tokens p ON p.id=g.token_id
         JOIN repositories r ON r.id=selected.repo_id JOIN users u ON u.id=?2
         WHERE selected.token_id=?1 AND NOT u.is_banned AND NOT u.must_change_password AND NOT r.is_gist
@@ -37,7 +37,7 @@ pub async fn repositories(
         AND (EXISTS(SELECT 1 FROM sessions s WHERE s.id=?3 AND s.user_id=u.id AND s.expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now'))
              OR EXISTS(SELECT 1 FROM personal_access_tokens t WHERE t.id=?4 AND t.token_hash=?5 AND t.user_id=u.id
                  AND (t.expires_at IS NULL OR t.expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now')) AND {issuer}))
-        AND {readable} ORDER BY r.name,r.id LIMIT 100"))
+        AND {readable} ORDER BY r.name,r.id LIMIT 100")))
         .bind(token).bind(actor).bind(session).bind(presented.map(|(id, _)| id)).bind(presented.map(|(_, hash)| hash))
         .bind(codeyard_types::identity::CLI_CLIENT)
         .fetch_all(pool).await?)
@@ -73,9 +73,9 @@ pub async fn repository_permission(
     let Some(bounds) = bounds else {
         let allowed =
             crate::queries::fine_grained_tokens::classic_allowed_condition("$1", "r.owner_org_id");
-        return Ok(sqlx::query_scalar::<_, bool>(&format!(
+        return Ok(sqlx::query_scalar::<_, bool>(sqlx::AssertSqlSafe(format!(
             "SELECT NOT EXISTS(SELECT 1 FROM repositories r WHERE r.id=$2 AND NOT ({allowed}))"
-        ))
+        )))
         .bind(token)
         .bind(repo)
         .fetch_one(&mut **tx)

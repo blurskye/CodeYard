@@ -28,7 +28,7 @@ async fn authorize_in(
             }
         }
         Reader::Viewer(None) | Reader::Scan(_) => {
-            let visible: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON FALSE WHERE r.id=$1 AND NOT r.is_gist AND ($2 OR {}) AND (NOT $2 OR NOT r.is_archived))", codeyard_database::queries::sqlite::repositories::access::readable_condition()))
+            let visible: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON FALSE WHERE r.id=$1 AND NOT r.is_gist AND ($2 OR {}) AND (NOT $2 OR NOT r.is_archived))", codeyard_database::queries::sqlite::repositories::access::readable_condition())))
                 .bind(repo).bind(matches!(reader, Reader::Scan(_))).fetch_one(&mut **tx).await?;
             if !visible {
                 return Err(GraphError::Denied);

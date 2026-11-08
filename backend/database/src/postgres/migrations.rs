@@ -28,7 +28,7 @@ pub async fn run_baseline(pool: &PgPool, name: &'static str, sql: &'static str) 
 
 async fn apply(
     connection: &mut sqlx::PgConnection,
-    migrations: &[(i64, &str, &str)],
+    migrations: &[(i64, &'static str, &'static str)],
 ) -> Result<()> {
     info!("Running database migrations...");
 

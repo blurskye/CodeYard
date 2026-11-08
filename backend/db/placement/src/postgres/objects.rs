@@ -49,10 +49,12 @@ pub async fn reserve(pool: &PgPool, id: i64, key: &str, object: &Object) -> Resu
         } else {
             "FOR SHARE"
         };
-        sqlx::query(&format!("SELECT id FROM nodes WHERE id=$1 {lock}"))
-            .bind(node)
-            .fetch_one(&mut *tx)
-            .await?;
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT id FROM nodes WHERE id=$1 {lock}"
+        )))
+        .bind(node)
+        .fetch_one(&mut *tx)
+        .await?;
     }
     owner(&mut tx, id, key).await?;
     sqlx::query("INSERT INTO storage_objects(object_key,digest,bytes,content_type) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING")

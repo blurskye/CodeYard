@@ -42,25 +42,25 @@ pub async fn create_or_update_secret(
         return Err(SecretsError::Denied);
     }
     let table = kind.secrets_table();
-    let exists: bool = sqlx::query_scalar(&format!(
+    let exists: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT EXISTS(SELECT 1 FROM {table} WHERE repo_id = $1 AND name = $2)",
-    ))
+    )))
     .bind(repo_id)
     .bind(name)
     .fetch_one(&mut *tx)
     .await?;
     // A set larger than one CI claim can carry is refused here, so claims never load more.
-    let (others, stored_bytes): (i64, i64) = sqlx::query_as(&format!(
+    let (others, stored_bytes): (i64, i64) = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT COUNT(*), COALESCE(SUM(octet_length(name) + octet_length(encrypted_value)), 0)::BIGINT \
          FROM {table} WHERE repo_id = $1 AND name <> $2",
-    ))
+    )))
     .bind(repo_id)
     .bind(name)
     .fetch_one(&mut *tx)
     .await?;
     crate::secrets::ensure_room_for_secret(others, stored_bytes, name, value)?;
 
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         r#"
         INSERT INTO {table} (repo_id, name, encrypted_value, nonce, created_by_id)
         VALUES ($1, $2, $3, $4, $5)
@@ -69,7 +69,7 @@ pub async fn create_or_update_secret(
             nonce = EXCLUDED.nonce,
             updated_at = NOW()
         "#,
-    ))
+    )))
     .bind(repo_id)
     .bind(name)
     .bind(&encrypted_value)
@@ -112,17 +112,17 @@ pub async fn repository_secret_key(
     }
     let (encrypted, nonce) = encryptor.generate_sealed_box_key()?;
     let table = kind.keys_table();
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "INSERT INTO {table} (repo_id, key_id, encrypted_key, nonce) VALUES ($1, $2, $3, $4) ON CONFLICT(repo_id) DO NOTHING",
-    ))
+    )))
     .bind(repo_id)
     .bind(uuid::Uuid::new_v4().simple().to_string())
     .bind(encrypted)
     .bind(nonce.as_slice())
     .execute(&mut *tx)
     .await?;
-    let (id, encrypted, nonce): (String, Vec<u8>, Vec<u8>) = sqlx::query_as(&format!(
-        "SELECT key_id, encrypted_key, nonce FROM {table} WHERE repo_id = $1",
+    let (id, encrypted, nonce): (String, Vec<u8>, Vec<u8>) = sqlx::query_as(sqlx::AssertSqlSafe(
+        format!("SELECT key_id, encrypted_key, nonce FROM {table} WHERE repo_id = $1",),
     ))
     .bind(repo_id)
     .fetch_one(&mut *tx)
@@ -163,10 +163,10 @@ pub async fn list_secrets(
             chrono::DateTime<chrono::Utc>,
             chrono::DateTime<chrono::Utc>,
         ),
-    >(&format!(
+    >(sqlx::AssertSqlSafe(format!(
         "SELECT name, created_at, updated_at FROM {} WHERE repo_id = $1 ORDER BY name",
         kind.secrets_table(),
-    ))
+    )))
     .bind(repo_id)
     .fetch_all(&mut *tx)
     .await?;
@@ -207,10 +207,10 @@ pub async fn delete_secret(
     {
         return Err(SecretsError::Denied);
     }
-    let result = sqlx::query(&format!(
+    let result = sqlx::query(sqlx::AssertSqlSafe(format!(
         "DELETE FROM {} WHERE repo_id = $1 AND name = $2",
         kind.secrets_table()
-    ))
+    )))
     .bind(repo_id)
     .bind(name)
     .execute(&mut *tx)

@@ -34,17 +34,17 @@ async fn admin(
         .await?)
 }
 async fn state_in(tx: &mut Transaction<'_, Sqlite>, repo: i64) -> Result<Option<State>> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLUMNS} FROM repository_dependency_security WHERE repo_id=?1"
-    ))
+    )))
     .bind(repo)
     .fetch_optional(&mut **tx)
     .await?)
 }
 pub async fn state(pool: &SqlitePool, repo: i64) -> Result<Option<State>> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLUMNS} FROM repository_dependency_security WHERE repo_id=?1"
-    ))
+    )))
     .bind(repo)
     .fetch_optional(pool)
     .await?)
@@ -55,10 +55,10 @@ async fn document(tx: &mut Transaction<'_, Sqlite>, repo: i64) -> Result<Snapsho
             .bind(repo)
             .fetch_optional(&mut **tx)
             .await?;
-    let sha: Option<String> = sqlx::query_scalar(&format!(
+    let sha: Option<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT {}",
         codeyard_database::queries::dependency_graph::DEFAULT_SNAPSHOT_SHA_SQL
-    ))
+    )))
     .bind(repo)
     .fetch_one(&mut **tx)
     .await?;
@@ -190,7 +190,7 @@ pub async fn claim(pool: &SqlitePool, nonce: &str) -> Result<Option<Job>> {
         Refusal::Invalid("Invalid dependency job lease")
     );
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let current:Option<State>=sqlx::query_as(&format!("SELECT {COLUMNS} FROM repository_dependency_security WHERE alerts_enabled AND alerts_actor_id IS NOT NULL AND next_scan_at<=strftime('%Y-%m-%dT%H:%M:%f000Z','now') AND (lease_until IS NULL OR lease_until<=strftime('%Y-%m-%dT%H:%M:%f000Z','now')) ORDER BY next_scan_at,repo_id LIMIT 1")).fetch_optional(&mut *tx).await?;
+    let current:Option<State>=sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT {COLUMNS} FROM repository_dependency_security WHERE alerts_enabled AND alerts_actor_id IS NOT NULL AND next_scan_at<=strftime('%Y-%m-%dT%H:%M:%f000Z','now') AND (lease_until IS NULL OR lease_until<=strftime('%Y-%m-%dT%H:%M:%f000Z','now')) ORDER BY next_scan_at,repo_id LIMIT 1"))).fetch_optional(&mut *tx).await?;
     let Some(current) = current else {
         tx.commit().await?;
         return Ok(None);
@@ -304,7 +304,7 @@ pub async fn complete_scan(pool: &SqlitePool, job: &Job, sha: &str) -> Result<()
     ensure!(crate::repositories::dependencies::sha(sha), Refusal::Stale);
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     active(&mut tx, job, Feature::Alerts).await?;
-    let current: Option<String> = sqlx::query_scalar(&format!("SELECT s.sha FROM dependency_snapshots s JOIN repositories r ON r.id=s.repo_id WHERE s.repo_id=$1 AND s.reference='refs/heads/'||r.default_branch AND s.detector='Codeyard' AND s.correlator='lockfiles' AND s.sha={} ORDER BY s.scanned DESC,s.id DESC LIMIT 1", codeyard_database::queries::dependency_graph::DEFAULT_SNAPSHOT_SHA_SQL))
+    let current: Option<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT s.sha FROM dependency_snapshots s JOIN repositories r ON r.id=s.repo_id WHERE s.repo_id=$1 AND s.reference='refs/heads/'||r.default_branch AND s.detector='Codeyard' AND s.correlator='lockfiles' AND s.sha={} ORDER BY s.scanned DESC,s.id DESC LIMIT 1", codeyard_database::queries::dependency_graph::DEFAULT_SNAPSHOT_SHA_SQL)))
         .bind(job.repo_id).fetch_optional(&mut *tx).await?;
     ensure!(current.as_deref() == Some(sha), Refusal::Stale);
     sqlx::query("UPDATE repository_dependency_security SET last_scan_sha=?2,last_scan_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now'),last_status='complete',last_error=NULL WHERE repo_id=?1").bind(job.repo_id).bind(sha).execute(&mut *tx).await?;

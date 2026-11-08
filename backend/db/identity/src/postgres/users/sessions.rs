@@ -407,10 +407,10 @@ async fn csrf_row<'c>(
 ) -> Result<Option<CsrfRow>> {
     let suffix = if lock { " FOR UPDATE OF s" } else { "" };
     let row = if let Some(user) = expected_user {
-        sqlx::query_as::<_, CsrfRow>(&format!("SELECT s.csrf_token,s.csrf_expires_at,s.expires_at,clock_timestamp() AS now FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.id=$1 AND s.user_id=$2 AND s.expires_at>clock_timestamp() AND NOT u.is_banned{suffix}"))
+        sqlx::query_as::<_, CsrfRow>(sqlx::AssertSqlSafe(format!("SELECT s.csrf_token,s.csrf_expires_at,s.expires_at,clock_timestamp() AS now FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.id=$1 AND s.user_id=$2 AND s.expires_at>clock_timestamp() AND NOT u.is_banned{suffix}")))
             .bind(id).bind(user).fetch_optional(conn).await?
     } else {
-        sqlx::query_as::<_, CsrfRow>(&format!("SELECT s.csrf_token,s.csrf_expires_at,s.expires_at,clock_timestamp() AS now FROM anonymous_sessions s WHERE s.id=$1 AND s.expires_at>clock_timestamp() AND NOT EXISTS(SELECT 1 FROM sessions WHERE id=$1){suffix}"))
+        sqlx::query_as::<_, CsrfRow>(sqlx::AssertSqlSafe(format!("SELECT s.csrf_token,s.csrf_expires_at,s.expires_at,clock_timestamp() AS now FROM anonymous_sessions s WHERE s.id=$1 AND s.expires_at>clock_timestamp() AND NOT EXISTS(SELECT 1 FROM sessions WHERE id=$1){suffix}")))
             .bind(id).fetch_optional(conn).await?
     };
     Ok(row)
@@ -466,7 +466,7 @@ pub async fn get_or_create_csrf_token(
     } else {
         "UPDATE anonymous_sessions SET csrf_token=$2,csrf_expires_at=$3 WHERE id=$1"
     };
-    sqlx::query(query)
+    sqlx::query(sqlx::AssertSqlSafe(query))
         .bind(id)
         .bind(candidate)
         .bind(expires_at)
@@ -504,7 +504,7 @@ pub async fn remove_expired_identity_rows(pool: &PgPool) -> Result<u64> {
     let mut changed = 0;
     for sql in STATEMENTS {
         loop {
-            let batch = sqlx::query(sql)
+            let batch = sqlx::query(sqlx::AssertSqlSafe(sql))
                 .bind(BATCH)
                 .execute(pool)
                 .await?

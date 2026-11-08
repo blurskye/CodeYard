@@ -75,9 +75,9 @@ pub async fn regenerate(
     let changed = sqlx::query("UPDATE personal_access_tokens SET token_hash=$3,expires_at=$4,last_used_at=NULL,last_used_ip=NULL WHERE id=$1 AND user_id=$2 AND EXISTS(SELECT 1 FROM fine_grained_tokens WHERE token_id=$1)")
         .bind(token).bind(user).bind(hash).bind(expires_at.map(codeyard_database::queries::sqlite::time::encode)).execute(&mut *tx).await?.rows_affected() == 1;
     if changed {
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "UPDATE fine_grained_tokens SET requested_at={NOW} WHERE token_id=$1"
-        ))
+        )))
         .bind(token)
         .execute(&mut *tx)
         .await?;
@@ -102,17 +102,17 @@ pub async fn repository_choices(
     crate::sqlite::users::transitions::require_account(&mut tx, actor, credential).await?;
     let access = codeyard_database::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
     let projection = format!("SELECT r.id,r.name FROM repositories r JOIN users u ON u.id=?1 WHERE NOT r.is_gist AND ((?2 IS NULL AND r.owner_kind='user' AND r.owner_user_id=u.id) OR (?2 IS NOT NULL AND r.owner_kind='org' AND r.owner_org_id=?2)) AND ({access})>=1");
-    let kept = sqlx::query_as(&format!(
+    let kept = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{projection} AND r.id IN (SELECT value FROM json_each(?3)) ORDER BY r.id"
-    ))
+    )))
     .bind(actor)
     .bind(org)
     .bind(serde_json::to_string(selected)?)
     .fetch_all(&mut *tx)
     .await?;
-    let matching = sqlx::query_as(&format!(
+    let matching = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{projection} AND LOWER(r.name) LIKE ?3 ESCAPE '\\' ORDER BY r.name,r.id LIMIT 101"
-    ))
+    )))
     .bind(actor)
     .bind(org)
     .bind(codeyard_database::queries::discussions::contains_pattern(
@@ -128,14 +128,16 @@ pub async fn repository_choices(
 }
 
 pub async fn get(pool: &SqlitePool, token: i64) -> Result<Option<Token>> {
-    Ok(sqlx::query_as(&format!("{TOKEN} WHERE f.token_id=$1"))
-        .bind(token)
-        .fetch_optional(pool)
-        .await?)
+    Ok(
+        sqlx::query_as(sqlx::AssertSqlSafe(format!("{TOKEN} WHERE f.token_id=$1")))
+            .bind(token)
+            .fetch_optional(pool)
+            .await?,
+    )
 }
 
 pub async fn list_before(pool: &SqlitePool, user: i64, before: Option<i64>) -> Result<Vec<Token>> {
-    Ok(sqlx::query_as(&format!("{TOKEN} WHERE t.user_id=$1 AND (CAST($2 AS BIGINT) IS NULL OR f.token_id<$2) ORDER BY f.token_id DESC LIMIT 100"))
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!("{TOKEN} WHERE t.user_id=$1 AND (CAST($2 AS BIGINT) IS NULL OR f.token_id<$2) ORDER BY f.token_id DESC LIMIT 100")))
         .bind(user).bind(before).fetch_all(pool).await?)
 }
 
@@ -191,7 +193,7 @@ async fn tokens_page(
     let (permission, level) = filter.permission.map_or((None, None), |(key, level)| {
         (Some(format!("$.\"{key}\"")), level)
     });
-    Ok(sqlx::query_as(&format!("{TOKEN} JOIN users u ON u.id=t.user_id WHERE f.owner_org_id=$1 AND f.status=$2 AND EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=$1 AND m.user_id=t.user_id) AND (json_array_length($3)=0 OR u.username IN (SELECT value FROM json_each($3))) AND (json_array_length($4)=0 OR f.token_id IN (SELECT value FROM json_each($4))) AND ($5 IS NULL OR f.repository_access='all' OR (f.repository_access='selected' AND EXISTS(SELECT 1 FROM fine_grained_token_repositories s WHERE s.token_id=f.token_id AND s.repo_id=$5))) AND ($6 IS NULL OR (json_extract(f.permissions,$6) IS NOT NULL AND ($7 IS NULL OR json_extract(f.permissions,$6)=$7))) AND ($8 IS NULL OR julianday(t.last_used_at)<julianday($8)) AND ($9 IS NULL OR julianday(t.last_used_at)>julianday($9)) AND ($12 IS NULL OR f.token_id<$12) ORDER BY f.token_id {order} LIMIT $10 OFFSET $11"))
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!("{TOKEN} JOIN users u ON u.id=t.user_id WHERE f.owner_org_id=$1 AND f.status=$2 AND EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=$1 AND m.user_id=t.user_id) AND (json_array_length($3)=0 OR u.username IN (SELECT value FROM json_each($3))) AND (json_array_length($4)=0 OR f.token_id IN (SELECT value FROM json_each($4))) AND ($5 IS NULL OR f.repository_access='all' OR (f.repository_access='selected' AND EXISTS(SELECT 1 FROM fine_grained_token_repositories s WHERE s.token_id=f.token_id AND s.repo_id=$5))) AND ($6 IS NULL OR (json_extract(f.permissions,$6) IS NOT NULL AND ($7 IS NULL OR json_extract(f.permissions,$6)=$7))) AND ($8 IS NULL OR julianday(t.last_used_at)<julianday($8)) AND ($9 IS NULL OR julianday(t.last_used_at)>julianday($9)) AND ($12 IS NULL OR f.token_id<$12) ORDER BY f.token_id {order} LIMIT $10 OFFSET $11")))
         .bind(org).bind(filter.status).bind(serde_json::to_string(filter.owners)?).bind(serde_json::to_string(filter.token_ids)?).bind(filter.repository).bind(permission).bind(level)
         .bind(filter.last_used_before).bind(filter.last_used_after).bind(limit).bind(offset).bind(filter.before)
         .fetch_all(connection).await?)
@@ -217,7 +219,7 @@ pub async fn owner_tokens(
 ) -> Result<Option<OwnerTokens>> {
     // A deferred transaction reads every list from the snapshot that saw the owner.
     let mut tx = pool.begin().await?;
-    let owner: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM org_memberships m JOIN users u ON u.id=m.user_id JOIN sessions s ON s.user_id=u.id WHERE m.org_id=$1 AND m.user_id=$2 AND m.role='owner' AND NOT u.is_banned AND NOT u.must_change_password AND s.id=$3 AND s.expires_at>{NOW})"))
+    let owner: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT EXISTS(SELECT 1 FROM org_memberships m JOIN users u ON u.id=m.user_id JOIN sessions s ON s.user_id=u.id WHERE m.org_id=$1 AND m.user_id=$2 AND m.role='owner' AND NOT u.is_banned AND NOT u.must_change_password AND s.id=$3 AND s.expires_at>{NOW})")))
         .bind(org).bind(actor).bind(session).fetch_one(&mut *tx).await?;
     if !owner {
         return Ok(None);
@@ -238,11 +240,11 @@ pub async fn owner_tokens(
         .map(|token| token.token_id)
         .collect();
     let readable = codeyard_database::queries::sqlite::repositories::access::readable_condition();
-    let repositories: Vec<(i64, String)> = sqlx::query_as(&format!("SELECT token_id,name FROM (SELECT selected.token_id,r.name,ROW_NUMBER() OVER (PARTITION BY selected.token_id ORDER BY r.name,r.id) AS row_position
+    let repositories: Vec<(i64, String)> = sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT token_id,name FROM (SELECT selected.token_id,r.name,ROW_NUMBER() OVER (PARTITION BY selected.token_id ORDER BY r.name,r.id) AS row_position
         FROM fine_grained_token_repositories selected JOIN fine_grained_tokens g ON g.token_id=selected.token_id
         JOIN repositories r ON r.id=selected.repo_id JOIN users u ON u.id=$2
         WHERE selected.token_id IN (SELECT value FROM json_each($1)) AND g.owner_org_id=$3
-        AND r.owner_kind='org' AND r.owner_org_id=$3 AND {readable}) listed WHERE row_position<=100 ORDER BY token_id,row_position"))
+        AND r.owner_kind='org' AND r.owner_org_id=$3 AND {readable}) listed WHERE row_position<=100 ORDER BY token_id,row_position")))
         .bind(serde_json::to_string(&ids)?).bind(actor).bind(org).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok(Some(OwnerTokens {
@@ -279,7 +281,7 @@ pub async fn review(
     }
     let mut changed = 0;
     for token in tokens {
-        changed += sqlx::query(&format!("UPDATE fine_grained_tokens SET status=$4,reason=$5,reviewed_by=$3,reviewed_at={NOW} WHERE token_id=$1 AND owner_org_id=$2 AND status=$6"))
+        changed += sqlx::query(sqlx::AssertSqlSafe(format!("UPDATE fine_grained_tokens SET status=$4,reason=$5,reviewed_by=$3,reviewed_at={NOW} WHERE token_id=$1 AND owner_org_id=$2 AND status=$6")))
             .bind(token).bind(org).bind(reviewer).bind(status).bind(reason).bind(from).execute(&mut *tx).await?.rows_affected();
     }
     tx.commit().await?;
@@ -309,7 +311,7 @@ pub async fn review_all(
     {
         return Ok(0);
     }
-    let changed = sqlx::query(&format!("UPDATE fine_grained_tokens SET status=$3,reason=$4,reviewed_by=$2,reviewed_at={NOW} WHERE owner_org_id=$1 AND status=$5 AND EXISTS(SELECT 1 FROM personal_access_tokens t JOIN org_memberships m ON m.user_id=t.user_id WHERE t.id=fine_grained_tokens.token_id AND m.org_id=$1)"))
+    let changed = sqlx::query(sqlx::AssertSqlSafe(format!("UPDATE fine_grained_tokens SET status=$3,reason=$4,reviewed_by=$2,reviewed_at={NOW} WHERE owner_org_id=$1 AND status=$5 AND EXISTS(SELECT 1 FROM personal_access_tokens t JOIN org_memberships m ON m.user_id=t.user_id WHERE t.id=fine_grained_tokens.token_id AND m.org_id=$1)")))
         .bind(org).bind(reviewer).bind(status).bind(reason).bind(from).execute(&mut *tx).await?.rows_affected();
     tx.commit().await?;
     Ok(changed)
@@ -318,11 +320,13 @@ pub async fn review_all(
 pub async fn classic_refused(pool: &SqlitePool, token: i64, org: i64) -> Result<bool> {
     let allowed =
         codeyard_database::queries::fine_grained_tokens::classic_allowed_condition("$1", "$2");
-    Ok(sqlx::query_scalar(&format!("SELECT NOT ({allowed})"))
-        .bind(token)
-        .bind(org)
-        .fetch_one(pool)
-        .await?)
+    Ok(
+        sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT NOT ({allowed})")))
+            .bind(token)
+            .bind(org)
+            .fetch_one(pool)
+            .await?,
+    )
 }
 
 pub async fn classic_refused_repository(pool: &SqlitePool, token: i64, repo: i64) -> Result<bool> {
@@ -330,9 +334,9 @@ pub async fn classic_refused_repository(pool: &SqlitePool, token: i64, repo: i64
         "$1",
         "r.owner_org_id",
     );
-    Ok(sqlx::query_scalar(&format!(
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT EXISTS(SELECT 1 FROM repositories r WHERE r.id=$2 AND NOT ({allowed}))"
-    ))
+    )))
     .bind(token)
     .bind(repo)
     .fetch_one(pool)

@@ -41,8 +41,8 @@ async fn actor<'a>(
     let token = match token {
         Credential::Token(id) => id,
         Credential::Session(session) => {
-            let accounts: Vec<i64> = sqlx::query_scalar(&crate::packages::session_account_query(
-                "strftime('%Y-%m-%dT%H:%M:%f000Z','now')",
+            let accounts: Vec<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(
+                crate::packages::session_account_query("strftime('%Y-%m-%dT%H:%M:%f000Z','now')"),
             ))
             .bind(session)
             .bind(codeyard_security::token_hash::token_hash(session))
@@ -181,14 +181,14 @@ async fn authorize<'a>(
             .bind(repo).bind(&package.owner_kind).bind(package.owner_user_id.or(package.owner_org_id)).fetch_one(&mut **tx).await?;
         ensure!(same_owner, Refusal::Missing);
     }
-    let readable: bool = sqlx::query_scalar(&format!("SELECT COALESCE({},false) FROM packages p LEFT JOIN repositories r ON r.id=p.repo_id LEFT JOIN users u ON u.id=$2 WHERE p.id=$1", read_condition(&actor)))
+    let readable: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COALESCE({},false) FROM packages p LEFT JOIN repositories r ON r.id=p.repo_id LEFT JOIN users u ON u.id=$2 WHERE p.id=$1", read_condition(&actor))))
         .bind(id).bind(actor.id).fetch_one(&mut **tx).await?;
     ensure!(readable, Refusal::Missing);
     if !matches!(permission, Permission::Read) {
-        let scoped: bool = sqlx::query_scalar(&format!(
+        let scoped: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT {} FROM packages p WHERE p.id=$1",
             actor.scope_condition()
-        ))
+        )))
         .bind(id)
         .fetch_one(&mut **tx)
         .await?;
@@ -352,7 +352,7 @@ async fn listing(
         None if actor.owner.is_some() => Actor::ANONYMOUS,
         None => actor,
     };
-    let rows = sqlx::query_as(&format!("SELECT p.* FROM packages p LEFT JOIN repositories r ON r.id=p.repo_id LEFT JOIN users u ON u.id=$5 WHERE ($1 IS NULL OR p.owner_kind=$1) AND ($2 IS NULL OR COALESCE(p.owner_user_id,p.owner_org_id)=$2) AND ($3 IS NULL OR p.package_type=$3) AND p.deleted_at IS NULL AND ($4 IS NULL OR p.visibility=$4) AND ($6 IS NULL OR (p.repo_id=$6 AND r.owner_kind=p.owner_kind AND COALESCE(r.owner_user_id,r.owner_org_id)=COALESCE(p.owner_user_id,p.owner_org_id))) AND ($9 IS NULL OR p.repo_id=$9) AND ($10 IS NULL OR p.id<$10) AND {} ORDER BY p.id DESC LIMIT $7 OFFSET $8",read_condition(&actor)))
+    let rows = sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT p.* FROM packages p LEFT JOIN repositories r ON r.id=p.repo_id LEFT JOIN users u ON u.id=$5 WHERE ($1 IS NULL OR p.owner_kind=$1) AND ($2 IS NULL OR COALESCE(p.owner_user_id,p.owner_org_id)=$2) AND ($3 IS NULL OR p.package_type=$3) AND p.deleted_at IS NULL AND ($4 IS NULL OR p.visibility=$4) AND ($6 IS NULL OR (p.repo_id=$6 AND r.owner_kind=p.owner_kind AND COALESCE(r.owner_user_id,r.owner_org_id)=COALESCE(p.owner_user_id,p.owner_org_id))) AND ($9 IS NULL OR p.repo_id=$9) AND ($10 IS NULL OR p.id<$10) AND {} ORDER BY p.id DESC LIMIT $7 OFFSET $8",read_condition(&actor))))
         .bind(query.owner.map(|o| o.kind.as_str())).bind(query.owner.map(|o| o.id)).bind(query.kind).bind(query.visibility).bind(actor.id).bind(actor.repo).bind(query.limit).bind(query.offset).bind(query.repo).bind(before).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok(rows)
@@ -371,7 +371,7 @@ pub async fn count_linked(
     } else {
         actor
     };
-    let count = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM packages p LEFT JOIN repositories r ON r.id=p.repo_id LEFT JOIN users u ON u.id=$2 WHERE p.repo_id=$1 AND p.deleted_at IS NULL AND ($3 IS NULL OR p.repo_id=$3) AND {}",read_condition(&actor)))
+    let count = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM packages p LEFT JOIN repositories r ON r.id=p.repo_id LEFT JOIN users u ON u.id=$2 WHERE p.repo_id=$1 AND p.deleted_at IS NULL AND ($3 IS NULL OR p.repo_id=$3) AND {}",read_condition(&actor))))
         .bind(repo).bind(actor.id).bind(actor.repo).fetch_one(&mut *tx).await?;
     tx.commit().await?;
     Ok(count)
@@ -421,10 +421,10 @@ pub async fn create(
         Refusal::Forbidden
     );
     let user = actor.id.ok_or(Refusal::Unauthorized)?;
-    let scoped: bool = sqlx::query_scalar(&format!(
+    let scoped: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT {} FROM (SELECT $1 AS owner_org_id,$2 AS repo_id) p",
         actor.scope_condition()
-    ))
+    )))
     .bind(candidate.owner_org_id)
     .bind(repo)
     .fetch_one(&mut *tx)
@@ -530,7 +530,7 @@ pub async fn version_page(
     } else {
         "manifest"
     };
-    let rows = sqlx::query_as(&format!("SELECT id,package_id,name,digest,media_type,{metadata} AS manifest,downloads,created_at,updated_at,deleted_at FROM package_versions WHERE package_id=$1 AND deleted_at IS NULL AND id<$2 ORDER BY id DESC LIMIT 100"))
+    let rows = sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT id,package_id,name,digest,media_type,{metadata} AS manifest,downloads,created_at,updated_at,deleted_at FROM package_versions WHERE package_id=$1 AND deleted_at IS NULL AND id<$2 ORDER BY id DESC LIMIT 100")))
         .bind(package).bind(before).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok(rows)

@@ -2308,20 +2308,24 @@ async fn test_public_repository_search_and_shares_on_sqlite() {
 async fn set_state(pool: &DbPool, table: &str, id: i64, state: &str) {
     match pool {
         DbPool::Sqlite(pool) => {
-            sqlx::query(&format!("UPDATE {table} SET state = ?1 WHERE id = ?2"))
-                .bind(state)
-                .bind(id)
-                .execute(pool)
-                .await
-                .unwrap();
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "UPDATE {table} SET state = ?1 WHERE id = ?2"
+            )))
+            .bind(state)
+            .bind(id)
+            .execute(pool)
+            .await
+            .unwrap();
         }
         DbPool::Postgres(pool) => {
-            sqlx::query(&format!("UPDATE {table} SET state = $1 WHERE id = $2"))
-                .bind(state)
-                .bind(id)
-                .execute(pool)
-                .await
-                .unwrap();
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "UPDATE {table} SET state = $1 WHERE id = $2"
+            )))
+            .bind(state)
+            .bind(id)
+            .execute(pool)
+            .await
+            .unwrap();
         }
     }
 }

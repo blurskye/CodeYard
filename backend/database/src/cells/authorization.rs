@@ -600,7 +600,7 @@ pub async fn postgres(
     let Some(proof) = scope::find(query) else {
         return Ok(None);
     };
-    let user = sqlx::query_as(&format!("{CREDENTIAL_USER} FOR SHARE"))
+    let user = sqlx::query_as(sqlx::AssertSqlSafe(format!("{CREDENTIAL_USER} FOR SHARE")))
         .bind(proof.answer.user.id)
         .fetch_optional(connection)
         .await?;

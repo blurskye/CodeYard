@@ -62,28 +62,28 @@ pub(super) async fn ordinary_name_available(
     Ok(sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM gist_identifiers WHERE id=lower($3) AND (EXISTS(SELECT 1 FROM users WHERE id=$1 AND lower(username) IN ('gist','gists')) OR EXISTS(SELECT 1 FROM organizations WHERE id=$2 AND lower(name) IN ('gist','gists'))))").bind(user).bind(org).bind(name).fetch_one(connection).await?)
 }
 pub async fn get(pool: &PgPool, id: &str) -> Result<Option<Gist>> {
-    Ok(
-        sqlx::query_as(&format!("SELECT {FIELDS} {FROM} WHERE g.id=$1"))
-            .bind(id)
-            .fetch_optional(pool)
-            .await?,
-    )
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {FIELDS} {FROM} WHERE g.id=$1"
+    )))
+    .bind(id)
+    .fetch_optional(pool)
+    .await?)
 }
 pub async fn by_repository(pool: &PgPool, repo: i64) -> Result<Option<Gist>> {
-    Ok(
-        sqlx::query_as(&format!("SELECT {FIELDS} {FROM} WHERE g.repo_id=$1"))
-            .bind(repo)
-            .fetch_optional(pool)
-            .await?,
-    )
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {FIELDS} {FROM} WHERE g.repo_id=$1"
+    )))
+    .bind(repo)
+    .fetch_optional(pool)
+    .await?)
 }
 pub async fn git_repository(pool: &PgPool, id: &str) -> Result<Option<Repository>> {
-    Ok(
-        sqlx::query_as(&format!("SELECT r.* {FROM} WHERE g.id=$1 AND g.ready"))
-            .bind(id)
-            .fetch_optional(pool)
-            .await?,
-    )
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT r.* {FROM} WHERE g.id=$1 AND g.ready"
+    )))
+    .bind(id)
+    .fetch_optional(pool)
+    .await?)
 }
 /// The repositories of the gists among `repo_ids`, for a page that lists them.
 pub async fn git_repositories(pool: &PgPool, repo_ids: &[i64]) -> Result<Vec<Repository>> {
@@ -123,7 +123,7 @@ async fn list_on(connection: &mut sqlx::PgConnection, input: &GistList) -> Resul
         ListScope::Starred(id) => (2, id, true),
         ListScope::Forks(id) => (3, id, true),
     };
-    Ok(sqlx::query_as(&format!("SELECT {FIELDS} {FROM} WHERE g.ready AND ($1::timestamptz IS NULL OR g.updated_at>$1) AND (($2=0 AND g.is_public) OR ($2=1 AND r.owner_user_id=$3 AND ($4 OR g.is_public)) OR ($2=2 AND EXISTS(SELECT 1 FROM gist_stars s WHERE s.repo_id=g.repo_id AND s.user_id=$3)) OR ($2=3 AND r.forked_from_id=$3)) ORDER BY g.updated_at DESC,g.id DESC LIMIT $5 OFFSET $6")).bind(input.since).bind(mode).bind(id).bind(secret).bind(input.limit.clamp(0,101)).bind(input.offset.max(0)).fetch_all(connection).await?)
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT {FIELDS} {FROM} WHERE g.ready AND ($1::timestamptz IS NULL OR g.updated_at>$1) AND (($2=0 AND g.is_public) OR ($2=1 AND r.owner_user_id=$3 AND ($4 OR g.is_public)) OR ($2=2 AND EXISTS(SELECT 1 FROM gist_stars s WHERE s.repo_id=g.repo_id AND s.user_id=$3)) OR ($2=3 AND r.forked_from_id=$3)) ORDER BY g.updated_at DESC,g.id DESC LIMIT $5 OFFSET $6"))).bind(input.since).bind(mode).bind(id).bind(secret).bind(input.limit.clamp(0,101)).bind(input.offset.max(0)).fetch_all(connection).await?)
 }
 const OWNED: &str = "WHERE g.ready AND r.owner_user_id=$1 AND ($2 OR g.is_public) AND ($3::boolean IS NULL OR g.is_public=$3)";
 pub async fn count_owned(
@@ -132,14 +132,14 @@ pub async fn count_owned(
     secret: bool,
     privacy: Option<bool>,
 ) -> Result<i64> {
-    Ok(
-        sqlx::query_scalar(&format!("SELECT COUNT(*) {FROM} {OWNED}"))
-            .bind(owner)
-            .bind(secret)
-            .bind(privacy)
-            .fetch_one(pool)
-            .await?,
-    )
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT COUNT(*) {FROM} {OWNED}"
+    )))
+    .bind(owner)
+    .bind(secret)
+    .bind(privacy)
+    .fetch_one(pool)
+    .await?)
 }
 pub async fn list_created(
     pool: &PgPool,
@@ -149,9 +149,9 @@ pub async fn list_created(
     limit: i64,
     offset: i64,
 ) -> Result<Vec<Gist>> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {FIELDS} {FROM} {OWNED} ORDER BY g.created_at DESC,g.id DESC LIMIT $4 OFFSET $5"
-    ))
+    )))
     .bind(owner)
     .bind(secret)
     .bind(privacy)
@@ -216,9 +216,9 @@ pub async fn reserve(
         .await?;
     let repo = authority(&mut tx, actor, input.repo_id, true, false).await?;
     if let Some(source) = repo.forked_from_id {
-        let public: bool = sqlx::query_scalar(&format!(
+        let public: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT g.is_public {FROM} WHERE g.repo_id=$1 AND g.ready"
-        ))
+        )))
         .bind(source)
         .fetch_optional(&mut *tx)
         .await?

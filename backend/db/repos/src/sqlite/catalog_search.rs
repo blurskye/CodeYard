@@ -28,8 +28,8 @@ pub async fn search(
         .map_err(anyhow::Error::msg)?;
     let mut connection = crate::sqlite::repositories::discovery::search_connection(pool).await?;
     let result=async{sqlx::query("BEGIN").execute(&mut *connection).await?;
-        let count_sql=format!("{} SELECT COUNT(*) FROM matched",statement.prefix);let mut count=sqlx::query_scalar::<_,i64>(&count_sql).bind(viewer);for value in &statement.args{count=count.bind(value);}let total=count.fetch_one(&mut *connection).await?;
-        let sql=format!("{} SELECT m.key,m.repository_id,m.score FROM matched m ORDER BY {order} LIMIT {} OFFSET {}",statement.prefix,statement.placeholder(statement.args.len()+2),statement.placeholder(statement.args.len()+3));let mut rows=sqlx::query_as::<_,Hit>(&sql).bind(viewer);for value in &statement.args{rows=rows.bind(value);}let items=rows.bind(options.limit).bind(options.offset).fetch_all(&mut *connection).await?;sqlx::query("COMMIT").execute(&mut *connection).await?;Ok::<_,anyhow::Error>(Results{total,items})}.await;
+        let count_sql=format!("{} SELECT COUNT(*) FROM matched",statement.prefix);let mut count=sqlx::query_scalar::<_,i64>(sqlx::AssertSqlSafe(count_sql.as_str())).bind(viewer);for value in &statement.args{count=count.bind(value);}let total=count.fetch_one(&mut *connection).await?;
+        let sql=format!("{} SELECT m.key,m.repository_id,m.score FROM matched m ORDER BY {order} LIMIT {} OFFSET {}",statement.prefix,statement.placeholder(statement.args.len()+2),statement.placeholder(statement.args.len()+3));let mut rows=sqlx::query_as::<_,Hit>(sqlx::AssertSqlSafe(sql.as_str())).bind(viewer);for value in &statement.args{rows=rows.bind(value);}let items=rows.bind(options.limit).bind(options.offset).fetch_all(&mut *connection).await?;sqlx::query("COMMIT").execute(&mut *connection).await?;Ok::<_,anyhow::Error>(Results{total,items})}.await;
     if result.is_err() {
         let _ = sqlx::query("ROLLBACK").execute(&mut *connection).await;
     }
@@ -50,7 +50,7 @@ pub async fn topic(
     );
     let name = statement.bind(name);
     let sql=format!("SELECT t.*,COUNT(*) AS repository_count FROM topics t JOIN repository_topics rt ON rt.topic=t.name JOIN repositories r ON r.id=rt.repo_id LEFT JOIN users u ON u.id=?1 WHERE t.name={name} AND ({readable}) GROUP BY t.name");
-    let mut query = sqlx::query_as(&sql).bind(viewer);
+    let mut query = sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str())).bind(viewer);
     for value in &statement.args {
         query = query.bind(value);
     }

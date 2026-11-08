@@ -46,10 +46,10 @@ pub async fn refresh(
         return Ok(());
     }
     let reference = format!("refs/heads/{branch}");
-    let sha: Option<String> = sqlx::query_scalar(&format!(
+    let sha: Option<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT {}",
         crate::queries::dependency_graph::DEFAULT_SNAPSHOT_SHA_SQL
-    ))
+    )))
     .bind(repo)
     .fetch_one(&mut **tx)
     .await?;

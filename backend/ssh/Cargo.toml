@@ -5,12 +5,9 @@ edition.workspace = true
 license = "LGPL-3.0-or-later"
 
 [dependencies]
-codeyard-placement.workspace = true
-codeyard-repos-pulls.workspace = true
 codeyard-git-storage.workspace = true
 codeyard-ci.workspace = true
 codeyard-repos.workspace = true
-codeyard-app.workspace = true
 anyhow.workspace = true
 bytes.workspace = true
 clap.workspace = true

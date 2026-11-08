@@ -58,13 +58,13 @@ pub async fn change(
         let nodes: Vec<ClusterNode> = sqlx::query_as("SELECT *,clock_timestamp() AS observed_at FROM nodes ORDER BY id LIMIT 1001 FOR UPDATE")
             .fetch_all(&mut *tx).await?;
         ensure!(nodes.len() <= 1000, "drain node limit exceeded");
-        let repos: Vec<Repository> = sqlx::query_as(&format!("{FAMILY} SELECT r.id,r.forked_from_id AS parent,r.storage_node_id AS primary_id,r.write_version AS version,r.size_bytes AS size,(SELECT COUNT(*) FROM repository_voters v WHERE v.repository_id=r.id) AS voters FROM repositories r JOIN family f ON f.id=r.id ORDER BY r.id LIMIT $2 FOR UPDATE OF r"))
+        let repos: Vec<Repository> = sqlx::query_as(sqlx::AssertSqlSafe(format!("{FAMILY} SELECT r.id,r.forked_from_id AS parent,r.storage_node_id AS primary_id,r.write_version AS version,r.size_bytes AS size,(SELECT COUNT(*) FROM repository_voters v WHERE v.repository_id=r.id) AS voters FROM repositories r JOIN family f ON f.id=r.id ORDER BY r.id LIMIT $2 FOR UPDATE OF r")))
             .bind(node.id).bind(limit+1).fetch_all(&mut *tx).await?;
         ensure!(
             repos.len() as i64 <= limit,
             "drain repository limit exceeded"
         );
-        let copies: Vec<(i64,i64,i64)> = sqlx::query_as(&format!("{FAMILY} SELECT repository_id,node_id,MAX(applied_version) FROM (SELECT rr.repository_id,rr.node_id,rr.applied_version FROM repository_replicas rr JOIN family f ON f.id=rr.repository_id UNION ALL SELECT v.repository_id,v.node_id,v.applied_version FROM repository_voters v JOIN family f ON f.id=v.repository_id) copies GROUP BY repository_id,node_id ORDER BY repository_id,node_id LIMIT $2"))
+        let copies: Vec<(i64,i64,i64)> = sqlx::query_as(sqlx::AssertSqlSafe(format!("{FAMILY} SELECT repository_id,node_id,MAX(applied_version) FROM (SELECT rr.repository_id,rr.node_id,rr.applied_version FROM repository_replicas rr JOIN family f ON f.id=rr.repository_id UNION ALL SELECT v.repository_id,v.node_id,v.applied_version FROM repository_voters v JOIN family f ON f.id=v.repository_id) copies GROUP BY repository_id,node_id ORDER BY repository_id,node_id LIMIT $2")))
             .bind(node.id).bind(limit.saturating_mul(1000)+1).fetch_all(&mut *tx).await?;
         ensure!(
             copies.len() as i64 <= limit.saturating_mul(1000),

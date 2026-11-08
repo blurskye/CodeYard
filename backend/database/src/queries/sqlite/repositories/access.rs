@@ -11,9 +11,9 @@ pub async fn user_repo_access_in_transaction(
     // Projection only, not a write permit. All contributions and governance
     // share one statement snapshot; suspended orgs cap even nonmember grants.
     // Collaborator levels are 1..=5; Owner comes only from scoped ownership.
-    let level: Option<i16> = sqlx::query_scalar(&format!(
+    let level: Option<i16> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT ({USER_REPO_ACCESS_SQL}) FROM repositories r JOIN users u ON u.id = ?1 WHERE r.id = ?2"
-    ))
+    )))
     .bind(user_id)
     .bind(repo_id)
     .fetch_optional(connection)
@@ -99,6 +99,6 @@ pub async fn lock_readable_repository_in_transaction(
     user_id: i64,
     repo_id: i64,
 ) -> Result<bool> {
-    Ok(sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=?1 WHERE r.id=?2 AND NOT u.is_banned AND NOT u.must_change_password AND {})", readable_condition()))
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=?1 WHERE r.id=?2 AND NOT u.is_banned AND NOT u.must_change_password AND {})", readable_condition())))
         .bind(user_id).bind(repo_id).fetch_one(connection).await?)
 }

@@ -136,7 +136,7 @@ pub(super) async fn save_in_transaction(
         }
         if matches!(policy, InvitationOffer::Retain) {
             let sql=format!("SELECT i.* FROM organization_invitations i WHERE {RECIPIENT} AND i.org_id=$2 AND {LIVE} ORDER BY i.id LIMIT 1 FOR UPDATE");
-            let previous: Option<OrgInvitation> = sqlx::query_as(&sql)
+            let previous: Option<OrgInvitation> = sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))
                 .bind(target)
                 .bind(org)
                 .fetch_optional(&mut *tx)
@@ -211,7 +211,7 @@ pub(super) async fn save_in_transaction(
         }
     }
     let recipient = RECIPIENT.replace("$1", "$2");
-    let mut previous: Vec<OrgInvitation> = sqlx::query_as(&format!("SELECT i.* FROM organization_invitations i WHERE i.org_id=$1 AND (($2::bigint IS NOT NULL AND {recipient}) OR ($3::text IS NOT NULL AND i.email=$3)) ORDER BY i.id LIMIT 2 FOR UPDATE"))
+    let mut previous: Vec<OrgInvitation> = sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT i.* FROM organization_invitations i WHERE i.org_id=$1 AND (($2::bigint IS NOT NULL AND {recipient}) OR ($3::text IS NOT NULL AND i.email=$3)) ORDER BY i.id LIMIT 2 FOR UPDATE")))
         .bind(org).bind(target).bind(&input.email).fetch_all(&mut *tx).await?;
     if previous.len() > 1 {
         return Ok(Conflict);
@@ -306,7 +306,7 @@ pub async fn list_organization_invitations(
         return Ok(Denied);
     }
     let sql = format!("SELECT i.* FROM organization_invitations i WHERE i.org_id=$1 AND i.id>$2 AND {LIVE} ORDER BY i.id LIMIT $3");
-    let rows = sqlx::query_as(&sql)
+    let rows = sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(org)
         .bind(page.after)
         .bind(page.limit)
@@ -435,7 +435,7 @@ pub(super) async fn cancel_offers(
     let sql = format!(
         "SELECT i.* FROM organization_invitations i WHERE i.org_id=$1 AND {matches} ORDER BY i.id FOR UPDATE"
     );
-    let invitations: Vec<OrgInvitation> = sqlx::query_as(&sql)
+    let invitations: Vec<OrgInvitation> = sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(org)
         .bind(target)
         .fetch_all(&mut *tx)
@@ -470,7 +470,7 @@ pub async fn list_received_organization_invitations(
     page: OrganizationPage,
 ) -> Result<Vec<ReceivedInvitation>> {
     let sql = format!("SELECT i.id,i.org_id,o.name AS org_name,o.display_name AS org_display_name,i.role,i.created_at FROM organization_invitations i JOIN organizations o ON o.id=i.org_id WHERE {RECIPIENT} AND i.id>$2 AND {LIVE} ORDER BY i.id LIMIT $3");
-    Ok(sqlx::query_as(&sql)
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(actor)
         .bind(page.after)
         .bind(page.limit)
@@ -505,13 +505,13 @@ pub async fn accept_organization_invitation(
     // primary-address changes lock the same row and cannot revoke proof under acceptance.
     let actor_active = active(&mut tx, actor).await?;
     let sql = format!("SELECT i.id FROM organization_invitations i WHERE {RECIPIENT} AND i.org_id=$2 ORDER BY i.id FOR UPDATE");
-    sqlx::query(&sql)
+    sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(actor)
         .bind(org)
         .execute(&mut *tx)
         .await?;
     let sql = format!("SELECT i.* FROM organization_invitations i WHERE {RECIPIENT} AND i.org_id=$2 AND ($3 IS NULL OR i.id=$3) AND {LIVE} AND NOT EXISTS(SELECT 1 FROM organization_member_history h WHERE h.org_id=i.org_id AND h.user_id=$1 AND h.removed_at>=i.created_at) ORDER BY i.id LIMIT 1");
-    let Some(invitation): Option<OrgInvitation> = sqlx::query_as(&sql)
+    let Some(invitation): Option<OrgInvitation> = sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(actor)
         .bind(org)
         .bind(invitation)
@@ -548,14 +548,14 @@ pub async fn accept_organization_invitation(
     sqlx::query("INSERT INTO team_memberships(team_id,user_id,role) SELECT ti.team_id,$1,ti.role FROM team_invitations ti JOIN teams t ON t.id=ti.team_id WHERE ti.invitation_id=$2 AND t.org_id=$3 AND ti.role IN ('member','maintainer') ON CONFLICT(team_id,user_id) DO UPDATE SET role=EXCLUDED.role")
         .bind(actor).bind(invitation.id).bind(org).execute(&mut *tx).await?;
     let sql = format!("DELETE FROM email_outbox WHERE organization_invitation_id IN (SELECT i.id FROM organization_invitations i WHERE {RECIPIENT} AND i.org_id=$2)");
-    sqlx::query(&sql)
+    sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(actor)
         .bind(org)
         .execute(&mut *tx)
         .await?;
     let sql =
         format!("DELETE FROM organization_invitations AS i WHERE {RECIPIENT} AND i.org_id=$2");
-    sqlx::query(&sql)
+    sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(actor)
         .bind(org)
         .execute(&mut *tx)
@@ -587,20 +587,20 @@ pub async fn decline_organization_invitation(
         .await?;
     let _ = active(&mut tx, actor).await?;
     let sql = format!("SELECT i.id FROM organization_invitations i WHERE {RECIPIENT} AND i.org_id=$2 ORDER BY i.id FOR UPDATE");
-    sqlx::query(&sql)
+    sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(actor)
         .bind(org)
         .execute(&mut *tx)
         .await?;
     let sql = format!("DELETE FROM email_outbox WHERE organization_invitation_id IN (SELECT i.id FROM organization_invitations i WHERE {RECIPIENT} AND i.org_id=$2 AND ($3 IS NULL OR i.id=$3))");
-    sqlx::query(&sql)
+    sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(actor)
         .bind(org)
         .bind(invitation)
         .execute(&mut *tx)
         .await?;
     let sql = format!("DELETE FROM organization_invitations AS i WHERE {RECIPIENT} AND i.org_id=$2 AND ($3 IS NULL OR i.id=$3)");
-    let deleted = sqlx::query(&sql)
+    let deleted = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(actor)
         .bind(org)
         .bind(invitation)

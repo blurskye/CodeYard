@@ -120,13 +120,13 @@ pub async fn primary_required(
         DbPool::Postgres(pool) => {
             let clock = "FLOOR(EXTRACT(EPOCH FROM clock_timestamp()))::bigint";
             if write {
-                sqlx::query(&update(clock))
+                sqlx::query(sqlx::AssertSqlSafe(update(clock)))
                     .bind(value)
                     .execute(pool)
                     .await?;
                 return Ok(true);
             }
-            Ok(sqlx::query_scalar(&read(clock))
+            Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(read(clock)))
                 .bind(value)
                 .fetch_one(pool)
                 .await?)
@@ -134,13 +134,13 @@ pub async fn primary_required(
         DbPool::Sqlite(pool) => {
             let clock = "CAST(strftime('%s','now') AS INTEGER)";
             if write {
-                sqlx::query(&update(clock))
+                sqlx::query(sqlx::AssertSqlSafe(update(clock)))
                     .bind(value)
                     .execute(pool)
                     .await?;
                 return Ok(true);
             }
-            Ok(sqlx::query_scalar(&read(clock))
+            Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(read(clock)))
                 .bind(value)
                 .fetch_one(pool)
                 .await?)

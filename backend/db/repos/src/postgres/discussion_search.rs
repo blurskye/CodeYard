@@ -28,13 +28,15 @@ pub async fn search(
         .execute(&mut *tx)
         .await?;
     let count_sql = format!("{} SELECT COUNT(*) FROM matched", statement.prefix);
-    let mut count = sqlx::query_scalar::<_, i64>(&count_sql).bind(viewer);
+    let mut count =
+        sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(count_sql.as_str())).bind(viewer);
     for value in &statement.args {
         count = count.bind(value);
     }
     let total = count.fetch_one(&mut *tx).await?;
     let sql=format!("{} SELECT i.id,i.repo_id,i.pull_request,CAST(i.score AS BIGINT) FROM matched i ORDER BY {} {},i.repo_id,i.number,i.pull_request,i.id LIMIT {} OFFSET {}",statement.prefix,sort.sql(),if ascending{"ASC"}else{"DESC"},statement.placeholder(statement.args.len()+2),statement.placeholder(statement.args.len()+3));
-    let mut rows = sqlx::query_as::<_, (i64, i64, bool, i64)>(&sql).bind(viewer);
+    let mut rows =
+        sqlx::query_as::<_, (i64, i64, bool, i64)>(sqlx::AssertSqlSafe(sql.as_str())).bind(viewer);
     for value in &statement.args {
         rows = rows.bind(value);
     }

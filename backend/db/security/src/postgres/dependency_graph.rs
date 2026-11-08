@@ -47,7 +47,7 @@ async fn authorize_in(
             .await
             .map_err(GraphError::Authority)?;
             let lock = if exclusive { "FOR UPDATE" } else { "FOR SHARE" };
-            let row: Option<i64> = sqlx::query_scalar(&format!("SELECT r.id FROM repositories r LEFT JOIN users u ON FALSE WHERE r.id=$1 AND NOT r.is_gist AND ($2 OR {}) AND (NOT $2 OR NOT r.is_archived) {lock} OF r", codeyard_database::queries::postgres::repositories::access::readable_condition()))
+            let row: Option<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT r.id FROM repositories r LEFT JOIN users u ON FALSE WHERE r.id=$1 AND NOT r.is_gist AND ($2 OR {}) AND (NOT $2 OR NOT r.is_archived) {lock} OF r", codeyard_database::queries::postgres::repositories::access::readable_condition())))
                 .bind(repo).bind(matches!(reader, Reader::Scan(_))).fetch_optional(&mut **tx).await?;
             if row.is_none() {
                 return Err(GraphError::Denied);

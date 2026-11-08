@@ -82,7 +82,7 @@ impl Database {
         let user = (kind == "user").then_some(COLLISION);
         let org = (kind == "org").then_some(COLLISION);
         match self {
-            Self::Sqlite(f) => sqlx::query_scalar(sql)
+            Self::Sqlite(f) => sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
                 .bind(kind)
                 .bind(user)
                 .bind(org)
@@ -91,7 +91,7 @@ impl Database {
                 .fetch_one(&f.raw)
                 .await
                 .unwrap(),
-            Self::Postgres(f) => sqlx::query_scalar(sql)
+            Self::Postgres(f) => sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
                 .bind(kind)
                 .bind(user)
                 .bind(org)
@@ -122,7 +122,7 @@ impl Database {
         let sql = "UPDATE repositories SET disk_path=$1 WHERE id=$2";
         match self {
             Self::Sqlite(f) => {
-                sqlx::query(sql)
+                sqlx::query(sqlx::AssertSqlSafe(sql))
                     .bind(path.to_str().unwrap())
                     .bind(repo)
                     .execute(&f.raw)
@@ -130,7 +130,7 @@ impl Database {
                     .unwrap();
             }
             Self::Postgres(f) => {
-                sqlx::query(sql)
+                sqlx::query(sqlx::AssertSqlSafe(sql))
                     .bind(path.to_str().unwrap())
                     .bind(repo)
                     .execute(&f.raw)
@@ -150,7 +150,7 @@ impl Database {
             "UPDATE repositories SET owner_kind=$1,owner_user_id=$2,owner_org_id=$3 WHERE id=$4";
         match self {
             Self::Sqlite(f) => {
-                sqlx::query(sql)
+                sqlx::query(sqlx::AssertSqlSafe(sql))
                     .bind(kind)
                     .bind(user)
                     .bind(org)
@@ -159,7 +159,7 @@ impl Database {
                     .await?;
             }
             Self::Postgres(f) => {
-                sqlx::query(sql)
+                sqlx::query(sqlx::AssertSqlSafe(sql))
                     .bind(kind)
                     .bind(user)
                     .bind(org)

@@ -64,9 +64,9 @@ async fn authorize_write(
 
 async fn read_on(tx: &mut Transaction<'_, Postgres>, scope: Scope) -> Result<Settings> {
     let (table, column, id) = scope.storage();
-    let row: Option<(bool, Option<String>)> = sqlx::query_as(&format!(
+    let row: Option<(bool, Option<String>)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT use_default,claim_keys FROM {table} WHERE {column}=$1"
-    ))
+    )))
     .bind(id)
     .fetch_optional(&mut **tx)
     .await?;
@@ -104,7 +104,7 @@ pub async fn save(
             .map(serde_json::to_string)
             .transpose()?
     };
-    sqlx::query(&format!("INSERT INTO {table}({column},use_default,claim_keys) VALUES($1,$2,$3) ON CONFLICT({column}) DO UPDATE SET use_default=excluded.use_default,claim_keys=excluded.claim_keys"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("INSERT INTO {table}({column},use_default,claim_keys) VALUES($1,$2,$3) ON CONFLICT({column}) DO UPDATE SET use_default=excluded.use_default,claim_keys=excluded.claim_keys")))
         .bind(id).bind(settings.use_default).bind(keys).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(())

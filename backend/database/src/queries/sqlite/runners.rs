@@ -33,8 +33,8 @@ pub async fn runner_rows(
 ) -> Result<Vec<Runner>> {
     let (org, repo) = scope.ids();
     Ok(
-        sqlx::query_as::<_, crate::queries::runners::RunnerProjection>(&format!(
-            "{RUNNERS} WHERE {RUNNER_FILTER} ORDER BY a.id LIMIT ?6 OFFSET ?7"
+        sqlx::query_as::<_, crate::queries::runners::RunnerProjection>(sqlx::AssertSqlSafe(
+            format!("{RUNNERS} WHERE {RUNNER_FILTER} ORDER BY a.id LIMIT ?6 OFFSET ?7"),
         ))
         .bind(org)
         .bind(repo)

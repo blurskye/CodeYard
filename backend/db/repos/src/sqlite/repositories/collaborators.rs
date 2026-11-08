@@ -105,14 +105,14 @@ pub async fn list(
     query: &CollaboratorQuery<'_>,
 ) -> Result<Vec<Collaborator>> {
     let projection = crate::sqlite::repositories::access::user_repo_grant_sql();
-    Ok(sqlx::query_as(&format!("WITH candidates AS (SELECT owner_user_id AS id FROM repositories WHERE id=?1 AND owner_kind='user' UNION SELECT user_id FROM repo_access WHERE repo_id=?1 UNION SELECT m.user_id FROM org_memberships m JOIN repositories r ON r.owner_org_id=m.org_id WHERE r.id=?1 AND m.role IN ('owner','admin','member'))
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!("WITH candidates AS (SELECT owner_user_id AS id FROM repositories WHERE id=?1 AND owner_kind='user' UNION SELECT user_id FROM repo_access WHERE repo_id=?1 UNION SELECT m.user_id FROM org_memberships m JOIN repositories r ON r.owner_org_id=m.org_id WHERE r.id=?1 AND m.role IN ('owner','admin','member'))
         SELECT * FROM (SELECT u.*, ({projection}) AS permission,
         EXISTS(SELECT 1 FROM repo_access a WHERE a.repo_id=r.id AND a.user_id=u.id) AS direct,
         EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=r.owner_org_id AND m.user_id=u.id AND m.role IN ('owner','admin','member')) AS organization_member,
         COALESCE(r.owner_user_id=u.id AND r.owner_kind='user',FALSE) AS personal_owner
         FROM repositories r CROSS JOIN candidates c JOIN users u ON u.id=c.id WHERE r.id=?1 AND (?2 IS NULL OR u.username=?2)) found
         WHERE permission>0 AND (?3 IS NULL OR permission=?3 OR (?3=5 AND permission=6))
-        AND (?4='all' OR (?4='direct' AND direct) OR (?4='outside' AND direct AND NOT organization_member AND NOT personal_owner)) ORDER BY username LIMIT ?5 OFFSET ?6"))
+        AND (?4='all' OR (?4='direct' AND direct) OR (?4='outside' AND direct AND NOT organization_member AND NOT personal_owner)) ORDER BY username LIMIT ?5 OFFSET ?6")))
         .bind(repo_id).bind(query.username).bind(query.permission).bind(query.affiliation).bind(query.limit).bind(query.offset).fetch_all(pool).await?)
 }
 
@@ -153,7 +153,7 @@ pub async fn recipient_invitations(
     );
     let query = invitation_query("i.*,CASE WHEN r.owner_kind='user' THEN owner.username ELSE org.name END AS owner,r.name AS repository,inviter.username AS inviter",
         "JOIN users inviter ON inviter.id=i.inviter_id LEFT JOIN users owner ON owner.id=r.owner_user_id LEFT JOIN organizations org ON org.id=r.owner_org_id", true);
-    Ok(sqlx::query_as(&query)
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(query.as_str()))
         .bind(actor)
         .bind(None::<i64>)
         .bind(limit)
@@ -171,13 +171,15 @@ pub async fn invitations(
     limit: i64,
 ) -> Result<Vec<Invitation>> {
     anyhow::ensure!(offset >= 0 && limit > 0, "Invalid invitation page");
-    Ok(sqlx::query_as(&invitation_query("i.*", "", false))
-        .bind(actor)
-        .bind(repo_id)
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(pool)
-        .await?)
+    Ok(
+        sqlx::query_as(sqlx::AssertSqlSafe(invitation_query("i.*", "", false)))
+            .bind(actor)
+            .bind(repo_id)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(pool)
+            .await?,
+    )
 }
 
 pub async fn update_invitation(

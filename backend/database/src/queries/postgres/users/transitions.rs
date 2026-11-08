@@ -18,7 +18,7 @@ pub async fn account_locks(
         "pg_advisory_xact_lock"
     };
     for account in accounts {
-        sqlx::query(&format!("SELECT {lock}(hashtextextended(COALESCE(current_schema(),'') || ':account:' || $1::bigint::text,0))"))
+        sqlx::query(sqlx::AssertSqlSafe(format!("SELECT {lock}(hashtextextended(COALESCE(current_schema(),'') || ':account:' || $1::bigint::text,0))")))
             .bind(account).execute(&mut *connection).await?;
     }
     Ok(())
@@ -86,7 +86,7 @@ pub async fn credential_live(
                 .bind(id).fetch_optional(&mut *tx).await?;
             // A token issued to an OAuth app ends with that app's availability.
             let issuer = crate::queries::oauth_apps::token_issuer_condition("t", "$5");
-            let expiry: Option<Option<chrono::DateTime<chrono::Utc>>> = sqlx::query_scalar(&format!("SELECT t.expires_at FROM personal_access_tokens t WHERE t.id=$1 AND t.user_id=$2 AND (NOT $4 OR t.scope='write') AND t.token_hash=$3 AND {issuer} FOR SHARE OF t"))
+            let expiry: Option<Option<chrono::DateTime<chrono::Utc>>> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT t.expires_at FROM personal_access_tokens t WHERE t.id=$1 AND t.user_id=$2 AND (NOT $4 OR t.scope='write') AND t.token_hash=$3 AND {issuer} FOR SHARE OF t")))
                 .bind(id).bind(actor).bind(hash).bind(write).bind(codeyard_types::identity::CLI_CLIENT).fetch_optional(&mut *tx).await?;
             match expiry {
                 Some(None) => true,

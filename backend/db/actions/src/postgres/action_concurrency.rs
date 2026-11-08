@@ -40,7 +40,7 @@ pub(crate) async fn eligible(connection: &mut PgConnection, run: &CiRun) -> Resu
         return Ok(true);
     };
     let sql = crate::action_concurrency::blockers_sql(true);
-    let blocked: bool = sqlx::query_scalar(&sql)
+    let blocked: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(run.repo_id)
         .bind(&key)
         .bind(order)
@@ -118,7 +118,7 @@ pub(crate) async fn admit_job(
         return Ok(Some(true));
     }
     let sql = crate::action_concurrency::blockers_sql(true);
-    let blocked: bool = sqlx::query_scalar(&sql)
+    let blocked: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(run.repo_id)
         .bind(&key)
         .bind(order)
@@ -139,7 +139,7 @@ pub(crate) async fn admit_job(
 
 pub async fn groups(pool: &PgPool, repo: i64, run: Option<i64>) -> Result<Vec<Group>> {
     let sql = crate::action_concurrency::groups_sql(true);
-    Ok(sqlx::query_as(&sql)
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(repo)
         .bind(run)
         .fetch_all(pool)
@@ -147,7 +147,7 @@ pub async fn groups(pool: &PgPool, repo: i64, run: Option<i64>) -> Result<Vec<Gr
 }
 pub async fn members(pool: &PgPool, repo: i64, group: &str) -> Result<Vec<Member>> {
     let sql = crate::action_concurrency::members_sql(true);
-    Ok(sqlx::query_as(&sql)
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(repo)
         .bind(group.to_lowercase())
         .fetch_all(pool)

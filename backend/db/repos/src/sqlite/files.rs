@@ -504,7 +504,7 @@ pub async fn remove_expired_transfer_rows(pool: &SqlitePool) -> Result<u64, sqlx
     ] {
         // A short batch means none are left.
         for _ in 0..SWEEP_BATCHES {
-            let batch = sqlx::query(&sql).execute(pool).await?.rows_affected();
+            let batch = sqlx::query(sqlx::AssertSqlSafe(sql.as_str())).execute(pool).await?.rows_affected();
             removed += batch;
             if batch < SWEEP_BATCH {
                 break;

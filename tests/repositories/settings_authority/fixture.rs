@@ -63,12 +63,12 @@ impl Fixture {
     pub async fn snapshot(&self, repo: i64) -> Vec<u8> {
         let sql = "SELECT * FROM repositories WHERE id=$1";
         let row: Option<RepositorySnapshot> = match &self.database {
-            Database::Postgres(f) => sqlx::query_as(sql)
+            Database::Postgres(f) => sqlx::query_as(sqlx::AssertSqlSafe(sql))
                 .bind(repo)
                 .fetch_optional(&f.raw)
                 .await
                 .unwrap(),
-            Database::Sqlite(f) => sqlx::query_as(sql)
+            Database::Sqlite(f) => sqlx::query_as(sqlx::AssertSqlSafe(sql))
                 .bind(repo)
                 .fetch_optional(&f.raw)
                 .await

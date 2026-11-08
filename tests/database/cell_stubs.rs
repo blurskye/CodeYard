@@ -63,8 +63,16 @@ async fn credentials(pool: &DbPool, user: i64, session: &str) -> bool {
 }
 async fn mutate(pool: &DbPool, statement: &str, id: i64) -> bool {
     match pool {
-        DbPool::Postgres(pool) => sqlx::query(statement).bind(id).execute(pool).await.is_ok(),
-        DbPool::Sqlite(pool) => sqlx::query(statement).bind(id).execute(pool).await.is_ok(),
+        DbPool::Postgres(pool) => sqlx::query(sqlx::AssertSqlSafe(statement))
+            .bind(id)
+            .execute(pool)
+            .await
+            .is_ok(),
+        DbPool::Sqlite(pool) => sqlx::query(sqlx::AssertSqlSafe(statement))
+            .bind(id)
+            .execute(pool)
+            .await
+            .is_ok(),
     }
 }
 async fn contract(pg: bool) {

@@ -497,7 +497,7 @@ fn vector(field: &str) -> Option<&'static str> {
     }
 }
 
-fn word_query(sql: &mut QueryBuilder<'_, Postgres>, value: &str) {
+fn word_query(sql: &mut QueryBuilder<Postgres>, value: &str) {
     // GitHub's parser already owns operators and quoting. A term is plain text, never SQL
     // or tsquery syntax, including a quoted term containing punctuation or operators.
     sql.push("plainto_tsquery('simple'::regconfig,");
@@ -516,7 +516,7 @@ fn like(value: &str) -> String {
     escaped
 }
 
-fn push_text(sql: &mut QueryBuilder<'_, Postgres>, fields: &[&'static str], value: &str) {
+fn push_text(sql: &mut QueryBuilder<Postgres>, fields: &[&'static str], value: &str) {
     if fields.is_empty() {
         sql.push("FALSE");
         return;
@@ -543,7 +543,7 @@ fn push_text(sql: &mut QueryBuilder<'_, Postgres>, fields: &[&'static str], valu
 
 /// FROM and WHERE: the kind's tables, what the viewer may read, then the filter.
 fn matching(
-    sql: &mut QueryBuilder<'_, Postgres>,
+    sql: &mut QueryBuilder<Postgres>,
     query: &Query,
     fields: &[&'static str],
 ) -> Result<()> {
@@ -569,7 +569,7 @@ fn matching(
 }
 
 fn filter(
-    sql: &mut QueryBuilder<'_, Postgres>,
+    sql: &mut QueryBuilder<Postgres>,
     kind: Kind,
     fields: &[&'static str],
     value: &Filter,
@@ -600,14 +600,14 @@ fn filter(
     Ok(())
 }
 
-fn equal_lower(sql: &mut QueryBuilder<'_, Postgres>, column: &str, value: &str) {
+fn equal_lower(sql: &mut QueryBuilder<Postgres>, column: &str, value: &str) {
     sql.push("lower(");
     sql.push(column);
     sql.push(")=lower(");
     sql.push_bind(value.to_owned());
     sql.push(")");
 }
-fn contains(sql: &mut QueryBuilder<'_, Postgres>, column: &str, value: &str) {
+fn contains(sql: &mut QueryBuilder<Postgres>, column: &str, value: &str) {
     sql.push_bind(value.to_lowercase());
     sql.push("=ANY(");
     sql.push(column);
@@ -622,7 +622,7 @@ fn boolean(column: &str, value: &str) -> Result<String> {
 }
 
 fn term(
-    sql: &mut QueryBuilder<'_, Postgres>,
+    sql: &mut QueryBuilder<Postgres>,
     kind: Kind,
     fields: &[&'static str],
     key: &str,
@@ -735,12 +735,7 @@ fn term(
 
 /// Weighted word frequency for prose, plus the existing literal score for names and code.
 /// Negative terms filter only; they never raise a document's rank.
-fn score(
-    sql: &mut QueryBuilder<'_, Postgres>,
-    kind: Kind,
-    fields: &[&'static str],
-    filter: &Filter,
-) {
+fn score(sql: &mut QueryBuilder<Postgres>, kind: Kind, fields: &[&'static str], filter: &Filter) {
     let words = filter.positive_text();
     if words.is_empty() {
         sql.push("0::DOUBLE PRECISION");

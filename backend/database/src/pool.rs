@@ -2,10 +2,9 @@
 use futures_util::{future::BoxFuture, stream::BoxStream, StreamExt};
 use sqlx::{
     pool::{MaybePoolConnection, PoolConnection},
-    Database, Describe, Either, Error, Execute, Executor, Transaction,
+    Database, Describe, Either, Error, Execute, Executor, SqlSafeStr, SqlStr, Transaction,
 };
 use std::{
-    borrow::Cow,
     future::{poll_fn, Future},
     ops::Deref,
     pin::pin,
@@ -201,11 +200,11 @@ impl<DB: Database> Pool<DB> {
     }
     pub async fn begin_with(
         &self,
-        statement: impl Into<Cow<'static, str>>,
+        statement: impl SqlSafeStr,
     ) -> Result<Transaction<'static, DB>, Error> {
         Transaction::begin(
             MaybePoolConnection::PoolConnection(self.acquire().await?),
-            Some(statement.into()),
+            Some(statement.into_sql_str()),
         )
         .await
     }
@@ -267,15 +266,21 @@ where
         let pool = self.clone();
         Box::pin(async move { pool.acquire().await?.fetch_optional(query).await })
     }
-    fn prepare_with<'e, 'q: 'e>(
+    fn prepare_with<'e>(
         self,
-        sql: &'q str,
+        sql: SqlStr,
         parameters: &'e [DB::TypeInfo],
-    ) -> BoxFuture<'e, Result<DB::Statement<'q>, Error>> {
+    ) -> BoxFuture<'e, Result<DB::Statement, Error>>
+    where
+        'p: 'e,
+    {
         let pool = self.clone();
         Box::pin(async move { pool.acquire().await?.prepare_with(sql, parameters).await })
     }
-    fn describe<'e, 'q: 'e>(self, sql: &'q str) -> BoxFuture<'e, Result<Describe<DB>, Error>> {
+    fn describe<'e>(self, sql: SqlStr) -> BoxFuture<'e, Result<Describe<DB>, Error>>
+    where
+        'p: 'e,
+    {
         let pool = self.clone();
         Box::pin(async move { pool.acquire().await?.describe(sql).await })
     }
@@ -409,7 +414,7 @@ mod tests {
             .unwrap()
             .into();
         let sql = String::from("SELECT 1 AS value; SELECT 2 AS value;");
-        let mut stream = sqlx::raw_sql(&sql).fetch_many(&pool);
+        let mut stream = sqlx::raw_sql(sqlx::AssertSqlSafe(sql.as_str())).fetch_many(&pool);
         use sqlx::Row;
         let mut values = Vec::new();
         while let Some(row) = stream.next().await {
@@ -420,7 +425,7 @@ mod tests {
         assert_eq!(values, [1, 2]);
         drop(stream);
         let sql = String::from("SELECT 3 AS value; SELECT 4 AS value;");
-        let mut stream = sqlx::raw_sql(&sql).fetch_many(&pool);
+        let mut stream = sqlx::raw_sql(sqlx::AssertSqlSafe(sql.as_str())).fetch_many(&pool);
         assert!(stream.next().await.unwrap().is_ok());
         assert_eq!(pool.num_idle(), 0);
         drop(stream);

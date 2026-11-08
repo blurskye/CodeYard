@@ -122,7 +122,7 @@ macro_rules! engine {
                 ensure!(key.belongs_to(previous.object.kind), Refusal::Unavailable);
                 if Some(previous.object) == expected { return Ok(true); }
                 if previous.cell == pool.cell_id() {
-                    let present: bool = sqlx::query_scalar(present_sql(previous.object.kind, key.kind())?)
+                    let present: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(present_sql(previous.object.kind, key.kind())?))
                         .bind(previous.object.id).bind(key.value()).fetch_one(&mut *connection).await?;
                     if !present {
                         if key.kind() == KeyKind::Name { provider.forget(previous.object).await?; }
@@ -181,7 +181,7 @@ macro_rules! engine {
                     $lock(&mut tx, keys).await?;
                     let mut absent = Vec::new();
                     for key in keys {
-                        let present: bool = sqlx::query_scalar(present_sql(object.kind, key.kind())?)
+                        let present: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(present_sql(object.kind, key.kind())?))
                             .bind(object.id).bind(key.value()).fetch_one(&mut *tx).await?;
                         if !present { absent.push(key.clone()); }
                     }
@@ -196,7 +196,7 @@ macro_rules! engine {
                 config.validate()?;
                 object.validate()?;
                 tokio::time::timeout(Duration::from_secs(config.request_seconds), async {
-                    let present: bool = sqlx::query_scalar(object_sql(object.kind)).bind(object.id).fetch_one(pool).await?;
+                    let present: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(object_sql(object.kind))).bind(object.id).fetch_one(pool).await?;
                     if !present { provider.forget(object).await?; }
                     Ok(())
                 }).await.map_err(|_| Refusal::Unavailable)?
@@ -270,9 +270,9 @@ pub async fn publish_native(
         ObjectKind::Organization => "organizations",
         ObjectKind::Repository => "repositories",
     };
-    let ids: Vec<i64> = sqlx::query_scalar(&format!(
+    let ids: Vec<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT id FROM {table} WHERE id>$1 AND NOT is_stub AND home_cell=$2 ORDER BY id LIMIT $3"
-    ))
+    )))
     .bind(after)
     .bind(i32::from(pool.cell_id().get()))
     .bind(limit)
@@ -284,9 +284,9 @@ pub async fn publish_native(
             crate::queries::postgres::users::transitions::account_locks(&mut tx, &[id], false)
                 .await?;
         }
-        let present: Option<i64> = sqlx::query_scalar(&format!(
+        let present: Option<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT id FROM {table} WHERE id=$1 AND NOT is_stub AND home_cell=$2 FOR UPDATE"
-        ))
+        )))
         .bind(id)
         .bind(i32::from(pool.cell_id().get()))
         .fetch_optional(&mut *tx)

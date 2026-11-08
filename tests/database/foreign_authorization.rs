@@ -52,8 +52,14 @@ impl Home for Provider {
 async fn count(pool: &DbPool, table: &str) -> i64 {
     let query = format!("SELECT COUNT(*) FROM {table}");
     match pool {
-        DbPool::Postgres(pool) => sqlx::query_scalar(&query).fetch_one(pool).await.unwrap(),
-        DbPool::Sqlite(pool) => sqlx::query_scalar(&query).fetch_one(pool).await.unwrap(),
+        DbPool::Postgres(pool) => sqlx::query_scalar(sqlx::AssertSqlSafe(query.as_str()))
+            .fetch_one(pool)
+            .await
+            .unwrap(),
+        DbPool::Sqlite(pool) => sqlx::query_scalar(sqlx::AssertSqlSafe(query.as_str()))
+            .fetch_one(pool)
+            .await
+            .unwrap(),
     }
 }
 async fn sessions(database: &Database, mut answer: Answer, owner: i64) {

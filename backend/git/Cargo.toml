@@ -15,7 +15,6 @@ encoding_rs.workspace = true
 git2.workspace = true
 libc.workspace = true
 libgit2-sys.workspace = true
-regex.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
@@ -23,7 +22,6 @@ sqlx.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
-toml.workspace = true
 tracing.workspace = true
 uuid = { workspace = true, default-features = true, features = ["v4"] }
 

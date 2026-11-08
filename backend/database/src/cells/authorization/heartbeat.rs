@@ -67,16 +67,18 @@ pub async fn snapshot(pool: &DbPool, proof: &Proof) -> Result<Option<DateTime<Ut
     };
     Ok(match pool {
         DbPool::Postgres(pool) => {
-            sqlx::query_scalar(&query("clock_timestamp()"))
+            sqlx::query_scalar(sqlx::AssertSqlSafe(query("clock_timestamp()")))
                 .bind(value)
                 .fetch_optional(pool)
                 .await?
         }
         DbPool::Sqlite(pool) => {
-            sqlx::query_scalar(&query("strftime('%Y-%m-%dT%H:%M:%f000Z','now')"))
-                .bind(value)
-                .fetch_optional(pool)
-                .await?
+            sqlx::query_scalar(sqlx::AssertSqlSafe(query(
+                "strftime('%Y-%m-%dT%H:%M:%f000Z','now')",
+            )))
+            .bind(value)
+            .fetch_optional(pool)
+            .await?
         }
     })
 }

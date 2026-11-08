@@ -63,10 +63,10 @@ pub(super) async fn register_in_connection(
         return Ok(None);
     }
     sqlx::query("INSERT INTO oauth_applications(owner_id,client_id,secret_hash,name,homepage,redirect_uri,is_github_app) VALUES($1,$2,$3,$4,$5,$5,TRUE)").bind(actor).bind(&app.client_id).bind(secret_hash).bind(&app.name).bind(&app.homepage).execute(&mut *tx).await?;
-    let bot: i64 = sqlx::query_scalar(&format!(
+    let bot: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "INSERT INTO users(home_cell,username,display_name) VALUES({cell_home},$1,$2) RETURNING id",
         cell_home = codeyard_database::cells::LOCAL_HOME_SQL
-    ))
+    )))
     .bind(format!("{}[bot]", app.slug))
     .bind(&app.name)
     .fetch_one(&mut *tx)
@@ -84,10 +84,10 @@ pub(super) async fn register_in_connection(
 /// Whether a client's owner, and a GitHub App's bot, may still use it. A missing client is
 /// not active.
 pub async fn client_active(pool: &SqlitePool, client: &str) -> Result<bool> {
-    Ok(sqlx::query_scalar(&format!(
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT {}",
         codeyard_database::queries::oauth_apps::client_condition("$1")
-    ))
+    )))
     .bind(client)
     .fetch_one(pool)
     .await?)
@@ -101,9 +101,12 @@ pub async fn app_issuer(pool: &SqlitePool, issuer: &str) -> Result<Option<App>> 
     let column = if id.is_some() { "a.id" } else { "a.client_id" };
     let query = format!("SELECT a.* FROM github_apps a JOIN users u ON u.id=a.owner_id JOIN users bot ON bot.id=a.bot_id WHERE {column}=$1 AND NOT u.is_banned AND NOT u.must_change_password AND NOT bot.is_banned AND NOT bot.must_change_password");
     Ok(if let Some(id) = id {
-        sqlx::query_as(&query).bind(id).fetch_optional(pool).await?
+        sqlx::query_as(sqlx::AssertSqlSafe(query.as_str()))
+            .bind(id)
+            .fetch_optional(pool)
+            .await?
     } else {
-        sqlx::query_as(&query)
+        sqlx::query_as(sqlx::AssertSqlSafe(query.as_str()))
             .bind(issuer)
             .fetch_optional(pool)
             .await?
@@ -176,16 +179,16 @@ pub async fn installations(
     let filters = format!("($1 IS NULL OR i.app_id=$1) AND ($2 IS NULL OR ({reaches} AND EXISTS(SELECT 1 FROM github_apps a JOIN users u ON u.id=a.owner_id JOIN users bot ON bot.id=a.bot_id WHERE a.id=i.app_id AND NOT u.is_banned AND NOT u.must_change_password AND NOT bot.is_banned AND NOT bot.must_change_password))) AND ($3 IS NULL OR i.org_id=$3) AND ($4 IS NULL OR i.id=$4) AND ($2 IS NULL OR $3 IS NULL OR EXISTS(SELECT 1 FROM org_memberships m JOIN users actor ON actor.id=m.user_id WHERE m.org_id=$3 AND m.user_id=$2 AND m.role='owner' AND NOT actor.is_banned AND NOT actor.must_change_password)) AND {ACCOUNT_AVAILABLE}", reaches = actor_reaches("$2"));
     // One snapshot for the count and the page.
     let mut tx = pool.begin().await?;
-    let total: i64 = sqlx::query_scalar(&format!(
+    let total: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT COUNT(*) FROM github_app_installations i WHERE {filters}"
-    ))
+    )))
     .bind(filter.app)
     .bind(filter.actor)
     .bind(filter.org)
     .bind(filter.id)
     .fetch_one(&mut *tx)
     .await?;
-    let rows = sqlx::query_as(&format!("SELECT i.* FROM github_app_installations i WHERE {filters} ORDER BY i.id LIMIT $5 OFFSET $6"))
+    let rows = sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT i.* FROM github_app_installations i WHERE {filters} ORDER BY i.id LIMIT $5 OFFSET $6")))
         .bind(filter.app).bind(filter.actor).bind(filter.org).bind(filter.id).bind(limit).bind(offset)
         .fetch_all(&mut *tx).await?;
     tx.commit().await?;
@@ -216,7 +219,7 @@ pub async fn repository_installation(
     active: bool,
     actor: Option<i64>,
 ) -> Result<Option<Installation>> {
-    Ok(sqlx::query_as(&format!("SELECT i.* FROM github_app_installations i JOIN repositories r ON r.id=$2 WHERE i.app_id=$1 AND (NOT $3 OR i.suspended_at IS NULL) AND (r.owner_user_id=i.user_id OR r.owner_org_id=i.org_id) AND (i.all_repos OR EXISTS(SELECT 1 FROM github_app_repositories ar WHERE ar.installation_id=i.id AND ar.repo_id=r.id)) AND ($4 IS NULL OR {reaches})", reaches = actor_reaches("$4")))
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT i.* FROM github_app_installations i JOIN repositories r ON r.id=$2 WHERE i.app_id=$1 AND (NOT $3 OR i.suspended_at IS NULL) AND (r.owner_user_id=i.user_id OR r.owner_org_id=i.org_id) AND (i.all_repos OR EXISTS(SELECT 1 FROM github_app_repositories ar WHERE ar.installation_id=i.id AND ar.repo_id=r.id)) AND ($4 IS NULL OR {reaches})", reaches = actor_reaches("$4"))))
         .bind(app).bind(repo).bind(active).bind(actor).fetch_optional(pool).await?)
 }
 pub async fn installation(pool: &SqlitePool, id: i64) -> Result<Option<Installation>> {
@@ -241,15 +244,17 @@ pub async fn installation_repositories(
     let filters = format!("(r.owner_user_id=i.user_id OR r.owner_org_id=i.org_id) AND NOT r.is_gist AND (i.all_repos OR EXISTS(SELECT 1 FROM github_app_repositories ar WHERE ar.installation_id=i.id AND ar.repo_id=r.id)) AND ($3 = '[]' OR r.id IN (SELECT value FROM json_each($3))) AND ($2 IS NULL OR ((r.owner_user_id=u.id OR EXISTS(SELECT 1 FROM repo_access d WHERE d.repo_id=r.id AND d.user_id=u.id AND d.access_level BETWEEN 1 AND 5) OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=r.owner_org_id AND m.user_id=u.id)) AND ({access}) >= 1))", access = codeyard_database::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL);
     let from = "FROM repositories r JOIN github_app_installations i ON i.id=$1 LEFT JOIN users u ON u.id=$2";
     let mut tx = pool.begin().await?;
-    let total: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) {from} WHERE {filters}"))
-        .bind(id)
-        .bind(viewer)
-        .bind(serde_json::to_string(selected)?)
-        .fetch_one(&mut *tx)
-        .await?;
-    let rows = sqlx::query_as(&format!(
+    let total: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT COUNT(*) {from} WHERE {filters}"
+    )))
+    .bind(id)
+    .bind(viewer)
+    .bind(serde_json::to_string(selected)?)
+    .fetch_one(&mut *tx)
+    .await?;
+    let rows = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT r.* {from} WHERE {filters} ORDER BY r.id LIMIT $4 OFFSET $5"
-    ))
+    )))
     .bind(id)
     .bind(viewer)
     .bind(serde_json::to_string(selected)?)
@@ -368,7 +373,7 @@ async fn change_in_connection(
         "unsuspend" => "UPDATE github_app_installations SET suspended_at=NULL,suspended_by=NULL,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE app_id=$1 AND id=$2",
         _ => anyhow::bail!("invalid installation action"),
     };
-    let changed = sqlx::query(sql)
+    let changed = sqlx::query(sqlx::AssertSqlSafe(sql))
         .bind(app)
         .bind(id)
         .execute(&mut *tx)
@@ -391,7 +396,7 @@ pub async fn change_repository(
     let actor = credential.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
 
-    let installation: Option<(bool, Option<i64>)> = sqlx::query_as(&format!("SELECT i.all_repos,i.org_id FROM github_app_installations i JOIN users u ON u.id=$1 JOIN repositories r ON r.id=$3 WHERE i.id=$2 AND NOT u.is_banned AND NOT u.must_change_password AND (r.owner_user_id=i.user_id OR r.owner_org_id=i.org_id) AND ({})>=5", codeyard_database::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL)).bind(actor).bind(id).bind(repo).fetch_optional(&mut *tx).await?;
+    let installation: Option<(bool, Option<i64>)> = sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT i.all_repos,i.org_id FROM github_app_installations i JOIN users u ON u.id=$1 JOIN repositories r ON r.id=$3 WHERE i.id=$2 AND NOT u.is_banned AND NOT u.must_change_password AND (r.owner_user_id=i.user_id OR r.owner_org_id=i.org_id) AND ({})>=5", codeyard_database::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL))).bind(actor).bind(id).bind(repo).fetch_optional(&mut *tx).await?;
     let Some((all_repos, org)) = installation else {
         return Ok(RepositoryChange::Missing);
     };
@@ -467,10 +472,10 @@ pub async fn issue(
         if let Some(parent_expiry) = source.expires_at {
             expiry = expiry.min(parent_expiry);
         }
-        let eligible: bool = sqlx::query_scalar(&format!(
+        let eligible: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT EXISTS(SELECT 1 FROM github_app_installations i WHERE i.id=$1 AND {})",
             actor_reaches("$2")
-        ))
+        )))
         .bind(installation)
         .bind(actor)
         .fetch_one(&mut *tx)

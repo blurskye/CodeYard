@@ -18,12 +18,12 @@ pub async fn create_forked_repository(
 ) -> Result<Repository> {
     let mut tx = pool.begin().await?;
     let result = sqlx::query_as::<_, Repository>(
-        &format!(r#"
+        sqlx::AssertSqlSafe(format!(r#"
         INSERT INTO repositories (home_cell,owner_kind, owner_user_id, name, description, is_private, disk_path, is_fork, forked_from_id, default_branch, created_by_id)
         SELECT {cell_home},'user', $1, $2, $3, ($4 OR source.is_private OR source.visibility_locked), $5, true, $6, $7, $1
         FROM repositories source WHERE source.id=$6 AND NOT source.is_gist
         RETURNING *
-        "#, cell_home = codeyard_database::cells::LOCAL_HOME_SQL),
+        "#, cell_home = codeyard_database::cells::LOCAL_HOME_SQL)),
     )
     .bind(input.owner_id)
     .bind(input.name)
@@ -102,10 +102,10 @@ pub async fn visible_fork_counts(
     if ids.is_empty() {
         return Ok(std::collections::HashMap::new());
     }
-    let rows = sqlx::query_as::<_, (i64, i32)>(&format!(
+    let rows = sqlx::query_as::<_, (i64, i32)>(sqlx::AssertSqlSafe(format!(
         "SELECT r.forked_from_id, COUNT(*)::integer FROM repositories r {FORK_VIEWER_JOIN} WHERE r.forked_from_id=ANY($3) AND {} GROUP BY r.forked_from_id",
         readable_condition(),
-    )).bind(viewer).bind(session).bind(ids).fetch_all(pool).await?;
+    ))).bind(viewer).bind(session).bind(ids).fetch_all(pool).await?;
     Ok(rows.into_iter().collect())
 }
 
@@ -118,10 +118,10 @@ pub async fn list_visible_forks(
     offset: i64,
 ) -> Result<Vec<Repository>> {
     anyhow::ensure!(offset >= 0, "Page offset must be nonnegative");
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT r.* FROM repositories r {FORK_VIEWER_JOIN} WHERE r.forked_from_id=$3 AND {} ORDER BY r.created_at DESC, r.id DESC LIMIT $4 OFFSET $5",
         readable_condition(),
-    )).bind(viewer).bind(session).bind(repo).bind(limit.clamp(1, 101)).bind(offset).fetch_all(pool).await?)
+    ))).bind(viewer).bind(session).bind(repo).bind(limit.clamp(1, 101)).bind(offset).fetch_all(pool).await?)
 }
 
 /// Joins the owner of `r` and the viewer, which the access projection reads as `u`. `$1` is the
@@ -169,7 +169,7 @@ pub async fn search_repositories(
         repository_match(&search),
         repository_order_by(sort)
     );
-    let statement = sqlx::query_as::<_, Repository>(&sql).bind(viewer);
+    let statement = sqlx::query_as::<_, Repository>(sqlx::AssertSqlSafe(sql.as_str())).bind(viewer);
     let statement = match search {
         RepositorySearch::Text(text) => statement.bind(contains_pattern(text)),
         RepositorySearch::Owned { owner, name } => {
@@ -199,7 +199,7 @@ pub async fn search_repository_ids(
         repository_order_by(RepositorySort::Updated)
     );
     let mut connection = search_connection(pool).await?;
-    let statement = sqlx::query_scalar::<_, i64>(&sql).bind(viewer);
+    let statement = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(sql.as_str())).bind(viewer);
     let statement = match search {
         RepositorySearch::Text(text) => statement.bind(contains_pattern(text)),
         RepositorySearch::Owned { owner, name } => {
@@ -228,7 +228,7 @@ pub async fn count_repositories(
         readable_condition(),
         repository_match(&search)
     );
-    let statement = sqlx::query_scalar::<_, i64>(&sql).bind(viewer);
+    let statement = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(sql.as_str())).bind(viewer);
     let statement = match search {
         RepositorySearch::Text(text) => statement.bind(contains_pattern(text)),
         RepositorySearch::Owned { owner, name } => {
@@ -269,13 +269,15 @@ pub async fn search_issues(
         readable_condition(),
         sort.order_by("i")
     );
-    Ok(sqlx::query_as::<_, Issue>(&sql)
-        .bind(viewer)
-        .bind(contains_pattern(query))
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(pool)
-        .await?)
+    Ok(
+        sqlx::query_as::<_, Issue>(sqlx::AssertSqlSafe(sql.as_str()))
+            .bind(viewer)
+            .bind(contains_pattern(query))
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(pool)
+            .await?,
+    )
 }
 
 pub async fn count_issues(
@@ -293,12 +295,14 @@ pub async fn count_issues(
          WHERE {} AND (i.title ILIKE $2 OR i.body ILIKE $2) LIMIT $3) AS matches",
         readable_condition()
     );
-    Ok(sqlx::query_scalar::<_, i64>(&sql)
-        .bind(viewer)
-        .bind(contains_pattern(query))
-        .bind(cap)
-        .fetch_one(pool)
-        .await?)
+    Ok(
+        sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(sql.as_str()))
+            .bind(viewer)
+            .bind(contains_pattern(query))
+            .bind(cap)
+            .fetch_one(pool)
+            .await?,
+    )
 }
 
 pub async fn search_pull_requests(
@@ -322,13 +326,15 @@ pub async fn search_pull_requests(
         readable_condition(),
         sort.order_by("p")
     );
-    Ok(sqlx::query_as::<_, PullRequest>(&sql)
-        .bind(viewer)
-        .bind(contains_pattern(query))
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(pool)
-        .await?)
+    Ok(
+        sqlx::query_as::<_, PullRequest>(sqlx::AssertSqlSafe(sql.as_str()))
+            .bind(viewer)
+            .bind(contains_pattern(query))
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(pool)
+            .await?,
+    )
 }
 
 pub async fn count_pull_requests(
@@ -346,12 +352,14 @@ pub async fn count_pull_requests(
          WHERE {} AND (p.title ILIKE $2 OR p.body ILIKE $2) LIMIT $3) AS matches",
         readable_condition()
     );
-    Ok(sqlx::query_scalar::<_, i64>(&sql)
-        .bind(viewer)
-        .bind(contains_pattern(query))
-        .bind(cap)
-        .fetch_one(pool)
-        .await?)
+    Ok(
+        sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(sql.as_str()))
+            .bind(viewer)
+            .bind(contains_pattern(query))
+            .bind(cap)
+            .fetch_one(pool)
+            .await?,
+    )
 }
 
 pub async fn search_users(

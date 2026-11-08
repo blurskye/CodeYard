@@ -174,7 +174,7 @@ async fn native_state(tx: &mut SqliteConnection, run: &CiRun) -> Result<Option<S
     };
     let pending = crate::deployment_protection::native_pending_sql(false);
     let rules: Option<(i64, String, Option<String>, bool)> = sqlx::query_as(
-        &format!("SELECT e.id,d.status,e.branch_policy,{pending} FROM ci_deployments d JOIN deployment_environments e ON e.repo_id=d.repo_id AND e.name_key=?2 WHERE d.run_id=?1"),
+        sqlx::AssertSqlSafe(format!("SELECT e.id,d.status,e.branch_policy,{pending} FROM ci_deployments d JOIN deployment_environments e ON e.repo_id=d.repo_id AND e.name_key=?2 WHERE d.run_id=?1")),
     )
     .bind(run.id)
     .bind(environment.to_lowercase())

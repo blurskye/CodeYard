@@ -102,10 +102,11 @@ pub async fn highest_id(pool: &DbPool) -> Result<i64> {
         let sequence = sequence_name(&mut connection, &table, &column)
             .await?
             .context("cell IDs require an owned sequence")?;
-        let (last, called): (i64, bool) =
-            sqlx::query_as(&format!("SELECT last_value,is_called FROM {sequence}"))
-                .fetch_one(&mut *connection)
-                .await?;
+        let (last, called): (i64, bool) = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT last_value,is_called FROM {sequence}"
+        )))
+        .fetch_one(&mut *connection)
+        .await?;
         if called {
             maximum = maximum.max(last);
         }
@@ -153,23 +154,27 @@ async fn initialize_postgres(
             .await?;
         // CLI writers must also finish before the emptiness check; maintenance excludes
         // servers, and these table locks close the remaining allocation race.
-        sqlx::query(&format!("LOCK TABLE {quoted} IN ACCESS EXCLUSIVE MODE"))
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "LOCK TABLE {quoted} IN ACCESS EXCLUSIVE MODE"
+        )))
+        .execute(&mut *tx)
+        .await?;
         if fresh && renewal.is_none() {
-            let populated: bool =
-                sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM {quoted} LIMIT 1)"))
-                    .fetch_one(&mut *tx)
-                    .await?;
+            let populated: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+                "SELECT EXISTS(SELECT 1 FROM {quoted} LIMIT 1)"
+            )))
+            .fetch_one(&mut *tx)
+            .await?;
             ensure!(
                 !populated,
                 "a new prefix requires an empty cell; existing table {table} has rows"
             );
         }
-        let (last, called): (i64, bool) =
-            sqlx::query_as(&format!("SELECT last_value,is_called FROM {name}"))
-                .fetch_one(&mut *tx)
-                .await?;
+        let (last, called): (i64, bool) = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT last_value,is_called FROM {name}"
+        )))
+        .fetch_one(&mut *tx)
+        .await?;
         if renewal.is_some() {
             ensure!(
                 previous.ids().contains(&last),
@@ -193,8 +198,8 @@ async fn initialize_postgres(
             String::new()
         };
         // Names come from PostgreSQL's identifier formatter, numbers from the typed prefix.
-        sqlx::query(&format!("ALTER SEQUENCE {name} AS bigint MINVALUE {} MAXVALUE {} START WITH {} NO CYCLE{restart}",
-            bounds.start(), bounds.end(), bounds.start()))
+        sqlx::query(sqlx::AssertSqlSafe(format!("ALTER SEQUENCE {name} AS bigint MINVALUE {} MAXVALUE {} START WITH {} NO CYCLE{restart}",
+            bounds.start(), bounds.end(), bounds.start())))
             .execute(&mut *tx).await?;
     }
     ensure!(

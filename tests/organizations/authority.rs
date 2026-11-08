@@ -109,7 +109,7 @@ impl Database {
         // SQLite supports numbered $ parameters too. Fixture SQL uses common types.
         match &self.raw {
             Raw::Postgres(pool) => {
-                let mut query = sqlx::query(sql);
+                let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
                 for id in ids {
                     query = query.bind(*id);
                 }
@@ -119,7 +119,7 @@ impl Database {
                     .expect("owned PG fixture mutation");
             }
             Raw::Sqlite(pool) => {
-                let mut query = sqlx::query(sql);
+                let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
                 for id in ids {
                     query = query.bind(*id);
                 }
@@ -133,7 +133,7 @@ impl Database {
     async fn count(&self, sql: &str, ids: &[i64]) -> i64 {
         match &self.raw {
             Raw::Postgres(pool) => {
-                let mut query = sqlx::query_scalar::<_, i64>(sql);
+                let mut query = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(sql));
                 for id in ids {
                     query = query.bind(*id);
                 }
@@ -143,7 +143,7 @@ impl Database {
                     .expect("owned PG fixture observation")
             }
             Raw::Sqlite(pool) => {
-                let mut query = sqlx::query_scalar::<_, i64>(sql);
+                let mut query = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(sql));
                 for id in ids {
                     query = query.bind(*id);
                 }
@@ -158,7 +158,7 @@ impl Database {
         let sql = "INSERT INTO ci_runs(run_id,repo_id,triggered_by_id,mode,pipeline,event,branch,workflow_path,status) VALUES($1,$2,$3,'local','ci','workflow_dispatch','main','.github/workflows/ci.yml',$4)";
         match &self.raw {
             Raw::Postgres(pool) => {
-                sqlx::query(sql)
+                sqlx::query(sqlx::AssertSqlSafe(sql))
                     .bind(uuid::Uuid::new_v4())
                     .bind(repo)
                     .bind(actor)
@@ -168,7 +168,7 @@ impl Database {
                     .unwrap();
             }
             Raw::Sqlite(pool) => {
-                sqlx::query(sql)
+                sqlx::query(sqlx::AssertSqlSafe(sql))
                     .bind(uuid::Uuid::new_v4())
                     .bind(repo)
                     .bind(actor)

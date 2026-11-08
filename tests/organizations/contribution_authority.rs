@@ -86,7 +86,11 @@ impl Database {
                     .execute(&f.raw)
                     .await
                     .unwrap();
-                sqlx::query(sql).bind(repo).execute(&f.raw).await.unwrap();
+                sqlx::query(sqlx::AssertSqlSafe(sql))
+                    .bind(repo)
+                    .execute(&f.raw)
+                    .await
+                    .unwrap();
             }
             Self::Sqlite(f) => {
                 let mut c = f.raw.acquire().await.unwrap();
@@ -94,7 +98,11 @@ impl Database {
                     .execute(&mut *c)
                     .await
                     .unwrap();
-                sqlx::query(sql).bind(repo).execute(&mut *c).await.unwrap();
+                sqlx::query(sqlx::AssertSqlSafe(sql))
+                    .bind(repo)
+                    .execute(&mut *c)
+                    .await
+                    .unwrap();
                 sqlx::query("PRAGMA ignore_check_constraints=OFF")
                     .execute(&mut *c)
                     .await

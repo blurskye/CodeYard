@@ -1000,21 +1000,25 @@ mod tests {
         ));
         assert_eq!(handler.user.as_ref().unwrap().id, owner.id);
         for column in ["is_banned", "must_change_password"] {
-            sqlx::query(&format!("UPDATE users SET {column} = TRUE WHERE id = ?1"))
-                .bind(owner.id)
-                .execute(&native)
-                .await
-                .unwrap();
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "UPDATE users SET {column} = TRUE WHERE id = ?1"
+            )))
+            .bind(owner.id)
+            .execute(&native)
+            .await
+            .unwrap();
             assert!(matches!(
                 handler.auth_publickey("git", &public).await.unwrap(),
                 Auth::Reject { .. }
             ));
             assert!(handler.user.is_none() && handler.key_id.is_none());
-            sqlx::query(&format!("UPDATE users SET {column} = FALSE WHERE id = ?1"))
-                .bind(owner.id)
-                .execute(&native)
-                .await
-                .unwrap();
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "UPDATE users SET {column} = FALSE WHERE id = ?1"
+            )))
+            .bind(owner.id)
+            .execute(&native)
+            .await
+            .unwrap();
         }
         codeyard_db_identity::users::ssh_keys::delete_ssh_key(&pool, key.id)
             .await

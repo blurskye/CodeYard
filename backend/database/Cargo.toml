@@ -37,9 +37,6 @@ workspace = true
 [dependencies.thiserror]
 workspace = true
 
-[dependencies.serde_yaml]
-workspace = true
-
 [dependencies.codeyard-security]
 workspace = true
 

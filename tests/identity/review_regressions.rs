@@ -496,12 +496,12 @@ async fn audit_changes(pg: bool) {
     }
     let query = "SELECT action,target_id FROM audit_log WHERE actor_id=$1 ORDER BY id";
     let rows: Vec<(String, i64)> = match f.pool() {
-        codeyard_database::DbPool::Postgres(raw) => sqlx::query_as(query)
+        codeyard_database::DbPool::Postgres(raw) => sqlx::query_as(sqlx::AssertSqlSafe(query))
             .bind(actor)
             .fetch_all(raw)
             .await
             .unwrap(),
-        codeyard_database::DbPool::Sqlite(raw) => sqlx::query_as(query)
+        codeyard_database::DbPool::Sqlite(raw) => sqlx::query_as(sqlx::AssertSqlSafe(query))
             .bind(actor)
             .fetch_all(raw)
             .await
@@ -606,7 +606,7 @@ async fn sqlite_activity_and_cleanup_queries_seek_their_indexes() {
         ("SELECT COUNT(*) FROM ci_runs WHERE created_at>'2026-01-01' AND triggered_by_id IS NOT NULL AND event='push'", "idx_ci_runs_push_created_at"),
         ("SELECT id FROM signup_requests WHERE status<>'pending' AND password_hash<>'' LIMIT 500", "idx_signup_requests_processed_hash"),
     ] {
-        let plan: Vec<(i64,i64,i64,String)> = sqlx::query_as(&format!("EXPLAIN QUERY PLAN {query}")).fetch_all(raw).await.unwrap();
+        let plan: Vec<(i64,i64,i64,String)> = sqlx::query_as(sqlx::AssertSqlSafe(format!("EXPLAIN QUERY PLAN {query}"))).fetch_all(raw).await.unwrap();
         assert!(plan.iter().any(|row| row.3.contains(index)), "{plan:?}");
     }
     f.finish().await;

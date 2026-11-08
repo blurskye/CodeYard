@@ -83,9 +83,9 @@ async fn begin_write<'a>(
         Subject::CommitComment => "commit_comments",
         _ => "pull_requests",
     };
-    let item: Option<i64> = sqlx::query_scalar(&format!(
+    let item: Option<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT id FROM {table} WHERE id=$1 AND repo_id=$2 FOR UPDATE"
-    ))
+    )))
     .bind(target.item_id)
     .bind(target.repo_id)
     .fetch_optional(&mut *tx)
@@ -227,7 +227,7 @@ async fn is_on_item(
         Subject::PullRequestComment => "SELECT 1 FROM pr_comments c WHERE c.id = $1 AND c.pull_request_id = $2 AND NOT EXISTS (SELECT 1 FROM pr_reviews v WHERE v.id = c.review_id AND v.state = 'pending')",
         Subject::PullRequestReview => "SELECT 1 FROM pr_reviews WHERE id = $1 AND pull_request_id = $2 AND state <> 'pending'",
     };
-    let found: Option<i32> = sqlx::query_scalar(sql)
+    let found: Option<i32> = sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
         .bind(id)
         .bind(item_id)
         .fetch_optional(&mut **tx)

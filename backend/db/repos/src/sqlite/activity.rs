@@ -35,9 +35,8 @@ pub async fn list_user_activity(
 ) -> Result<ActivityBatch> {
     let (limit, offset, prefix) = crate::activity::scan_window(limit, offset);
     let readable = codeyard_database::queries::sqlite::repositories::access::readable_condition();
-    let rows = sqlx::query_as::<_, ScannedActivity>(&crate::activity::activity_sql(
-        &readable,
-        "julianday(s.expires_at)>julianday('now')",
+    let rows = sqlx::query_as::<_, ScannedActivity>(sqlx::AssertSqlSafe(
+        crate::activity::activity_sql(&readable, "julianday(s.expires_at)>julianday('now')"),
     ))
     .bind(user_id)
     .bind(limit)

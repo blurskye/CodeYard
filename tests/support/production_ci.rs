@@ -56,10 +56,12 @@ impl Fixture {
             table,
             "ci_runs" | "ci_deployments" | "commit_statuses" | "notifications"
         ));
-        sqlx::query_scalar(&format!("SELECT COUNT(*)::BIGINT FROM {table}"))
-            .fetch_one(&self.raw)
-            .await
-            .expect("owned count")
+        sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT COUNT(*)::BIGINT FROM {table}"
+        )))
+        .fetch_one(&self.raw)
+        .await
+        .expect("owned count")
     }
 }
 

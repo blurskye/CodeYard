@@ -87,13 +87,13 @@ impl Database {
     async fn execute(&self, sql: &str) {
         match &self.raw {
             Raw::Postgres(pool) => {
-                sqlx::query(sql)
+                sqlx::query(sqlx::AssertSqlSafe(sql))
                     .execute(pool)
                     .await
                     .expect("owned PG mutation");
             }
             Raw::Sqlite(pool) => {
-                sqlx::query(sql)
+                sqlx::query(sqlx::AssertSqlSafe(sql))
                     .execute(pool)
                     .await
                     .expect("owned SQLite mutation");
@@ -103,12 +103,12 @@ impl Database {
 
     async fn count(&self, sql: &str, name: &str) -> i64 {
         match &self.raw {
-            Raw::Postgres(pool) => sqlx::query_scalar::<_, i64>(sql)
+            Raw::Postgres(pool) => sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(sql))
                 .bind(name)
                 .fetch_one(pool)
                 .await
                 .expect("owned PG observation"),
-            Raw::Sqlite(pool) => sqlx::query_scalar::<_, i64>(sql)
+            Raw::Sqlite(pool) => sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(sql))
                 .bind(name)
                 .fetch_one(pool)
                 .await

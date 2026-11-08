@@ -97,9 +97,9 @@ async fn set_setting(
     {
         return Ok(false);
     }
-    let result = sqlx::query(&format!(
+    let result = sqlx::query(sqlx::AssertSqlSafe(format!(
         "UPDATE node_configuration SET {column} = $1, updated_at = NOW() WHERE id = 1"
-    ))
+    )))
     .bind(value)
     .execute(&mut *tx)
     .await?;

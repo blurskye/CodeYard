@@ -22,9 +22,9 @@ pub async fn page_snapshot(
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
         .execute(&mut *tx)
         .await?;
-    let allowed: bool = sqlx::query_scalar(&format!(
+    let allowed: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=$1 AND NOT u.is_banned AND NOT u.must_change_password AND EXISTS(SELECT 1 FROM sessions s WHERE s.id=$2 AND s.user_id=u.id AND s.expires_at>clock_timestamp()) WHERE r.id=$3 AND NOT r.is_gist AND (NOT r.is_private OR (r.owner_kind='user' AND u.is_admin) OR ({USER_REPO_ACCESS_SQL})>=1))"
-    )).bind(viewer).bind(session).bind(repo).fetch_one(&mut *tx).await?;
+    ))).bind(viewer).bind(session).bind(repo).fetch_one(&mut *tx).await?;
     ensure!(allowed, Refusal::Missing);
     let run = sqlx::query_as::<_, Run>("SELECT * FROM check_runs WHERE repo_id=$1 AND id=$2")
         .bind(repo)

@@ -17,13 +17,13 @@ pub async fn read_release_snapshot(
     selection: ReleaseSelection<'_>,
 ) -> Result<ReleaseSnapshot> {
     let mut tx = pool.begin().await?;
-    let repository = sqlx::query_as::<_, Repository>(&format!(
+    let repository = sqlx::query_as::<_, Repository>(sqlx::AssertSqlSafe(format!(
         "SELECT r.* FROM repositories r LEFT JOIN users u ON u.id=?1 AND NOT u.is_banned AND NOT u.must_change_password WHERE r.id=?2 AND NOT r.is_gist AND (NOT r.is_private OR (r.owner_kind='user' AND u.is_admin) OR ({USER_REPO_ACCESS_SQL})>=1)"
-    )).bind(viewer).bind(repo_id).fetch_optional(&mut *tx).await?
+    ))).bind(viewer).bind(repo_id).fetch_optional(&mut *tx).await?
         .ok_or(ReleaseRefusal::NotFound)?;
-    let drafts: bool = sqlx::query_scalar(&format!(
+    let drafts: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT COALESCE((r.owner_kind='user' AND u.is_admin) OR ({USER_REPO_ACCESS_SQL})>=3,0) FROM repositories r LEFT JOIN users u ON u.id=?1 AND NOT u.is_banned AND NOT u.must_change_password WHERE r.id=?2"
-    )).bind(viewer).bind(repo_id).fetch_one(&mut *tx).await?;
+    ))).bind(viewer).bind(repo_id).fetch_one(&mut *tx).await?;
     let (id, tag, limit, offset) = match selection {
         ReleaseSelection::Page { limit, offset } => {
             anyhow::ensure!(
@@ -35,9 +35,9 @@ pub async fn read_release_snapshot(
         ReleaseSelection::Id(id) => (Some(id), None, 1, 0),
         ReleaseSelection::Tag(tag) => (None, Some(tag), 1, 0),
     };
-    let releases = sqlx::query_as::<_, ReleaseRow>(&format!(
+    let releases = sqlx::query_as::<_, ReleaseRow>(sqlx::AssertSqlSafe(format!(
         "{ROW_SELECT} WHERE r.repo_id=?1 AND (?2 OR NOT r.is_draft) AND (?3 IS NULL OR r.id=?3) AND (?4 IS NULL OR r.tag_name=?4) ORDER BY r.created_at DESC, r.id DESC LIMIT ?5 OFFSET ?6"
-    )).bind(repo_id).bind(drafts).bind(id).bind(tag).bind(limit).bind(offset)
+    ))).bind(repo_id).bind(drafts).bind(id).bind(tag).bind(limit).bind(offset)
         .fetch_all(&mut *tx).await?;
     let total = sqlx::query_scalar(
         "SELECT COUNT(*) FROM releases WHERE repo_id=?1 AND (?2 OR NOT is_draft)",
@@ -50,9 +50,9 @@ pub async fn read_release_snapshot(
         .iter()
         .map(|row| row.release.id)
         .collect::<Vec<_>>();
-    let assets = sqlx::query_as::<_, ReleaseAsset>(&format!(
+    let assets = sqlx::query_as::<_, ReleaseAsset>(sqlx::AssertSqlSafe(format!(
         "SELECT {ASSET_COLUMNS} FROM release_assets WHERE release_id IN (SELECT value FROM json_each(?1)) ORDER BY id"
-    )).bind(serde_json::to_string(&ids)?).fetch_all(&mut *tx).await?;
+    ))).bind(serde_json::to_string(&ids)?).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok(ReleaseSnapshot {
         repository,

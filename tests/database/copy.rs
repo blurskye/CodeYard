@@ -17,17 +17,21 @@ async fn sqlite_tables(source: &SqlitePool) -> Vec<String> {
 }
 
 async fn sqlite_count(source: &SqlitePool, table: &str) -> i64 {
-    sqlx::query_scalar(&format!("SELECT count(*) FROM \"{table}\""))
-        .fetch_one(source)
-        .await
-        .unwrap()
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT count(*) FROM \"{table}\""
+    )))
+    .fetch_one(source)
+    .await
+    .unwrap()
 }
 
 async fn postgres_count(target: &PgPool, table: &str) -> i64 {
-    sqlx::query_scalar(&format!("SELECT count(*) FROM \"{table}\""))
-        .fetch_one(target)
-        .await
-        .unwrap()
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT count(*) FROM \"{table}\""
+    )))
+    .fetch_one(target)
+    .await
+    .unwrap()
 }
 
 /// These tests share one PostgreSQL database, and each copy changes its tables with
@@ -513,9 +517,9 @@ async fn round_trip_through_postgres_keeps_every_row() {
             .collect::<Vec<_>>()
             .join(", ");
         for (left, right) in [("original", "main"), ("main", "original")] {
-            let differing: i64 = sqlx::query_scalar(&format!(
+            let differing: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
                 "SELECT count(*) FROM (SELECT {select} FROM {left}.\"{table}\" EXCEPT SELECT {select} FROM {right}.\"{table}\")"
-            ))
+            )))
             .fetch_one(&mut *connection)
             .await
             .unwrap();

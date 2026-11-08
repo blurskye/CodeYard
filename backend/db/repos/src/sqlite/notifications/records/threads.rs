@@ -15,7 +15,7 @@ pub(crate) async fn subscribers(
     key: &str,
 ) -> Result<Vec<i64>> {
     let scope = crate::sqlite::notifications::records::scope_readable_condition();
-    Ok(sqlx::query_scalar(&format!("SELECT t.user_id FROM notification_threads t JOIN notification_thread_subscriptions s ON s.thread_id=t.id JOIN users u ON u.id=t.user_id JOIN repositories r ON r.id=t.scope_repository_id WHERE t.scope_repository_id=?1 AND t.subject_type=?2 AND t.subject_key=?3 AND s.subscribed AND NOT s.ignored AND NOT u.is_banned AND NOT u.must_change_password AND {scope} AND NOT EXISTS(SELECT 1 FROM watches w WHERE w.repo_id=?1 AND w.user_id=t.user_id AND w.level='ignoring') ORDER BY t.user_id")).bind(repo_id).bind(kind).bind(key).fetch_all(pool).await?)
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT t.user_id FROM notification_threads t JOIN notification_thread_subscriptions s ON s.thread_id=t.id JOIN users u ON u.id=t.user_id JOIN repositories r ON r.id=t.scope_repository_id WHERE t.scope_repository_id=?1 AND t.subject_type=?2 AND t.subject_key=?3 AND s.subscribed AND NOT s.ignored AND NOT u.is_banned AND NOT u.must_change_password AND {scope} AND NOT EXISTS(SELECT 1 FROM watches w WHERE w.repo_id=?1 AND w.user_id=t.user_id AND w.level='ignoring') ORDER BY t.user_id"))).bind(repo_id).bind(kind).bind(key).fetch_all(pool).await?)
 }
 
 fn readable(scopes: &NotificationScopes) -> Vec<i64> {
@@ -67,7 +67,7 @@ async fn candidates(
     } else {
         sql.to_owned()
     };
-    Ok(sqlx::query_as(&sql)
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(user)
         .bind(scopes.high_water)
         .bind(serde_json::to_string(&ids)?)
@@ -167,7 +167,7 @@ async fn manage_subscription(
         return Ok(ThreadInbox::default());
     };
     let condition = crate::sqlite::notifications::records::scope_readable_condition();
-    let allowed:bool=sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=?1 WHERE r.id=?2 AND {condition})")).bind(user).bind(thread.scope_repository_id).fetch_one(&mut *connection).await?;
+    let allowed:bool=sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=?1 WHERE r.id=?2 AND {condition})"))).bind(user).bind(thread.scope_repository_id).fetch_one(&mut *connection).await?;
     let stub: bool = sqlx::query_scalar("SELECT is_stub FROM repositories WHERE id=?1")
         .bind(thread.scope_repository_id)
         .fetch_optional(&mut *connection)
@@ -210,7 +210,7 @@ pub(super) async fn perform(
     };
     if let Some(repo) = repository {
         let condition = crate::sqlite::notifications::records::scope_readable_condition();
-        let allowed:bool=sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=?1 WHERE r.id=?2 AND {condition})")).bind(user).bind(repo).fetch_one(&mut *connection).await?;
+        let allowed:bool=sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=?1 WHERE r.id=?2 AND {condition})"))).bind(user).bind(repo).fetch_one(&mut *connection).await?;
         let stub: bool = sqlx::query_scalar("SELECT is_stub FROM repositories WHERE id=?1")
             .bind(repo)
             .fetch_optional(&mut *connection)

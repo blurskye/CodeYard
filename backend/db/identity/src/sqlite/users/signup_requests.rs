@@ -150,14 +150,14 @@ pub async fn approve_signup_request(
     {
         return Err(ReviewError::Conflict.into());
     }
-    let user = sqlx::query_as::<_, User>(&format!(
+    let user = sqlx::query_as::<_, User>(sqlx::AssertSqlSafe(format!(
         r#"
         INSERT INTO users (home_cell,username, email, password_hash, is_admin, must_change_password)
         VALUES ({cell_home},?1, ?2, ?3, FALSE, FALSE)
         RETURNING *
         "#,
         cell_home = codeyard_database::cells::LOCAL_HOME_SQL
-    ))
+    )))
     .bind(&signup_request.username)
     .bind(signup_request.email.as_deref())
     .bind(&signup_request.password_hash)

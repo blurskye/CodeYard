@@ -98,7 +98,7 @@ pub async fn list_repositories(
         &codeyard_database::queries::sqlite::repositories::access::readable_condition(),
     )
     .replace('$', "?");
-    Ok(sqlx::query_as(&sql)
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(query.viewer)
         .bind(query.target_id())
         .bind(query.since)
@@ -117,7 +117,7 @@ pub async fn count_repositories(pool: &SqlitePool, query: RepositoryListQuery<'_
         &codeyard_database::queries::sqlite::repositories::access::readable_condition(),
     )
     .replace('$', "?");
-    Ok(sqlx::query_scalar(&sql)
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(query.viewer)
         .bind(query.target_id())
         .bind(query.since)

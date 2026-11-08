@@ -16,7 +16,7 @@ pub async fn by_ids(pool: &SqlitePool, repo: i64, ids: &[i64]) -> Result<Vec<Tea
     if ids.is_empty() {
         return Ok(Vec::new());
     }
-    Ok(sqlx::query_as(&format!("SELECT t.*,o.name AS org_slug,({PERMISSION}) AS permission FROM teams t JOIN repositories r ON r.owner_org_id=t.org_id AND r.owner_kind='org' AND r.owner_user_id IS NULL JOIN organizations o ON o.id=t.org_id LEFT JOIN effective_team_repo_access a ON a.team_id=t.id AND a.repo_id=r.id WHERE r.id=?1 AND t.id IN (SELECT value FROM json_each(?2)) AND t.privacy IN ('visible','secret') ORDER BY t.id")).bind(repo).bind(serde_json::to_string(ids)?).fetch_all(pool).await?)
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT t.*,o.name AS org_slug,({PERMISSION}) AS permission FROM teams t JOIN repositories r ON r.owner_org_id=t.org_id AND r.owner_kind='org' AND r.owner_user_id IS NULL JOIN organizations o ON o.id=t.org_id LEFT JOIN effective_team_repo_access a ON a.team_id=t.id AND a.repo_id=r.id WHERE r.id=?1 AND t.id IN (SELECT value FROM json_each(?2)) AND t.privacy IN ('visible','secret') ORDER BY t.id"))).bind(repo).bind(serde_json::to_string(ids)?).fetch_all(pool).await?)
 }
 pub(super) async fn eligible_ids_on(
     connection: &mut SqliteConnection,
@@ -24,9 +24,9 @@ pub(super) async fn eligible_ids_on(
     ids: &[i64],
 ) -> Result<Vec<i64>> {
     validate_count(ids.len())?;
-    Ok(sqlx::query_scalar(&format!("SELECT t.id FROM teams t JOIN repositories r ON r.owner_org_id=t.org_id AND r.owner_kind='org' AND r.owner_user_id IS NULL LEFT JOIN effective_team_repo_access a ON a.team_id=t.id AND a.repo_id=r.id WHERE r.id=?1 AND t.id IN (SELECT value FROM json_each(?2)) AND t.privacy IN ('visible','secret') AND ({PERMISSION})>=3 ORDER BY t.id")).bind(repo).bind(serde_json::to_string(ids)?).fetch_all(connection).await?)
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT t.id FROM teams t JOIN repositories r ON r.owner_org_id=t.org_id AND r.owner_kind='org' AND r.owner_user_id IS NULL LEFT JOIN effective_team_repo_access a ON a.team_id=t.id AND a.repo_id=r.id WHERE r.id=?1 AND t.id IN (SELECT value FROM json_each(?2)) AND t.privacy IN ('visible','secret') AND ({PERMISSION})>=3 ORDER BY t.id"))).bind(repo).bind(serde_json::to_string(ids)?).fetch_all(connection).await?)
 }
 pub async fn contains_actor(pool: &SqlitePool, repo: i64, actor: i64, ids: &[i64]) -> Result<bool> {
     validate_count(ids.len())?;
-    Ok(sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM teams t JOIN repositories r ON r.owner_org_id=t.org_id AND r.owner_kind='org' AND r.owner_user_id IS NULL LEFT JOIN effective_team_repo_access a ON a.team_id=t.id AND a.repo_id=r.id JOIN effective_team_memberships tm ON tm.team_id=t.id AND tm.user_id=?2 JOIN org_memberships m ON m.org_id=t.org_id AND m.user_id=tm.user_id JOIN users u ON u.id=tm.user_id WHERE r.id=?1 AND t.id IN (SELECT value FROM json_each(?3)) AND t.privacy IN ('visible','secret') AND ({PERMISSION})>=3 AND tm.role IN ('member','maintainer') AND m.role IN ('owner','admin','member') AND NOT u.is_banned AND NOT u.must_change_password)")).bind(repo).bind(actor).bind(serde_json::to_string(ids)?).fetch_one(pool).await?)
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT EXISTS(SELECT 1 FROM teams t JOIN repositories r ON r.owner_org_id=t.org_id AND r.owner_kind='org' AND r.owner_user_id IS NULL LEFT JOIN effective_team_repo_access a ON a.team_id=t.id AND a.repo_id=r.id JOIN effective_team_memberships tm ON tm.team_id=t.id AND tm.user_id=?2 JOIN org_memberships m ON m.org_id=t.org_id AND m.user_id=tm.user_id JOIN users u ON u.id=tm.user_id WHERE r.id=?1 AND t.id IN (SELECT value FROM json_each(?3)) AND t.privacy IN ('visible','secret') AND ({PERMISSION})>=3 AND tm.role IN ('member','maintainer') AND m.role IN ('owner','admin','member') AND NOT u.is_banned AND NOT u.must_change_password)"))).bind(repo).bind(actor).bind(serde_json::to_string(ids)?).fetch_one(pool).await?)
 }

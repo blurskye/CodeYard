@@ -151,7 +151,7 @@ impl PostgresDatabase {
             .map(codeyard_database::pool::Pool::from)
             .expect("required PostgreSQL fixture");
         let schema = format!("test_{}", Uuid::new_v4().simple());
-        sqlx::query(&format!("CREATE SCHEMA \"{schema}\""))
+        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE SCHEMA \"{schema}\"")))
             .execute(&admin)
             .await
             .unwrap();
@@ -224,9 +224,11 @@ async fn drop_schema(
     .await?;
     let mut attempt = 1;
     loop {
-        match sqlx::query(&format!("DROP SCHEMA \"{schema}\" CASCADE"))
-            .execute(&admin)
-            .await
+        match sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DROP SCHEMA \"{schema}\" CASCADE"
+        )))
+        .execute(&admin)
+        .await
         {
             Ok(_) => break,
             Err(error) if attempt < 5 => {

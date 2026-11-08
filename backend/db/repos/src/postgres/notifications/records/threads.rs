@@ -15,7 +15,7 @@ pub(crate) async fn subscribers(
     key: &str,
 ) -> Result<Vec<i64>> {
     let scope = crate::postgres::notifications::records::scope_readable_condition();
-    Ok(sqlx::query_scalar(&format!("SELECT t.user_id FROM notification_threads t JOIN notification_thread_subscriptions s ON s.thread_id=t.id JOIN users u ON u.id=t.user_id JOIN repositories r ON r.id=t.scope_repository_id WHERE t.scope_repository_id=$1 AND t.subject_type=$2 AND t.subject_key=$3 AND s.subscribed AND NOT s.ignored AND NOT u.is_banned AND NOT u.must_change_password AND {scope} AND NOT EXISTS(SELECT 1 FROM watches w WHERE w.repo_id=$1 AND w.user_id=t.user_id AND w.level='ignoring') ORDER BY t.user_id")).bind(repo_id).bind(kind).bind(key).fetch_all(pool).await?)
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT t.user_id FROM notification_threads t JOIN notification_thread_subscriptions s ON s.thread_id=t.id JOIN users u ON u.id=t.user_id JOIN repositories r ON r.id=t.scope_repository_id WHERE t.scope_repository_id=$1 AND t.subject_type=$2 AND t.subject_key=$3 AND s.subscribed AND NOT s.ignored AND NOT u.is_banned AND NOT u.must_change_password AND {scope} AND NOT EXISTS(SELECT 1 FROM watches w WHERE w.repo_id=$1 AND w.user_id=t.user_id AND w.level='ignoring') ORDER BY t.user_id"))).bind(repo_id).bind(kind).bind(key).fetch_all(pool).await?)
 }
 
 fn readable(scopes: &NotificationScopes) -> Vec<i64> {
@@ -108,7 +108,7 @@ async fn candidates(
     } else {
         sql.to_owned()
     };
-    Ok(sqlx::query_as(&sql)
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(user)
         .bind(scopes.high_water)
         .bind(ids)

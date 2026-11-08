@@ -58,7 +58,7 @@ impl Database {
     pub async fn execute(&self, sql: &str, ids: &[i64]) {
         match self {
             Self::Postgres(f) => {
-                let mut query = sqlx::query(sql);
+                let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
                 for id in ids {
                     query = query.bind(*id);
                 }
@@ -68,7 +68,7 @@ impl Database {
                     .expect("owned PG fixture mutation");
             }
             Self::Sqlite(f) => {
-                let mut query = sqlx::query(sql);
+                let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
                 for id in ids {
                     query = query.bind(*id);
                 }
@@ -84,7 +84,7 @@ impl Database {
         match self {
             Self::Postgres(f) => {
                 use sqlx::Row;
-                let mut query = sqlx::query(sql);
+                let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
                 for id in ids {
                     query = query.bind(*id);
                 }
@@ -95,7 +95,7 @@ impl Database {
                     .expect("owned PG integer observation")
             }
             Self::Sqlite(f) => {
-                let mut query = sqlx::query_scalar::<_, i64>(sql);
+                let mut query = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(sql));
                 for id in ids {
                     query = query.bind(*id);
                 }
@@ -124,12 +124,12 @@ impl Database {
     pub async fn repository(&self, id: i64) -> codeyard_database::models::Repository {
         let sql = "SELECT * FROM repositories WHERE id=$1";
         match self {
-            Self::Postgres(f) => sqlx::query_as(sql)
+            Self::Postgres(f) => sqlx::query_as(sqlx::AssertSqlSafe(sql))
                 .bind(id)
                 .fetch_one(&f.raw)
                 .await
                 .unwrap(),
-            Self::Sqlite(f) => sqlx::query_as(sql)
+            Self::Sqlite(f) => sqlx::query_as(sqlx::AssertSqlSafe(sql))
                 .bind(id)
                 .fetch_one(&f.raw)
                 .await

@@ -27,7 +27,7 @@ pub async fn issue(
         "invalid log capability"
     );
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let readable:bool=sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=$1 WHERE r.id=$2 AND NOT u.is_banned AND NOT u.must_change_password AND {})",codeyard_database::queries::sqlite::repositories::access::readable_condition())).bind(actor.user_id).bind(repo).fetch_one(&mut *tx).await?;
+    let readable:bool=sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=$1 WHERE r.id=$2 AND NOT u.is_banned AND NOT u.must_change_password AND {})",codeyard_database::queries::sqlite::repositories::access::readable_condition()))).bind(actor.user_id).bind(repo).fetch_one(&mut *tx).await?;
     if !readable {
         return Ok(false);
     }

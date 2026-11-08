@@ -20,7 +20,7 @@ pub async fn item_links(
     anyhow::ensure!(items.len() <= 50, Refusal::Invalid);
     let mut tx = pool.begin().await?;
     readable(&mut tx, viewer, project).await?;
-    let links = sqlx::query_as(&format!("SELECT i.id,COALESCE(owner_user.username,owner_org.name),r.name,CASE WHEN i.issue_id IS NOT NULL THEN 'issues' ELSE 'pulls' END,COALESCE(issues.number,pr.number) FROM project_items i JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id=?2 LEFT JOIN users owner_user ON owner_user.id=r.owner_user_id LEFT JOIN organizations owner_org ON owner_org.id=r.owner_org_id LEFT JOIN issues ON issues.id=i.issue_id LEFT JOIN pull_requests pr ON pr.id=i.pull_request_id WHERE i.project_id=?1 AND i.id IN (SELECT value FROM json_each(?3)) AND {}", codeyard_database::queries::sqlite::repositories::access::readable_condition()))
+    let links = sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT i.id,COALESCE(owner_user.username,owner_org.name),r.name,CASE WHEN i.issue_id IS NOT NULL THEN 'issues' ELSE 'pulls' END,COALESCE(issues.number,pr.number) FROM project_items i JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id=?2 LEFT JOIN users owner_user ON owner_user.id=r.owner_user_id LEFT JOIN organizations owner_org ON owner_org.id=r.owner_org_id LEFT JOIN issues ON issues.id=i.issue_id LEFT JOIN pull_requests pr ON pr.id=i.pull_request_id WHERE i.project_id=?1 AND i.id IN (SELECT value FROM json_each(?3)) AND {}", codeyard_database::queries::sqlite::repositories::access::readable_condition())))
         .bind(project).bind(viewer).bind(serde_json::to_string(items)?).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok(links)
@@ -33,7 +33,7 @@ pub(super) async fn repository_read(
     actor: i64,
     repo: i64,
 ) -> Result<()> {
-    let visible: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=$1 WHERE r.id=$2 AND {})", codeyard_database::queries::sqlite::repositories::access::readable_condition()))
+    let visible: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=$1 WHERE r.id=$2 AND {})", codeyard_database::queries::sqlite::repositories::access::readable_condition())))
         .bind(actor).bind(repo).fetch_one(&mut **tx).await?;
     anyhow::ensure!(visible, Refusal::Missing);
     Ok(())
@@ -46,22 +46,26 @@ pub(super) async fn writable_item(
     project: i64,
     id: i64,
 ) -> Result<Item> {
-    let item: Item = sqlx::query_as(&format!("{ITEM} WHERE i.id=$1 AND i.project_id=$2"))
-        .bind(id)
-        .bind(project)
-        .fetch_optional(&mut **tx)
-        .await?
-        .ok_or(Refusal::Missing)?;
+    let item: Item = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{ITEM} WHERE i.id=$1 AND i.project_id=$2"
+    )))
+    .bind(id)
+    .bind(project)
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or(Refusal::Missing)?;
     if let Some(repo) = item.repo_id {
         repository_read(tx, actor, repo).await?;
     }
     write_project(tx, actor, credential, project).await?;
-    let item = sqlx::query_as(&format!("{ITEM} WHERE i.id=$1 AND i.project_id=$2"))
-        .bind(id)
-        .bind(project)
-        .fetch_optional(&mut **tx)
-        .await?
-        .ok_or(Refusal::Missing)?;
+    let item = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{ITEM} WHERE i.id=$1 AND i.project_id=$2"
+    )))
+    .bind(id)
+    .bind(project)
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or(Refusal::Missing)?;
     Ok(item)
 }
 
@@ -156,11 +160,13 @@ pub async fn add_item(
             } else {
                 "pull_requests"
             };
-            let repo: i64 = sqlx::query_scalar(&format!("SELECT repo_id FROM {table} WHERE id=$1"))
-                .bind(id)
-                .fetch_optional(&mut *tx)
-                .await?
-                .ok_or(Refusal::Missing)?;
+            let repo: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+                "SELECT repo_id FROM {table} WHERE id=$1"
+            )))
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or(Refusal::Missing)?;
             repository_read(&mut tx, actor, repo).await?;
             (
                 matches!(content, Content::Issue(_)).then_some(*id),
@@ -188,7 +194,7 @@ pub async fn add_item(
     } else {
         id
     };
-    let item = sqlx::query_as(&format!("{ITEM} WHERE i.id=$1"))
+    let item = sqlx::query_as(sqlx::AssertSqlSafe(format!("{ITEM} WHERE i.id=$1")))
         .bind(id)
         .fetch_one(&mut *tx)
         .await?;
@@ -204,7 +210,7 @@ pub async fn item(
 ) -> Result<Option<Item>> {
     let mut tx = pool.begin().await?;
     readable(&mut tx, viewer, project).await?;
-    let item = sqlx::query_as(&format!("{ITEM} LEFT JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id=$2 WHERE i.project_id=$1 AND i.id=$3 AND (i.repo_id IS NULL OR {})", codeyard_database::queries::sqlite::repositories::access::readable_condition()))
+    let item = sqlx::query_as(sqlx::AssertSqlSafe(format!("{ITEM} LEFT JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id=$2 WHERE i.project_id=$1 AND i.id=$3 AND (i.repo_id IS NULL OR {})", codeyard_database::queries::sqlite::repositories::access::readable_condition())))
         .bind(project).bind(viewer).bind(id).fetch_optional(&mut *tx).await?;
     tx.commit().await?;
     Ok(item)
@@ -225,7 +231,7 @@ pub async fn items_page(
     let mut tx = pool.begin().await?;
     readable(&mut tx, viewer, project).await?;
     let direction = if before < i64::MAX { "DESC" } else { "ASC" };
-    let items = sqlx::query_as(&format!("{ITEM} LEFT JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id=$2 WHERE i.project_id=$1 AND (i.repo_id IS NULL OR {}) AND ($3=0 OR (i.position,i.id)>(SELECT b.position,b.id FROM project_items b WHERE b.project_id=$1 AND b.id=$3)) AND ($4=9223372036854775807 OR (i.position,i.id)<(SELECT b.position,b.id FROM project_items b WHERE b.project_id=$1 AND b.id=$4)) ORDER BY i.position {direction},i.id {direction} LIMIT $5", codeyard_database::queries::sqlite::repositories::access::readable_condition()))
+    let items = sqlx::query_as(sqlx::AssertSqlSafe(format!("{ITEM} LEFT JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id=$2 WHERE i.project_id=$1 AND (i.repo_id IS NULL OR {}) AND ($3=0 OR (i.position,i.id)>(SELECT b.position,b.id FROM project_items b WHERE b.project_id=$1 AND b.id=$3)) AND ($4=9223372036854775807 OR (i.position,i.id)<(SELECT b.position,b.id FROM project_items b WHERE b.project_id=$1 AND b.id=$4)) ORDER BY i.position {direction},i.id {direction} LIMIT $5", codeyard_database::queries::sqlite::repositories::access::readable_condition())))
         .bind(project).bind(viewer).bind(after).bind(before).bind(limit).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok(items)
@@ -249,28 +255,32 @@ pub async fn content_items(
     let joins = format!(" JOIN projects p ON p.id=i.project_id LEFT JOIN repositories r ON r.id=COALESCE(issues.repo_id,pr.repo_id,i.repo_id) LEFT JOIN users u ON u.id=?3 WHERE (i.issue_id=?1 OR i.pull_request_id=?2) AND (?4 OR NOT i.archived) AND {} AND (COALESCE(issues.repo_id,pr.repo_id,i.repo_id) IS NULL OR {})", crate::projects::readable_condition("?3"), codeyard_database::queries::sqlite::repositories::access::readable_condition());
     let mut tx = pool.begin().await?;
     let total = if count {
-        sqlx::query_scalar(&format!("SELECT COUNT(*) FROM ({ITEM}{joins}) visible"))
-            .bind(issue)
-            .bind(pull)
-            .bind(viewer)
-            .bind(include_archived)
-            .fetch_one(&mut *tx)
-            .await?
+        sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT COUNT(*) FROM ({ITEM}{joins}) visible"
+        )))
+        .bind(issue)
+        .bind(pull)
+        .bind(viewer)
+        .bind(include_archived)
+        .fetch_one(&mut *tx)
+        .await?
     } else {
         0
     };
     let rows = if limit == 0 {
         Vec::new()
     } else {
-        sqlx::query_as(&format!("{ITEM}{joins} ORDER BY i.id LIMIT ?5 OFFSET ?6"))
-            .bind(issue)
-            .bind(pull)
-            .bind(viewer)
-            .bind(include_archived)
-            .bind(limit)
-            .bind(offset)
-            .fetch_all(&mut *tx)
-            .await?
+        sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "{ITEM}{joins} ORDER BY i.id LIMIT ?5 OFFSET ?6"
+        )))
+        .bind(issue)
+        .bind(pull)
+        .bind(viewer)
+        .bind(include_archived)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&mut *tx)
+        .await?
     };
     tx.commit().await?;
     Ok((total, rows))
@@ -289,12 +299,14 @@ pub async fn items_window(
     readable_at(&mut tx, viewer, window.project, window.include_deleted).await?;
     let joins = format!(" LEFT JOIN repositories r ON r.id=COALESCE(issues.repo_id,pr.repo_id,i.repo_id) LEFT JOIN users u ON u.id=?2 WHERE i.project_id=?1 AND (?3 IS NULL OR i.archived=?3) AND (COALESCE(issues.repo_id,pr.repo_id,i.repo_id) IS NULL OR {})", codeyard_database::queries::sqlite::repositories::access::readable_condition());
     let total = if window.count {
-        sqlx::query_scalar(&format!("SELECT COUNT(*) FROM ({ITEM}{joins}) visible"))
-            .bind(window.project)
-            .bind(viewer)
-            .bind(window.archived)
-            .fetch_one(&mut *tx)
-            .await?
+        sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT COUNT(*) FROM ({ITEM}{joins}) visible"
+        )))
+        .bind(window.project)
+        .bind(viewer)
+        .bind(window.archived)
+        .fetch_one(&mut *tx)
+        .await?
     } else {
         0
     };
@@ -302,9 +314,9 @@ pub async fn items_window(
     let rows = if window.limit == 0 {
         Vec::new()
     } else {
-        sqlx::query_as(&format!(
+        sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "{ITEM}{joins} ORDER BY i.position {direction},i.id {direction} LIMIT ?4 OFFSET ?5"
-        ))
+        )))
         .bind(window.project)
         .bind(viewer)
         .bind(window.archived)
@@ -327,7 +339,7 @@ pub(super) async fn readable_items(
     viewer: Option<i64>,
     project: i64,
 ) -> Result<Vec<Item>> {
-    Ok(sqlx::query_as(&format!("{ITEM} LEFT JOIN repositories r ON r.id=COALESCE(issues.repo_id,pr.repo_id,i.repo_id) LEFT JOIN users u ON u.id=?2 WHERE i.project_id=?1 AND (COALESCE(issues.repo_id,pr.repo_id,i.repo_id) IS NULL OR {}) ORDER BY i.position,i.id", codeyard_database::queries::sqlite::repositories::access::readable_condition()))
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!("{ITEM} LEFT JOIN repositories r ON r.id=COALESCE(issues.repo_id,pr.repo_id,i.repo_id) LEFT JOIN users u ON u.id=?2 WHERE i.project_id=?1 AND (COALESCE(issues.repo_id,pr.repo_id,i.repo_id) IS NULL OR {}) ORDER BY i.position,i.id", codeyard_database::queries::sqlite::repositories::access::readable_condition())))
         .bind(project).bind(viewer).fetch_all(&mut **tx).await?)
 }
 
@@ -389,7 +401,7 @@ pub async fn update_item(
     .bind(chrono::Utc::now())
     .execute(&mut *tx)
     .await?;
-    let item = sqlx::query_as(&format!("{ITEM} WHERE i.id=$1"))
+    let item = sqlx::query_as(sqlx::AssertSqlSafe(format!("{ITEM} WHERE i.id=$1")))
         .bind(item)
         .fetch_one(&mut *tx)
         .await?;

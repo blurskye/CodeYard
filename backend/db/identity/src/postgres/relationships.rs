@@ -19,7 +19,7 @@ pub async fn window(pool: &PgPool, page: &Window<'_>) -> Result<Vec<Link>> {
     );
     let readable = codeyard_database::queries::postgres::repositories::access::readable_condition();
     let sql = window_sql(page, &readable, "$5::BIGINT[] IS NULL OR i.repo_id=ANY($5)");
-    Ok(sqlx::query_as(&sql)
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(page.viewer)
         .bind(page.root)
         .bind(page.kind.storage())
@@ -41,7 +41,7 @@ pub async fn repository_counts(
         "SELECT i.repo_id,COUNT(*) {} GROUP BY i.repo_id ORDER BY i.repo_id",
         related_sql(kind, &readable, "TRUE")
     );
-    Ok(sqlx::query_as(&sql)
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(viewer)
         .bind(root)
         .bind(kind.storage())

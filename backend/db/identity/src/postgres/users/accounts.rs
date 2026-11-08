@@ -10,14 +10,14 @@ pub async fn create_user(pool: &PgPool, username: &str, email: Option<&str>) -> 
     let mut tx = pool.begin().await?;
     crate::postgres::users::transitions::lock_namespace(&mut tx, username).await?;
     crate::postgres::users::transitions::require_user_namespace(&mut tx, username).await?;
-    let result = sqlx::query_as::<_, User>(&format!(
+    let result = sqlx::query_as::<_, User>(sqlx::AssertSqlSafe(format!(
         r#"
         INSERT INTO users (home_cell,username, email)
         VALUES ({cell_home},$1, $2)
         RETURNING *
         "#,
         cell_home = codeyard_database::cells::LOCAL_HOME_SQL
-    ))
+    )))
     .bind(username)
     .bind(email)
     .fetch_one(&mut *tx)
@@ -50,14 +50,14 @@ pub async fn create_user_with_password_and_flags(
     let mut tx = pool.begin().await?;
     crate::postgres::users::transitions::lock_namespace(&mut tx, username).await?;
     crate::postgres::users::transitions::require_user_namespace(&mut tx, username).await?;
-    let result = sqlx::query_as::<_, User>(&format!(
+    let result = sqlx::query_as::<_, User>(sqlx::AssertSqlSafe(format!(
         r#"
         INSERT INTO users (home_cell,username, email, password_hash, is_admin, must_change_password)
         VALUES ({cell_home},$1, $2, $3, $4, $5)
         RETURNING *
         "#,
         cell_home = codeyard_database::cells::LOCAL_HOME_SQL
-    ))
+    )))
     .bind(username)
     .bind(email)
     .bind(password_hash)
@@ -250,14 +250,14 @@ pub async fn create_user_from_oauth(
     let mut tx = pool.begin().await?;
     crate::postgres::users::transitions::lock_namespace(&mut tx, username).await?;
     crate::postgres::users::transitions::require_user_namespace(&mut tx, username).await?;
-    let result = sqlx::query_as::<_, User>(&format!(
+    let result = sqlx::query_as::<_, User>(sqlx::AssertSqlSafe(format!(
         r#"
         INSERT INTO users (home_cell,username, email, display_name, email_verified)
         VALUES ({cell_home},$1, $2, $3, $4)
         RETURNING *
         "#,
         cell_home = codeyard_database::cells::LOCAL_HOME_SQL
-    ))
+    )))
     .bind(username)
     .bind(email)
     .bind(display_name)

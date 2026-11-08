@@ -86,9 +86,9 @@ async fn locate_item(
     item: AssignedItem,
 ) -> Result<(&'static str, &'static str)> {
     let (table, link, column) = tables(item);
-    let found: Option<i64> = sqlx::query_scalar(&format!(
+    let found: Option<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT id FROM {table} WHERE id = $1 AND repo_id = $2 FOR UPDATE"
-    ))
+    )))
     .bind(item_id(item))
     .bind(repo_id)
     .fetch_optional(&mut **tx)
@@ -123,11 +123,11 @@ pub(crate) async fn candidate(
     repo_id: i64,
     user_id: i64,
 ) -> Result<()> {
-    let assignable: bool = sqlx::query_scalar(&format!(
+    let assignable: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT EXISTS (SELECT 1 FROM repositories r JOIN users u ON u.id=$2
          WHERE r.id=$1 AND {CANDIDATES} AND ({})>=1)",
         codeyard_database::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL
-    ))
+    )))
     .bind(repo_id)
     .bind(user_id)
     .fetch_one(&mut **tx)
@@ -145,9 +145,9 @@ pub(crate) async fn assign_in_transaction(
     let (link, column) = locate_item(tx, repo_id, item).await?;
     // A user who is already assigned stays assigned, even after losing access, so only a new
     // assignee must be a candidate.
-    let assigned: bool = sqlx::query_scalar(&format!(
+    let assigned: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT EXISTS (SELECT 1 FROM {link} WHERE {column} = $1 AND user_id = $2)"
-    ))
+    )))
     .bind(item_id(item))
     .bind(user_id)
     .fetch_one(&mut **tx)
@@ -155,16 +155,17 @@ pub(crate) async fn assign_in_transaction(
     let mut added = false;
     if !assigned {
         candidate(tx, repo_id, user_id).await?;
-        let count: i64 =
-            sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {link} WHERE {column} = $1"))
-                .bind(item_id(item))
-                .fetch_one(&mut **tx)
-                .await?;
+        let count: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT COUNT(*) FROM {link} WHERE {column} = $1"
+        )))
+        .bind(item_id(item))
+        .fetch_one(&mut **tx)
+        .await?;
         anyhow::ensure!(count < MAX_ASSIGNEES, AssignmentRefusal::TooMany);
         // A row that a concurrent request inserted first is not a new assignment.
-        added = sqlx::query(&format!(
+        added = sqlx::query(sqlx::AssertSqlSafe(format!(
             "INSERT INTO {link} ({column}, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING"
-        ))
+        )))
         .bind(item_id(item))
         .bind(user_id)
         .execute(&mut **tx)
@@ -201,9 +202,9 @@ pub async fn unassign_users(
     let (link, column) = locate_item(&mut tx, repo_id, item).await?;
     let mut removed = Vec::new();
     for username in usernames {
-        let deleted = sqlx::query(&format!(
+        let deleted = sqlx::query(sqlx::AssertSqlSafe(format!(
             "DELETE FROM {link} WHERE {column} = $1 AND user_id = (SELECT id FROM users WHERE username = $2)"
-        ))
+        )))
         .bind(item_id(item))
         .bind(username)
         .execute(&mut *tx)
@@ -234,9 +235,9 @@ pub async fn unassign_users(
 
 pub async fn list_assignees(pool: &PgPool, item: AssignedItem) -> Result<Vec<String>> {
     let (_, link, column) = tables(item);
-    Ok(sqlx::query_scalar(&format!(
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT u.username FROM {link} a JOIN users u ON u.id = a.user_id WHERE a.{column} = $1 ORDER BY u.username"
-    ))
+    )))
     .bind(item_id(item))
     .fetch_all(pool)
     .await?)
@@ -270,11 +271,11 @@ pub async fn list_item_assignees(
 }
 
 pub async fn list_assignable_usernames(pool: &PgPool, repo_id: i64) -> Result<Vec<String>> {
-    Ok(sqlx::query_scalar(&format!(
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT u.username FROM repositories r JOIN users u ON {CANDIDATES}
          WHERE r.id=$1 AND ({})>=1 ORDER BY u.username",
         codeyard_database::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL
-    ))
+    )))
     .bind(repo_id)
     .fetch_all(pool)
     .await?)
@@ -285,13 +286,14 @@ fn matching_candidates() -> String {
 }
 
 pub async fn count_assignable_users(pool: &PgPool, repo_id: i64, query: &str) -> Result<i64> {
-    Ok(
-        sqlx::query_scalar(&format!("SELECT COUNT(*) {}", matching_candidates()))
-            .bind(repo_id)
-            .bind(query)
-            .fetch_one(pool)
-            .await?,
-    )
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT COUNT(*) {}",
+        matching_candidates()
+    )))
+    .bind(repo_id)
+    .bind(query)
+    .fetch_one(pool)
+    .await?)
 }
 
 pub async fn list_assignable_users(
@@ -301,10 +303,10 @@ pub async fn list_assignable_users(
     offset: i64,
     limit: i64,
 ) -> Result<Vec<User>> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT u.* {} ORDER BY u.username,u.id LIMIT $3 OFFSET $4",
         matching_candidates()
-    ))
+    )))
     .bind(repo_id)
     .bind(query)
     .bind(limit)
@@ -322,11 +324,11 @@ pub async fn assignable_user_ids(
     if user_ids.is_empty() {
         return Ok(Vec::new());
     }
-    Ok(sqlx::query_scalar(&format!(
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT u.id FROM repositories r JOIN users u ON {CANDIDATES}
          WHERE r.id=$1 AND u.id = ANY($2) AND ({})>=1",
         codeyard_database::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL
-    ))
+    )))
     .bind(repo_id)
     .bind(user_ids)
     .fetch_all(pool)

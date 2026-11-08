@@ -28,11 +28,11 @@ pub async fn create_repository(
 ) -> Result<Repository> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let result = sqlx::query_as::<_, Repository>(
-        &format!(r#"
+        sqlx::AssertSqlSafe(format!(r#"
         INSERT INTO repositories (home_cell,owner_kind, owner_user_id, name, description, is_private, disk_path, created_by_id)
         VALUES ({cell_home},'user', ?1, ?2, ?3, ?4, ?5, ?1)
         RETURNING *
-        "#, cell_home = codeyard_database::cells::LOCAL_HOME_SQL),
+        "#, cell_home = codeyard_database::cells::LOCAL_HOME_SQL)),
     )
     .bind(owner_id)
     .bind(name)
@@ -147,10 +147,10 @@ pub async fn count_user_repositories(
     user_id: i64,
     owner_session: Option<&str>,
 ) -> Result<i64> {
-    Ok(sqlx::query_scalar::<_, i64>(&format!(
+    Ok(sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(format!(
         "SELECT COUNT(*) FROM repositories WHERE {}",
         personal_repository_condition()
-    ))
+    )))
     .bind(user_id)
     .bind(owner_session)
     .fetch_one(pool)
@@ -179,7 +179,7 @@ pub async fn list_public_repositories(
             "SELECT * FROM repositories WHERE is_private = false AND NOT is_stub AND NOT is_gist ORDER BY updated_at DESC, id DESC LIMIT ?1".into()
         }
     };
-    let repos = sqlx::query_as::<_, Repository>(&sql)
+    let repos = sqlx::query_as::<_, Repository>(sqlx::AssertSqlSafe(&*sql))
         .bind(limit)
         .fetch_all(pool)
         .await?;
@@ -219,7 +219,7 @@ pub async fn list_shared_repositories(
     user_id: i64,
 ) -> Result<Vec<SharedRepository>> {
     Ok(sqlx::query_as::<_, SharedRepository>(
-        &format!("SELECT r.*, ({}) AS access_level FROM repositories r JOIN users u ON u.id=?1 WHERE {} ORDER BY r.name,r.id", codeyard_database::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL, shared_repository_condition()),
+        sqlx::AssertSqlSafe(format!("SELECT r.*, ({}) AS access_level FROM repositories r JOIN users u ON u.id=?1 WHERE {} ORDER BY r.name,r.id", codeyard_database::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL, shared_repository_condition())),
     )
     .bind(user_id)
     .fetch_all(pool)
@@ -245,17 +245,17 @@ pub async fn list_user_repository_page(
         }
     );
     let needle = codeyard_database::queries::sqlite::search::contains(text.trim());
-    let count = sqlx::query_scalar(&format!(
+    let count = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT COUNT(*) FROM repositories WHERE {condition}"
-    ))
+    )))
     .bind(user)
     .bind(owner_session)
     .bind(&needle)
     .fetch_one(pool)
     .await?;
-    let rows = sqlx::query_as(&format!(
+    let rows = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT * FROM repositories WHERE {condition} ORDER BY name,id LIMIT ?4 OFFSET ?5"
-    ))
+    )))
     .bind(user)
     .bind(owner_session)
     .bind(&needle)
@@ -284,14 +284,14 @@ pub async fn list_shared_repository_page(
         }
     );
     let needle = codeyard_database::queries::sqlite::search::contains(text.trim());
-    let count = sqlx::query_scalar(&format!(
+    let count = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT COUNT(*) FROM repositories r JOIN users u ON u.id=?1 WHERE {condition}"
-    ))
+    )))
     .bind(user)
     .bind(&needle)
     .fetch_one(pool)
     .await?;
-    let rows = sqlx::query_as(&format!("SELECT r.*, ({}) AS access_level FROM repositories r JOIN users u ON u.id=?1 WHERE {condition} ORDER BY r.name,r.id LIMIT ?3 OFFSET ?4", codeyard_database::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL))
+    let rows = sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT r.*, ({}) AS access_level FROM repositories r JOIN users u ON u.id=?1 WHERE {condition} ORDER BY r.name,r.id LIMIT ?3 OFFSET ?4", codeyard_database::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL)))
         .bind(user).bind(&needle).bind(limit.clamp(1,100)).bind(offset.max(0)).fetch_all(pool).await?;
     Ok((rows, count))
 }
@@ -335,7 +335,7 @@ pub async fn search_public_repositories(
             ORDER BY {order} LIMIT ?1 OFFSET ?3"#,
         kind = filter.kind.condition(),
     );
-    Ok(sqlx::query_as::<_, Repository>(&sql)
+    Ok(sqlx::query_as::<_, Repository>(sqlx::AssertSqlSafe(&*sql))
         .bind(limit)
         .bind(pattern)
         .bind(offset)
@@ -1162,10 +1162,10 @@ pub async fn repository_features(
     pool: &SqlitePool,
     repo_id: i64,
 ) -> Result<crate::repositories::records::RepositoryFeatures> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {} FROM repositories r LEFT JOIN repository_features f ON f.repo_id=r.id WHERE r.id=?1",
         crate::repositories::records::FEATURES
-    ))
+    )))
     .bind(repo_id)
     .fetch_one(pool)
     .await?)

@@ -22,12 +22,12 @@ pub async fn closing_candidates(
     number: i32,
     before: i64,
 ) -> Result<Vec<codeyard_database::models::PullRequest>> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT p.* FROM pull_requests p JOIN repositories r ON r.id=p.repo_id LEFT JOIN users u ON u.id=$1
          WHERE (p.body LIKE $2 OR p.body LIKE $5) AND (p.repo_id=$3 OR p.body ILIKE $4) AND p.base_branch=r.default_branch AND ($6<=0 OR p.id<$6) AND {}
          ORDER BY p.id DESC LIMIT 100",
         codeyard_database::queries::postgres::repositories::access::readable_condition()
-    ))
+    )))
     .bind(viewer)
     .bind(format!("%#{number}%"))
     .bind(repo)

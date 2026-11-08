@@ -80,7 +80,7 @@ async fn public_team(
     let org = team.org_id;
     let member_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM effective_team_memberships tm JOIN org_memberships om ON om.user_id=tm.user_id AND om.org_id=?1 JOIN users u ON u.id=tm.user_id WHERE tm.team_id=?2 AND tm.role IN ('member','maintainer') AND om.role IN ('owner','admin','member') AND NOT u.is_stub AND NOT u.is_banned AND NOT u.must_change_password")
         .bind(org).bind(team.id).fetch_one(&mut *connection).await?;
-    let repository_count: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM effective_team_repo_access a JOIN repositories r ON r.id=a.repo_id JOIN users u ON u.id=?4 WHERE a.team_id=?1 AND a.permission BETWEEN 1 AND 5 AND r.owner_kind='org' AND r.owner_org_id=?2 AND r.owner_user_id IS NULL AND (?3 OR NOT r.is_private OR ({USER_REPO_ACCESS_SQL})>=1)"))
+    let repository_count: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM effective_team_repo_access a JOIN repositories r ON r.id=a.repo_id JOIN users u ON u.id=?4 WHERE a.team_id=?1 AND a.permission BETWEEN 1 AND 5 AND r.owner_kind='org' AND r.owner_org_id=?2 AND r.owner_user_id IS NULL AND (?3 OR NOT r.is_private OR ({USER_REPO_ACCESS_SQL})>=1)")))
         .bind(team.id).bind(org).bind(administers(role)).bind(actor).fetch_one(&mut *connection).await?;
     let parent = sqlx::query_as(PARENT)
         .bind(team.id)
@@ -241,7 +241,7 @@ pub async fn update_organization_team(
     let reparented = parent != current.parent_team_id && current.parent_team_id.is_some();
     let denied_runs = format!("SELECT c.id FROM ci_runs c JOIN repositories r ON r.id=c.repo_id JOIN users u ON u.id=c.triggered_by_id WHERE r.owner_kind='org' AND r.owner_org_id=?1 AND c.triggered_by_id IN (SELECT user_id FROM effective_team_memberships WHERE team_id=?2) AND (c.status IN ('queued','running') OR c.completed_at > strftime('%Y-%m-%dT%H:%M:%f000Z','now','-1 hour')) AND ({USER_REPO_ACCESS_SQL}) < CASE WHEN c.pipeline IN ('cd','full') OR c.environment IS NOT NULL THEN 5 ELSE 3 END");
     let denied_before: Vec<i64> = if reparented {
-        sqlx::query_scalar(&denied_runs)
+        sqlx::query_scalar(sqlx::AssertSqlSafe(denied_runs.as_str()))
             .bind(org)
             .bind(team_id)
             .fetch_all(&mut *tx)
@@ -252,7 +252,7 @@ pub async fn update_organization_team(
     let team = sqlx::query_as("UPDATE teams SET name=COALESCE(?3,name),description=CASE WHEN ?10 THEN ?4 ELSE description END,privacy=?5,slug=COALESCE(?6,slug),default_permission=COALESCE(?7,default_permission),notifications_enabled=COALESCE(?8,notifications_enabled),parent_team_id=?9,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id=?1 AND org_id=?2 RETURNING *")
         .bind(team).bind(org).bind(&input.name).bind(input.description.clone().flatten()).bind(privacy.as_str()).bind(&input.slug).bind(input.default_permission).bind(input.notifications_enabled).bind(parent).bind(input.description.is_some()).fetch_one(&mut *tx).await?;
     if reparented {
-        let denied: Vec<i64> = sqlx::query_scalar(&denied_runs)
+        let denied: Vec<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(denied_runs.as_str()))
             .bind(org)
             .bind(team_id)
             .fetch_all(&mut *tx)
@@ -293,7 +293,7 @@ pub async fn delete_organization_team(
         return Ok(Missing);
     }
     // The runs of everyone on the team or a child team, on repositories that any of them reach.
-    let runs: Vec<i64> = sqlx::query_scalar(&format!("SELECT id FROM ci_runs WHERE (status IN ('queued','running') OR completed_at > strftime('%Y-%m-%dT%H:%M:%f000Z','now','-1 hour')) AND triggered_by_id IN (SELECT user_id FROM effective_team_memberships WHERE team_id IN ({SUBTREE})) AND repo_id IN (SELECT r.id FROM repositories r WHERE r.owner_kind='org' AND r.owner_org_id=?2 AND r.owner_user_id IS NULL AND (EXISTS(SELECT 1 FROM effective_team_repo_access a WHERE a.team_id IN ({SUBTREE}) AND a.repo_id=r.id AND a.permission>=3) OR EXISTS(SELECT 1 FROM organization_role_assignments a JOIN organization_roles role ON role.id=a.role_id AND role.base_level BETWEEN 3 AND 5 JOIN team_ancestors lineage ON lineage.ancestor_id=a.team_id WHERE lineage.team_id IN ({SUBTREE}) AND a.org_id=?2 AND a.user_id IS NULL)))"))
+    let runs: Vec<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT id FROM ci_runs WHERE (status IN ('queued','running') OR completed_at > strftime('%Y-%m-%dT%H:%M:%f000Z','now','-1 hour')) AND triggered_by_id IN (SELECT user_id FROM effective_team_memberships WHERE team_id IN ({SUBTREE})) AND repo_id IN (SELECT r.id FROM repositories r WHERE r.owner_kind='org' AND r.owner_org_id=?2 AND r.owner_user_id IS NULL AND (EXISTS(SELECT 1 FROM effective_team_repo_access a WHERE a.team_id IN ({SUBTREE}) AND a.repo_id=r.id AND a.permission>=3) OR EXISTS(SELECT 1 FROM organization_role_assignments a JOIN organization_roles role ON role.id=a.role_id AND role.base_level BETWEEN 3 AND 5 JOIN team_ancestors lineage ON lineage.ancestor_id=a.team_id WHERE lineage.team_id IN ({SUBTREE}) AND a.org_id=?2 AND a.user_id IS NULL)))")))
         .bind(team).bind(org).fetch_all(&mut *tx).await?;
     codeyard_database::queries::sqlite::ci::stop_ci_runs(&mut tx, &runs).await?;
     let teams: Vec<i64> = sqlx::query_scalar(SUBTREE)
@@ -462,7 +462,7 @@ pub async fn remove_organization_team_member(
         return Ok(Missing);
     }
     let recipient = RECIPIENT.replace("?1", "?3");
-    let pending = sqlx::query(&format!("DELETE FROM team_invitations WHERE team_id=?1 AND invitation_id IN (SELECT i.id FROM organization_invitations i WHERE i.org_id=?2 AND {recipient})"))
+    let pending = sqlx::query(sqlx::AssertSqlSafe(format!("DELETE FROM team_invitations WHERE team_id=?1 AND invitation_id IN (SELECT i.id FROM organization_invitations i WHERE i.org_id=?2 AND {recipient})")))
         .bind(team).bind(org).bind(target).execute(&mut *tx).await?.rows_affected();
     if sqlx::query("DELETE FROM team_memberships WHERE team_id=?1 AND user_id=?2")
         .bind(team)
@@ -623,7 +623,7 @@ async fn list_repositories(
     } else {
         sql
     };
-    let rows = sqlx::query_as(&sql)
+    let rows = sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(team.id)
         .bind(page.after)
         .bind(org)
@@ -721,7 +721,7 @@ pub async fn get_public_team_repository(
     let Some((role, team)) = readable_team(&mut tx, actor, org, team).await? else {
         return Ok(None);
     };
-    let grant = sqlx::query_as(&team_repositories_sql("a.repo_id=?2"))
+    let grant = sqlx::query_as(sqlx::AssertSqlSafe(team_repositories_sql("a.repo_id=?2")))
         .bind(team.id)
         .bind(repo)
         .bind(org)
@@ -745,7 +745,7 @@ pub async fn list_team_members_by_role(
     let Some((_, team)) = readable_team(&mut tx, actor, org, team).await? else {
         return Ok(None);
     };
-    let members = sqlx::query_as(&format!("{REPORTED_MEMBERS} AND tm.id>?3 AND (?5 IS NULL OR (CASE WHEN om.role='owner' THEN 'maintainer' ELSE tm.role END)=?5) ORDER BY tm.id LIMIT ?4"))
+    let members = sqlx::query_as(sqlx::AssertSqlSafe(format!("{REPORTED_MEMBERS} AND tm.id>?3 AND (?5 IS NULL OR (CASE WHEN om.role='owner' THEN 'maintainer' ELSE tm.role END)=?5) ORDER BY tm.id LIMIT ?4")))
         .bind(org)
         .bind(team.id)
         .bind(page.after)
@@ -767,12 +767,14 @@ pub async fn get_team_member(
     let Some((_, team)) = readable_team(&mut tx, actor, org, team).await? else {
         return Ok(None);
     };
-    let member = sqlx::query_as(&format!("{REPORTED_MEMBERS} AND tm.user_id=?3"))
-        .bind(org)
-        .bind(team.id)
-        .bind(user)
-        .fetch_optional(&mut *tx)
-        .await?;
+    let member = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{REPORTED_MEMBERS} AND tm.user_id=?3"
+    )))
+    .bind(org)
+    .bind(team.id)
+    .bind(user)
+    .fetch_optional(&mut *tx)
+    .await?;
     tx.commit().await?;
     Ok(Some(member))
 }

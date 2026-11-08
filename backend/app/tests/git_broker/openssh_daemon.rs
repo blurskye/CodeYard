@@ -563,11 +563,13 @@ async fn real_fixture(act: Option<PathBuf>) {
         .await,
     );
     for column in ["is_banned", "must_change_password"] {
-        sqlx::query(&format!("UPDATE users SET {column} = TRUE WHERE id = $1"))
-            .bind(actor.id)
-            .execute(&database.native)
-            .await
-            .unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "UPDATE users SET {column} = TRUE WHERE id = $1"
+        )))
+        .bind(actor.id)
+        .execute(&database.native)
+        .await
+        .unwrap();
         assert!(broker.keys(&public, &user).await.stdout.is_empty());
         assert!(!git(
             &broker,
@@ -578,11 +580,13 @@ async fn real_fixture(act: Option<PathBuf>) {
         .await
         .status
         .success());
-        sqlx::query(&format!("UPDATE users SET {column} = FALSE WHERE id = $1"))
-            .bind(actor.id)
-            .execute(&database.native)
-            .await
-            .unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "UPDATE users SET {column} = FALSE WHERE id = $1"
+        )))
+        .bind(actor.id)
+        .execute(&database.native)
+        .await
+        .unwrap();
     }
     codeyard_db_identity::users::ssh_keys::delete_ssh_key(&database.pool, key.id)
         .await

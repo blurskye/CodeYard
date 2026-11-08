@@ -355,7 +355,7 @@ pub async fn find_cache(
 ) -> Result<Option<ActionObject>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let sql = crate::action_objects::cache_lookup_sql(false);
-    let id: Option<i64> = sqlx::query_scalar(&sql)
+    let id: Option<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(run.repo_id)
         .bind(version)
         .bind(chrono::Utc::now().timestamp())
@@ -403,7 +403,7 @@ pub async fn artifact_for_reader(
     id: i64,
 ) -> Result<Option<ActionObject>> {
     let access = codeyard_database::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
-    Ok(sqlx::query_as(&format!("SELECT o.* FROM actions_objects o JOIN repositories r ON r.id=o.repo_id JOIN ci_runs c ON c.id=o.run_id AND c.repo_id=r.id JOIN users u ON u.id=?1 JOIN sessions s ON s.user_id=u.id AND s.id=?2 WHERE r.id=?3 AND c.id=?4 AND o.id=?5 AND o.kind='artifact' AND o.finalized AND o.expires_at>?6 AND s.expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now') AND NOT u.is_banned AND NOT u.must_change_password AND ((r.owner_kind='user' AND u.is_admin) OR ({access})>0)"))
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT o.* FROM actions_objects o JOIN repositories r ON r.id=o.repo_id JOIN ci_runs c ON c.id=o.run_id AND c.repo_id=r.id JOIN users u ON u.id=?1 JOIN sessions s ON s.user_id=u.id AND s.id=?2 WHERE r.id=?3 AND c.id=?4 AND o.id=?5 AND o.kind='artifact' AND o.finalized AND o.expires_at>?6 AND s.expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now') AND NOT u.is_banned AND NOT u.must_change_password AND ((r.owner_kind='user' AND u.is_admin) OR ({access})>0)")))
         .bind(actor).bind(session).bind(repo).bind(run).bind(id).bind(chrono::Utc::now().timestamp()).fetch_optional(pool).await?)
 }
 
@@ -451,10 +451,10 @@ pub async fn delete_artifact(
     Ok(changed)
 }
 
-fn object_query<'a>(
-    filter: &'a crate::action_objects::ObjectQuery<'_>,
+fn object_query(
+    filter: &crate::action_objects::ObjectQuery<'_>,
     columns: &str,
-) -> sqlx::QueryBuilder<'a, sqlx::Sqlite> {
+) -> sqlx::QueryBuilder<sqlx::Sqlite> {
     let mut query = sqlx::QueryBuilder::new(format!(
         "SELECT {columns} FROM actions_objects WHERE finalized AND repo_id="
     ));
@@ -579,7 +579,7 @@ pub async fn grant_artifact_download(
 ) -> Result<bool> {
     let actor = actor.into();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let readable: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=$1 WHERE r.id=$2 AND NOT u.is_banned AND NOT u.must_change_password AND {})", codeyard_database::queries::sqlite::repositories::access::readable_condition()))
+    let readable: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=$1 WHERE r.id=$2 AND NOT u.is_banned AND NOT u.must_change_password AND {})", codeyard_database::queries::sqlite::repositories::access::readable_condition())))
         .bind(actor.user_id).bind(repo).fetch_one(&mut *tx).await?;
     if !readable {
         return Ok(false);

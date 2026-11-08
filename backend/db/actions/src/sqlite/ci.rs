@@ -323,7 +323,7 @@ async fn enqueue_ci_run_inner(
                     "SELECT id FROM pull_requests WHERE repo_id = ?1 AND head_sha = ?2 AND {} AND state = 'open' AND NOT is_draft ORDER BY id LIMIT 2",
                     branch_or_trunk_sql("?3")
                 );
-                let ids: Vec<i64> = sqlx::query_scalar(&lookup)
+                let ids: Vec<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(lookup.as_str()))
                     .bind(input.repo_id)
                     .bind(input.head_sha)
                     .bind(input.branch)
@@ -340,14 +340,15 @@ async fn enqueue_ci_run_inner(
             "SELECT head_repo_id IS NOT repo_id, COALESCE(workflows_approved_sha = head_sha, 0), json_object('number', number, 'title', title, 'head_ref', head_branch, 'head_sha', head_sha, 'head_repo_id', head_repo_id, 'base_ref', ?4, 'base_sha', CASE WHEN base_branch = ?4 THEN base_sha ELSE (SELECT trunk_layer.base_sha FROM pull_requests trunk_layer WHERE trunk_layer.repo_id = pull_requests.repo_id AND trunk_layer.stack_id = pull_requests.stack_id AND trunk_layer.state = 'open' AND trunk_layer.base_branch = ?4 AND NOT EXISTS (SELECT 1 FROM pull_requests below WHERE below.repo_id = trunk_layer.repo_id AND below.stack_id = trunk_layer.stack_id AND below.state = 'open' AND below.head_branch = trunk_layer.base_branch) ORDER BY trunk_layer.id LIMIT 1) END) FROM pull_requests WHERE id = ?1 AND repo_id = ?2 AND head_sha = ?3 AND {} AND ((state = 'open' AND NOT is_draft) OR ?5)",
             branch_or_trunk_sql("?4")
         );
-        let context: Option<(bool, bool, String)> = sqlx::query_as(&context_sql)
-            .bind(id)
-            .bind(input.repo_id)
-            .bind(input.head_sha)
-            .bind(input.branch)
-            .bind(event_payload.is_some())
-            .fetch_optional(&mut *tx)
-            .await?;
+        let context: Option<(bool, bool, String)> =
+            sqlx::query_as(sqlx::AssertSqlSafe(context_sql.as_str()))
+                .bind(id)
+                .bind(input.repo_id)
+                .bind(input.head_sha)
+                .bind(input.branch)
+                .bind(event_payload.is_some())
+                .fetch_optional(&mut *tx)
+                .await?;
         let (fork, approved, event) = context.ok_or(CiAdmissionRefusal::Conflict(
             "CI pull request revision is not open",
         ))?;
@@ -450,11 +451,12 @@ async fn enqueue_ci_run_inner(
     }
     crate::sqlite::deployment_protection::snapshot(&mut tx, &run).await?;
     let waiting = crate::deployment_protection::waiting_sql(false, "r");
-    run.deployment_waiting =
-        sqlx::query_scalar(&format!("SELECT {waiting} FROM ci_runs r WHERE r.id=?1"))
-            .bind(run.id)
-            .fetch_one(&mut *tx)
-            .await?;
+    run.deployment_waiting = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT {waiting} FROM ci_runs r WHERE r.id=?1"
+    )))
+    .bind(run.id)
+    .fetch_one(&mut *tx)
+    .await?;
     // Adding retained input changes what a current replica must contain.
     sqlx::query("UPDATE repositories SET write_version=write_version+1 WHERE id=?1 AND storage_node_id IS NOT NULL")
         .bind(run.repo_id).execute(&mut *tx).await?;
@@ -594,14 +596,16 @@ async fn claim_queued_run(
         tx.commit().await?;
         return Ok((!held.cancel_requested).then_some(held));
     }
-    let candidates: Vec<CiRun> = sqlx::query_as(&crate::ci::claims::candidates_sql(false))
-        .bind(node_key)
-        .bind(mode)
-        .bind(serde_json::to_string(platforms)?)
-        .bind(0_i64)
-        .bind(limit)
-        .fetch_all(&mut *tx)
-        .await?;
+    let candidates: Vec<CiRun> = sqlx::query_as(sqlx::AssertSqlSafe(
+        crate::ci::claims::candidates_sql(false),
+    ))
+    .bind(node_key)
+    .bind(mode)
+    .bind(serde_json::to_string(platforms)?)
+    .bind(0_i64)
+    .bind(limit)
+    .fetch_all(&mut *tx)
+    .await?;
     for run in candidates {
         // A private repository's fork switch may have been turned off after admission.
         let fork_refused = run.is_fork
@@ -946,9 +950,9 @@ pub async fn delete_ci_run_data(
 
 pub async fn get_ci_run_by_id(pool: &SqlitePool, repo_id: i64, id: i64) -> Result<Option<CiRun>> {
     let waiting = crate::deployment_protection::waiting_sql(false, "r");
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT r.*,{waiting} AS deployment_waiting FROM ci_runs r WHERE r.repo_id=$1 AND r.id=$2"
-    ))
+    )))
     .bind(repo_id)
     .bind(id)
     .fetch_optional(pool)
@@ -958,9 +962,9 @@ pub async fn get_ci_run_by_id(pool: &SqlitePool, repo_id: i64, id: i64) -> Resul
 /// For callers that hold a run's own id but not its repository, such as a worker's report.
 pub async fn get_ci_run(pool: &SqlitePool, id: i64) -> Result<Option<CiRun>> {
     let waiting = crate::deployment_protection::waiting_sql(false, "r");
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT r.*,{waiting} AS deployment_waiting FROM ci_runs r WHERE r.id=$1"
-    ))
+    )))
     .bind(id)
     .fetch_optional(pool)
     .await?)
@@ -968,9 +972,9 @@ pub async fn get_ci_run(pool: &SqlitePool, id: i64) -> Result<Option<CiRun>> {
 
 pub async fn get_ci_run_by_run_id(pool: &SqlitePool, run_id: uuid::Uuid) -> Result<Option<CiRun>> {
     let waiting = crate::deployment_protection::waiting_sql(false, "r");
-    let run = sqlx::query_as::<_, CiRun>(&format!(
+    let run = sqlx::query_as::<_, CiRun>(sqlx::AssertSqlSafe(format!(
         "SELECT r.*,{waiting} AS deployment_waiting FROM ci_runs r WHERE r.run_id=?1"
-    ))
+    )))
     .bind(run_id)
     .fetch_optional(pool)
     .await?;
@@ -1003,21 +1007,22 @@ pub async fn list_rest_ci_runs(
         AND (?7 IS NULL OR c.head_sha=?7)
         AND (?8 IS NULL OR julianday(c.created_at)>=julianday(?8))
         AND (?9 IS NULL OR julianday(c.created_at)<=julianday(?9))";
-    let count: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) {condition}"))
-        .bind(repo_id)
-        .bind(&filter.workflow)
-        .bind(&filter.branch)
-        .bind(&filter.actor)
-        .bind(&filter.event)
-        .bind(&filter.status)
-        .bind(&filter.head_sha)
-        .bind(filter.since)
-        .bind(filter.until)
-        .fetch_one(pool)
-        .await?;
+    let count: i64 =
+        sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) {condition}")))
+            .bind(repo_id)
+            .bind(&filter.workflow)
+            .bind(&filter.branch)
+            .bind(&filter.actor)
+            .bind(&filter.event)
+            .bind(&filter.status)
+            .bind(&filter.head_sha)
+            .bind(filter.since)
+            .bind(filter.until)
+            .fetch_one(pool)
+            .await?;
     let columns = crate::ci::RUN_METADATA_COLUMNS;
     let sql = format!("SELECT {columns} {condition} ORDER BY c.id DESC LIMIT ?10 OFFSET ?11");
-    let rows = sqlx::query_as(&sql)
+    let rows = sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(repo_id)
         .bind(&filter.workflow)
         .bind(&filter.branch)
@@ -1044,7 +1049,7 @@ pub async fn list_filtered_ci_runs(
     ensure!(limit >= 0, "Result limit must be nonnegative");
     let access = codeyard_database::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
     let columns = crate::ci::RUN_METADATA_COLUMNS;
-    Ok(sqlx::query_as::<_, CiRun>(&format!(
+    Ok(sqlx::query_as::<_, CiRun>(sqlx::AssertSqlSafe(format!(
         "WITH history AS (
             SELECT {columns}, r.name AS repository_name,
                 CASE WHEN c.event = 'pull_request' THEN coalesce(json_extract(c.pull_request_event, '$.head_ref'), c.branch) ELSE c.branch END AS display_ref
@@ -1060,7 +1065,7 @@ pub async fn list_filtered_ci_runs(
             AND (?7 = '' OR instr(lower(substr(hex(c.run_id),1,8) || '-' || substr(hex(c.run_id),9,4) || '-' || substr(hex(c.run_id),13,4) || '-' || substr(hex(c.run_id),17,4) || '-' || substr(hex(c.run_id),21) || ' ' || c.repository_name || ' ' || c.workflow_path || ' ' || c.display_branch || ' ' || coalesce(c.head_sha, '')), lower(?7)) > 0)
             AND (?8 IS NULL OR c.id < ?8)
             AND (?10 = '' OR EXISTS (SELECT 1 FROM users actor WHERE actor.id=c.triggered_by_id AND actor.username=?10)) ORDER BY c.id DESC LIMIT ?9"
-    )).bind(actor).bind(repo).bind(&filter.workflow).bind(&filter.event).bind(&filter.branch).bind(&filter.status).bind(&filter.text).bind(filter.before).bind(limit).bind(&filter.actor).fetch_all(pool).await?)
+    ))).bind(actor).bind(repo).bind(&filter.workflow).bind(&filter.event).bind(&filter.branch).bind(&filter.status).bind(&filter.text).bind(filter.before).bind(limit).bind(&filter.actor).fetch_all(pool).await?)
 }
 
 pub async fn list_ci_runs_for_repo(
@@ -1070,9 +1075,9 @@ pub async fn list_ci_runs_for_repo(
 ) -> Result<Vec<CiRun>> {
     ensure!(limit >= 0, "Result limit must be nonnegative");
     let columns = crate::ci::RUN_METADATA_COLUMNS;
-    let rows = sqlx::query_as::<_, CiRun>(&format!(
+    let rows = sqlx::query_as::<_, CiRun>(sqlx::AssertSqlSafe(format!(
         "SELECT {columns} FROM ci_runs c WHERE repo_id = ?1 ORDER BY created_at DESC LIMIT ?2"
-    ))
+    )))
     .bind(repo_id)
     .bind(limit)
     .fetch_all(pool)
@@ -1177,7 +1182,7 @@ pub async fn list_ci_runs_for_user(
     // Visibility is decided once per repository the user has runs in, in the same
     // statement that orders and limits the runs.
     let columns = crate::ci::RUN_METADATA_COLUMNS;
-    Ok(sqlx::query_as::<_, CiRun>(&format!(
+    Ok(sqlx::query_as::<_, CiRun>(sqlx::AssertSqlSafe(format!(
         "SELECT {columns} FROM ci_runs c
          WHERE c.triggered_by_id = ?1 AND c.repo_id IN (
              SELECT r.id FROM repositories r JOIN users u ON u.id = ?1
@@ -1185,7 +1190,7 @@ pub async fn list_ci_runs_for_user(
                  AND r.id IN (SELECT h.repo_id FROM ci_runs h WHERE h.triggered_by_id = ?1)
                  AND ((r.owner_kind = 'user' AND u.is_admin) OR ({access}) > 0))
          ORDER BY c.created_at DESC, c.id DESC LIMIT ?2"
-    ))
+    )))
     .bind(user_id)
     .bind(limit)
     .fetch_all(pool)
@@ -1411,9 +1416,9 @@ pub(crate) async fn read_log_chunks(
     reverse: bool,
 ) -> Result<Vec<crate::ci::log_chunks::Chunk>> {
     let order = if reverse { "DESC" } else { "ASC" };
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT l.* FROM ci_log_chunks l JOIN ci_runs r ON r.id=l.run_id WHERE l.run_id=$1 AND l.first_line+l.line_count-1>$2 AND l.first_line<=$3 AND (r.log_expires_at IS NULL OR r.log_expires_at>CAST(strftime('%s','now') AS INTEGER)) ORDER BY l.sequence {order} LIMIT 64"
-    )).bind(run).bind(after).bind(before).fetch_all(pool).await?)
+    ))).bind(run).bind(after).bind(before).fetch_all(pool).await?)
 }
 
 pub async fn get_ci_deployment_by_run_id(

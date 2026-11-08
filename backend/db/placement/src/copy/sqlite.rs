@@ -135,9 +135,12 @@ pub(super) async fn prepare_load(
             .await?;
     let mut restore = Vec::with_capacity(triggers.len() + 2 * sequences.len());
     for (name, sql) in triggers {
-        sqlx::query(&format!("DROP TRIGGER {}", quote(&name)))
-            .execute(&mut **tx)
-            .await?;
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DROP TRIGGER {}",
+            quote(&name)
+        )))
+        .execute(&mut **tx)
+        .await?;
         restore.push(sql);
     }
     for sequence in sequences {
@@ -171,10 +174,10 @@ pub(super) async fn check_text_without_nul(
             })
             .collect::<Vec<_>>()
             .join(" OR ");
-        let row: Option<i64> = sqlx::query_scalar(&format!(
+        let row: Option<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT rowid FROM {} WHERE {tests} LIMIT 1",
             quote(&table.name)
-        ))
+        )))
         .fetch_optional(&mut **tx)
         .await?;
         if let Some(row) = row {

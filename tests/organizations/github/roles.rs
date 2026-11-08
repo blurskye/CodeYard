@@ -24,7 +24,7 @@ pub(super) async fn run(f: &Database, repo: i64, actor: i64, status: &str) {
     let id = uuid::Uuid::new_v4();
     match f.pool() {
         codeyard_database::DbPool::Sqlite(pool) => {
-            sqlx::query(sql)
+            sqlx::query(sqlx::AssertSqlSafe(sql))
                 .bind(id)
                 .bind(repo)
                 .bind(actor)
@@ -34,7 +34,7 @@ pub(super) async fn run(f: &Database, repo: i64, actor: i64, status: &str) {
                 .unwrap();
         }
         codeyard_database::DbPool::Postgres(pool) => {
-            sqlx::query(sql)
+            sqlx::query(sqlx::AssertSqlSafe(sql))
                 .bind(id)
                 .bind(repo)
                 .bind(actor)

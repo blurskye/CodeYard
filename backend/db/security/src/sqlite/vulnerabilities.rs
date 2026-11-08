@@ -87,18 +87,18 @@ pub async fn advisories(pool: &SqlitePool, ecosystem: &str, name: &str) -> Resul
     Ok(sqlx::query_scalar("SELECT a.data FROM osv_advisories a JOIN osv_packages p ON p.advisory=a.id WHERE p.ecosystem=$1 AND p.name=$2 ORDER BY a.id").bind(ecosystem).bind(name).fetch_all(pool).await?)
 }
 pub async fn enqueue(pool: &SqlitePool, repo: i64) -> Result<()> {
-    sqlx::query(&format!("INSERT INTO vulnerability_jobs(repo_id,generation,next_scan) SELECT r.id,1,$2 FROM repositories r WHERE r.id=$1 AND NOT r.is_gist AND NOT r.is_archived AND {} ON CONFLICT(repo_id) DO UPDATE SET generation=vulnerability_jobs.generation+1,lease_until=NULL,next_scan=$2", codeyard_database::queries::dependency_graph::enabled_sql(false, "r.id"))).bind(repo).bind(chrono::Utc::now()).execute(pool).await?;
+    sqlx::query(sqlx::AssertSqlSafe(format!("INSERT INTO vulnerability_jobs(repo_id,generation,next_scan) SELECT r.id,1,$2 FROM repositories r WHERE r.id=$1 AND NOT r.is_gist AND NOT r.is_archived AND {} ON CONFLICT(repo_id) DO UPDATE SET generation=vulnerability_jobs.generation+1,lease_until=NULL,next_scan=$2", codeyard_database::queries::dependency_graph::enabled_sql(false, "r.id")))).bind(repo).bind(chrono::Utc::now()).execute(pool).await?;
     Ok(())
 }
 pub async fn queue_changed(pool: &SqlitePool) -> Result<()> {
     sqlx::query("DELETE FROM vulnerability_jobs WHERE repo_id IN (SELECT id FROM repositories WHERE is_gist)").execute(pool).await?;
-    sqlx::query(&format!("INSERT INTO vulnerability_jobs(repo_id,generation,next_scan) SELECT r.id,1,$1 FROM repositories r WHERE NOT r.is_gist AND NOT r.is_archived AND {} ORDER BY r.id ON CONFLICT(repo_id) DO NOTHING", codeyard_database::queries::dependency_graph::enabled_sql(false, "r.id"))).bind(chrono::Utc::now()).execute(pool).await?;
+    sqlx::query(sqlx::AssertSqlSafe(format!("INSERT INTO vulnerability_jobs(repo_id,generation,next_scan) SELECT r.id,1,$1 FROM repositories r WHERE NOT r.is_gist AND NOT r.is_archived AND {} ORDER BY r.id ON CONFLICT(repo_id) DO NOTHING", codeyard_database::queries::dependency_graph::enabled_sql(false, "r.id")))).bind(chrono::Utc::now()).execute(pool).await?;
     Ok(())
 }
 pub async fn claim(pool: &SqlitePool) -> Result<Option<(i64, i64)>> {
     let now = chrono::Utc::now();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let mut row:Option<(i64,i64)>=sqlx::query_as(&format!("SELECT j.repo_id,j.generation FROM vulnerability_jobs j WHERE j.next_scan<=$1 AND (j.lease_until IS NULL OR j.lease_until<$1) AND EXISTS(SELECT 1 FROM repositories r WHERE r.id=j.repo_id AND NOT r.is_gist AND NOT r.is_archived AND {}) ORDER BY j.next_scan,j.repo_id LIMIT 1", codeyard_database::queries::dependency_graph::enabled_sql(false, "r.id"))).bind(now).fetch_optional(&mut *tx).await?;
+    let mut row:Option<(i64,i64)>=sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT j.repo_id,j.generation FROM vulnerability_jobs j WHERE j.next_scan<=$1 AND (j.lease_until IS NULL OR j.lease_until<$1) AND EXISTS(SELECT 1 FROM repositories r WHERE r.id=j.repo_id AND NOT r.is_gist AND NOT r.is_archived AND {}) ORDER BY j.next_scan,j.repo_id LIMIT 1", codeyard_database::queries::dependency_graph::enabled_sql(false, "r.id")))).bind(now).fetch_optional(&mut *tx).await?;
     if let Some((repo, _)) = row {
         // Moving next_scan with the lease keeps a job that never completes from staying
         // first in line ahead of newer work.

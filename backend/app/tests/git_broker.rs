@@ -53,7 +53,7 @@ impl Drop for Database {
                     .await?;
                 sqlx::query("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name=$1 AND pid<>pg_backend_pid()")
                     .bind(&schema).execute(&admin).await?;
-                let result = sqlx::query(&format!("DROP SCHEMA \"{schema}\" CASCADE"))
+                let result = sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA \"{schema}\" CASCADE")))
                     .execute(&admin)
                     .await;
                 admin.close().await;
@@ -94,7 +94,7 @@ async fn database() -> Database {
         .await
         .map(codeyard_database::pool::Pool::from)
         .expect("required disposable PostgreSQL is unavailable");
-    sqlx::query(&format!("CREATE SCHEMA \"{schema}\""))
+    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE SCHEMA \"{schema}\"")))
         .execute(&admin)
         .await
         .unwrap();
@@ -1951,22 +1951,26 @@ async fn live_ban_password_revocation_command_and_canonical_path_denials() {
         );
     }
     for column in ["is_banned", "must_change_password"] {
-        sqlx::query(&format!("UPDATE users SET {column} = TRUE WHERE id = $1"))
-            .bind(user.id)
-            .execute(&database.native)
-            .await
-            .unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "UPDATE users SET {column} = TRUE WHERE id = $1"
+        )))
+        .bind(user.id)
+        .execute(&database.native)
+        .await
+        .unwrap();
         assert!(broker.keys(&key(10), "git").await.stdout.is_empty());
         let result = broker
             .serve(ssh_key.id, "git-upload-pack 'alice/private.git'")
             .await;
         assert!(!result.status.success());
         assert!(result.stdout.is_empty());
-        sqlx::query(&format!("UPDATE users SET {column} = FALSE WHERE id = $1"))
-            .bind(user.id)
-            .execute(&database.native)
-            .await
-            .unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "UPDATE users SET {column} = FALSE WHERE id = $1"
+        )))
+        .bind(user.id)
+        .execute(&database.native)
+        .await
+        .unwrap();
     }
     let outside = tempfile::Builder::new()
         .prefix("openssh-outside-")

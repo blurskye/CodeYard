@@ -428,7 +428,7 @@ pub async fn get_or_create_csrf_token(
     } else {
         "UPDATE anonymous_sessions SET csrf_token=?2,csrf_expires_at=?3 WHERE id=?1"
     };
-    sqlx::query(query)
+    sqlx::query(sqlx::AssertSqlSafe(query))
         .bind(id)
         .bind(candidate)
         .bind(codeyard_database::queries::sqlite::time::encode(expires_at))
@@ -466,7 +466,7 @@ pub async fn remove_expired_identity_rows(pool: &SqlitePool) -> Result<u64> {
     let mut changed = 0;
     for sql in STATEMENTS {
         loop {
-            let batch = sqlx::query(sql)
+            let batch = sqlx::query(sqlx::AssertSqlSafe(sql))
                 .bind(BATCH)
                 .execute(pool)
                 .await?

@@ -336,7 +336,7 @@ async fn notification_candidates(
            AND ($9::timestamptz IS NULL OR (created_at,id) < ($9,$10))
          ORDER BY created_at DESC,id DESC LIMIT 100"
     );
-    Ok(sqlx::query_as(&sql)
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(user_id)
         .bind(high_water)
         .bind(filter.unread_only)
@@ -435,7 +435,7 @@ async fn notification_list(
             let sql = format!(
                 "SELECT * FROM notifications WHERE user_id=$1 AND id=ANY($2) AND {FILTER_SQL}"
             );
-            let rows: Vec<Notification> = sqlx::query_as(&sql)
+            let rows: Vec<Notification> = sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))
                 .bind(user_id)
                 .bind(&ids)
                 .bind(filter.unread_only)
@@ -539,9 +539,9 @@ async fn decide_scopes(
         "SELECT repo_id FROM repo_access WHERE user_id=$1 AND repo_id=ANY($2) ORDER BY repo_id FOR SHARE",
     ).bind(user_id).bind(&retained).fetch_all(&mut *connection).await?;
     let readable = scope_readable_condition();
-    let decisions: Vec<(i64, bool, bool)> = sqlx::query_as(&format!(
+    let decisions: Vec<(i64, bool, bool)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT r.id, r.is_stub, ({readable}) AND (NOT $3 OR NOT EXISTS(SELECT 1 FROM organization_token_policies p WHERE p.org_id=r.owner_org_id AND NOT p.classic_allowed)) FROM repositories r JOIN users u ON u.id=$1 WHERE r.id=ANY($2)"
-    ))
+    )))
     .bind(user_id)
     .bind(retained)
     .bind(scopes.classic_token)
@@ -701,7 +701,7 @@ fn scope_readable_condition() -> String {
 /// The native badge remains lock-free. Foreign candidates need live source checks too.
 pub async fn count_header_unread(pool: &PgPool, user_id: i64) -> Result<i64> {
     let readable = scope_readable_condition();
-    let native: i64 = sqlx::query_scalar(&format!(
+    let native: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT COUNT(*) FROM notifications WHERE user_id=$1 AND read_at IS NULL AND done_at IS NULL
          AND EXISTS(SELECT 1 FROM users WHERE id=$1 AND NOT is_banned AND NOT must_change_password)
          AND (scope_repository_id=0 OR scope_repository_id IN (
@@ -710,7 +710,7 @@ pub async fn count_header_unread(pool: &PgPool, user_id: i64) -> Result<i64> {
                             WHERE user_id=$1 AND read_at IS NULL AND done_at IS NULL
                               AND scope_repository_id>0)
                AND NOT r.is_stub AND {readable}))"
-    ))
+    )))
     .bind(user_id)
     .fetch_one(pool)
     .await?;
@@ -977,9 +977,9 @@ async fn notification_mark(
     if !scope_readable(connection, user_id, scopes, scope_repository_id).await? {
         return Ok((None, 0));
     }
-    let was_set: Option<bool> = sqlx::query_scalar(&format!(
+    let was_set: Option<bool> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT {column} IS NOT NULL FROM notifications WHERE id=$1 AND user_id=$2 AND scope_repository_id=$3 FOR UPDATE"
-    ))
+    )))
     .bind(notification_id)
     .bind(user_id)
     .bind(scope_repository_id)
@@ -988,10 +988,10 @@ async fn notification_mark(
     let Some(was_set) = was_set else {
         return Ok((None, 0));
     };
-    let notification = sqlx::query_as::<_, Notification>(&format!(
+    let notification = sqlx::query_as::<_, Notification>(sqlx::AssertSqlSafe(format!(
         "UPDATE notifications SET {column}=CASE WHEN $3::boolean THEN COALESCE({column},NOW()) ELSE NULL END
          WHERE id=$1 AND user_id=$2 AND scope_repository_id=$4 RETURNING *"
-    ))
+    )))
     .bind(notification_id)
     .bind(user_id)
     .bind(on)
@@ -1048,7 +1048,7 @@ async fn notification_done_all(
         notification_scope_counts(connection, user_id, scopes.high_water).await?
     {
         if scope_readable(connection, user_id, scopes, scope).await? {
-            count += sqlx::query(&sql)
+            count += sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
                 .bind(user_id)
                 .bind(scopes.high_water)
                 .bind(filter.unread_only)

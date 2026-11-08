@@ -426,10 +426,18 @@ async fn deadline(pool: &DbPool) {
     let sql = "UPDATE repository_writes SET deadline='2000-01-01T00:00:00.000000Z' WHERE id=$1";
     match pool {
         DbPool::Postgres(raw) => {
-            sqlx::query(sql).bind(&id).execute(raw).await.unwrap();
+            sqlx::query(sqlx::AssertSqlSafe(sql))
+                .bind(&id)
+                .execute(raw)
+                .await
+                .unwrap();
         }
         DbPool::Sqlite(raw) => {
-            sqlx::query(sql).bind(&id).execute(raw).await.unwrap();
+            sqlx::query(sqlx::AssertSqlSafe(sql))
+                .bind(&id)
+                .execute(raw)
+                .await
+                .unwrap();
         }
     }
     assert!(
@@ -1000,8 +1008,14 @@ async fn cascades(pool: &DbPool) {
     ] {
         let sql = format!("SELECT COUNT(*) FROM {table}");
         let count: i64 = match pool {
-            DbPool::Postgres(raw) => sqlx::query_scalar(&sql).fetch_one(raw).await.unwrap(),
-            DbPool::Sqlite(raw) => sqlx::query_scalar(&sql).fetch_one(raw).await.unwrap(),
+            DbPool::Postgres(raw) => sqlx::query_scalar(sqlx::AssertSqlSafe(sql.as_str()))
+                .fetch_one(raw)
+                .await
+                .unwrap(),
+            DbPool::Sqlite(raw) => sqlx::query_scalar(sqlx::AssertSqlSafe(sql.as_str()))
+                .fetch_one(raw)
+                .await
+                .unwrap(),
         };
         assert_eq!(count, 0, "{table}");
     }
@@ -1158,10 +1172,16 @@ pub(super) async fn set_timeout(pool: &DbPool, seconds: i64) -> Result<(), sqlx:
     let sql = "UPDATE node_configuration SET write_timeout_seconds=$1 WHERE id=1";
     match pool {
         DbPool::Postgres(raw) => {
-            sqlx::query(sql).bind(seconds).execute(raw).await?;
+            sqlx::query(sqlx::AssertSqlSafe(sql))
+                .bind(seconds)
+                .execute(raw)
+                .await?;
         }
         DbPool::Sqlite(raw) => {
-            sqlx::query(sql).bind(seconds).execute(raw).await?;
+            sqlx::query(sqlx::AssertSqlSafe(sql))
+                .bind(seconds)
+                .execute(raw)
+                .await?;
         }
     }
     Ok(())

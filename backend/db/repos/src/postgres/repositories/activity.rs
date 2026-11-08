@@ -43,21 +43,21 @@ pub async fn list(
     limit: i64,
     viewer: Option<i64>,
 ) -> Result<Vec<Activity>> {
-    Ok(
-        sqlx::query_as::<_, Activity>(&crate::repositories::activity::list_sql(
+    Ok(sqlx::query_as::<_, Activity>(sqlx::AssertSqlSafe(
+        crate::repositories::activity::list_sql(
             true,
             filter,
             &codeyard_database::queries::postgres::repositories::access::readable_condition(),
-        ))
-        .bind(repo)
-        .bind(filter.boundary)
-        .bind(filter.reference)
-        .bind(filter.actor)
-        .bind(filter.kind.map(Kind::as_str))
-        .bind(filter.since.as_ref())
-        .bind(limit.clamp(1, 101))
-        .bind(viewer)
-        .fetch_all(pool)
-        .await?,
-    )
+        ),
+    ))
+    .bind(repo)
+    .bind(filter.boundary)
+    .bind(filter.reference)
+    .bind(filter.actor)
+    .bind(filter.kind.map(Kind::as_str))
+    .bind(filter.since.as_ref())
+    .bind(limit.clamp(1, 101))
+    .bind(viewer)
+    .fetch_all(pool)
+    .await?)
 }

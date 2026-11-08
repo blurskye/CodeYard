@@ -22,7 +22,7 @@ pub async fn list_suites(
     let short_ref = reference.filter(|r| !r.starts_with("refs/"));
     let enforcement = enforcement(filter);
     let columns = StoredSuite::SUMMARY_COLUMNS;
-    let rows:Vec<StoredSuite>=sqlx::query_as(&format!("SELECT {columns} FROM repository_rule_suites s JOIN repositories r ON r.id=s.repo_id JOIN users u ON u.id=?2 WHERE s.org_id=?1 AND r.owner_kind='org' AND r.owner_org_id=?1 AND r.owner_user_id IS NULL AND {readable} AND s.created_at>=?3 AND (?4 IS NULL OR s.ref_name=?4 OR s.ref_name='refs/heads/'||?5 OR s.ref_name='refs/tags/'||?5) AND (?6 IS NULL OR s.repository_name=?6 COLLATE NOCASE) AND (?7 IS NULL OR s.actor_name=?7 COLLATE NOCASE) AND (?8 IS NULL OR s.result=?8) AND (?9 IS NULL OR EXISTS(SELECT 1 FROM json_each(s.evaluations) e WHERE json_extract(e.value,'$.enforcement')=?9)) ORDER BY s.id DESC LIMIT ?10 OFFSET ?11"))
+    let rows:Vec<StoredSuite>=sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT {columns} FROM repository_rule_suites s JOIN repositories r ON r.id=s.repo_id JOIN users u ON u.id=?2 WHERE s.org_id=?1 AND r.owner_kind='org' AND r.owner_org_id=?1 AND r.owner_user_id IS NULL AND {readable} AND s.created_at>=?3 AND (?4 IS NULL OR s.ref_name=?4 OR s.ref_name='refs/heads/'||?5 OR s.ref_name='refs/tags/'||?5) AND (?6 IS NULL OR s.repository_name=?6 COLLATE NOCASE) AND (?7 IS NULL OR s.actor_name=?7 COLLATE NOCASE) AND (?8 IS NULL OR s.result=?8) AND (?9 IS NULL OR EXISTS(SELECT 1 FROM json_each(s.evaluations) e WHERE json_extract(e.value,'$.enforcement')=?9)) ORDER BY s.id DESC LIMIT ?10 OFFSET ?11")))
         .bind(org).bind(actor).bind(filter.since).bind(reference).bind(short_ref)
         .bind(&filter.repository_name).bind(&filter.actor_name).bind(filter.result.map(|r|r.as_str())).bind(enforcement)
         .bind(page.limit).bind(page.offset).fetch_all(&mut *tx).await?;
@@ -42,7 +42,7 @@ pub async fn get_suite(
     let mut tx = begin_read(pool).await?;
     require_read_org_sqlite!(tx, actor, org);
     let readable = codeyard_database::queries::sqlite::repositories::access::readable_condition();
-    let row:Option<StoredSuite>=sqlx::query_as(&format!("SELECT s.* FROM repository_rule_suites s JOIN repositories r ON r.id=s.repo_id JOIN users u ON u.id=?2 WHERE s.org_id=?1 AND s.id=?3 AND r.owner_kind='org' AND r.owner_org_id=?1 AND r.owner_user_id IS NULL AND {readable}")).bind(org).bind(actor).bind(id).fetch_optional(&mut *tx).await?;
+    let row:Option<StoredSuite>=sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT s.* FROM repository_rule_suites s JOIN repositories r ON r.id=s.repo_id JOIN users u ON u.id=?2 WHERE s.org_id=?1 AND s.id=?3 AND r.owner_kind='org' AND r.owner_org_id=?1 AND r.owner_user_id IS NULL AND {readable}"))).bind(org).bind(actor).bind(id).fetch_optional(&mut *tx).await?;
     let Some(row) = row else { return Ok(Missing) };
     let row = row.decode()?;
     tx.commit().await?;
@@ -90,7 +90,7 @@ pub async fn list_repository_suites(
     }
     let reference = filter.reference.as_deref();
     let short_ref = reference.filter(|r| !r.starts_with("refs/"));
-    let rows: Vec<StoredSuite> = sqlx::query_as(&format!("SELECT {} FROM repository_rule_suites s WHERE s.repo_id=?1 AND s.created_at>=?2 AND (?3 IS NULL OR s.ref_name=?3 OR s.ref_name='refs/heads/'||?4 OR s.ref_name='refs/tags/'||?4) AND (?5 IS NULL OR s.actor_name=?5 COLLATE NOCASE) AND (?6 IS NULL OR s.result=?6) AND (?7 IS NULL OR EXISTS(SELECT 1 FROM json_each(s.evaluations) e WHERE json_extract(e.value,'$.enforcement')=?7)) ORDER BY s.id DESC LIMIT ?8 OFFSET ?9", StoredSuite::SUMMARY_COLUMNS))
+    let rows: Vec<StoredSuite> = sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT {} FROM repository_rule_suites s WHERE s.repo_id=?1 AND s.created_at>=?2 AND (?3 IS NULL OR s.ref_name=?3 OR s.ref_name='refs/heads/'||?4 OR s.ref_name='refs/tags/'||?4) AND (?5 IS NULL OR s.actor_name=?5 COLLATE NOCASE) AND (?6 IS NULL OR s.result=?6) AND (?7 IS NULL OR EXISTS(SELECT 1 FROM json_each(s.evaluations) e WHERE json_extract(e.value,'$.enforcement')=?7)) ORDER BY s.id DESC LIMIT ?8 OFFSET ?9", StoredSuite::SUMMARY_COLUMNS)))
         .bind(repo)
         .bind(filter.since)
         .bind(reference)

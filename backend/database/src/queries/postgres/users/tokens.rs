@@ -26,13 +26,14 @@ pub async fn permits_write(
         None => None,
     };
     let org = org.or_else(|| repository.as_ref().and_then(|r| r.owner_org_id));
-    let bounds: Option<crate::queries::fine_grained_tokens::Bounds> = sqlx::query_as(&format!(
-        "{} FOR SHARE OF f",
-        crate::queries::postgres::fine_grained_tokens::BOUNDS
-    ))
-    .bind(token)
-    .fetch_optional(&mut *tx)
-    .await?;
+    let bounds: Option<crate::queries::fine_grained_tokens::Bounds> =
+        sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "{} FOR SHARE OF f",
+            crate::queries::postgres::fine_grained_tokens::BOUNDS
+        )))
+        .bind(token)
+        .fetch_optional(&mut *tx)
+        .await?;
     if let Some(bounds) = bounds {
         let active = bounds.active();
         let permissions: serde_json::Value = serde_json::from_str(&bounds.permissions)?;

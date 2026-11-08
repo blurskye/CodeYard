@@ -473,7 +473,7 @@ async fn deleting_repositories_retires_only_unreferenced_release_uploads() {
                 let sql = "INSERT INTO release_assets(release_id,file_id,name,content_type,size) VALUES($1,$2,'asset.zip','application/zip',100)";
                 match f.pool() {
                     codeyard_database::DbPool::Postgres(pool) => {
-                        sqlx::query(sql)
+                        sqlx::query(sqlx::AssertSqlSafe(sql))
                             .bind(release.id)
                             .bind(file.id)
                             .execute(pool)
@@ -481,7 +481,7 @@ async fn deleting_repositories_retires_only_unreferenced_release_uploads() {
                             .unwrap();
                     }
                     codeyard_database::DbPool::Sqlite(pool) => {
-                        sqlx::query(sql)
+                        sqlx::query(sqlx::AssertSqlSafe(sql))
                             .bind(release.id)
                             .bind(file.id)
                             .execute(pool)

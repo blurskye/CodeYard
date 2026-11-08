@@ -1092,11 +1092,13 @@ async fn upload_quotas_count_reservations_and_reset_with_time() {
 async fn reservations_recheck_account_state_and_policy() {
     let fixture = Fixture::open().await;
     for restriction in ["is_banned", "must_change_password"] {
-        sqlx::query(&format!("UPDATE users SET {restriction}=1 WHERE id=?1"))
-            .bind(fixture.owner)
-            .execute(&fixture.raw)
-            .await
-            .unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "UPDATE users SET {restriction}=1 WHERE id=?1"
+        )))
+        .bind(fixture.owner)
+        .execute(&fixture.raw)
+        .await
+        .unwrap();
         assert_eq!(
             fixture
                 .try_reserve(b"x", "text/plain", FileReason::Other, FileVisibility::Owner)
@@ -1111,11 +1113,13 @@ async fn reservations_recheck_account_state_and_policy() {
         .await
         .unwrap();
         assert_eq!(records, (0, 0), "{restriction}: nothing may be recorded");
-        sqlx::query(&format!("UPDATE users SET {restriction}=0 WHERE id=?1"))
-            .bind(fixture.owner)
-            .execute(&fixture.raw)
-            .await
-            .unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "UPDATE users SET {restriction}=0 WHERE id=?1"
+        )))
+        .bind(fixture.owner)
+        .execute(&fixture.raw)
+        .await
+        .unwrap();
     }
     fixture.activate(b"allowed again").await;
 

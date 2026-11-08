@@ -21,7 +21,7 @@ async fn begin_read<'a>(
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         .execute(&mut *tx)
         .await?;
-    let allowed: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=$1 WHERE r.id=$2 AND ({}) AND ({}))", codeyard_database::queries::postgres::repositories::access::readable_condition(), repository_condition(true, "pages", Access::PublicRead, "$3", "$4", "$5")))
+    let allowed: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=$1 WHERE r.id=$2 AND ({}) AND ({}))", codeyard_database::queries::postgres::repositories::access::readable_condition(), repository_condition(true, "pages", Access::PublicRead, "$3", "$4", "$5"))))
         .bind(reader.user).bind(repo).bind(reader.token()).bind(reader.session()).bind(reader.hash()).fetch_one(&mut *tx).await?;
     anyhow::ensure!(allowed, Refusal::Missing);
     Ok(tx)

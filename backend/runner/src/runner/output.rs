@@ -126,7 +126,10 @@ impl Stdout {
         if set < 0 {
             return Err(std::io::Error::last_os_error().into());
         }
-        Ok(Self::Pipe(tokio::io::unix::AsyncFd::new(fd)?))
+        // SAFETY: the AsyncFd owns `fd`, so the descriptor stays open and unchanged until drop.
+        Ok(Self::Pipe(unsafe {
+            tokio::io::unix::AsyncFd::register(fd)
+        }?))
     }
 
     async fn write(&mut self, mut bytes: &[u8]) -> std::io::Result<()> {

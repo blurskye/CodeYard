@@ -43,9 +43,9 @@ async fn release_in_repo(
     repo_id: i64,
     release_id: i64,
 ) -> Result<Release> {
-    sqlx::query_as::<_, Release>(&format!(
+    sqlx::query_as::<_, Release>(sqlx::AssertSqlSafe(format!(
         "SELECT {RELEASE_COLUMNS} FROM releases r WHERE r.id = ?1 AND r.repo_id = ?2"
-    ))
+    )))
     .bind(release_id)
     .bind(repo_id)
     .fetch_optional(&mut **tx)
@@ -356,10 +356,10 @@ pub async fn add_release_asset(
     .execute(&mut *tx)
     .await?;
     anyhow::ensure!(activated.rows_affected() == 1, ReleaseRefusal::NotFound);
-    let asset = sqlx::query_as::<_, ReleaseAsset>(&format!(
+    let asset = sqlx::query_as::<_, ReleaseAsset>(sqlx::AssertSqlSafe(format!(
         "INSERT INTO release_assets (release_id, file_id, name, label, content_type, size)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6) RETURNING {ASSET_COLUMNS}"
-    ))
+    )))
     .bind(release_id)
     .bind(asset.file_id)
     .bind(asset.name)
@@ -392,7 +392,7 @@ pub async fn update_release_asset(
     .fetch_one(&mut *tx)
     .await?;
     anyhow::ensure!(!taken, ReleaseRefusal::AssetNameTaken);
-    let asset = sqlx::query_as::<_, ReleaseAsset>(&format!("UPDATE release_assets SET name=COALESCE(?2,name), label=CASE WHEN ?3 THEN ?4 ELSE label END, updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id=?1 RETURNING {ASSET_COLUMNS}"))
+    let asset = sqlx::query_as::<_, ReleaseAsset>(sqlx::AssertSqlSafe(format!("UPDATE release_assets SET name=COALESCE(?2,name), label=CASE WHEN ?3 THEN ?4 ELSE label END, updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id=?1 RETURNING {ASSET_COLUMNS}")))
         .bind(asset_id).bind(&changes.name).bind(changes.label.is_some()).bind(changes.label.as_ref().and_then(|label| label.as_deref())).fetch_one(&mut *tx).await?;
     tx.commit().await?;
     Ok(asset)
@@ -444,9 +444,9 @@ pub async fn get_release_by_tag(
     repo_id: i64,
     tag: &str,
 ) -> Result<Option<ReleaseRow>> {
-    Ok(sqlx::query_as::<_, ReleaseRow>(&format!(
+    Ok(sqlx::query_as::<_, ReleaseRow>(sqlx::AssertSqlSafe(format!(
         "{ROW_SELECT} WHERE r.repo_id = ?1 AND r.tag_name = ?2"
-    ))
+    )))
     .bind(repo_id)
     .bind(tag)
     .fetch_optional(pool)
@@ -458,15 +458,13 @@ pub async fn get_release(
     repo_id: i64,
     release_id: i64,
 ) -> Result<Option<ReleaseRow>> {
-    Ok(
-        sqlx::query_as::<_, ReleaseRow>(&format!(
-            "{ROW_SELECT} WHERE r.repo_id = ?1 AND r.id = ?2"
-        ))
-        .bind(repo_id)
-        .bind(release_id)
-        .fetch_optional(pool)
-        .await?,
-    )
+    Ok(sqlx::query_as::<_, ReleaseRow>(sqlx::AssertSqlSafe(format!(
+        "{ROW_SELECT} WHERE r.repo_id = ?1 AND r.id = ?2"
+    )))
+    .bind(repo_id)
+    .bind(release_id)
+    .fetch_optional(pool)
+    .await?)
 }
 
 pub async fn list_releases(
@@ -495,10 +493,10 @@ pub async fn list_releases_ordered(
     offset: i64,
 ) -> Result<Vec<ReleaseRow>> {
     let order = order.sql();
-    Ok(sqlx::query_as::<_, ReleaseRow>(&format!(
+    Ok(sqlx::query_as::<_, ReleaseRow>(sqlx::AssertSqlSafe(format!(
         "{ROW_SELECT} WHERE r.repo_id = ?1 AND (?2 OR r.is_draft = 0)
          ORDER BY {order} LIMIT ?3 OFFSET ?4"
-    ))
+    )))
     .bind(repo_id)
     .bind(include_drafts)
     .bind(limit)
@@ -516,10 +514,10 @@ pub async fn list_releases_by_creation(
     offset: i64,
 ) -> Result<Vec<ReleaseRow>> {
     let direction = if ascending { "ASC" } else { "DESC" };
-    Ok(sqlx::query_as::<_, ReleaseRow>(&format!(
+    Ok(sqlx::query_as::<_, ReleaseRow>(sqlx::AssertSqlSafe(format!(
         "{ROW_SELECT} WHERE r.repo_id = ?1 AND (?2 OR r.is_draft = 0)
          ORDER BY r.created_at {direction}, r.id {direction} LIMIT ?3 OFFSET ?4"
-    ))
+    )))
     .bind(repo_id)
     .bind(include_drafts)
     .bind(limit)
@@ -539,9 +537,9 @@ pub async fn count_releases(pool: &SqlitePool, repo_id: i64, include_drafts: boo
 }
 
 pub async fn latest_release(pool: &SqlitePool, repo_id: i64) -> Result<Option<Release>> {
-    Ok(sqlx::query_as::<_, Release>(&format!(
+    Ok(sqlx::query_as::<_, Release>(sqlx::AssertSqlSafe(format!(
         "SELECT {RELEASE_COLUMNS} FROM releases r WHERE r.repo_id = ?1 AND r.is_latest = 1 AND r.is_draft = 0"
-    ))
+    )))
     .bind(repo_id)
     .fetch_optional(pool)
     .await?)
@@ -556,12 +554,14 @@ pub async fn list_asset_files(
 }
 
 pub async fn list_release_assets(pool: &SqlitePool, release_id: i64) -> Result<Vec<ReleaseAsset>> {
-    Ok(sqlx::query_as::<_, ReleaseAsset>(&format!(
-        "SELECT {ASSET_COLUMNS} FROM release_assets WHERE release_id = ?1 ORDER BY name"
-    ))
-    .bind(release_id)
-    .fetch_all(pool)
-    .await?)
+    Ok(
+        sqlx::query_as::<_, ReleaseAsset>(sqlx::AssertSqlSafe(format!(
+            "SELECT {ASSET_COLUMNS} FROM release_assets WHERE release_id = ?1 ORDER BY name"
+        )))
+        .bind(release_id)
+        .fetch_all(pool)
+        .await?,
+    )
 }
 
 pub async fn get_repository_release_asset(
@@ -583,7 +583,7 @@ pub async fn download_asset(
 ) -> Result<Option<ReleaseAsset>> {
     let readable = codeyard_database::queries::sqlite::repositories::access::readable_condition();
     let access = codeyard_database::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
-    Ok(sqlx::query_as(&format!("SELECT a.* FROM release_assets a JOIN releases rel ON rel.id=a.release_id JOIN repositories r ON r.id=rel.repo_id LEFT JOIN users u ON u.id=?1 WHERE r.id=?2 AND {readable} AND (NOT rel.is_draft OR ({access})>=3 OR (r.owner_kind='user' AND u.is_admin)) AND (?3 IS NULL OR rel.tag_name=?3) AND (?4 IS NULL OR a.name=?4) AND (?5 IS NULL OR a.id=?5)"))
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT a.* FROM release_assets a JOIN releases rel ON rel.id=a.release_id JOIN repositories r ON r.id=rel.repo_id LEFT JOIN users u ON u.id=?1 WHERE r.id=?2 AND {readable} AND (NOT rel.is_draft OR ({access})>=3 OR (r.owner_kind='user' AND u.is_admin)) AND (?3 IS NULL OR rel.tag_name=?3) AND (?4 IS NULL OR a.name=?4) AND (?5 IS NULL OR a.id=?5)")))
         .bind(viewer).bind(repo).bind(tag).bind(name).bind(asset).fetch_optional(pool).await?)
 }
 
@@ -592,9 +592,9 @@ pub async fn get_release_asset_by_name(
     release_id: i64,
     name: &str,
 ) -> Result<Option<ReleaseAsset>> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {ASSET_COLUMNS} FROM release_assets WHERE release_id=?1 AND name=?2"
-    ))
+    )))
     .bind(release_id)
     .bind(name)
     .fetch_optional(pool)
@@ -608,9 +608,9 @@ pub async fn list_releases_assets(
     if release_ids.is_empty() {
         return Ok(Vec::new());
     }
-    Ok(sqlx::query_as::<_, ReleaseAsset>(&format!(
+    Ok(sqlx::query_as::<_, ReleaseAsset>(sqlx::AssertSqlSafe(format!(
         "SELECT {ASSET_COLUMNS} FROM release_assets WHERE release_id IN (SELECT value FROM json_each(?1)) ORDER BY release_id, name"
-    )).bind(serde_json::to_string(release_ids)?).fetch_all(pool).await?)
+    ))).bind(serde_json::to_string(release_ids)?).fetch_all(pool).await?)
 }
 
 pub async fn count_asset_download(pool: &SqlitePool, asset_id: i64) -> Result<()> {

@@ -287,8 +287,8 @@ async fn insert_kind(
         anyhow::ensure!(eligible.is_some(), RepositoryStorageRefusal::StalePlacement);
     }
     let repository = sqlx::query_as::<_, Repository>(
-        &format!("INSERT INTO repositories (home_cell,owner_kind,owner_user_id,owner_org_id,name,description,is_private,disk_path,is_fork,forked_from_id,default_branch,storage_node_id,created_by_id,is_gist,visibility_locked)
-         VALUES ({cell_home},?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14) ON CONFLICT DO NOTHING RETURNING *", cell_home = codeyard_database::cells::LOCAL_HOME_SQL),
+        sqlx::AssertSqlSafe(format!("INSERT INTO repositories (home_cell,owner_kind,owner_user_id,owner_org_id,name,description,is_private,disk_path,is_fork,forked_from_id,default_branch,storage_node_id,created_by_id,is_gist,visibility_locked)
+         VALUES ({cell_home},?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14) ON CONFLICT DO NOTHING RETURNING *", cell_home = codeyard_database::cells::LOCAL_HOME_SQL)),
     )
     .bind(kind)
     .bind(user)

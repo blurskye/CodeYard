@@ -73,9 +73,9 @@ pub async fn discussion_ids(
         ExportRefusal::Invalid
     );
     let table = if pulls { "pull_requests" } else { "issues" };
-    Ok(sqlx::query_scalar(&format!(
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT id FROM {table} WHERE repo_id=$1 AND id<$2 ORDER BY id DESC LIMIT $3"
-    ))
+    )))
     .bind(repo)
     .bind(before)
     .bind(limit)

@@ -74,7 +74,7 @@ pub async fn list_star_history(
 ) -> Result<Vec<crate::repositories::engagement::StarHistoryWeek>> {
     let sums=(0..7).map(|day|format!("SUM(CASE WHEN CAST(strftime('%w',day) AS INTEGER)={day} THEN stars ELSE 0 END) AS day{day}")).collect::<Vec<_>>().join(",");
     let sql=format!("SELECT date(day,'-' || strftime('%w',day) || ' days') AS week,{sums} FROM repository_star_days WHERE repo_id=?1 GROUP BY week ORDER BY week DESC LIMIT ?2 OFFSET ?3");
-    Ok(sqlx::query_as(&sql)
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(repo_id)
         .bind(limit.clamp(1, 31))
         .bind(offset)
@@ -111,7 +111,7 @@ pub async fn list_watched_repositories(
     offset: i64,
 ) -> Result<Vec<Repository>> {
     let sql=format!("SELECT r.* FROM watches w JOIN repositories r ON r.id=w.repo_id LEFT JOIN users u ON u.id=?2 WHERE w.user_id=?1 AND w.level IN ('watching','custom') AND {} ORDER BY w.created_at DESC,w.repo_id DESC LIMIT ?3 OFFSET ?4",readable_condition());
-    Ok(sqlx::query_as(&sql)
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(user_id)
         .bind(viewer)
         .bind(limit)
@@ -271,14 +271,16 @@ pub async fn list_starred_repositories(
          ORDER BY {order} LIMIT ?4 OFFSET ?5",
         readable = readable_condition(),
     );
-    Ok(sqlx::query_as::<_, Repository>(&sql)
-        .bind(starred_by)
-        .bind(viewer)
-        .bind(contains(text))
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(pool)
-        .await?)
+    Ok(
+        sqlx::query_as::<_, Repository>(sqlx::AssertSqlSafe(sql.as_str()))
+            .bind(starred_by)
+            .bind(viewer)
+            .bind(contains(text))
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(pool)
+            .await?,
+    )
 }
 
 /// How many repositories `list_starred_repositories` lists for the same arguments.
@@ -295,12 +297,14 @@ pub async fn count_starred_repositories(
          AND (r.name REGEXP ?3 OR r.description REGEXP ?3)",
         readable = readable_condition(),
     );
-    Ok(sqlx::query_scalar::<_, i64>(&sql)
-        .bind(starred_by)
-        .bind(viewer)
-        .bind(contains(text))
-        .fetch_one(pool)
-        .await?)
+    Ok(
+        sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(sql.as_str()))
+            .bind(starred_by)
+            .bind(viewer)
+            .bind(contains(text))
+            .fetch_one(pool)
+            .await?,
+    )
 }
 
 /// Saves a watch level. `custom` keeps `events`; the other levels clear them.
@@ -366,11 +370,13 @@ pub async fn list_event_watchers(
          ORDER BY w.user_id LIMIT ?4",
         readable = readable_condition(),
     );
-    Ok(sqlx::query_scalar::<_, i64>(&sql)
-        .bind(repo_id)
-        .bind(after_user_id)
-        .bind(event)
-        .bind(limit)
-        .fetch_all(pool)
-        .await?)
+    Ok(
+        sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(sql.as_str()))
+            .bind(repo_id)
+            .bind(after_user_id)
+            .bind(event)
+            .bind(limit)
+            .fetch_all(pool)
+            .await?,
+    )
 }

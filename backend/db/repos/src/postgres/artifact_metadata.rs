@@ -57,7 +57,7 @@ async fn writable(tx: &mut Tx<'_>, admission: &mut Admission, org: i64, repo: i6
     let actor = admission.actor;
     let result: Result<()> = async {
         anyhow::ensure!(actor.repo.is_none_or(|scope| scope == repo), Refusal::Missing);
-        let readable: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=$1 WHERE r.id=$2 AND r.owner_kind='org' AND r.owner_org_id=$3 AND {})",codeyard_database::queries::postgres::repositories::access::readable_condition()))
+        let readable: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=$1 WHERE r.id=$2 AND r.owner_kind='org' AND r.owner_org_id=$3 AND {})",codeyard_database::queries::postgres::repositories::access::readable_condition())))
             .bind(actor.user).bind(repo).bind(org).fetch_one(&mut **tx).await?;
         anyhow::ensure!(readable, Refusal::Missing);
         anyhow::ensure!(codeyard_database::queries::postgres::discussions::lock_write_authority(tx, actor.user, repo).await?, Refusal::Denied);
@@ -91,7 +91,7 @@ async fn targets(
     let actor = admission.actor;
     let result: Result<Vec<(i64, Option<i64>)>> = async {
         let sql = crate::artifact_metadata::target_candidates_sql(true, codeyard_database::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL);
-        let mut rows: Vec<(i64,Option<i64>)> = sqlx::query_as(&sql)
+        let mut rows: Vec<(i64,Option<i64>)> = sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(org).bind(&artifact.digest).bind(actor.user).bind(actor.repo).bind(maximum as i64).fetch_all(&mut **tx).await?;
         if rows.is_empty() {
             // Filtering must not turn authoritative but inaccessible provenance into
@@ -382,7 +382,7 @@ pub async fn list(
 ) -> Result<Vec<Record>> {
     use futures_util::TryStreamExt;
     let sql = format!("SELECT d.id,a.repo_id,d.kind,a.digest,a.name,a.version,d.document,d.attestation_id,d.created_at,d.updated_at FROM artifact_metadata_records d JOIN artifact_metadata a ON a.id=d.artifact_id JOIN repositories r ON r.id=a.repo_id JOIN users u ON u.id=$1 WHERE d.org_id=$2 AND r.owner_kind='org' AND r.owner_org_id=$2 AND a.digest=$3 AND d.kind=$4 AND (CAST($5 AS BIGINT) IS NULL OR r.id=$5) AND {} ORDER BY d.id LIMIT 10001",codeyard_database::queries::postgres::repositories::access::readable_condition());
-    let mut stream = sqlx::query_as(&sql)
+    let mut stream = sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(actor.user)
         .bind(org)
         .bind(digest)

@@ -7,18 +7,30 @@ use codeyard_database::DbPool;
 async fn execute(pool: &DbPool, sql: &str) {
     match pool {
         DbPool::Sqlite(raw) => {
-            sqlx::raw_sql(sql).execute(raw).await.unwrap();
+            sqlx::raw_sql(sqlx::AssertSqlSafe(sql))
+                .execute(raw)
+                .await
+                .unwrap();
         }
         DbPool::Postgres(raw) => {
-            sqlx::raw_sql(sql).execute(raw).await.unwrap();
+            sqlx::raw_sql(sqlx::AssertSqlSafe(sql))
+                .execute(raw)
+                .await
+                .unwrap();
         }
     };
 }
 
 async fn strings(pool: &DbPool, sql: &str) -> Vec<String> {
     match pool {
-        DbPool::Sqlite(raw) => sqlx::query_scalar(sql).fetch_all(raw).await.unwrap(),
-        DbPool::Postgres(raw) => sqlx::query_scalar(sql).fetch_all(raw).await.unwrap(),
+        DbPool::Sqlite(raw) => sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+            .fetch_all(raw)
+            .await
+            .unwrap(),
+        DbPool::Postgres(raw) => sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+            .fetch_all(raw)
+            .await
+            .unwrap(),
     }
 }
 

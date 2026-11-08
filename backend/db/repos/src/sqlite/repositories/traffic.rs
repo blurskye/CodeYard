@@ -52,7 +52,7 @@ pub async fn prune(pool: &SqlitePool, first: &str) -> Result<u64> {
         "repository_traffic_visitors",
         "repository_traffic_keys",
     ] {
-        removed+=sqlx::query(&format!("DELETE FROM {table} WHERE rowid IN (SELECT rowid FROM {table} WHERE day<?1 LIMIT 10000)")).bind(first).execute(&mut *tx).await?.rows_affected();
+        removed+=sqlx::query(sqlx::AssertSqlSafe(format!("DELETE FROM {table} WHERE rowid IN (SELECT rowid FROM {table} WHERE day<?1 LIMIT 10000)"))).bind(first).execute(&mut *tx).await?.rows_affected();
     }
     tx.commit().await?;
     Ok(removed)
@@ -71,7 +71,7 @@ pub async fn summary(
     } else {
         "day"
     };
-    let buckets=sqlx::query_as(&format!("SELECT {bucket} || 'T00:00:00Z' AS timestamp,SUM(count) AS count,COUNT(DISTINCT visitor) AS uniques FROM repository_traffic_counts WHERE repo_id=?1 AND kind=?2 AND day BETWEEN ?3 AND ?4 GROUP BY {bucket} ORDER BY timestamp")).bind(repo).bind(kind.as_str()).bind(&window.first).bind(&window.today).fetch_all(&mut *tx).await?;
+    let buckets=sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT {bucket} || 'T00:00:00Z' AS timestamp,SUM(count) AS count,COUNT(DISTINCT visitor) AS uniques FROM repository_traffic_counts WHERE repo_id=?1 AND kind=?2 AND day BETWEEN ?3 AND ?4 GROUP BY {bucket} ORDER BY timestamp"))).bind(repo).bind(kind.as_str()).bind(&window.first).bind(&window.today).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok(Summary { totals, buckets })
 }

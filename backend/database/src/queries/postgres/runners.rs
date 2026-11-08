@@ -9,9 +9,9 @@ pub const RUNNER_FILTER: &str = "a.org_id IS NOT DISTINCT FROM $1 AND a.repo_id 
 
 pub async fn runner(c: &mut Connection, scope: Scope, id: i64) -> Result<Runner> {
     let (org, repo) = scope.ids();
-    sqlx::query_as::<_, crate::queries::runners::RunnerProjection>(&format!(
+    sqlx::query_as::<_, crate::queries::runners::RunnerProjection>(sqlx::AssertSqlSafe(format!(
         "{RUNNERS} WHERE {RUNNER_FILTER} FOR UPDATE OF a"
-    ))
+    )))
     .bind(org)
     .bind(repo)
     .bind(id)

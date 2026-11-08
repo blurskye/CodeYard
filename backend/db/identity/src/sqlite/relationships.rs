@@ -25,7 +25,7 @@ pub async fn window(pool: &SqlitePool, page: &Window<'_>) -> Result<Vec<Link>> {
     )
     .replace('$', "?");
     let repositories = page.repositories.map(serde_json::to_string).transpose()?;
-    Ok(sqlx::query_as(&sql)
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(page.viewer)
         .bind(page.root)
         .bind(page.kind.storage())
@@ -48,7 +48,7 @@ pub async fn repository_counts(
         related_sql(kind, &readable, "1")
     )
     .replace('$', "?");
-    Ok(sqlx::query_as(&sql)
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(viewer)
         .bind(root)
         .bind(kind.storage())
@@ -172,7 +172,7 @@ pub async fn change_in_transaction<'a>(
             );
         }
     }
-    let visible:bool=sqlx::query_scalar(&format!("SELECT EXISTS (SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=?1 WHERE r.id=?2 AND {})",codeyard_database::queries::sqlite::repositories::access::readable_condition())).bind(actor).bind(target_repo).fetch_one(&mut *tx).await?;
+    let visible:bool=sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT EXISTS (SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=?1 WHERE r.id=?2 AND {})",codeyard_database::queries::sqlite::repositories::access::readable_condition()))).bind(actor).bind(target_repo).fetch_one(&mut *tx).await?;
     anyhow::ensure!(visible, Refusal::Missing);
     let ids: Vec<i64> = sqlx::query_scalar(
         "SELECT id FROM issues WHERE (id=?1 AND repo_id=?3) OR (id=?2 AND repo_id=?4) ORDER BY id",

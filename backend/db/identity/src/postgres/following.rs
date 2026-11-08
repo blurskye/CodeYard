@@ -9,12 +9,16 @@ pub async fn list_connections(
     limit: i64,
     offset: i64,
 ) -> Result<Vec<codeyard_database::models::User>> {
-    Ok(sqlx::query_as(crate::following::connections_sql(followers))
+    Ok(
+        sqlx::query_as(sqlx::AssertSqlSafe(crate::following::connections_sql(
+            followers,
+        )))
         .bind(user_id)
         .bind(limit)
         .bind(offset)
         .fetch_all(pool)
-        .await?)
+        .await?,
+    )
 }
 
 pub async fn follow_user(

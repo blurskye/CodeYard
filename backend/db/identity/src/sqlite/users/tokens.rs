@@ -273,12 +273,12 @@ pub async fn token_hash(pool: &SqlitePool, token_id: i64, user_id: i64) -> Resul
 pub async fn token_user(pool: &SqlitePool, token_id: i64, write: bool) -> Result<Option<User>> {
     // Missing or restricted OAuth issuers invalidate tokens in every transport, including feeds.
     let issuer = codeyard_database::queries::oauth_apps::token_issuer_condition("t", "?3");
-    let user: Option<User> = sqlx::query_as(&format!("SELECT u.* FROM users u JOIN personal_access_tokens t ON t.user_id=u.id
+    let user: Option<User> = sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT u.* FROM users u JOIN personal_access_tokens t ON t.user_id=u.id
         WHERE t.id=?1 AND (t.expires_at IS NULL OR t.expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now')) AND (NOT ?2 OR t.scope='write')
         AND NOT u.is_banned AND NOT u.must_change_password AND {issuer}
         AND NOT EXISTS(SELECT 1 FROM github_app_tokens g WHERE g.token_id=t.id AND NOT EXISTS(
             SELECT 1 FROM github_app_installations i JOIN github_apps a ON a.id=i.app_id JOIN users owner ON owner.id=a.owner_id
-            WHERE i.id=g.installation_id AND i.suspended_at IS NULL AND NOT owner.is_banned AND NOT owner.must_change_password))"))
+            WHERE i.id=g.installation_id AND i.suspended_at IS NULL AND NOT owner.is_banned AND NOT owner.must_change_password))")))
         .bind(token_id).bind(write).bind(codeyard_types::identity::CLI_CLIENT).fetch_optional(pool).await?;
     if user.as_ref().is_some_and(|user| {
         user.username.ends_with("[bot]")

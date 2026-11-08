@@ -98,7 +98,7 @@ pub(super) async fn run(
 ) {
     let sql="INSERT INTO ci_runs(run_id,repo_id,triggered_by_id,mode,pipeline,event,branch,workflow_path,status,worker) VALUES($1,$2,$3,'local','ci','push',$4,'.github/workflows/ci.yml','running','test') RETURNING *";
     let row = match f.pool() {
-        codeyard_database::DbPool::Postgres(pool) => sqlx::query_as(sql)
+        codeyard_database::DbPool::Postgres(pool) => sqlx::query_as(sqlx::AssertSqlSafe(sql))
             .bind(Uuid::new_v4())
             .bind(repo)
             .bind(actor)
@@ -106,7 +106,7 @@ pub(super) async fn run(
             .fetch_one(pool)
             .await
             .unwrap(),
-        codeyard_database::DbPool::Sqlite(pool) => sqlx::query_as(sql)
+        codeyard_database::DbPool::Sqlite(pool) => sqlx::query_as(sqlx::AssertSqlSafe(sql))
             .bind(Uuid::new_v4())
             .bind(repo)
             .bind(actor)

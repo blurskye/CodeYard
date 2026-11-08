@@ -367,16 +367,16 @@ async fn repositories_once(
     authorize(&mut tx, actor, org).await?;
     selected(&mut tx, org, kind, name).await?;
     let selection = "FROM repositories r JOIN org_actions_value_repositories s ON s.repo_id=r.id AND s.org_id=r.owner_org_id JOIN organizations o ON o.id=r.owner_org_id WHERE s.org_id=$1 AND s.kind=$2 AND s.name=$3 AND r.owner_kind='org'";
-    let total = sqlx::query_scalar(&format!("SELECT COUNT(*) {selection}"))
+    let total = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) {selection}")))
         .bind(org)
         .bind(kind.as_str())
         .bind(name)
         .fetch_one(&mut *tx)
         .await?;
-    let rows = sqlx::query_as(&format!(
+    let rows = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT r.*,{},o.name AS owner {selection} ORDER BY r.id LIMIT $4 OFFSET $5",
         codeyard_database::queries::postgres::repository_stats::DOCUMENT_FACTS
-    ))
+    )))
     .bind(org)
     .bind(kind.as_str())
     .bind(name)
@@ -445,7 +445,7 @@ pub async fn inherited(
     if !allowed {
         return Err(ValueError::Denied);
     }
-    let rows = sqlx::query_as(&format!("SELECT v.name,v.kind,v.value,v.visibility,v.created_at,v.updated_at FROM org_actions_values v JOIN repositories r ON r.owner_org_id=v.org_id AND r.owner_kind='org' WHERE r.id=$1 AND v.kind=$2 AND {} ORDER BY v.name", crate::organization_values::REACHES_REPOSITORY))
+    let rows = sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT v.name,v.kind,v.value,v.visibility,v.created_at,v.updated_at FROM org_actions_values v JOIN repositories r ON r.owner_org_id=v.org_id AND r.owner_kind='org' WHERE r.id=$1 AND v.kind=$2 AND {} ORDER BY v.name", crate::organization_values::REACHES_REPOSITORY)))
         .bind(repo).bind(kind.as_str()).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok(rows)
@@ -456,6 +456,6 @@ pub async fn workflow_values(
     repo: i64,
     kind: Kind,
 ) -> Result<Vec<StoredValue>, ValueError> {
-    Ok(sqlx::query_as(&format!("SELECT v.name,v.value,v.visibility,v.encrypted_value,v.nonce FROM org_actions_values v JOIN repositories r ON r.owner_org_id=v.org_id AND r.owner_kind='org' WHERE r.id=$1 AND v.kind=$2 AND {} ORDER BY v.name LIMIT $3", crate::organization_values::REACHES_REPOSITORY))
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT v.name,v.value,v.visibility,v.encrypted_value,v.nonce FROM org_actions_values v JOIN repositories r ON r.owner_org_id=v.org_id AND r.owner_kind='org' WHERE r.id=$1 AND v.kind=$2 AND {} ORDER BY v.name LIMIT $3", crate::organization_values::REACHES_REPOSITORY)))
         .bind(repo).bind(kind.as_str()).bind(if kind==Kind::Secret {100i64} else {1000i64}).fetch_all(pool).await?)
 }

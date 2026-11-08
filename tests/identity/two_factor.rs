@@ -917,12 +917,12 @@ async fn unsuccessful_disable_changes_nothing(pg: bool) {
     );
     let sql = "SELECT COUNT(*) FROM two_factor_recovery_codes WHERE user_id=$1";
     let remaining: i64 = match database.pool() {
-        codeyard_database::DbPool::Postgres(pool) => sqlx::query_scalar(sql)
+        codeyard_database::DbPool::Postgres(pool) => sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
             .bind(alice.id)
             .fetch_one(pool)
             .await
             .unwrap(),
-        codeyard_database::DbPool::Sqlite(pool) => sqlx::query_scalar(sql)
+        codeyard_database::DbPool::Sqlite(pool) => sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
             .bind(alice.id)
             .fetch_one(pool)
             .await

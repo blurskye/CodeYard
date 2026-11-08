@@ -108,9 +108,9 @@ pub async fn list_window(
         .await?;
     readable(&mut tx, actor, org).await?;
     let direction = if before < i64::MAX { "DESC" } else { "ASC" };
-    let rows = sqlx::query_as(&format!(
+    let rows = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT * FROM code_security_configurations WHERE org_id=$1 AND id>$2 AND id<$3 ORDER BY id {direction} LIMIT $4"
-    ))
+    )))
     .bind(org)
     .bind(after)
     .bind(before)

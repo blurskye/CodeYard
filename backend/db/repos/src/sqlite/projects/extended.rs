@@ -88,7 +88,7 @@ pub async fn item_by_id_at(
     include_deleted: bool,
 ) -> Result<Item> {
     let mut tx = pool.begin().await?;
-    let item: Item = sqlx::query_as(&format!("{ITEM} WHERE i.id=$1"))
+    let item: Item = sqlx::query_as(sqlx::AssertSqlSafe(format!("{ITEM} WHERE i.id=$1")))
         .bind(id)
         .fetch_optional(&mut *tx)
         .await?
@@ -134,7 +134,7 @@ pub async fn archive_item(
         .bind(chrono::Utc::now())
         .execute(&mut *tx)
         .await?;
-    let result = sqlx::query_as(&format!("{ITEM} WHERE i.id=$1"))
+    let result = sqlx::query_as(sqlx::AssertSqlSafe(format!("{ITEM} WHERE i.id=$1")))
         .bind(item)
         .fetch_one(&mut *tx)
         .await?;
@@ -163,7 +163,7 @@ pub async fn edit_draft(
     .ok_or(Refusal::Missing)?;
     writable_item(&mut tx, actor, credential, project, item).await?;
     sqlx::query("UPDATE project_items SET draft_title=COALESCE($2,draft_title),draft_body=COALESCE($3,draft_body),updated_at=$4 WHERE id=$1").bind(item).bind(title).bind(body).bind(chrono::Utc::now()).execute(&mut *tx).await?;
-    let result = sqlx::query_as(&format!("{ITEM} WHERE i.id=$1"))
+    let result = sqlx::query_as(sqlx::AssertSqlSafe(format!("{ITEM} WHERE i.id=$1")))
         .bind(item)
         .fetch_one(&mut *tx)
         .await?;
@@ -205,7 +205,7 @@ pub async fn reorder_item(
         .bind(serde_json::to_string(&ids)?)
         .execute(&mut *tx)
         .await?;
-    let result = sqlx::query_as(&format!("{ITEM} WHERE i.id=$1"))
+    let result = sqlx::query_as(sqlx::AssertSqlSafe(format!("{ITEM} WHERE i.id=$1")))
         .bind(item)
         .fetch_one(&mut *tx)
         .await?;
@@ -270,9 +270,9 @@ pub async fn copy(
         sqlx::query("INSERT INTO project_views(project_id,number,creator_id,configuration,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$5)").bind(result.id).bind(view.number).bind(actor).bind(serde_json::to_string(&config)?).bind(now).execute(&mut *tx).await?;
     }
     if drafts {
-        let items: Vec<Item> = sqlx::query_as(&format!(
+        let items: Vec<Item> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "{ITEM} WHERE i.project_id=$1 AND i.draft_title IS NOT NULL ORDER BY i.position,i.id"
-        ))
+        )))
         .bind(source)
         .fetch_all(&mut *tx)
         .await?;

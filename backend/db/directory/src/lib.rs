@@ -221,9 +221,9 @@ async fn owner(
     // Operator registry changes retain the cell before its keys. Do the same here,
     // then recheck the key, so revocation cannot race the mutation or invert locks.
     let lock = if exclusive { "FOR UPDATE" } else { "FOR SHARE" };
-    let state: Option<String> = sqlx::query_scalar(&format!(
+    let state: Option<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT state FROM directory_cells WHERE id=$1 {lock}"
-    ))
+    )))
     .bind(cell)
     .fetch_optional(&mut **tx)
     .await?;

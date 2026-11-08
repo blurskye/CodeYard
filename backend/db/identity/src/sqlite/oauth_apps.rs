@@ -34,10 +34,10 @@ pub async fn register(
 }
 
 pub async fn application(pool: &SqlitePool, client_id: &str) -> Result<Option<Application>> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT * FROM oauth_applications WHERE client_id=$1 AND {}",
         codeyard_database::queries::oauth_apps::client_condition("$1")
-    ))
+    )))
     .bind(client_id)
     .fetch_optional(pool)
     .await?)
@@ -118,10 +118,10 @@ pub async fn exchange(
         .bind(hash)
         .execute(&mut *tx)
         .await?;
-    let active: bool = sqlx::query_scalar(&format!(
+    let active: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT $1=$2 OR {}",
         codeyard_database::queries::oauth_apps::client_condition("$1")
-    ))
+    )))
     .bind(client_id)
     .bind(codeyard_types::identity::CLI_CLIENT)
     .fetch_one(&mut *tx)
@@ -212,7 +212,7 @@ pub async fn owned_token(
     hash: &str,
 ) -> Result<Option<codeyard_database::models::PersonalAccessToken>> {
     let issuer = codeyard_database::queries::oauth_apps::token_issuer_condition("t", "$3");
-    Ok(sqlx::query_as(&format!("SELECT t.id,t.user_id,t.name,t.scope,t.expires_at,t.created_at FROM personal_access_tokens t JOIN oauth_app_tokens o ON o.token_id=t.id JOIN users u ON u.id=t.user_id WHERE o.client_id=$1 AND t.token_hash=$2 AND (t.expires_at IS NULL OR t.expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now')) AND NOT u.is_banned AND NOT u.must_change_password AND {issuer}"))
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT t.id,t.user_id,t.name,t.scope,t.expires_at,t.created_at FROM personal_access_tokens t JOIN oauth_app_tokens o ON o.token_id=t.id JOIN users u ON u.id=t.user_id WHERE o.client_id=$1 AND t.token_hash=$2 AND (t.expires_at IS NULL OR t.expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now')) AND NOT u.is_banned AND NOT u.must_change_password AND {issuer}")))
         .bind(client).bind(hash).bind(codeyard_types::identity::CLI_CLIENT).fetch_optional(pool).await?)
 }
 
@@ -225,7 +225,7 @@ pub async fn reset_token(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     // A token from an app that is no longer available is not refreshed.
     let issuer = codeyard_database::queries::oauth_apps::token_issuer_condition("t", "$3");
-    let old: Option<codeyard_database::models::PersonalAccessToken> = sqlx::query_as(&format!("SELECT t.id,t.user_id,t.name,t.scope,t.expires_at,t.created_at FROM personal_access_tokens t JOIN oauth_app_tokens o ON o.token_id=t.id JOIN users u ON u.id=t.user_id WHERE o.client_id=$1 AND t.token_hash=$2 AND (t.expires_at IS NULL OR t.expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now')) AND NOT u.is_banned AND NOT u.must_change_password AND {issuer}"))
+    let old: Option<codeyard_database::models::PersonalAccessToken> = sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT t.id,t.user_id,t.name,t.scope,t.expires_at,t.created_at FROM personal_access_tokens t JOIN oauth_app_tokens o ON o.token_id=t.id JOIN users u ON u.id=t.user_id WHERE o.client_id=$1 AND t.token_hash=$2 AND (t.expires_at IS NULL OR t.expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now')) AND NOT u.is_banned AND NOT u.must_change_password AND {issuer}")))
         .bind(client).bind(hash).bind(codeyard_types::identity::CLI_CLIENT).fetch_optional(&mut *tx).await?;
     let Some(old) = old else {
         return Ok(None);
@@ -256,10 +256,10 @@ pub async fn revoke(
         .bind(hash)
         .execute(&mut *tx)
         .await?;
-    let active: bool = sqlx::query_scalar(&format!(
+    let active: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT $1=$2 OR {}",
         codeyard_database::queries::oauth_apps::client_condition("$1")
-    ))
+    )))
     .bind(client)
     .bind(codeyard_types::identity::CLI_CLIENT)
     .fetch_one(&mut *tx)

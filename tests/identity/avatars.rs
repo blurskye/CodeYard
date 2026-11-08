@@ -903,12 +903,12 @@ async fn contract(pg: bool) {
     );
     let sql = "SELECT EXISTS(SELECT 1 FROM pending_object_deletions WHERE object_key=$1)";
     let queued: bool = match f.pool() {
-        codeyard_database::DbPool::Postgres(pool) => sqlx::query_scalar(sql)
+        codeyard_database::DbPool::Postgres(pool) => sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
             .bind(&file.object_key)
             .fetch_one(pool)
             .await
             .unwrap(),
-        codeyard_database::DbPool::Sqlite(pool) => sqlx::query_scalar(sql)
+        codeyard_database::DbPool::Sqlite(pool) => sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
             .bind(&file.object_key)
             .fetch_one(pool)
             .await

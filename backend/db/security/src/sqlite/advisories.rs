@@ -21,7 +21,7 @@ pub async fn can_administer(pool: &SqlitePool, actor: i64, repo: i64) -> Result<
     let sql = crate::advisories::administration_sql(
         codeyard_database::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL,
     );
-    Ok(sqlx::query_scalar(&sql)
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(actor)
         .bind(repo)
         .fetch_one(pool)
@@ -47,7 +47,7 @@ pub async fn list(
         .map(|(at, id)| (Some(at), Some(id)))
         .unwrap_or_default();
     let sql=format!("SELECT a.* FROM repository_advisories a JOIN repositories r ON r.id=a.repo_id LEFT JOIN users u ON u.id=?1 WHERE (?2 IS NULL OR a.repo_id=?2) AND (?3 IS NULL OR (r.owner_kind='org' AND r.owner_org_id=?3)) AND (?4 IS NULL OR a.state=?4) AND (?5 IS NULL OR ({column},a.id) {compare} (julianday(?5),?6)) AND ({}) ORDER BY {column} {order},a.id {order} LIMIT ?7 OFFSET ?8",visibility());
-    let mut rows = sqlx::query_as(&sql)
+    let mut rows = sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(actor)
         .bind(repo)
         .bind(org)
@@ -69,7 +69,7 @@ pub async fn get(
     repo: i64,
     ghsa: &str,
 ) -> Result<Option<Advisory>> {
-    Ok(sqlx::query_as(&format!("SELECT a.* FROM repository_advisories a JOIN repositories r ON r.id=a.repo_id LEFT JOIN users u ON u.id=?1 WHERE a.repo_id=?2 AND a.ghsa_id=?3 AND ({})",visibility())).bind(actor).bind(repo).bind(ghsa).fetch_optional(pool).await?)
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT a.* FROM repository_advisories a JOIN repositories r ON r.id=a.repo_id LEFT JOIN users u ON u.id=?1 WHERE a.repo_id=?2 AND a.ghsa_id=?3 AND ({})",visibility()))).bind(actor).bind(repo).bind(ghsa).fetch_optional(pool).await?)
 }
 pub async fn create(
     pool: &SqlitePool,

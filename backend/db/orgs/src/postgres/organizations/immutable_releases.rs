@@ -51,14 +51,14 @@ pub async fn repositories(
         return Ok(Denied);
     }
     let selection = "FROM organization_immutable_release_repositories s JOIN repositories r ON r.id=s.repo_id JOIN organizations o ON o.id=r.owner_org_id WHERE s.org_id=$1 AND r.owner_kind='org' AND r.owner_org_id=$1 AND r.owner_user_id IS NULL";
-    let count = sqlx::query_scalar(&format!("SELECT COUNT(*) {selection}"))
+    let count = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) {selection}")))
         .bind(org)
         .fetch_one(&mut *tx)
         .await?;
-    let rows = sqlx::query_as(&format!(
+    let rows = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT r.*,{},o.name AS owner {selection} ORDER BY r.id LIMIT $2 OFFSET $3",
         codeyard_database::queries::postgres::repository_stats::DOCUMENT_FACTS
-    ))
+    )))
     .bind(org)
     .bind(limit)
     .bind(offset)

@@ -98,12 +98,12 @@ impl Fixture {
         );
         let sql = "SELECT id,repo_id,title,body,link,CAST(metadata AS TEXT),CAST(read_at AS TEXT),scope_repository_id,user_id,actor_id,kind,CAST(created_at AS TEXT) FROM notifications WHERE user_id=$1 ORDER BY id DESC";
         let rows: Vec<Stored> = match self {
-            Self::Postgres(f) => sqlx::query_as(sql)
+            Self::Postgres(f) => sqlx::query_as(sqlx::AssertSqlSafe(sql))
                 .bind(recipient)
                 .fetch_all(&f.raw)
                 .await
                 .unwrap(),
-            Self::Sqlite(f) => sqlx::query_as(sql)
+            Self::Sqlite(f) => sqlx::query_as(sqlx::AssertSqlSafe(sql))
                 .bind(recipient)
                 .fetch_all(&f.raw)
                 .await
@@ -130,16 +130,16 @@ impl Fixture {
                     "repositories_owner_user_id_fkey",
                     "repositories_owner_org_id_fkey",
                 ] {
-                    sqlx::query(&format!(
+                    sqlx::query(sqlx::AssertSqlSafe(format!(
                         "ALTER TABLE repositories DROP CONSTRAINT IF EXISTS {constraint}"
-                    ))
+                    )))
                     .execute(&mut *tx)
                     .await
                     .unwrap();
                 }
                 sqlx::query("ALTER TABLE notifications DROP CONSTRAINT IF EXISTS notifications_repo_id_fkey")
                     .execute(&mut *tx).await.unwrap();
-                let mut query = sqlx::query(sql);
+                let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
                 for id in ids {
                     query = query.bind(*id);
                 }
@@ -156,7 +156,7 @@ impl Fixture {
                     .execute(&mut *connection)
                     .await
                     .unwrap();
-                let mut query = sqlx::query(sql);
+                let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
                 for id in ids {
                     query = query.bind(*id);
                 }
@@ -175,7 +175,7 @@ impl Fixture {
     pub async fn rejected(&self, sql: &str, ids: &[i64]) {
         let error = match self {
             Self::Postgres(f) => {
-                let mut query = sqlx::query(sql);
+                let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
                 for id in ids {
                     query = query.bind(*id);
                 }
@@ -185,7 +185,7 @@ impl Fixture {
                     .expect_err("notification constraint must reject")
             }
             Self::Sqlite(f) => {
-                let mut query = sqlx::query(sql);
+                let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
                 for id in ids {
                     query = query.bind(*id);
                 }

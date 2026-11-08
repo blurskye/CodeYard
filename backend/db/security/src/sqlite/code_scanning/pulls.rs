@@ -11,7 +11,7 @@ pub async fn pull_analyses(
     number: i32,
     branch: Option<&str>,
 ) -> Result<Vec<Analysis>> {
-    Ok(sqlx::query_as(&format!("SELECT * FROM (SELECT {ANALYSIS_COLUMNS},ROW_NUMBER() OVER(PARTITION BY tool_key,category ORDER BY upload_sequence DESC,id DESC) AS newest FROM code_scanning_analyses a WHERE repo_id=$1 AND commit_sha=$2 AND (ref_name IN ('refs/pull/' || CAST($3 AS TEXT) || '/head','refs/pull/' || CAST($3 AS TEXT) || '/merge') OR ref_name=$4)) revisions WHERE newest=1 ORDER BY id DESC LIMIT 101"))
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT * FROM (SELECT {ANALYSIS_COLUMNS},ROW_NUMBER() OVER(PARTITION BY tool_key,category ORDER BY upload_sequence DESC,id DESC) AS newest FROM code_scanning_analyses a WHERE repo_id=$1 AND commit_sha=$2 AND (ref_name IN ('refs/pull/' || CAST($3 AS TEXT) || '/head','refs/pull/' || CAST($3 AS TEXT) || '/merge') OR ref_name=$4)) revisions WHERE newest=1 ORDER BY id DESC LIMIT 101")))
         .bind(repo).bind(head).bind(number).bind(branch).fetch_all(pool).await?)
 }
 

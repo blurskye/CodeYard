@@ -12,9 +12,9 @@ pub async fn user_repo_access_in_transaction(
     // Projection only, not a write permit. All contributions and governance
     // share one statement snapshot; suspended orgs cap even nonmember grants.
     // Collaborator levels are 1..=5; Owner comes only from scoped ownership.
-    let level: Option<i16> = sqlx::query_scalar(&format!(
+    let level: Option<i16> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT ({USER_REPO_ACCESS_SQL}) FROM repositories r JOIN users u ON u.id = $1 WHERE r.id = $2"
-    ))
+    )))
     .bind(user_id)
     .bind(repo_id)
     .fetch_optional(connection)
@@ -107,10 +107,10 @@ pub async fn lock_readable_repository_in_transaction(
     {
         return Ok(false);
     }
-    Ok(sqlx::query_scalar(&format!(
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=$1 WHERE r.id=$2 AND {})",
         readable_condition()
-    ))
+    )))
     .bind(user_id)
     .bind(repo_id)
     .fetch_one(connection)
@@ -223,7 +223,7 @@ pub async fn lock_user_repo_access_in_transaction(
         (RepositoryRowLock::Exclusive, true) => "SELECT id FROM repositories WHERE id=$1 AND NOT is_stub AND owner_kind=$2 AND owner_user_id IS NOT DISTINCT FROM $3 AND owner_org_id IS NOT DISTINCT FROM $4 FOR UPDATE",
         (RepositoryRowLock::Exclusive, false) => "SELECT id FROM repositories WHERE id=$1 AND NOT is_stub AND owner_kind=$2 AND owner_user_id IS NOT DISTINCT FROM $3 AND owner_org_id IS NOT DISTINCT FROM $4 AND NOT is_archived FOR UPDATE",
     };
-    if sqlx::query_scalar::<_, i64>(repository_sql)
+    if sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(repository_sql))
         .bind(repo_id)
         .bind(&owner_kind)
         .bind(owner_user_id)

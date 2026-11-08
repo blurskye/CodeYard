@@ -669,7 +669,7 @@ async fn directory_search_comments_are_bounded_and_pending_reviews_stay_private(
                 .execute(&database.raw)
                 .await
                 .unwrap();
-            sqlx::query(&change)
+            sqlx::query(sqlx::AssertSqlSafe(change.as_str()))
                 .bind(id)
                 .execute(&database.raw)
                 .await
