@@ -178,10 +178,8 @@ async fn cluster_backup_cli_restores_into_an_empty_cluster_and_resumes_an_interr
     use codeyard_storage::{ObjectStore, Upload};
     use sha2::Digest;
     use std::sync::Arc;
-    // The builder helper owns this whole disposable server. Database names are generated here.
-    std::env::var("GITSERV_TEST_POSTGRES_MARKER")
-        .expect("builder-test.sh owns the PostgreSQL fixture");
-    let admin_url = std::env::var("GITSERV_TEST_DATABASE_URL").unwrap();
+    // Restore only into databases created below, never over the configured test database.
+    let admin_url = crate::support::native_database::postgres_url();
     let admin = sqlx::postgres::PgPoolOptions::new()
         .max_connections(1)
         .connect(&admin_url)

@@ -104,6 +104,20 @@ impl NativeDatabase {
     }
 }
 
+pub fn postgres_url() -> String {
+    let url = std::env::var("GITSERV_TEST_DATABASE_URL")
+        .expect("set GITSERV_TEST_DATABASE_URL to a PostgreSQL URL");
+    let parsed = url::Url::parse(&url).expect("fixture URL");
+    assert!(
+        matches!(parsed.scheme(), "postgres" | "postgresql")
+            && parsed.path() == "/gitserv_test"
+            && parsed.query().is_none()
+            && parsed.fragment().is_none(),
+        "tests only run against a database named gitserv_test"
+    );
+    url
+}
+
 pub struct PostgresDatabase {
     pub pool: codeyard_database::DbPool,
     pub raw: codeyard_database::pool::PgPool,
@@ -134,16 +148,7 @@ impl PostgresDatabase {
     }
 
     pub async fn unmigrated() -> Self {
-        let url = std::env::var("GITSERV_TEST_DATABASE_URL")
-            .expect("set GITSERV_TEST_DATABASE_URL to a PostgreSQL URL");
-        let parsed = url::Url::parse(&url).expect("fixture URL");
-        assert!(
-            matches!(parsed.scheme(), "postgres" | "postgresql")
-                && parsed.path() == "/gitserv_test"
-                && parsed.query().is_none()
-                && parsed.fragment().is_none(),
-            "tests only run against a database named gitserv_test"
-        );
+        let url = postgres_url();
         let admin = PgPoolOptions::new()
             .max_connections(1)
             .connect(&url)

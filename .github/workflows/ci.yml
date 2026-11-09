@@ -99,9 +99,14 @@ jobs:
           free -m
           df -h /
       - name: Install test dependencies
+        # Backup/restore needs client tools matching the PostgreSQL 18 service.
         run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl --proto '=https' --tlsv1.2 -fsSLo /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends libfaketime
+          sudo apt-get install --yes --no-install-recommends libfaketime postgresql-client-18
+          echo /usr/lib/postgresql/18/bin >> "$GITHUB_PATH"
           library=$(dpkg -L libfaketime | grep '/libfaketime\.so\.1$')
           test -f "$library"
           echo "CODEYARD_TEST_FAKETIME_LIBRARY=$library" >> "$GITHUB_ENV"
