@@ -120,4 +120,4 @@ jobs:
           GITSERV_TEST_OPENSSH_HELPER: ${{ github.workspace }}/target/debug/codeyard
           CODEYARD_ACTIONS_BIN: ${{ github.workspace }}/target/debug/codeyard-actions
           E2E_ACT_BINARY: ${{ runner.temp }}/bin/act
-        run: cargo test --locked --workspace --all-targets
+        run: cargo test --locked --workspace --all-targets --no-fail-fast

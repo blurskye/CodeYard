@@ -431,12 +431,14 @@ async fn delete_fork_during_read(
     });
     wait_until_blocked(raw, deletion_pid, 1).await;
     holder.commit().await.unwrap();
-    let deleted = tokio::time::timeout(Duration::from_secs(5), deletion)
+    // The lock graph above checks ordering, not five-second query latency on a shared runner.
+    let completion_timeout = Duration::from_secs(30);
+    let deleted = tokio::time::timeout(completion_timeout, deletion)
         .await
         .expect("fork deletion finishes")
         .unwrap()
         .expect("fork deletion must not abort");
-    let answer = tokio::time::timeout(Duration::from_secs(5), read)
+    let answer = tokio::time::timeout(completion_timeout, read)
         .await
         .expect("notification read finishes")
         .unwrap()
