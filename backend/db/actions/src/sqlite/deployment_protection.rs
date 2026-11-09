@@ -270,10 +270,10 @@ pub async fn review(
     let decision: Option<String> = sqlx::query_scalar("SELECT state FROM deployment_protection_gates WHERE run_id=?1 AND app_id=?2 AND environment_key=?3")
         .bind(id).bind(app).bind(input.environment_name.to_lowercase()).fetch_optional(&mut *tx).await?;
     let decision = decision.ok_or(Refusal::NotFound)?;
-    anyhow::ensure!(
-        decision == "pending" || input.state == Some(decision.as_str()),
-        Refusal::Conflict
-    );
+    if decision != "pending" && input.state != Some(decision.as_str()) {
+        tx.rollback().await?;
+        return Err(Refusal::Conflict.into());
+    }
     sqlx::query("UPDATE deployment_protection_gates SET state=COALESCE(?4,state),comment=COALESCE(?5,comment) WHERE run_id=?1 AND app_id=?2 AND environment_key=?3")
         .bind(id).bind(app).bind(input.environment_name.to_lowercase()).bind(input.state).bind(input.comment).execute(&mut *tx).await?;
     tx.commit().await?;

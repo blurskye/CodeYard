@@ -3203,6 +3203,12 @@ async fn startup_does_not_wait_for_a_podman_socket_that_never_answers() {
 
 #[tokio::test]
 async fn cleanup_keeps_heartbeating_and_a_recovered_slot_claims_more_work() {
+    let _logging = tracing::subscriber::set_default(
+        tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::WARN)
+            .with_test_writer()
+            .finish(),
+    );
     let fixture = ci_fixture().await;
     let socket = fixture.root.path().join("podman.sock");
     let listener = tokio::net::UnixListener::bind(&socket).unwrap();
@@ -3292,7 +3298,7 @@ async fn cleanup_keeps_heartbeating_and_a_recovered_slot_claims_more_work() {
     // A heartbeat comes every 10 s, so any heartbeat newer than ten minutes shows that cleanup
     // kept beating, and a sweep for runs ten minutes stale must leave the run alone. Windows of a
     // few seconds would only measure how fast a loaded runner gets from one query to the next.
-    tokio::time::timeout(Duration::from_secs(120), async {
+    let heartbeat = tokio::time::timeout(Duration::from_secs(120), async {
         loop {
             let recent: bool = sqlx::query_scalar(
                 "SELECT heartbeat_at > NOW() - INTERVAL '10 minutes' FROM ci_runs WHERE id=$1",
@@ -3307,8 +3313,18 @@ async fn cleanup_keeps_heartbeating_and_a_recovered_slot_claims_more_work() {
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
     })
-    .await
-    .unwrap();
+    .await;
+    assert!(
+        heartbeat.is_ok(),
+        "cleanup did not renew its heartbeat: {:?}",
+        sqlx::query_as::<_, (i64, String, Option<String>, Option<String>)>(
+            "SELECT id, status, heartbeat_at::text, worker FROM ci_runs WHERE id=ANY($1) ORDER BY id",
+        )
+        .bind(&[first.id, second.id][..])
+        .fetch_all(pg)
+        .await
+        .unwrap()
+    );
     codeyard_db_actions::ci::fail_stale_ci_runs(fixture.pool(), 600)
         .await
         .unwrap();

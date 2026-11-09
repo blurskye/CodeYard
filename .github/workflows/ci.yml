@@ -13,6 +13,8 @@ env:
   CARGO_TERM_COLOR: always
   # Smaller debug info and no incremental data make the large crate build faster and use less disk.
   CARGO_INCREMENTAL: 0
+  # Bound concurrent compiler memory instead of reserving most of the disk for swap.
+  CARGO_BUILD_JOBS: 2
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
   CARGO_PROFILE_TEST_DEBUG: line-tables-only
   # Unoptimized async test futures need the same stack budget as native test servers.
@@ -75,6 +77,8 @@ jobs:
           rustc --version
       - name: Cache dependencies
         uses: Swatinem/rust-cache@aa7c1c80a07a27a84c0aa76d0cef0aad3830e330 # v2.7.8
+        with:
+          cache-on-failure: true
       - name: Free disk space
         # The runner was stopped while Clippy checked the large crate, which points to running out
         # of memory. Remove the preinstalled tools this project does not use, to make room for swap
@@ -88,12 +92,33 @@ jobs:
         run: |
           sudo swapoff -a
           sudo rm -f /mnt/swapfile
-          sudo fallocate -l 70G /swapfile
+          sudo fallocate -l 16G /swapfile
           sudo chmod 600 /swapfile
           sudo mkswap /swapfile
           sudo swapon /swapfile
           free -m
           df -h /
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends libfaketime
+          library=$(dpkg -L libfaketime | grep '/libfaketime\.so\.1$')
+          test -f "$library"
+          echo "CODEYARD_TEST_FAKETIME_LIBRARY=$library" >> "$GITHUB_ENV"
+      - name: Allow the full-disk fixture's user namespace
+        # Give only this immutable test executable namespace permission; keep the host policy intact.
+        run: |
+          if [[ -f /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]]; then
+            sudo install -Dm755 "$(command -v unshare)" /usr/local/lib/codeyard-ci/unshare
+            cat > "$RUNNER_TEMP/codeyard-userns.apparmor" <<'PROFILE'
+          abi <abi/4.0>,
+          profile codeyard-test-unshare /usr/local/lib/codeyard-ci/unshare flags=(unconfined) {
+            userns,
+          }
+          PROFILE
+            sudo apparmor_parser -r "$RUNNER_TEMP/codeyard-userns.apparmor"
+            echo /usr/local/lib/codeyard-ci >> "$GITHUB_PATH"
+          fi
       - name: Check formatting
         run: cargo fmt --all -- --check
       - name: Clippy
@@ -120,4 +145,6 @@ jobs:
           GITSERV_TEST_OPENSSH_HELPER: ${{ github.workspace }}/target/debug/codeyard
           CODEYARD_ACTIONS_BIN: ${{ github.workspace }}/target/debug/codeyard-actions
           E2E_ACT_BINARY: ${{ runner.temp }}/bin/act
-        run: cargo test --locked --workspace --all-targets --no-fail-fast
+        run: |
+          df -h /
+          cargo test --locked --workspace --all-targets --no-fail-fast

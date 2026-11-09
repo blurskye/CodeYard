@@ -465,9 +465,26 @@ async fn contract(pg: bool) {
     .is_none());
     decide(&f, token, &run, Some("approved")).await.unwrap();
     decide(&f, token, &run, Some("approved")).await.unwrap();
-    refused(decide(&f, token, &run, Some("rejected")).await, |error| {
-        matches!(error, Refusal::Conflict)
-    });
+    let mut probe = if pg {
+        Some(f.pg().acquire().await.unwrap())
+    } else {
+        None
+    };
+    for _ in 0..100 {
+        refused(decide(&f, token, &run, Some("rejected")).await, |error| {
+            matches!(error, Refusal::Conflict)
+        });
+        if let Some(connection) = &mut probe {
+            let unlocked: i64 =
+                sqlx::query_scalar("SELECT id FROM ci_runs WHERE id=$1 FOR UPDATE NOWAIT")
+                    .bind(run.id)
+                    .fetch_one(&mut **connection)
+                    .await
+                    .expect("a refused review releases the run row before returning");
+            assert_eq!(unlocked, run.id);
+        }
+    }
+    drop(probe);
     assert_eq!(
         codeyard_db_actions::ci::claim_ci_run(
             f.pool(),
