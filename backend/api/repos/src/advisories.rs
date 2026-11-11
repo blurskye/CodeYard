@@ -319,7 +319,7 @@ async fn submit(
             "save"=>{codeyard_db_security::advisories::update(&ctx.state.pool,authority.clone(),loaded.repository.id,&ghsa,&value).await?;}
             "publish"|"close"|"draft"=>{let state=match op.as_str(){"publish"=>"published","close"=>"closed",_=>"draft"};codeyard_db_security::advisories::update(&ctx.state.pool,authority.clone(),loaded.repository.id,&ghsa,&json!({"state":state})).await?;}
             "cve"=>codeyard_db_security::advisories::request_cve(&ctx.state.pool,authority.clone(),loaded.repository.id,&ghsa).await?,
-            "fork"=>{codeyard_repos_pulls::repositories::advisories::private_fork(&ctx.state,authority.clone(),&loaded.repository,&ghsa).await?;}
+            "fork"=>{codeyard_repositories::repositories::advisories::private_fork(&ctx.state,authority.clone(),&loaded.repository,&ghsa).await?;}
             _=>anyhow::bail!(codeyard_types::advisories::Refusal::Invalid),
         }
         Ok::<_,anyhow::Error>(ghsa.clone())

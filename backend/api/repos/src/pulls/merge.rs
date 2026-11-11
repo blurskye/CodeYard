@@ -22,8 +22,8 @@ use codeyard_api_http::shared::repos::forms::field;
 use codeyard_app::app::AppState;
 use codeyard_ci::pull_requests::branches::refresh_open_pull_request;
 use codeyard_git_storage::store_types::MergeMethod;
-use codeyard_repos_pulls::repositories::pull_requests::merge::MergeRequest;
-use codeyard_repos_pulls::repositories::pull_requests::merge::MergeResponse;
+use codeyard_repositories::repositories::pull_requests::merge::MergeRequest;
+use codeyard_repositories::repositories::pull_requests::merge::MergeResponse;
 use codeyard_webui::pages::repos::issues::DetailDraft;
 use codeyard_webui::pages::repos::issues::Kind;
 use std::collections::HashMap;
@@ -36,7 +36,7 @@ pub async fn merge_pull_request(
     Json(request): Json<MergeRequest>,
 ) -> Result<Json<MergeResponse>, (StatusCode, Json<ApiError>)> {
     let actor = get_current_user(&state.pool, &headers).await?;
-    codeyard_repos_pulls::repositories::pull_requests::merge::merge_pull_request(
+    codeyard_repositories::repositories::pull_requests::merge::merge_pull_request(
         &state,
         codeyard_database::queries::credentials::Actor::from((
             actor.id,
@@ -150,11 +150,11 @@ pub(crate) async fn native_merge(
     {
         return render_detail(&ctx, &repo, Kind::Pull, &value, &draft, Some("A branch changed since this pull request was created. This comparison is out of date; merge was not attempted."), StatusCode::CONFLICT).await;
     }
-    match codeyard_repos_pulls::repositories::pull_requests::merge::merge_pull_request_checked(
+    match codeyard_repositories::repositories::pull_requests::merge::merge_pull_request_checked(
         &ctx.state,
         ctx.database_actor(ctx.require_user()?.id),
         (owner, name, number),
-        codeyard_repos_pulls::repositories::pull_requests::merge::MergeRequest {
+        codeyard_repositories::repositories::pull_requests::merge::MergeRequest {
             expected_head: field(&form, "expected_head"),
             expected_base: field(&form, "expected_base"),
             expected_base_branch: form.get("expected_base_branch").cloned(),

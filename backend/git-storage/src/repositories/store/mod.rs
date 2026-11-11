@@ -7,6 +7,12 @@
 //! The one exception is [`RepoStore::local_path_for_spawning_git`], used by the
 //! host OpenSSH gateway.
 use crate::context::NodeContext;
+use crate::repositories::editor::CommitIdentities;
+use crate::repositories::editor::FileWrite;
+use crate::repositories::editor::PreparedFile;
+use crate::repositories::editor::UploadWrite;
+use crate::repositories::gists::GistCredential;
+use crate::repositories::protection::WriteVia;
 use crate::store_types::AsyncMergePublication;
 use crate::store_types::BlobBytes;
 use crate::store_types::BranchMergePublication;
@@ -51,12 +57,6 @@ use codeyard_git::RepoInfo;
 use codeyard_git::TagInfo;
 use codeyard_git::TreeEntry;
 use codeyard_git::WeekChanges;
-use codeyard_repos::editor::CommitIdentities;
-use codeyard_repos::editor::FileWrite;
-use codeyard_repos::editor::PreparedFile;
-use codeyard_repos::editor::UploadWrite;
-use codeyard_repos::gists::GistCredential;
-use codeyard_repos::protection::WriteVia;
 use codeyard_storage::range::ByteRange as BlobRange;
 use std::collections::HashMap;
 use std::path::Path;
@@ -417,7 +417,7 @@ impl RepoStore {
         pool: &codeyard_database::DbPool,
         repo_id: i64,
         actor: i64,
-        import: codeyard_repos::imports::GitImport,
+        import: crate::repositories::imports::GitImport,
         pack: Vec<u8>,
     ) -> Result<(), RepoError> {
         match &self.0 {

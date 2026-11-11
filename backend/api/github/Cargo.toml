@@ -6,12 +6,11 @@ license = "LGPL-3.0-or-later"
 
 [dependencies]
 codeyard-cache.workspace = true
-codeyard-repos-pulls.workspace = true
+codeyard-repositories.workspace = true
 codeyard-git-storage.workspace = true
 codeyard-webhooks.workspace = true
 codeyard-nodes.workspace = true
 codeyard-ci.workspace = true
-codeyard-repos.workspace = true
 codeyard-storage.workspace = true
 anyhow.workspace = true
 axum.workspace = true

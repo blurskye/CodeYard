@@ -125,7 +125,7 @@ impl codeyard_git_storage::request_context::RequestContext for AppState {
     }
 }
 
-impl codeyard_repos_pulls::services::RepositoryServices for AppState {
+impl codeyard_repositories::services::RepositoryServices for AppState {
     fn secret_encryptor(
         &self,
     ) -> &Option<std::sync::Arc<codeyard_security::secrets::SecretEncryptor>> {

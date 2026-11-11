@@ -832,10 +832,10 @@ async fn pull_request_head_synchronize_hook(pg: bool, url: &str) {
 }
 
 async fn server_ref_events(pg: bool, url: &str) {
+    use codeyard_git_storage::repositories::editor::FileWrite;
     use codeyard_git_storage::repositories::store::repo_store;
     use codeyard_git_storage::store_types::MergeMethod;
     use codeyard_git_storage::store_types::MergeRequest;
-    use codeyard_repos::editor::FileWrite;
     let (database, _root, alice, _) = setup(pg).await;
     let repository =
         codeyard_db_repos::repositories::records::get_repository(database.pool(), "alice", "proj")
@@ -969,9 +969,9 @@ async fn server_ref_events(pg: bool, url: &str) {
 }
 
 async fn repository_creation_is_not_a_ref_event(pg: bool, url: &str) {
+    use codeyard_git_storage::repositories::editor::FileWrite;
     use codeyard_git_storage::repositories::lifecycle;
     use codeyard_git_storage::repositories::store::repo_store;
-    use codeyard_repos::editor::FileWrite;
     let mut database = Database::new(pg).await;
     database.complete_setup().await;
     let actor = database.actor("creator").await;

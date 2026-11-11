@@ -395,7 +395,7 @@ async fn live_authority(pg: bool) {
         .await
         .unwrap()
         .unwrap();
-    let key = codeyard_repos::deploy_keys::add_key(
+    let key = codeyard_git_storage::repositories::deploy_keys::add_key(
         pool,
         &administrator,
         &bob.session,
@@ -407,16 +407,21 @@ async fn live_authority(pg: bool) {
     .await
     .unwrap();
     for write in [false, true] {
-        let (_, access) = codeyard_repos::deploy_keys::authorize(pool, key.id, &repository, write)
-            .await
-            .unwrap();
+        let (_, access) = codeyard_git_storage::repositories::deploy_keys::authorize(
+            pool,
+            key.id,
+            &repository,
+            write,
+        )
+        .await
+        .unwrap();
         assert_eq!(access, codeyard_database::models::AccessLevel::Write);
     }
     codeyard_db_identity::users::sessions::delete_session(pool, &alice.session)
         .await
         .unwrap();
     assert!(matches!(
-        codeyard_repos::deploy_keys::add_key(
+        codeyard_git_storage::repositories::deploy_keys::add_key(
             pool,
             &owner,
             &alice.session,
@@ -440,7 +445,7 @@ async fn live_authority(pg: bool) {
     database
         .execute("UPDATE users SET is_admin=FALSE WHERE id=$1", &[bob_id])
         .await;
-    assert!(codeyard_repos::deploy_keys::remove_key(
+    assert!(codeyard_git_storage::repositories::deploy_keys::remove_key(
         pool,
         &administrator,
         &bob.session,
@@ -483,9 +488,14 @@ async fn live_authority(pg: bool) {
         .await;
     let organization_repository = database.repository(repository.id).await;
     assert!(
-        codeyard_repos::deploy_keys::authorize(pool, key.id, &organization_repository, false)
-            .await
-            .is_err(),
+        codeyard_git_storage::repositories::deploy_keys::authorize(
+            pool,
+            key.id,
+            &organization_repository,
+            false
+        )
+        .await
+        .is_err(),
         "personal site-admin authority does not extend to organizations"
     );
     let late = codeyard_db_identity::deploy_keys::NewDeployKey {

@@ -66,7 +66,7 @@ async fn respond(
     if download {
         // The same typed document as the REST export, so submitted relationships survive.
         let snapshots =
-            match codeyard_repos_pulls::repositories::dependency_graph::pinned_snapshots(
+            match codeyard_repositories::repositories::dependency_graph::pinned_snapshots(
                 &ctx.state,
                 &reader,
                 &loaded.repository,
@@ -90,7 +90,7 @@ async fn respond(
             codeyard_types::dependency_graph::sbom(&format!("{owner}/{name}"), &snapshots);
         return Json(document["sbom"].take()).into_response();
     }
-    let (sha, packages) = match codeyard_repos_pulls::repositories::dependency_graph::inventory(
+    let (sha, packages) = match codeyard_repositories::repositories::dependency_graph::inventory(
         &ctx.state,
         &reader,
         &loaded.repository,

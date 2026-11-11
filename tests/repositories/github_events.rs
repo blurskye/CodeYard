@@ -11,8 +11,8 @@ use codeyard_git_storage::repositories::lifecycle;
 use codeyard_identity::tokens;
 use codeyard_identity::tokens::TokenInput;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
-use codeyard_repos_pulls::repositories::engagement;
-use codeyard_repos_pulls::repositories::engagement::Engagement;
+use codeyard_repositories::repositories::engagement;
+use codeyard_repositories::repositories::engagement::Engagement;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 

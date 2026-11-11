@@ -10,8 +10,8 @@ use codeyard_ci::config::CiConfig;
 use codeyard_database::queries::users::accounts::AccountCredential;
 use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
 use codeyard_db_repos::repositories::creation::RepositoryTarget;
+use codeyard_git_storage::repositories::gists::GistCredential;
 use codeyard_git_storage::repositories::lifecycle;
-use codeyard_repos::gists::GistCredential;
 use codeyard_storage::ObjectStore;
 use std::{collections::BTreeMap, sync::Arc};
 

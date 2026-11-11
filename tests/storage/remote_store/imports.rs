@@ -1,7 +1,7 @@
 //! Source imports are publishers, not a way to import somebody else's server attestations.
 use super::*;
-use codeyard_repos::imports::GitImport;
-use codeyard_repos::imports::ImportCredential;
+use codeyard_git_storage::repositories::imports::GitImport;
+use codeyard_git_storage::repositories::imports::ImportCredential;
 
 #[tokio::test]
 async fn remote_imports_attest_the_importer_and_reject_foreign_provenance() {

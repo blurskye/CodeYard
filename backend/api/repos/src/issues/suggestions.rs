@@ -363,7 +363,7 @@ pub(crate) async fn native_change(
             let id = field(&form, "suggestion_id")
                 .parse()
                 .map_err(|_| ctx.error(StatusCode::UNPROCESSABLE_ENTITY, "Invalid suggestion."))?;
-            codeyard_repos_pulls::issues::suggestions::resolve(
+            codeyard_repositories::issues::suggestions::resolve(
                 &ctx.state.pool,
                 &ctx.state.notification_broadcaster,
                 actor,

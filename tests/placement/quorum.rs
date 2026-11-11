@@ -426,7 +426,7 @@ async fn editor_uses_both_stores(pool: &DbPool) {
             pool,
             f.repo,
             f.owner,
-            &codeyard_repos::editor::FileWrite {
+            &codeyard_git_storage::repositories::editor::FileWrite {
                 branch: "main".into(),
                 path: "README.md".into(),
                 message: "save file".into(),

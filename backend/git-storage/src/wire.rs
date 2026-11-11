@@ -1,3 +1,8 @@
+use crate::repositories::editor::FileWrite;
+use crate::repositories::editor::PreparedFile;
+use crate::repositories::editor::UploadWrite;
+use crate::repositories::editor::MAX_EDITOR_BYTES;
+use crate::repositories::editor::MAX_UPLOAD_TOTAL_BYTES;
 use crate::store_types::AsyncMergePublication;
 use crate::store_types::GitService;
 use crate::store_types::GitSession;
@@ -10,11 +15,6 @@ use anyhow::Result;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
 use codeyard_git::CommitFilter;
-use codeyard_repos::editor::FileWrite;
-use codeyard_repos::editor::PreparedFile;
-use codeyard_repos::editor::UploadWrite;
-use codeyard_repos::editor::MAX_EDITOR_BYTES;
-use codeyard_repos::editor::MAX_UPLOAD_TOTAL_BYTES;
 use codeyard_storage::range::ByteRange as BlobRange;
 use serde::Deserialize;
 use serde::Serialize;
@@ -165,7 +165,7 @@ pub enum Operation {
         limit: usize,
     },
     GistWrite {
-        credential: codeyard_repos::gists::GistCredential,
+        credential: crate::repositories::gists::GistCredential,
     },
     /// Fetches a commit of another repository on this node into a pull ref.
     FetchPullHead {
@@ -239,7 +239,7 @@ pub enum Operation {
         token: Option<i64>,
     },
     ImportGit {
-        import: codeyard_repos::imports::GitImport,
+        import: crate::repositories::imports::GitImport,
     },
     CancelImport,
     LockMigration {
@@ -500,7 +500,7 @@ pub enum Operation {
         author: String,
         email: String,
         #[serde(default)]
-        identities: codeyard_repos::editor::CommitIdentities,
+        identities: crate::repositories::editor::CommitIdentities,
     },
     #[serde(rename = "PublishFileWithAuthority", alias = "PublishFile")]
     PublishFile {
@@ -819,7 +819,7 @@ pub fn operation_body_limit(operation: &Operation) -> usize {
         } => codeyard_git::objects::MAX_BLOB_WRITE_BYTES,
         Operation::PrepareUpload { .. } => MAX_UPLOAD_TOTAL_BYTES,
         Operation::GistWrite { .. } => codeyard_git::gist_types::MAX_GIST_REQUEST_BYTES,
-        Operation::ImportGit { .. } => codeyard_repos::imports::MAX_IMPORT_PACK_BYTES,
+        Operation::ImportGit { .. } => crate::repositories::imports::MAX_IMPORT_PACK_BYTES,
         _ => 0,
     }
 }

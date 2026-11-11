@@ -6,11 +6,10 @@ license = "LGPL-3.0-or-later"
 
 [dependencies]
 codeyard-router.workspace = true
-codeyard-repos-pulls.workspace = true
+codeyard-repositories.workspace = true
 codeyard-git-storage.workspace = true
 codeyard-webhooks.workspace = true
 codeyard-ci.workspace = true
-codeyard-repos.workspace = true
 codeyard-storage.workspace = true
 codeyard-db-orgs.workspace = true
 subtle.workspace = true

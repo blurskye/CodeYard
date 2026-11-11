@@ -374,7 +374,7 @@ impl ReceiveCredential {
             }
             Self::DeployKey(id) => {
                 let admitted =
-                    codeyard_repos::deploy_keys::authorize(pool, id, repo, write).await?;
+                    crate::repositories::deploy_keys::authorize(pool, id, repo, write).await?;
                 anyhow::ensure!(
                     !write || !codeyard_db_repos::repository_exports::locked(pool, repo.id).await?,
                     CredentialRefusal::Migration
@@ -583,8 +583,10 @@ async fn maintainer_edits(
             else {
                 continue;
             };
-            if codeyard_repos::maintainer_edit::can_update_head(pool, actor, &base, head, &pull)
-                .await?
+            if crate::repositories::maintainer_edit::can_update_head(
+                pool, actor, &base, head, &pull,
+            )
+            .await?
             {
                 granted.insert(pull.head_branch);
                 if done(&granted) {
@@ -637,7 +639,7 @@ async fn maintainer_edits(
                 && grantor.is_some_and(|owner| !owner.is_banned && !owner.must_change_password)
                 && codeyard_db_repos::pull_requests::cells::publisher(pool, &binding).await?
                     == Some(grant.publisher_id)
-                && codeyard_repos::maintainer_edit::publication_authorized(
+                && crate::repositories::maintainer_edit::publication_authorized(
                     pool,
                     Some(grant.publisher_id),
                     head,

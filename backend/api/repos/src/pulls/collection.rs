@@ -13,7 +13,7 @@ use codeyard_api_http::error::ApiError;
 use codeyard_api_http::session::get_current_user;
 use codeyard_api_http::shared::user::responses::PublicUserResponse;
 use codeyard_app::app::AppState;
-use codeyard_repos_pulls::repositories::pull_requests::mutations::CreatePullRequestRequest;
+use codeyard_repositories::repositories::pull_requests::mutations::CreatePullRequestRequest;
 use serde::Deserialize;
 use std::sync::Arc;
 
@@ -36,7 +36,7 @@ pub async fn create_pull_request(
             .admission;
     }
     let pull_request =
-        codeyard_repos_pulls::repositories::pull_requests::mutations::create_pull_request(
+        codeyard_repositories::repositories::pull_requests::mutations::create_pull_request(
             &state.pool,
             &state.ci_runs,
             &state.notification_broadcaster,

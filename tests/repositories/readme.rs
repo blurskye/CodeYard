@@ -10,10 +10,10 @@ use axum::{
     http::{Request, StatusCode},
 };
 
+use codeyard_git_storage::repositories::editor::FileWrite;
 use codeyard_git_storage::repositories::lifecycle::provision;
 use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_git_storage::repositories::store::RepoStore;
-use codeyard_repos::editor::FileWrite;
 use codeyard_webui::app::Page;
 use codeyard_webui::app::PageEnvelope;
 use codeyard_webui::pages::repos as view;

@@ -101,7 +101,8 @@ pub async fn request_code_owner_reviews(
     if pull.state != "open" || pull.is_draft {
         return;
     }
-    let base_sha = match codeyard_repos::stacks::merge_target(pool, pull).await {
+    let base_sha = match codeyard_git_storage::repositories::stacks::merge_target(pool, pull).await
+    {
         Ok((_, base_sha, _)) => base_sha,
         Err(error) => {
             tracing::warn!(pull_request_id = pull.id, %error, "code owner target unavailable");

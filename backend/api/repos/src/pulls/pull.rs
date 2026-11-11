@@ -11,7 +11,7 @@ use codeyard_api_http::error::ApiFailure;
 use codeyard_api_http::session::get_current_user;
 use codeyard_api_http::shared::user::responses::PublicUserResponse as UserResponse;
 use codeyard_app::app::AppState;
-use codeyard_repos_pulls::repositories::pull_requests::mutations::UpdatePullRequestRequest;
+use codeyard_repositories::repositories::pull_requests::mutations::UpdatePullRequestRequest;
 use serde::Serialize;
 use std::sync::Arc;
 
@@ -25,7 +25,7 @@ pub async fn update_pull_request(
     let repository =
         crate::access::readable_repository(&state.pool, &owner, &repo, &headers).await?;
     let pull_request =
-        codeyard_repos_pulls::repositories::pull_requests::mutations::update_pull_request(
+        codeyard_repositories::repositories::pull_requests::mutations::update_pull_request(
             &state.pool,
             &state.ci_runs,
             &state.notification_broadcaster,
@@ -131,7 +131,7 @@ pub(crate) async fn detail_response(
         codeyard_db_identity::users::accounts::get_user_by_id(pool, pull_request.author_id)
             .await
             .map_err(|_| storage_unavailable())?;
-    let stack = codeyard_repos::stacks::stack_of(pool, &pull_request)
+    let stack = codeyard_git_storage::repositories::stacks::stack_of(pool, &pull_request)
         .await
         .map_err(|_| storage_unavailable())?;
     let stack = stack.map(|stack| {

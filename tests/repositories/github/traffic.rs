@@ -413,7 +413,7 @@ async fn traffic_contract(pg: bool) {
     f.execute("INSERT INTO repository_traffic_counts(repo_id,day,kind,visitor,path_hash,path,title,referrer,count,last_seen) SELECT repo_id,'2000-01-01',kind,visitor,path_hash,path,title,referrer,count,last_seen FROM repository_traffic_counts WHERE repo_id=$1 LIMIT 1",&[repo.id]).await;
     assert_eq!(views(&router, &reader).await["count"], 19);
     assert!(
-        codeyard_repos::traffic::purge_expired(f.pool())
+        codeyard_git_storage::repositories::traffic::purge_expired(f.pool())
             .await
             .unwrap()
             >= 3

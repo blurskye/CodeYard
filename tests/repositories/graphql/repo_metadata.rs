@@ -48,7 +48,7 @@ async fn contract(pg: bool) {
         ("main.rs", "fn main() {}\n"),
         ("SECURITY.md", "Report a vulnerability privately.\n"),
         ("CODE_OF_CONDUCT.md", "# Contributor Covenant\n"),
-        ("LICENSE", codeyard_repos::templates::license("MIT").unwrap().text),
+        ("LICENSE", codeyard_git_storage::repositories::templates::license("MIT").unwrap().text),
         (".github/ISSUE_TEMPLATE/bug.md", "---\nname: Bug\ntitle: Broken\nabout: Report a bug\n---\nSteps\n"),
         (".github/ISSUE_TEMPLATE/config.yml", "blank_issues_enabled: false\ncontact_links:\n  - name: Help\n    about: Ask for help\n    url: https://example.test/help\n"),
         (".github/PULL_REQUEST_TEMPLATE.md", "Explain the change.\n"),

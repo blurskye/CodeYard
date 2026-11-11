@@ -64,7 +64,7 @@ async fn list(
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, false).await?;
     let auth = auth.ok_or_else(codeyard_identity::github_auth::required)?;
-    let keys = codeyard_repos::deploy_keys::list_keys(
+    let keys = codeyard_git_storage::repositories::deploy_keys::list_keys(
         &state.pool,
         &auth.user,
         &repo,
@@ -88,7 +88,7 @@ async fn read(
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, false).await?;
     let auth = auth.ok_or_else(codeyard_identity::github_auth::required)?;
-    let keys = codeyard_repos::deploy_keys::list_keys(
+    let keys = codeyard_git_storage::repositories::deploy_keys::list_keys(
         &state.pool,
         &auth.user,
         &repo,
@@ -135,7 +135,7 @@ async fn create(
                 comment
             }
         });
-    let key = codeyard_repos::deploy_keys::add_key(
+    let key = codeyard_git_storage::repositories::deploy_keys::add_key(
         &state.pool,
         &auth.user,
         auth.owned_credential(),
@@ -160,7 +160,7 @@ async fn remove(
 ) -> Result<StatusCode> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
     let auth = auth.ok_or_else(codeyard_identity::github_auth::required)?;
-    codeyard_repos::deploy_keys::remove_key(
+    codeyard_git_storage::repositories::deploy_keys::remove_key(
         &state.pool,
         &auth.user,
         auth.owned_credential(),

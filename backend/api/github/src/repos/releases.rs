@@ -76,7 +76,7 @@ pub(crate) async fn document(
     state: &AppState,
     owner: &str,
     name: &str,
-    detail: &codeyard_repos_pulls::repositories::releases::ReleaseDetail,
+    detail: &codeyard_repositories::repositories::releases::ReleaseDetail,
 ) -> Result<Value> {
     let release = &detail.release.release;
     let author = codeyard_webhooks::payloads::Person {
@@ -127,7 +127,7 @@ async fn list(
     let (repo, auth) = repository(&state, &headers, &owner, &name, false).await?;
     let viewer = auth.as_ref().map(|auth| auth.user.id);
     let (offset, limit) = page.window()?;
-    let listing = codeyard_repos_pulls::repositories::releases::list(
+    let listing = codeyard_repositories::repositories::releases::list(
         &state.pool,
         viewer,
         repo.id,
@@ -143,7 +143,7 @@ async fn list(
     }
     for row in listing.releases {
         let assets = grouped.remove(&row.release.id).unwrap_or_default();
-        let detail = codeyard_repos_pulls::repositories::releases::ReleaseDetail {
+        let detail = codeyard_repositories::repositories::releases::ReleaseDetail {
             repository: listing.repository.clone(),
             can_write: listing.can_write,
             release: row,
@@ -163,7 +163,7 @@ async fn get_one(
     let (repo, auth) = repository(&state, &headers, owner, name, false).await?;
     let viewer = auth.as_ref().map(|auth| auth.user.id);
     let detail = if let Some(tag) = params.get("tag") {
-        codeyard_repos_pulls::repositories::releases::detail_by_tag(
+        codeyard_repositories::repositories::releases::detail_by_tag(
             &state.pool,
             viewer,
             repo.id,
@@ -181,8 +181,13 @@ async fn get_one(
                     .id
             }
         };
-        codeyard_repos_pulls::repositories::releases::detail_by_id(&state.pool, viewer, repo.id, id)
-            .await
+        codeyard_repositories::repositories::releases::detail_by_id(
+            &state.pool,
+            viewer,
+            repo.id,
+            id,
+        )
+        .await
     }
     .map_err(release_error)?;
     Ok(Json(document(&state, owner, name, &detail).await?))
@@ -221,12 +226,12 @@ async fn generate_notes(
     let actor = auth
         .ok_or_else(codeyard_identity::github_auth::required)?
         .user;
-    let notes = codeyard_repos_pulls::repositories::releases::notes::generate_notes(
+    let notes = codeyard_repositories::repositories::releases::notes::generate_notes(
         &state.pool,
         state.cluster.as_ref(),
         actor.id,
         repo.id,
-        &codeyard_repos_pulls::repositories::releases::notes::NotesInput {
+        &codeyard_repositories::repositories::releases::notes::NotesInput {
             tag: &input.tag_name,
             target: input.target_commitish.as_deref(),
             previous_tag: input.previous_tag_name.as_deref(),
@@ -236,7 +241,7 @@ async fn generate_notes(
     .await
     .map_err(release_error)?;
     Ok(Json(
-        codeyard_repos_pulls::webhook_payloads::release::release_notes(&notes),
+        codeyard_repositories::webhook_payloads::release::release_notes(&notes),
     ))
 }
 
@@ -360,12 +365,12 @@ async fn create(
         _ => return Err(Error::invalid("Invalid make_latest")),
     };
     let (title, body, target) = if input.generate_release_notes {
-        let notes = codeyard_repos_pulls::repositories::releases::notes::generate_notes(
+        let notes = codeyard_repositories::repositories::releases::notes::generate_notes(
             &state.pool,
             state.cluster.as_ref(),
             actor.id,
             repo.id,
-            &codeyard_repos_pulls::repositories::releases::notes::NotesInput {
+            &codeyard_repositories::repositories::releases::notes::NotesInput {
                 tag: &input.tag_name,
                 target: input.target_commitish.as_deref(),
                 previous_tag: None,
@@ -385,7 +390,7 @@ async fn create(
             input.target_commitish.unwrap_or(repo.default_branch),
         )
     };
-    let release = codeyard_repos_pulls::repositories::releases::create(
+    let release = codeyard_repositories::repositories::releases::create(
         &state.pool,
         state.cluster.as_ref(),
         &state.ci_runs,
@@ -393,7 +398,7 @@ async fn create(
         actor.id,
         &owner,
         &name,
-        &codeyard_repos_pulls::repositories::releases::ReleaseInput {
+        &codeyard_repositories::repositories::releases::ReleaseInput {
             repository_id: repo.id,
             tag: input.tag_name,
             target,
@@ -410,7 +415,7 @@ async fn create(
     .await
     .map_err(release_error)?;
     start_discussion(&state, &auth, &release, category).await?;
-    let detail = codeyard_repos_pulls::repositories::releases::detail_by_id(
+    let detail = codeyard_repositories::repositories::releases::detail_by_id(
         &state.pool,
         Some(actor.id),
         repo.id,
@@ -459,7 +464,7 @@ async fn update(
         Some("false") => Some(codeyard_db_repos::releases::LatestSelection::Keep),
         _ => return Err(Error::invalid("Invalid make_latest")),
     };
-    codeyard_repos_pulls::repositories::releases::update(
+    codeyard_repositories::repositories::releases::update(
         &state.pool,
         state.cluster.as_ref(),
         &state.ci_runs,
@@ -482,7 +487,7 @@ async fn update(
     )
     .await
     .map_err(release_error)?;
-    let detail = codeyard_repos_pulls::repositories::releases::detail_by_id(
+    let detail = codeyard_repositories::repositories::releases::detail_by_id(
         &state.pool,
         Some(actor.id),
         repo.id,
@@ -537,7 +542,7 @@ async fn upload(
         .await
         .map_err(crate::auth::scope_error)?;
     let actor = &auth.user;
-    let asset = codeyard_repos_pulls::repositories::releases::upload_asset(
+    let asset = codeyard_repositories::repositories::releases::upload_asset(
         &state.pool,
         &state.storage,
         actor.id,
@@ -545,7 +550,7 @@ async fn upload(
         &owner,
         &name,
         id,
-        codeyard_repos_pulls::repositories::releases::AssetUpload {
+        codeyard_repositories::repositories::releases::AssetUpload {
             token: Some(auth.token.id),
             name: &input.name,
             label: input.label.as_deref(),
@@ -555,7 +560,7 @@ async fn upload(
     )
     .await
     .map_err(release_error)?;
-    let detail = codeyard_repos_pulls::repositories::releases::detail_by_id(
+    let detail = codeyard_repositories::repositories::releases::detail_by_id(
         &state.pool,
         Some(actor.id),
         repo.id,
@@ -587,7 +592,7 @@ async fn update_asset(
         .user;
     let input: AssetUpdate = serde_json::from_value(value.clone())
         .map_err(|_| Error::invalid("Invalid asset fields"))?;
-    let asset = codeyard_repos_pulls::repositories::releases::update_asset(
+    let asset = codeyard_repositories::repositories::releases::update_asset(
         &state.pool,
         actor.id,
         &owner,
@@ -615,7 +620,7 @@ async fn remove(
     Path((owner, name, id)): Path<(String, String, i64)>,
 ) -> Result<StatusCode> {
     let (_, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    codeyard_repos_pulls::repositories::releases::delete(
+    codeyard_repositories::repositories::releases::delete(
         &state.pool,
         &state.storage,
         auth.ok_or_else(codeyard_identity::github_auth::required)?
@@ -638,7 +643,7 @@ async fn list_assets(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, false).await?;
-    let detail = codeyard_repos_pulls::repositories::releases::detail_by_id(
+    let detail = codeyard_repositories::repositories::releases::detail_by_id(
         &state.pool,
         auth.as_ref().map(|auth| auth.user.id),
         repo.id,
@@ -667,7 +672,7 @@ async fn asset(
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    let detail = codeyard_repos_pulls::repositories::releases::detail_by_id(
+    let detail = codeyard_repositories::repositories::releases::detail_by_id(
         &state.pool,
         viewer,
         repo.id,
@@ -680,7 +685,7 @@ async fn asset(
         .and_then(|value| value.to_str().ok())
         .is_some_and(|value| value.contains("application/octet-stream"))
     {
-        let download = codeyard_repos_pulls::repositories::releases::download_by_id(
+        let download = codeyard_repositories::repositories::releases::download_by_id(
             &state.pool,
             &state.storage,
             viewer,
@@ -719,7 +724,7 @@ async fn remove_asset(
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    codeyard_repos_pulls::repositories::releases::delete_asset(
+    codeyard_repositories::repositories::releases::delete_asset(
         &state.pool,
         &state.storage,
         actor,

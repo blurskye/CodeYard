@@ -569,7 +569,7 @@ async fn host_openssh_deploy_keys_clone_push_and_keep_repository_scope() {
         .await;
         assert!(!outside.status.success());
     }
-    let observed = codeyard_repos::traffic::summary(
+    let observed = codeyard_git_storage::repositories::traffic::summary(
         &database.pool,
         Some(&owner),
         &repo,

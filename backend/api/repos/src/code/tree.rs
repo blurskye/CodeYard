@@ -246,7 +246,7 @@ async fn tree_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
             )
             .await;
             let viewer = ctx.user.as_ref().map(|user| user.id);
-            page.releases = codeyard_repos_pulls::repositories::releases::summary(
+            page.releases = codeyard_repositories::repositories::releases::summary(
                 &ctx.state.pool,
                 viewer,
                 &loaded.repository,

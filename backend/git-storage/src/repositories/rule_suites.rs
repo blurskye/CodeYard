@@ -5,6 +5,7 @@
 //! rules are judged. Unsupported evaluate definitions cannot be saved; historical unsupported
 //! rules produce an indeterminate verdict, never a successful evaluation.
 use crate::repositories::git_sessions::ReceiveCredential;
+use crate::repositories::protection::History;
 use anyhow::Result;
 use codeyard_database::models::AccessLevel;
 use codeyard_database::models::OrgRole;
@@ -26,7 +27,6 @@ use codeyard_database::queries::rulesets::Enforcement;
 use codeyard_database::queries::rulesets::Rule;
 use codeyard_git::protocol::RefUpdate;
 use codeyard_git::protocol::ZERO_SHA;
-use codeyard_repos::protection::History;
 use codeyard_types::workflow_glob::WorkflowMatchBudget;
 use std::collections::HashSet;
 

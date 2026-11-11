@@ -1,7 +1,7 @@
 //! Association parity gets its own fixture so it does not enlarge the broad RPC contract future.
 use super::*;
-use codeyard_repos_pulls::repositories::commit_pulls::associated_pulls;
-use codeyard_repos_pulls::repositories::commit_pulls::CommitPullQuery;
+use codeyard_repositories::repositories::commit_pulls::associated_pulls;
+use codeyard_repositories::repositories::commit_pulls::CommitPullQuery;
 
 #[tokio::test]
 async fn associated_pulls_use_primary_storage_without_changing_refs_or_metadata() {

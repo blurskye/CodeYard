@@ -16,7 +16,7 @@ use codeyard_app::app::AppState;
 use codeyard_git::error::ErrorKind;
 use codeyard_git_storage::ref_errors::RefError;
 use codeyard_identity::repository_access::AccessError;
-use codeyard_repos_pulls::repositories::merges::BranchMerge;
+use codeyard_repositories::repositories::merges::BranchMerge;
 use codeyard_types::github_error::Error;
 use codeyard_types::github_error::Result;
 use serde::Deserialize;
@@ -55,7 +55,7 @@ async fn merge(
     let Json(input) = Json::<Input>::from_request(request, &state)
         .await
         .map_err(codeyard_types::github_error::json_error)?;
-    let result = codeyard_repos_pulls::repositories::merges::merge_branch(
+    let result = codeyard_repositories::repositories::merges::merge_branch(
         &state.pool,
         state.cluster.as_ref(),
         &state.ci_runs,

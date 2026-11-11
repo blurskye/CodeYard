@@ -458,9 +458,10 @@ async fn rules(
     Path((owner, name, branch)): Path<(String, String, String)>,
 ) -> Result<Json<Value>> {
     let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
-    let rules = codeyard_repos::protection::matching_rules(&state.pool, &repo, &branch)
-        .await
-        .map_err(Error::unavailable)?;
+    let rules =
+        codeyard_git_storage::repositories::protection::matching_rules(&state.pool, &repo, &branch)
+            .await
+            .map_err(Error::unavailable)?;
     let mut values = Vec::new();
     for rule in rules {
         for (enabled, kind) in [

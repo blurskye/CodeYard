@@ -412,7 +412,7 @@ impl RemoteStore {
             .await
             .map_err(RepoError::from)?;
         let mut request = Vec::new();
-        codeyard_repos::source::append_packet(&mut request, &format!("want {oid}\n"));
+        crate::repositories::source::append_packet(&mut request, &format!("want {oid}\n"));
         request.extend_from_slice(b"00000009done\n");
         let parent = destination
             .parent()

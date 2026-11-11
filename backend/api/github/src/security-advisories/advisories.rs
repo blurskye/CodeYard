@@ -362,7 +362,7 @@ async fn create(
     .await
     .map_err(failure)?;
     if value["start_private_fork"] == true {
-        match codeyard_repos_pulls::repositories::advisories::private_fork(
+        match codeyard_repositories::repositories::advisories::private_fork(
             &state,
             actor.database_actor(),
             &repo,
@@ -476,7 +476,7 @@ async fn fork(
     let (repo, actor) =
         repository(&state, &headers, &params["owner"], &params["repo"], true).await?;
     let actor = actor.ok_or_else(codeyard_identity::github_auth::required)?;
-    let fork = codeyard_repos_pulls::repositories::advisories::private_fork(
+    let fork = codeyard_repositories::repositories::advisories::private_fork(
         &state,
         actor.database_actor(),
         &repo,

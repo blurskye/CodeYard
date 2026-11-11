@@ -786,13 +786,13 @@ impl russh::server::Handler for GitSshHandler {
                     _permit = wait_for_session_slot(&store, &queued).await?;
                 }
                 match credential {
-                    ReceiveCredential::DeployKey(id) => { let _ = tokio::time::timeout(std::time::Duration::from_secs(1), codeyard_repos::deploy_keys::record_use(&pool, id)).await; }
+                    ReceiveCredential::DeployKey(id) => { let _ = tokio::time::timeout(std::time::Duration::from_secs(1), codeyard_git_storage::repositories::deploy_keys::record_use(&pool, id)).await; }
                     ReceiveCredential::SshKey(id) => { let _ = tokio::time::timeout(std::time::Duration::from_secs(1), codeyard_db_identity::users::ssh_keys::touch_ssh_key(&pool, id)).await; }
                     _ => {}
                 }
                 let (actor,_) = tokio::time::timeout(std::time::Duration::from_secs(5), credential.authorize_session(&pool, &repo, git_cmd.write)).await??;
                 let visitor=match credential { ReceiveCredential::DeployKey(id)=>codeyard_db_repos::repositories::traffic::Identity::deploy_key(id), _=>codeyard_db_repos::repositories::traffic::Identity::account(actor.id) };
-                let observation=codeyard_repos::traffic::clone::Observation::default();
+                let observation=codeyard_git_storage::repositories::traffic::clone::Observation::default();
                 let mut input=observation.input(io.input.as_mut().expect("open input"));
                 let mut output=observation.output(&mut output);
                 let execution = store.git_session(options, receive, GitStreams {
@@ -808,7 +808,7 @@ impl russh::server::Handler for GitSshHandler {
                 drop(_permit);
                 drop(_task_slot);
                 if !git_cmd.write && status.success() && observation.initial_transfer() {
-                    if let Some(visitor)=visitor { let _ = tokio::time::timeout(std::time::Duration::from_secs(1), codeyard_repos::traffic::observe(&pool,repo.id,&visitor,&codeyard_db_repos::repositories::traffic::Metric::clone_transfer())).await; }
+                    if let Some(visitor)=visitor { let _ = tokio::time::timeout(std::time::Duration::from_secs(1), codeyard_git_storage::repositories::traffic::observe(&pool,repo.id,&visitor,&codeyard_db_repos::repositories::traffic::Metric::clone_transfer())).await; }
                 }
                 Ok::<_,anyhow::Error>(status)
             }.await;

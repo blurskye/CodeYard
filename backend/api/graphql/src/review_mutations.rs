@@ -97,14 +97,14 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
             );
         }
         for name in &names {
-            codeyard_repos_pulls::repositories::pull_requests::reviews::request_reviewer(
+            codeyard_repositories::repositories::pull_requests::reviews::request_reviewer(
                 pool,
                 &request.state.notification_broadcaster,
                 actor,
                 owner.clone(),
                 repo.name.clone(),
                 pull.number,
-                codeyard_repos_pulls::repositories::pull_requests::reviews::RequestReviewerRequest {
+                codeyard_repositories::repositories::pull_requests::reviews::RequestReviewerRequest {
                     username: name.clone(),
                 },
             )
@@ -119,7 +119,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
             .map_err(unavailable)?
             {
                 if !names.iter().any(|n| n.eq_ignore_ascii_case(&row.username)) {
-                    codeyard_repos_pulls::repositories::pull_requests::reviews::remove_requested_reviewer(
+                    codeyard_repositories::repositories::pull_requests::reviews::remove_requested_reviewer(
                         pool,
                         actor,
                         owner.clone(),
@@ -183,14 +183,14 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
                 return Err(missing());
             }
             if let Some(state) = event(input)? {
-                codeyard_repos_pulls::repositories::pull_requests::reviews::create_pull_request_review(
+                codeyard_repositories::repositories::pull_requests::reviews::create_pull_request_review(
                     pool,
                     request.state.cluster.as_ref(),
                     &request.state.notification_broadcaster,
                     actor,
                     &request.auth.credential(),
                     (owner, repo.name.clone(), pull.number),
-                    codeyard_repos_pulls::repositories::pull_requests::reviews::CreatePullRequestReviewRequest {
+                    codeyard_repositories::repositories::pull_requests::reviews::CreatePullRequestReviewRequest {
                         state: Some(state),
                         body,
                         commit_sha: Some(commit.to_owned()),
@@ -221,7 +221,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
                 .map_err(|e| pull_error(codeyard_git_storage::repositories::pull_requests::write_error(e)))?
             }
         }
-        "updatePullRequestReview" => codeyard_repos_pulls::repositories::pull_requests::reviews::edit_review(
+        "updatePullRequestReview" => codeyard_repositories::repositories::pull_requests::reviews::edit_review(
             pool,
             &request.state.notification_broadcaster,
             actor,
@@ -232,14 +232,14 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
         )
         .await
         .map_err(pull_error)?,
-        "dismissPullRequestReview" => codeyard_repos_pulls::repositories::pull_requests::reviews::dismiss_pull_request_review(
+        "dismissPullRequestReview" => codeyard_repositories::repositories::pull_requests::reviews::dismiss_pull_request_review(
             pool,
             actor,
             owner,
             repo.name.clone(),
             pull.number,
             existing.as_ref().ok_or_else(missing)?.id,
-            codeyard_repos_pulls::repositories::pull_requests::reviews::DismissPullRequestReviewRequest {
+            codeyard_repositories::repositories::pull_requests::reviews::DismissPullRequestReviewRequest {
                 reason: Some(text(input, "message")?.to_owned()),
             },
         )

@@ -556,7 +556,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
             pool,
             repo.id,
             owner.id,
-            &codeyard_repos::editor::FileWrite {
+            &codeyard_git_storage::repositories::editor::FileWrite {
                 branch: "main".into(),
                 path: ".github/workflows/ci.yml".into(),
                 message: "Add CI".into(),
@@ -2761,7 +2761,7 @@ async fn shutdown_with_blocked_workspace_cleanup(pool: &codeyard_database::DbPoo
             pool,
             repo.id,
             owner.id,
-            &codeyard_repos::editor::FileWrite {
+            &codeyard_git_storage::repositories::editor::FileWrite {
                 branch: "main".into(),
                 path: ".github/workflows/ci.yml".into(),
                 message: "Add CI".into(),
@@ -2952,7 +2952,7 @@ async fn database_workers_recheck_membership_before_consuming_runs() {
                 pool,
                 repo.id,
                 owner.id,
-                &codeyard_repos::editor::FileWrite {
+                &codeyard_git_storage::repositories::editor::FileWrite {
                     branch: "main".into(),
                     path: ".github/workflows/ci.yml".into(),
                     message: "Add CI".into(),
@@ -4496,7 +4496,7 @@ async fn ci_fixture() -> CiFixture {
             &pool,
             repo.id,
             owner.id,
-            &codeyard_repos::editor::FileWrite {
+            &codeyard_git_storage::repositories::editor::FileWrite {
                 branch: "main".into(),
                 path: ".github/workflows/ci.yml".into(),
                 message: "Add CI".into(),
@@ -5133,7 +5133,7 @@ async fn a_remote_pull_request_run_keeps_its_enqueued_event_after_the_base_moves
         )
         .unwrap();
     }
-    let head = store.save_file_as(pool, repo.id, fixture.owner, &codeyard_repos::editor::FileWrite {
+    let head = store.save_file_as(pool, repo.id, fixture.owner, &codeyard_git_storage::repositories::editor::FileWrite {
         branch: "topic".into(), path: ".github/workflows/ci.yml".into(), message: "Test pull".into(),
         expected_revision: fixture.sha.clone(), creating: false, deleting: false,
     }, b"on: pull_request\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: true\n", "Tester", "tester@example.invalid").await.unwrap();
@@ -5203,7 +5203,7 @@ async fn a_remote_pull_request_run_keeps_its_enqueued_event_after_the_base_moves
             pool,
             repo.id,
             fixture.owner,
-            &codeyard_repos::editor::FileWrite {
+            &codeyard_git_storage::repositories::editor::FileWrite {
                 branch: "main".into(),
                 path: "base.txt".into(),
                 message: "Advance base".into(),

@@ -10,7 +10,7 @@ use axum::{
 use codeyard_git_storage::repositories::lifecycle;
 use codeyard_identity::tokens;
 use codeyard_identity::tokens::TokenInput;
-use codeyard_repos_pulls::repositories::pull_requests::async_merge;
+use codeyard_repositories::repositories::pull_requests::async_merge;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 

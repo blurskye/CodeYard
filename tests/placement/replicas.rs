@@ -28,13 +28,13 @@ use codeyard_db_placement::cluster::FamilyOutcome;
 use codeyard_db_placement::cluster::PromoteOutcome;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
+use codeyard_git_storage::repositories::editor::FileWrite;
 use codeyard_git_storage::repositories::store::local::begin_ref_change;
 use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_git_storage::repositories::store::RepoStore;
 use codeyard_git_storage::store_types::GitService;
 use codeyard_git_storage::store_types::GitSession;
 use codeyard_git_storage::store_types::GitStreams;
-use codeyard_repos::editor::FileWrite;
 use codeyard_storage::ObjectStore;
 use rand::Rng;
 use std::{
@@ -4176,7 +4176,7 @@ async fn review_admission_refuses_a_lagging_copy_when_primary_is_down() {
         .await
         .unwrap()
         .unwrap();
-    let error = codeyard_repos_pulls::repositories::pull_requests::reviews::create_pull_request_review(
+    let error = codeyard_repositories::repositories::pull_requests::reviews::create_pull_request_review(
         &database.pool,
         Some(&web.context),
         &codeyard_notifications::broadcast::NotificationBroadcaster::new(&database.pool),
@@ -4185,7 +4185,7 @@ async fn review_admission_refuses_a_lagging_copy_when_primary_is_down() {
             &crate::support::live_session(&database.pool, repo.actor).await,
         ),
         (actor.username, repo.repository.name.clone(), pull.number),
-        codeyard_repos_pulls::repositories::pull_requests::reviews::CreatePullRequestReviewRequest {
+        codeyard_repositories::repositories::pull_requests::reviews::CreatePullRequestReviewRequest {
             state: Some("commented".into()),
             body: Some("Old revision".into()),
             commit_sha: Some(head),

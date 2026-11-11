@@ -122,7 +122,7 @@ pub async fn set_enabled(
 pub(crate) async fn observe_refs(
     pool: &codeyard_database::DbPool,
     repo: &codeyard_database::models::Repository,
-    moves: &[codeyard_repos::ref_changes::RefMove],
+    moves: &[crate::repositories::ref_changes::RefMove],
 ) {
     let default = format!("refs/heads/{}", repo.default_branch);
     if !moves.iter().any(|(reference, _, _)| reference == &default) {
@@ -145,7 +145,7 @@ pub(crate) async fn observe_refs(
 pub(crate) fn check_publication(
     actor: i64,
     repo: &codeyard_database::models::Repository,
-    prepared: &codeyard_repos::editor::PreparedFile,
+    prepared: &crate::repositories::editor::PreparedFile,
     publication: &records::Publication,
     refs: &std::collections::HashMap<String, String>,
 ) -> Result<(), RepoError> {

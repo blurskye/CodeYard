@@ -3,6 +3,13 @@ use crate::receive_ci::CiRunRequest;
 use crate::repositories::git_sessions::broker::Gateway;
 use crate::repositories::git_sessions::broker::Operation;
 use crate::repositories::git_sessions::ReceiveCredential;
+use crate::repositories::protection::check_branch_write_with;
+use crate::repositories::protection::load_rules;
+use crate::repositories::protection::BranchWrite;
+use crate::repositories::protection::History;
+use crate::repositories::protection::Refusal;
+use crate::repositories::protection::WriteVia;
+use crate::repositories::ref_changes::RefMove;
 use crate::repositories::store::local::ensure_ref_room;
 use crate::repositories::store::repo_store;
 use anyhow::ensure;
@@ -18,13 +25,6 @@ use codeyard_git::protocol::ZERO_SHA;
 use codeyard_git::published_refs_in_use;
 use codeyard_git::ref_listing_bytes;
 use codeyard_git::RefsInUse;
-use codeyard_repos::protection::check_branch_write_with;
-use codeyard_repos::protection::load_rules;
-use codeyard_repos::protection::BranchWrite;
-use codeyard_repos::protection::History;
-use codeyard_repos::protection::Refusal;
-use codeyard_repos::protection::WriteVia;
-use codeyard_repos::ref_changes::RefMove;
 use codeyard_types::workflow_glob::WorkflowMatchBudget;
 use std::collections::HashMap;
 use std::path::Path;
@@ -550,7 +550,7 @@ impl Gateway {
             .filter(|update| update.new != ZERO_SHA)
             .map(|update| update.new.clone())
             .collect();
-        let bypasses = codeyard_repos::push_protection::refuse_blocked_secrets(
+        let bypasses = crate::repositories::push_protection::refuse_blocked_secrets(
             &self.pool,
             &repo,
             identity.id,
@@ -913,9 +913,10 @@ impl Gateway {
                 )
             })
             .collect();
-        if let Err(error) =
-            codeyard_repos::activity::record_moves(&self.pool, repo.id, actor_id, &path, &moves)
-                .await
+        if let Err(error) = crate::repositories::activity::record_moves(
+            &self.pool, repo.id, actor_id, &path, &moves,
+        )
+        .await
         {
             tracing::warn!(repo_id=repo.id,%error,"could not record accepted Git ref activity");
             failed = true;

@@ -1,4 +1,10 @@
 use super::*;
+use crate::repositories::imports::GitImport;
+use crate::repositories::imports::ImportCredential;
+use crate::repositories::imports::MAX_IMPORT_PACK_BYTES;
+use crate::repositories::protection::BranchWrite;
+use crate::repositories::protection::History;
+use crate::repositories::protection::WriteVia;
 use crate::repositories::store::local::ensure_ref_room;
 use crate::repositories::store::local::live_read;
 use crate::repositories::store::local::live_write;
@@ -6,12 +12,6 @@ use crate::repositories::store::local::refresh_storage_size;
 use crate::repositories::store::local::unavailable;
 use crate::repositories::store::local::LocalStore;
 use codeyard_git::protocol::ZERO_SHA;
-use codeyard_repos::imports::GitImport;
-use codeyard_repos::imports::ImportCredential;
-use codeyard_repos::imports::MAX_IMPORT_PACK_BYTES;
-use codeyard_repos::protection::BranchWrite;
-use codeyard_repos::protection::History;
-use codeyard_repos::protection::WriteVia;
 
 impl LocalStore {
     pub(crate) async fn import_git(

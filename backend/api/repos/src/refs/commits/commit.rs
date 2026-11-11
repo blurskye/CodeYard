@@ -91,8 +91,8 @@ async fn related_pulls(
     loaded: &Loaded,
     sha: &str,
 ) -> Result<view::commits::pulls::RelatedPulls, Response> {
-    use codeyard_repos_pulls::repositories::commit_pulls::associated_pulls;
-    use codeyard_repos_pulls::repositories::commit_pulls::CommitPullQuery;
+    use codeyard_repositories::repositories::commit_pulls::associated_pulls;
+    use codeyard_repositories::repositories::commit_pulls::CommitPullQuery;
     use view::commits::pulls::{RelatedPull, RelatedPulls};
     let page = ctx
         .query

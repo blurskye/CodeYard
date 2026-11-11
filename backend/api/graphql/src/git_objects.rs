@@ -196,9 +196,13 @@ pub(super) async fn reference_field(
     }
     let branch = parent["name"].as_str().ok_or_else(missing)?;
     if field == "branchProtectionRule" {
-        let rules = codeyard_repos::protection::matching_rules(&request.state.pool, &repo, branch)
-            .await
-            .map_err(unavailable)?;
+        let rules = codeyard_git_storage::repositories::protection::matching_rules(
+            &request.state.pool,
+            &repo,
+            branch,
+        )
+        .await
+        .map_err(unavailable)?;
         if parent["prefix"] != "refs/heads/" || rules.is_empty() {
             return Ok(Value::Null);
         }

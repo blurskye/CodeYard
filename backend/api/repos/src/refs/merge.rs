@@ -22,7 +22,7 @@ use codeyard_api_http::shared::repos::forms::field;
 use codeyard_api_http::shared::repos::forms::with_status;
 use codeyard_app::app::AppState;
 use codeyard_git_storage::ref_errors::RefError;
-use codeyard_repos_pulls::repositories::merges::BranchMerge;
+use codeyard_repositories::repositories::merges::BranchMerge;
 use codeyard_webui::components::SelectOption;
 use codeyard_webui::pages::repos::merge::MergeForm;
 use codeyard_webui::pages::repos::page::Page;
@@ -47,7 +47,7 @@ pub(super) async fn merge_json(
 ) -> Result<Response, (StatusCode, Json<ApiError>)> {
     let actor = get_current_user(&state.pool, &headers).await?;
     let repo = crate::refs::repository_id(&state, &owner, &name).await?;
-    let result = codeyard_repos_pulls::repositories::merges::merge_branch(
+    let result = codeyard_repositories::repositories::merges::merge_branch(
         &state.pool,
         state.cluster.as_ref(),
         &state.ci_runs,
@@ -222,7 +222,7 @@ async fn submit(
             .get("message")
             .filter(|message| !message.is_empty())
             .map(String::as_str);
-        codeyard_repos_pulls::repositories::merges::merge_branch(
+        codeyard_repositories::repositories::merges::merge_branch(
             &ctx.state.pool,
             ctx.state.cluster.as_ref(),
             &ctx.state.ci_runs,

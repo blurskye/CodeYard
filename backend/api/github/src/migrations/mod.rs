@@ -110,7 +110,9 @@ struct Input {
     vcs_password: Option<String>,
 }
 
-fn credentials(input: &Input) -> Result<Option<codeyard_repos::imports::Credentials>> {
+fn credentials(
+    input: &Input,
+) -> Result<Option<codeyard_git_storage::repositories::imports::Credentials>> {
     if input.vcs.as_deref().is_some_and(|vcs| vcs != "git") {
         return Err(Error::validation("Import", "vcs", "invalid"));
     }
@@ -118,7 +120,7 @@ fn credentials(input: &Input) -> Result<Option<codeyard_repos::imports::Credenti
     let password = input.vcs_password.clone().unwrap_or_default();
     Ok(
         if input.vcs_password.is_some() || input.vcs_username.is_some() {
-            Some(codeyard_repos::imports::Credentials { username, password })
+            Some(codeyard_git_storage::repositories::imports::Credentials { username, password })
         } else {
             None
         },
@@ -132,29 +134,31 @@ async fn begin(
     input: Input,
     url: &str,
 ) -> Result<SourceImport> {
-    codeyard_repos_pulls::repositories::imports::start(
+    codeyard_repositories::repositories::imports::start(
         state,
         repo,
-        codeyard_repos::imports::ImportCredential::Token(actor.token.id),
+        codeyard_git_storage::repositories::imports::ImportCredential::Token(actor.token.id),
         url,
         credentials(&input)?,
     )
     .await
     .map_err(|error| match error {
-        codeyard_repos::imports::ImportError::Source => {
+        codeyard_git_storage::repositories::imports::ImportError::Source => {
             Error::validation("Import", "vcs_url", "invalid")
         }
-        codeyard_repos::imports::ImportError::Credentials => {
+        codeyard_git_storage::repositories::imports::ImportError::Credentials => {
             Error::validation("Import", "vcs_password", "invalid")
         }
-        codeyard_repos::imports::ImportError::Denied => {
+        codeyard_git_storage::repositories::imports::ImportError::Denied => {
             Error::new(StatusCode::FORBIDDEN, error.to_string())
         }
-        codeyard_repos::imports::ImportError::NotEmpty
-        | codeyard_repos::imports::ImportError::Running => {
+        codeyard_git_storage::repositories::imports::ImportError::NotEmpty
+        | codeyard_git_storage::repositories::imports::ImportError::Running => {
             Error::new(StatusCode::CONFLICT, error.to_string())
         }
-        codeyard_repos::imports::ImportError::Unavailable => Error::unavailable(error),
+        codeyard_git_storage::repositories::imports::ImportError::Unavailable => {
+            Error::unavailable(error)
+        }
     })
 }
 

@@ -27,7 +27,7 @@ use codeyard_db_actions::deployments::Refusal;
 use codeyard_db_actions::deployments::Status;
 use codeyard_git_storage::api_shared::github::contents::store_error;
 use codeyard_git_storage::repositories::store::repo_store;
-use codeyard_repos_pulls::repositories::merges::BranchMerge;
+use codeyard_repositories::repositories::merges::BranchMerge;
 use codeyard_types::github_error::Error;
 use codeyard_types::github_error::Result;
 use codeyard_types::urls::repo_url;
@@ -209,7 +209,7 @@ async fn create(
                 auth.repository_scope(&state.pool, repo.id, "contents", true)
                     .await
                     .map_err(crate::auth::scope_error)?;
-                codeyard_repos_pulls::repositories::merges::merge_branch(
+                codeyard_repositories::repositories::merges::merge_branch(
                     &state.pool,
                     state.cluster.as_ref(),
                     &state.ci_runs,

@@ -113,7 +113,7 @@ pub(super) async fn resolve(
             ))
         }
         "isBlankIssuesEnabled" | "issueTemplates" => {
-            let files = codeyard_repos_pulls::repositories::issue_templates::issue_templates(
+            let files = codeyard_repositories::repositories::issue_templates::issue_templates(
                 &store,
                 &repo.default_branch,
             )
@@ -134,7 +134,7 @@ pub(super) async fn resolve(
             let files = texts(
                 &store,
                 &repo.default_branch,
-                &codeyard_repos_pulls::repositories::issue_templates::PULL_REQUEST_TEMPLATE_PATHS,
+                &codeyard_repositories::repositories::issue_templates::PULL_REQUEST_TEMPLATE_PATHS,
             )
             .await?;
             Ok(json!(files
@@ -204,7 +204,7 @@ pub(super) async fn resolve(
             .await?;
             let owner = crate::repository::owner(repo, request).await?;
             Ok(files.first().map(|(path, text)| {
-                let covenant = codeyard_repos::community::contributor_covenant(text);
+                let covenant = codeyard_git_storage::repositories::community::contributor_covenant(text);
                 json!({"key":if covenant { "contributor_covenant" } else { "other" },"name":if covenant { "Contributor Covenant" } else { "Other" },"url":url(&codeyard_types::ref_path::branch_url(&format!("/{}/{}",owner,repo.name),"blob",&repo.default_branch,path))})
             }).unwrap_or(Value::Null))
         }
@@ -219,7 +219,8 @@ pub(super) async fn resolve(
                 .map_err(unavailable)?;
             files.sort_by_key(|file| file.name.to_ascii_lowercase());
             let Some(file) = files.iter().find(|file| {
-                file.entry_type == "file" && codeyard_repos::templates::is_license_file(&file.name)
+                file.entry_type == "file"
+                    && codeyard_git_storage::repositories::templates::is_license_file(&file.name)
             }) else {
                 return Ok(Value::Null);
             };
@@ -228,7 +229,7 @@ pub(super) async fn resolve(
                 .await
                 .map_err(unavailable)?;
             Ok(texts.first().and_then(Option::as_ref).map(|(_, text)| {
-                codeyard_repos::templates::detect_license(text.as_bytes()).map(|template| json!({"key":template.name.to_lowercase(),"name":template.name,"nickname":Value::Null})).unwrap_or(json!({"key":"other","name":"Other","nickname":Value::Null}))
+                codeyard_git_storage::repositories::templates::detect_license(text.as_bytes()).map(|template| json!({"key":template.name.to_lowercase(),"name":template.name,"nickname":Value::Null})).unwrap_or(json!({"key":"other","name":"Other","nickname":Value::Null}))
             }).unwrap_or(Value::Null))
         }
         "languages" | "primaryLanguage" => {

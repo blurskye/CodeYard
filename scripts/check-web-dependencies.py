@@ -15,6 +15,7 @@ FORBIDDEN = {
     'aws-sdk-s3', 'aws-config', 'axum', 'tower-http',
     'codeyard-placement', 'codeyard-nodes', 'codeyard-ci',
     'codeyard-git-storage', 'codeyard-repos-rpc', 'codeyard-repos-pulls',
+    'codeyard-repositories',
     'codeyard-storage', 'codeyard-webhooks', 'codeyard-ci', 'codeyard-repos',
 }
 packages = set()

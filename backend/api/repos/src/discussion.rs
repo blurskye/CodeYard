@@ -19,8 +19,8 @@ use codeyard_db_repos::pull_requests::reviews::DiscussionItem;
 use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_git_storage::store_types::allowed_merge_methods;
 use codeyard_git_storage::store_types::MergeMethod;
-use codeyard_repos_pulls::issues::COMMENTS_PER_PAGE;
-use codeyard_repos_pulls::issues::MAX_COMMENT_PAGE;
+use codeyard_repositories::issues::COMMENTS_PER_PAGE;
+use codeyard_repositories::issues::MAX_COMMENT_PAGE;
 use codeyard_webui::pages::repos::issues as view;
 use codeyard_webui::pages::repos::issues::DetailDraft;
 use codeyard_webui::pages::repos::issues::Kind;
@@ -206,7 +206,7 @@ pub(crate) async fn issue_reference(
     scope: (&str, &str),
     reference: &str,
 ) -> ResultPage<i64> {
-    codeyard_repos_pulls::issues::references::resolve(
+    codeyard_repositories::issues::references::resolve(
         &ctx.state.pool,
         ctx.require_user()?.id,
         scope,
@@ -481,7 +481,11 @@ pub(crate) fn pull_item(
     })
 }
 /// The stack a pull request page shows, with the viewed pull request marked.
-fn stack_map(stack: &codeyard_repos::stacks::Stack, current: i64, restack: bool) -> view::StackMap {
+fn stack_map(
+    stack: &codeyard_git_storage::repositories::stacks::Stack,
+    current: i64,
+    restack: bool,
+) -> view::StackMap {
     view::StackMap {
         trunk: stack.trunk().to_owned(),
         position: stack.position(current),
@@ -610,20 +614,22 @@ async fn item_with_comparison(
             };
             let head_repository = head_for_viewer(ctx, head).await?;
             let current = value.id;
-            let stack = codeyard_repos::stacks::stack_of(&ctx.state.pool, &value)
-                .await
-                .map_err(|_| unavailable(ctx))?;
-            let stack_candidate = codeyard_repos::stacks::join_candidate(&ctx.state.pool, &value)
-                .await
-                .map_err(|_| unavailable(ctx))?;
+            let stack =
+                codeyard_git_storage::repositories::stacks::stack_of(&ctx.state.pool, &value)
+                    .await
+                    .map_err(|_| unavailable(ctx))?;
+            let stack_candidate =
+                codeyard_git_storage::repositories::stacks::join_candidate(&ctx.state.pool, &value)
+                    .await
+                    .map_err(|_| unavailable(ctx))?;
             let (merge_target, _, merge_with) =
-                codeyard_repos::stacks::merge_target(&ctx.state.pool, &value)
+                codeyard_git_storage::repositories::stacks::merge_target(&ctx.state.pool, &value)
                     .await
                     .map_err(|_| unavailable(ctx))?;
             // Only a writer sees the button, so readers do not pay for the check.
             let restack = match &stack {
                 Some(stack) if repo.view.can_write => {
-                    codeyard_repos_pulls::repositories::pull_requests::restack::restack_pending(
+                    codeyard_repositories::repositories::pull_requests::restack::restack_pending(
                         &ctx.state.ci_runs,
                         &repo.record,
                         &value,
@@ -1089,7 +1095,7 @@ pub(crate) async fn render_detail(
                     _ => Err(anyhow::anyhow!("Comment not found")),
                 },
             };
-            Some(codeyard_repos_pulls::issues::discussion_page(position))
+            Some(codeyard_repositories::issues::discussion_page(position))
         }
         None => None,
     };
@@ -1204,7 +1210,7 @@ pub(crate) async fn render_detail(
         (Vec::new(), Vec::new())
     };
     let mut ctx = ctx.clone();
-    ctx.return_to = Some(codeyard_repos_pulls::issues::discussion_link(
+    ctx.return_to = Some(codeyard_repositories::issues::discussion_link(
         &format!("{}/{}", repo.view.family_url(kind), value.number),
         comments.page,
         "",
@@ -1356,7 +1362,7 @@ async fn fill_merge_blockers(
         return;
     };
     let blockers = |method| {
-        codeyard_repos_pulls::repositories::pull_requests::merge::page_blockers(
+        codeyard_repositories::repositories::pull_requests::merge::page_blockers(
             &ctx.state.pool,
             &ctx.state.ci_runs,
             &repo.record,

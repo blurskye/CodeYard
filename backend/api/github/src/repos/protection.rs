@@ -84,9 +84,13 @@ pub(super) async fn protected(
         .find(|rule| rule.pattern == branch)
         .ok_or_else(Error::missing)?
     } else {
-        let mut matching = codeyard_repos::protection::matching_rules(&state.pool, &repo, branch)
-            .await
-            .map_err(Error::unavailable)?;
+        let mut matching = codeyard_git_storage::repositories::protection::matching_rules(
+            &state.pool,
+            &repo,
+            branch,
+        )
+        .await
+        .map_err(Error::unavailable)?;
         // Native enforcement intersects all matching rules. Classic protection cannot losslessly
         // express their actor allowances or conflicting producer pins; never pick an arbitrary one.
         if matching.len() > 1 {

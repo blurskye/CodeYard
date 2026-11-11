@@ -26,7 +26,7 @@ pub(super) async fn object(
         "author":match row.author_id {Some(id)=>crate::user::retained_author(id,request).await?,None=>Value::Null},"createdAt":row.created_at,"updatedAt":row.updated_at,
         "includesCreatedEdit":row.updated_at>row.created_at,"lastEditedAt":if row.updated_at>row.created_at {Some(row.updated_at)} else {None},"isMinimized":false,"minimizedReason":null,
         "viewerDidAuthor":authored,"viewerCanUpdate":writable&&authored,"viewerCanDelete":writable&&(authored || codeyard_identity::repository_access::can_maintain(&request.state.pool,&request.auth.user,&repo).await.map_err(unavailable)?),
-        "repository":crate::repository::object(&repo),"commit":{"__typename":"Commit","_repo":repo.id,"_scope":"contents","oid":row.sha},"url":url(&codeyard_repos::commit_comments::comment_link(&owner,&repo.name,row))}),
+        "repository":crate::repository::object(&repo),"commit":{"__typename":"Commit","_repo":repo.id,"_scope":"contents","oid":row.sha},"url":url(&codeyard_types::paths::commit_comment_path(&owner,&repo.name,&row.sha,row.id))}),
     )
 }
 pub(super) async fn field(field: &str, parent: &Value, request: &RequestContext) -> Result<Value> {
@@ -54,7 +54,7 @@ pub(super) async fn field(field: &str, parent: &Value, request: &RequestContext)
     .await
     .map_err(unavailable)?
     .ok_or_else(missing)?;
-    let details = codeyard_repos_pulls::repositories::commit_comments::comment_details(
+    let details = codeyard_repositories::repositories::commit_comments::comment_details(
         &request.state.pool,
         request.state.cluster.as_ref(),
         &repo,
@@ -94,7 +94,7 @@ pub(super) async fn list(
         .await
         .map_err(unavailable)?
     };
-    let details = codeyard_repos_pulls::repositories::commit_comments::comment_details(
+    let details = codeyard_repositories::repositories::commit_comments::comment_details(
         &request.state.pool,
         request.state.cluster.as_ref(),
         &repository,

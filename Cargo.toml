@@ -36,12 +36,11 @@ sha2.workspace = true
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 codeyard-repos-rpc.workspace = true
 codeyard-placement.workspace = true
-codeyard-repos-pulls.workspace = true
+codeyard-repositories.workspace = true
 codeyard-git-storage.workspace = true
 codeyard-webhooks.workspace = true
 codeyard-nodes.workspace = true
 codeyard-ci.workspace = true
-codeyard-repos.workspace = true
 codeyard-storage.workspace = true
 codeyard-ssh.workspace = true
 async-graphql.workspace = true
@@ -128,8 +127,8 @@ debug = false
 
 [workspace]
 resolver = "2"
-members = ["backend/cache", "backend/router", "backend/repos-rpc", "backend/webhooks", "backend/placement", "backend/nodes", "backend/ci", "backend/repos", "backend/storage", "backend/ssh", "backend/testing", "backend/api/rest", "backend/api/graphql", "backend/api/repos", "backend/api/github", "backend/api/http", "backend/app",
-    "backend/git-storage", "backend/repos-pulls", "backend/search", "backend/notifications", "backend/identity", "backend/api/github-graphql", "backend/runner", "backend/db/actions", "backend/db/placement", "backend/db/directory", "backend/database", "backend/db/identity", "backend/db/orgs", "backend/db/repos", "backend/db/security", "backend/git", "backend/security", "backend/types", "webui"]
+members = ["backend/cache", "backend/router", "backend/repos-rpc", "backend/webhooks", "backend/placement", "backend/nodes", "backend/ci", "backend/storage", "backend/ssh", "backend/testing", "backend/api/rest", "backend/api/graphql", "backend/api/repos", "backend/api/github", "backend/api/http", "backend/app",
+    "backend/git-storage", "backend/repositories", "backend/search", "backend/notifications", "backend/identity", "backend/api/github-graphql", "backend/runner", "backend/db/actions", "backend/db/placement", "backend/db/directory", "backend/database", "backend/db/identity", "backend/db/orgs", "backend/db/repos", "backend/db/security", "backend/git", "backend/security", "backend/types", "webui"]
 default-members = [".", "backend/router", "backend/api/github-graphql", "backend/runner", "backend/db/actions", "backend/db/placement", "backend/db/directory", "backend/database", "backend/db/identity", "backend/db/orgs", "backend/db/repos", "backend/db/security", "backend/git", "backend/security", "backend/types", "webui"]
 
 [workspace.package]
@@ -143,14 +142,13 @@ undocumented_unsafe_blocks = "deny"
 allow_attributes_without_reason = "deny"
 
 [workspace.dependencies]
-codeyard-repos-pulls = { path = "backend/repos-pulls" }
+codeyard-repositories = { path = "backend/repositories" }
 codeyard-repos-rpc = { path = "backend/repos-rpc" }
 codeyard-git-storage = { path = "backend/git-storage" }
 codeyard-webhooks = { path = "backend/webhooks" }
 codeyard-nodes = { path = "backend/nodes" }
 codeyard-placement = { path = "backend/placement" }
 codeyard-ci = { path = "backend/ci" }
-codeyard-repos = { path = "backend/repos" }
 codeyard-storage = { path = "backend/storage" }
 codeyard-ssh = { path = "backend/ssh" }
 codeyard-testing = { path = "backend/testing" }

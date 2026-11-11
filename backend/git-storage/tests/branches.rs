@@ -130,11 +130,11 @@ async fn row(forks: &Forks, id: i64) -> PullRequest {
 
 /// Opens a pull request from `head_branch` on the fork into `main` of the base.
 async fn open(forks: &Forks, head_branch: &str) -> PullRequest {
-    let request = codeyard_repos_pulls::repositories::pull_requests::mutations::CreatePullRequestRequest {
+    let request = codeyard_repositories::repositories::pull_requests::mutations::CreatePullRequestRequest {
         foreign_head: None,
         suppress_ci: false,
         head_repo_id: Some(forks.fork.id),
-        source: codeyard_repos_pulls::repositories::pull_requests::mutations::PullRequestSource::New {
+        source: codeyard_repositories::repositories::pull_requests::mutations::PullRequestSource::New {
             title: format!("From {head_branch}"),
             body: None,
         },
@@ -143,7 +143,7 @@ async fn open(forks: &Forks, head_branch: &str) -> PullRequest {
         is_draft: false,
         maintainer_can_modify: None,
     };
-    codeyard_repos_pulls::repositories::pull_requests::mutations::create_pull_request(
+    codeyard_repositories::repositories::pull_requests::mutations::create_pull_request(
         &forks.pool,
         &forks.ci,
         &forks.broadcaster,
@@ -159,7 +159,7 @@ async fn open(forks: &Forks, head_branch: &str) -> PullRequest {
 /// Closes the pull request through the same conditional update the API uses.
 async fn close(forks: &Forks, pull: &PullRequest) {
     let edit =
-        codeyard_repos_pulls::repositories::pull_requests::mutations::UpdatePullRequestRequest {
+        codeyard_repositories::repositories::pull_requests::mutations::UpdatePullRequestRequest {
             expected_state: "open".to_owned(),
             expected_updated: pull.updated_at.to_rfc3339(),
             title: None,
@@ -168,7 +168,7 @@ async fn close(forks: &Forks, pull: &PullRequest) {
             base: None,
             maintainer_can_modify: None,
         };
-    codeyard_repos_pulls::repositories::pull_requests::mutations::update_pull_request(
+    codeyard_repositories::repositories::pull_requests::mutations::update_pull_request(
         &forks.pool,
         &forks.ci,
         &forks.broadcaster,
@@ -353,18 +353,18 @@ async fn existing_owner_requests_do_not_take_a_write_lock() {
         .unwrap()
     };
     commit(&base, "feature", Some(main), "a.txt", "change\n");
-    let pull = codeyard_repos_pulls::repositories::pull_requests::mutations::create_pull_request(
+    let pull = codeyard_repositories::repositories::pull_requests::mutations::create_pull_request(
         &forks.pool,
         &forks.ci,
         &forks.broadcaster,
         forks.alice,
         "alice".into(),
         "proj".into(),
-        codeyard_repos_pulls::repositories::pull_requests::mutations::CreatePullRequestRequest {
+        codeyard_repositories::repositories::pull_requests::mutations::CreatePullRequestRequest {
             foreign_head: None,
             suppress_ci: false,
             head_repo_id: Some(forks.base.id),
-            source: codeyard_repos_pulls::repositories::pull_requests::mutations::PullRequestSource::New {
+            source: codeyard_repositories::repositories::pull_requests::mutations::PullRequestSource::New {
                 title: "Owned".into(),
                 body: None,
             },

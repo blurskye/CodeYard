@@ -1,6 +1,6 @@
 use super::*;
 use codeyard_app::app::AppState;
-use codeyard_repos::migration_archive::MigrationArchive;
+use codeyard_git_storage::repositories::migration_archive::MigrationArchive;
 use codeyard_webhooks::payloads;
 
 pub(super) async fn append(

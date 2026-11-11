@@ -95,8 +95,10 @@ fn immutable_releases_error(error: anyhow::Error) -> (StatusCode, Json<ApiError>
     }
 }
 
-fn invitation_error(error: codeyard_repos::collaborators::Error) -> (StatusCode, Json<ApiError>) {
-    use codeyard_repos::collaborators::Error;
+fn invitation_error(
+    error: codeyard_repositories::collaborators::Error,
+) -> (StatusCode, Json<ApiError>) {
+    use codeyard_repositories::collaborators::Error;
     match error {
         Error::Denied => ApiError::failure(
             StatusCode::FORBIDDEN,
@@ -699,7 +701,7 @@ pub(super) async fn settings_model(
     if tab == "collaborators"
         && (loaded.chrome.can_manage_collaborators || loaded.chrome.can_manage_invitations)
     {
-        let invitations = codeyard_repos::collaborators::invitations(
+        let invitations = codeyard_repositories::collaborators::invitations(
             &ctx.state.pool,
             viewer.id,
             Some(loaded.repository.id),
@@ -1687,8 +1689,8 @@ async fn mutate(
     let authority = || ctx.database_actor(actor.id);
     match action {
         "star" | "unstar" | "watch" | "unwatch" => {
-            use codeyard_repos_pulls::repositories::engagement::change;
-            use codeyard_repos_pulls::repositories::engagement::Engagement;
+            use codeyard_repositories::repositories::engagement::change;
+            use codeyard_repositories::repositories::engagement::Engagement;
             let kind = if matches!(action, "star" | "unstar") {
                 Engagement::Star
             } else {
@@ -1711,7 +1713,7 @@ async fn mutate(
                 .into_iter()
                 .filter(|name| checkbox(form, &format!("events_{name}")))
                 .collect();
-            codeyard_repos_pulls::repositories::engagement::set_level(
+            codeyard_repositories::repositories::engagement::set_level(
                 pool,
                 ctx.database_actor(actor.id),
                 repository.id,
@@ -2154,7 +2156,7 @@ async fn mutate(
             Ok(settings_section_url(&base, action))
         }
         "remove-invited-collaborator" => {
-            codeyard_repos::collaborators::remove(
+            codeyard_repositories::collaborators::remove(
                 pool,
                 actor.id,
                 repository.id,
@@ -2219,15 +2221,16 @@ async fn mutate(
             Ok(settings_section_url(&base, action))
         }
         "invite-collaborator" => {
-            let permission = codeyard_repos::collaborators::permission(&field(form, "access"))
-                .ok_or_else(|| {
-                    ApiError::failure(
-                        StatusCode::UNPROCESSABLE_ENTITY,
-                        "validation_error",
-                        "Invalid permission",
-                    )
-                })?;
-            codeyard_repos::collaborators::add(
+            let permission =
+                codeyard_repositories::collaborators::permission(&field(form, "access"))
+                    .ok_or_else(|| {
+                        ApiError::failure(
+                            StatusCode::UNPROCESSABLE_ENTITY,
+                            "validation_error",
+                            "Invalid permission",
+                        )
+                    })?;
+            codeyard_repositories::collaborators::add(
                 pool,
                 ctx.database_actor(actor.id),
                 repository.id,
@@ -2246,7 +2249,7 @@ async fn mutate(
                     "Invalid invitation",
                 )
             })?;
-            codeyard_repos::collaborators::update_invitation(
+            codeyard_repositories::collaborators::update_invitation(
                 pool,
                 actor.id,
                 repository.id,

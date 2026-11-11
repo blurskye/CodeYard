@@ -19,9 +19,9 @@ use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoErrorReason;
+use codeyard_git_storage::repositories::editor::FileWrite;
+use codeyard_git_storage::repositories::editor::MAX_EDITOR_BYTES;
 use codeyard_git_storage::repositories::store::repo_store;
-use codeyard_repos::editor::FileWrite;
-use codeyard_repos::editor::MAX_EDITOR_BYTES;
 use codeyard_types::github_error::Error;
 use codeyard_types::github_error::Result;
 use codeyard_types::ref_path::encode_path as path_url;
@@ -33,8 +33,8 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-fn file_error(error: codeyard_repos_pulls::repositories::files::WriteError) -> Error {
-    use codeyard_repos_pulls::repositories::files::WriteFailure;
+fn file_error(error: codeyard_repositories::repositories::files::WriteError) -> Error {
+    use codeyard_repositories::repositories::files::WriteFailure;
     let status = match error.kind {
         WriteFailure::Invalid | WriteFailure::Encoding => StatusCode::UNPROCESSABLE_ENTITY,
         WriteFailure::Conflict => StatusCode::CONFLICT,
@@ -354,7 +354,7 @@ async fn read(
 #[derive(Deserialize)]
 struct Write {
     #[serde(flatten)]
-    identities: codeyard_repos::editor::CommitIdentities,
+    identities: codeyard_git_storage::repositories::editor::CommitIdentities,
     message: String,
     content: Option<String>,
     sha: Option<String>,
@@ -413,9 +413,9 @@ async fn save(
             .content
             .as_deref()
             .ok_or_else(|| Error::invalid("content is required"))?;
-        codeyard_repos_pulls::repositories::files::decode_base64(content, MAX_EDITOR_BYTES)
+        codeyard_repositories::repositories::files::decode_base64(content, MAX_EDITOR_BYTES)
             .map_err(|error| match error {
-                codeyard_repos_pulls::repositories::files::WriteFailure::TooLarge => {
+                codeyard_repositories::repositories::files::WriteFailure::TooLarge => {
                     Error::new(StatusCode::PAYLOAD_TOO_LARGE, "File exceeds 1 MiB")
                 }
                 _ => Error::invalid("Invalid base64 content"),
@@ -430,7 +430,7 @@ async fn save(
         deleting,
     };
     let saved = if deleting {
-        codeyard_repos_pulls::repositories::files::delete_file(
+        codeyard_repositories::repositories::files::delete_file(
             &state.pool,
             state.cluster.as_ref(),
             &state.ci_runs,
@@ -443,7 +443,7 @@ async fn save(
         )
         .await
     } else {
-        codeyard_repos_pulls::repositories::files::write_file_bytes(
+        codeyard_repositories::repositories::files::write_file_bytes(
             &state.pool,
             state.cluster.as_ref(),
             &state.ci_runs,

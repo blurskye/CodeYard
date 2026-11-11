@@ -62,6 +62,14 @@ pub fn repository_path(owner: &str, name: &str) -> String {
     )
 }
 
+pub fn commit_comment_path(owner: &str, name: &str, sha: &str, id: i64) -> String {
+    format!(
+        "/{}/{}/commit/{sha}?comment={id}#commitcomment-{id}",
+        encode_component(owner),
+        encode_component(name)
+    )
+}
+
 /// Display one workflow filename, removing exactly one final YAML extension.
 pub fn workflow_filename(path: &str) -> String {
     let name = path.rsplit('/').next().unwrap_or(path);
@@ -77,5 +85,17 @@ mod tests {
     #[test]
     fn encodes_segments_and_utf8_without_query_ambiguity() {
         assert_eq!(encode_component("a/b +é?"), "a%2Fb%20%2B%C3%A9%3F");
+    }
+
+    #[test]
+    fn commit_comment_paths_preserve_the_query_and_anchor() {
+        assert_eq!(
+            commit_comment_path("owner", "repo", "abc123", 42),
+            "/owner/repo/commit/abc123?comment=42#commitcomment-42"
+        );
+        assert_eq!(
+            commit_comment_path("a/b", "repo ?é", "abc123", 42),
+            "/a%2Fb/repo%20%3F%C3%A9/commit/abc123?comment=42#commitcomment-42"
+        );
     }
 }

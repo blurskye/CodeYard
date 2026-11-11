@@ -8,9 +8,9 @@ use crate::url;
 use crate::RequestContext;
 use crate::Result;
 use async_graphql::Error;
-use codeyard_repos_pulls::issues::comments::CreateCommentRequest;
-use codeyard_repos_pulls::issues::mutations::CreateIssueRequest;
-use codeyard_repos_pulls::issues::mutations::UpdateIssueRequest;
+use codeyard_repositories::issues::comments::CreateCommentRequest;
+use codeyard_repositories::issues::mutations::CreateIssueRequest;
+use codeyard_repositories::issues::mutations::UpdateIssueRequest;
 use codeyard_types::node_id;
 use serde_json::json;
 use serde_json::Value;
@@ -418,7 +418,7 @@ pub(super) async fn mutation(
         }
         let repo = crate::repository::by_id(id, request).await?;
         request.authorize(repo.id, "issues", true).await?;
-        codeyard_repos_pulls::repositories::identity_interactions::prepare(
+        codeyard_repositories::repositories::identity_interactions::prepare(
             &request.state,
             &request.auth.user,
             &repo,
@@ -426,7 +426,7 @@ pub(super) async fn mutation(
         .await
         .map_err(unavailable)?;
         let metadata = crate::metadata_mutations::prepare(&input, &repo, request).await?;
-        let issue = codeyard_repos_pulls::issues::mutations::create_issue_with_metadata(
+        let issue = codeyard_repositories::issues::mutations::create_issue_with_metadata(
             pool,
             broadcaster,
             request.auth.database_actor(),
@@ -451,7 +451,7 @@ pub(super) async fn mutation(
             .ok_or_else(missing)?;
         let repo = crate::repository::by_id(pull.repo_id, request).await?;
         request.authorize(repo.id, "pull-requests", true).await?;
-        codeyard_repos_pulls::repositories::identity_interactions::prepare(
+        codeyard_repositories::repositories::identity_interactions::prepare(
             &request.state,
             &request.auth.user,
             &repo,
@@ -459,7 +459,7 @@ pub(super) async fn mutation(
         .await
         .map_err(unavailable)?;
         let body =
-            codeyard_repos_pulls::repositories::pull_requests::comments::CreatePullRequestCommentRequest {
+            codeyard_repositories::repositories::pull_requests::comments::CreatePullRequestCommentRequest {
                 body: string("body")?.to_owned(),
                 repository_id: Some(repo.id),
                 path: None,
@@ -474,7 +474,7 @@ pub(super) async fn mutation(
                 pending: false,
             };
         let saved =
-            codeyard_repos_pulls::repositories::pull_requests::comments::create_pull_request_comment(
+            codeyard_repositories::repositories::pull_requests::comments::create_pull_request_comment(
                 pool,
                 request.state.cluster.as_ref(),
                 broadcaster,
@@ -511,7 +511,7 @@ pub(super) async fn mutation(
             .ok_or_else(missing)?;
         let repo = crate::repository::by_id(issue.repo_id, request).await?;
         request.authorize(repo.id, "issues", true).await?;
-        codeyard_repos_pulls::repositories::identity_interactions::prepare(
+        codeyard_repositories::repositories::identity_interactions::prepare(
             &request.state,
             &request.auth.user,
             &repo,
@@ -522,7 +522,7 @@ pub(super) async fn mutation(
         let state_error =
             |error| crate::mutations::issue_change_error(error, issue.author_id, field, request);
         if field == "addComment" {
-            let saved = codeyard_repos_pulls::issues::comments::create_issue_comment(
+            let saved = codeyard_repositories::issues::comments::create_issue_comment(
                 pool,
                 broadcaster,
                 actor,
@@ -553,7 +553,7 @@ pub(super) async fn mutation(
             crate::repository::by_id(target.repo_id, request).await?;
             request.authorize(target.repo_id, "issues", false).await?;
             payload["issue"] = object(
-                &codeyard_repos_pulls::issues::mutations::close_duplicate(
+                &codeyard_repositories::issues::mutations::close_duplicate(
                     pool,
                     broadcaster,
                     request.actor.clone(),
@@ -565,7 +565,7 @@ pub(super) async fn mutation(
                 .map_err(state_error)?,
             );
         } else {
-            let saved = codeyard_repos_pulls::issues::mutations::update_issue_latest(
+            let saved = codeyard_repositories::issues::mutations::update_issue_latest(
                 pool,
                 broadcaster,
                 actor,

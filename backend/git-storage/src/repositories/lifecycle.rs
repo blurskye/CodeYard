@@ -5,14 +5,14 @@ use tracing::instrument::WithSubscriber;
 use tracing::Instrument;
 
 use crate::context::NodeContext;
+use crate::repositories::editor::UploadFile;
+use crate::repositories::editor::UploadWrite;
 use crate::repositories::store::repo_store;
+use crate::repositories::templates::Template;
 use chrono::Utc;
 use codeyard_database::models::Repository;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
-use codeyard_repos::editor::UploadFile;
-use codeyard_repos::editor::UploadWrite;
-use codeyard_repos::templates::Template;
 use std::path::Path;
 use uuid::Uuid;
 
@@ -799,7 +799,7 @@ async fn commit_initial_files(
     if files.readme {
         texts.push((
             "README.md",
-            codeyard_repos::templates::readme(&repository.name, description),
+            crate::repositories::templates::readme(&repository.name, description),
         ));
     }
     if let Some(template) = files.gitignore {
@@ -808,7 +808,7 @@ async fn commit_initial_files(
     if let Some(template) = files.license {
         texts.push((
             "LICENSE",
-            codeyard_repos::templates::fill_license(template.text, year, holder),
+            crate::repositories::templates::fill_license(template.text, year, holder),
         ));
     }
     let write = UploadWrite {

@@ -24,7 +24,7 @@ use codeyard_git::error::ErrorKind;
 use codeyard_git_storage::ref_errors::RefError;
 use codeyard_git_storage::repositories::releases::ReleaseError;
 use codeyard_identity::repository_access::AccessError;
-use codeyard_repos_pulls::repositories::releases::ReleaseInput;
+use codeyard_repositories::repositories::releases::ReleaseInput;
 use codeyard_storage::files::downloads::DownloadError;
 use codeyard_storage::files::uploads::UploadError;
 use codeyard_webui::app::Page;
@@ -211,7 +211,7 @@ async fn new_form(
         return ctx.error(StatusCode::UNAUTHORIZED, "Sign in to publish a release.");
     };
     let (tags, mut branches, default_branch) =
-        match codeyard_repos_pulls::repositories::releases::form_choices(
+        match codeyard_repositories::repositories::releases::form_choices(
             &ctx.state.pool,
             ctx.state.cluster.as_ref(),
             actor,
@@ -266,7 +266,7 @@ async fn edit_form(
     let Some(actor) = ctx.user.as_ref().map(|user| user.id) else {
         return ctx.error(StatusCode::UNAUTHORIZED, "Sign in to edit a release.");
     };
-    let found = match codeyard_repos_pulls::repositories::releases::edit_detail(
+    let found = match codeyard_repositories::repositories::releases::edit_detail(
         &ctx.state.pool,
         actor,
         owner,
@@ -343,7 +343,7 @@ pub(crate) async fn list(
         .unwrap_or(1)
         .max(1);
     let viewer = ctx.user.as_ref().map(|user| user.id);
-    match codeyard_repos_pulls::repositories::releases::list(
+    match codeyard_repositories::repositories::releases::list(
         &ctx.state.pool,
         viewer,
         repo.id,
@@ -392,7 +392,7 @@ pub(crate) async fn detail(
             Err(response) => return response,
         };
     let viewer = ctx.user.as_ref().map(|user| user.id);
-    match codeyard_repos_pulls::repositories::releases::detail_by_tag(
+    match codeyard_repositories::repositories::releases::detail_by_tag(
         &ctx.state.pool,
         viewer,
         repo.id,
@@ -509,12 +509,12 @@ pub(crate) async fn create(
         return ctx.error(StatusCode::UNAUTHORIZED, "Sign in to publish a release.");
     };
     if field(&form, "intent") == "generate-notes" {
-        let generated = codeyard_repos_pulls::repositories::releases::notes::generate_notes(
+        let generated = codeyard_repositories::repositories::releases::notes::generate_notes(
             &ctx.state.pool,
             ctx.state.cluster.as_ref(),
             actor,
             repo.id,
-            &codeyard_repos_pulls::repositories::releases::notes::NotesInput {
+            &codeyard_repositories::repositories::releases::notes::NotesInput {
                 tag: draft.tag.trim(),
                 target: (!draft.target.trim().is_empty()).then_some(draft.target.trim()),
                 previous_tag: (!draft.previous_tag.trim().is_empty())
@@ -552,7 +552,7 @@ pub(crate) async fn create(
         fields: fields_of(&draft),
         new_tag_denied: false,
     };
-    match codeyard_repos_pulls::repositories::releases::create(
+    match codeyard_repositories::repositories::releases::create(
         &ctx.state.pool,
         ctx.state.cluster.as_ref(),
         &ctx.state.ci_runs,
@@ -622,7 +622,7 @@ pub(crate) async fn update(
     };
     let mut changes: codeyard_db_repos::releases::ReleaseChanges = (&fields_of(&draft)).into();
     changes.expected_revision = Some(draft.revision.clone());
-    match codeyard_repos_pulls::repositories::releases::update(
+    match codeyard_repositories::repositories::releases::update(
         &ctx.state.pool,
         ctx.state.cluster.as_ref(),
         &ctx.state.ci_runs,
@@ -672,7 +672,7 @@ pub(crate) async fn delete(
     let Some(actor) = ctx.user.as_ref().map(|user| user.id) else {
         return ctx.error(StatusCode::UNAUTHORIZED, "Sign in to delete a release.");
     };
-    match codeyard_repos_pulls::repositories::releases::delete(
+    match codeyard_repositories::repositories::releases::delete(
         &ctx.state.pool,
         &ctx.state.storage,
         actor,
@@ -715,7 +715,7 @@ pub(crate) async fn upload_asset(
     let Some(actor) = ctx.user.as_ref().map(|user| user.id) else {
         return ctx.error(StatusCode::UNAUTHORIZED, "Sign in to upload an asset.");
     };
-    if let Err(error) = codeyard_repos_pulls::repositories::releases::edit_detail(
+    if let Err(error) = codeyard_repositories::repositories::releases::edit_detail(
         &ctx.state.pool,
         actor,
         &owner,
@@ -799,7 +799,7 @@ pub(crate) async fn upload_asset(
     let label = field(&fields, "label");
     let label = label.trim();
     let session = codeyard_api_http::session::extract_session_id(&ctx.headers).unwrap_or_default();
-    match codeyard_repos_pulls::repositories::releases::add_asset(
+    match codeyard_repositories::repositories::releases::add_asset(
         &ctx.state.pool,
         &ctx.state.storage,
         actor,
@@ -857,7 +857,7 @@ pub(crate) async fn update_asset(
         name: Some(field(&form, "name").to_owned()),
         label: Some((!label.is_empty()).then(|| label.to_owned())),
     };
-    match codeyard_repos_pulls::repositories::releases::update_asset(
+    match codeyard_repositories::repositories::releases::update_asset(
         &ctx.state.pool,
         actor,
         &owner,
@@ -894,7 +894,7 @@ pub(crate) async fn delete_asset(
     let Some(actor) = ctx.user.as_ref().map(|user| user.id) else {
         return ctx.error(StatusCode::UNAUTHORIZED, "Sign in to remove an asset.");
     };
-    match codeyard_repos_pulls::repositories::releases::delete_asset(
+    match codeyard_repositories::repositories::releases::delete_asset(
         &ctx.state.pool,
         &ctx.state.storage,
         actor,
@@ -931,7 +931,7 @@ pub(crate) async fn download(
         return ctx.error(StatusCode::NOT_FOUND, "Asset not found.");
     };
     let viewer = ctx.user.as_ref().map(|user| user.id);
-    match codeyard_repos_pulls::repositories::releases::download(
+    match codeyard_repositories::repositories::releases::download(
         &ctx.state.pool,
         &ctx.state.storage,
         viewer,

@@ -1,8 +1,8 @@
 use super::*;
 use codeyard_ci::runs::CiRuns;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
-use codeyard_repos_pulls::repositories::dependencies::registry;
-use codeyard_repos_pulls::repositories::dependencies::worker;
+use codeyard_repositories::repositories::dependencies::registry;
+use codeyard_repositories::repositories::dependencies::worker;
 mod provider;
 mod workers;
 struct World {

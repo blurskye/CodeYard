@@ -26,7 +26,7 @@ pub(crate) async fn react(
     let user = ctx.require_user()?;
     let loaded =
         codeyard_api_http::shared::repos::chrome::load_database(&ctx, &owner, &name).await?;
-    let detail = codeyard_repos_pulls::repositories::releases::detail_by_id(
+    let detail = codeyard_repositories::repositories::releases::detail_by_id(
         &ctx.state.pool,
         Some(user.id),
         loaded.repository.id,

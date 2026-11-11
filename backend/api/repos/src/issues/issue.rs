@@ -26,7 +26,7 @@ use codeyard_api_http::shared::repos::forms::authorize_post;
 use codeyard_api_http::shared::repos::forms::field;
 use codeyard_api_http::shared::user::responses::PublicUserResponse as UserResponse;
 use codeyard_app::app::AppState;
-use codeyard_repos_pulls::issues::mutations::UpdateIssueRequest;
+use codeyard_repositories::issues::mutations::UpdateIssueRequest;
 use codeyard_webui::pages::repos::issues::DetailDraft;
 use codeyard_webui::pages::repos::issues::Kind;
 use serde::Serialize;
@@ -41,7 +41,7 @@ pub async fn update_issue(
 ) -> Result<Json<IssueResponse>, (StatusCode, Json<ApiError>)> {
     let current_actor = get_current_user(&state.pool, &headers).await?;
     let repository = readable_repository(&state.pool, &owner, &repo, &headers).await?;
-    let issue = codeyard_repos_pulls::issues::mutations::update_issue(
+    let issue = codeyard_repositories::issues::mutations::update_issue(
         &state.pool,
         &state.notification_broadcaster,
         current_actor.id,
@@ -207,7 +207,7 @@ pub(crate) async fn native_detail(
                     .get("page")
                     .and_then(|page| page.parse::<usize>().ok())
                     .filter(|page| {
-                        (2..=codeyard_repos_pulls::issues::MAX_COMMENT_PAGE).contains(page)
+                        (2..=codeyard_repositories::issues::MAX_COMMENT_PAGE).contains(page)
                     });
                 let suffix = match (comment, page) {
                     (Some(id), _) => format!("?comment={id}#comment-{id}"),
@@ -253,7 +253,9 @@ pub(crate) async fn native_detail(
                 .query
                 .get("page")
                 .and_then(|page| page.parse::<usize>().ok())
-                .filter(|page| (2..=codeyard_repos_pulls::issues::MAX_COMMENT_PAGE).contains(page));
+                .filter(|page| {
+                    (2..=codeyard_repositories::issues::MAX_COMMENT_PAGE).contains(page)
+                });
             if let Some(page) = page {
                 location.push_str(&format!("?page={page}"));
             }
@@ -282,7 +284,7 @@ pub(crate) async fn native_detail(
                     .map_err(|_| unavailable(&ctx))?;
             ctx.query.insert(
                 "page".into(),
-                codeyard_repos_pulls::issues::discussion_page(Ok(position)).to_string(),
+                codeyard_repositories::issues::discussion_page(Ok(position)).to_string(),
             );
         }
     }
@@ -312,7 +314,7 @@ pub(crate) async fn native_detail(
                 .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Comment not found."))?;
             let base = format!("{}/{}", repo.view.family_url(Kind::Pull), number);
             let location =
-                codeyard_repos_pulls::repositories::pull_requests::comments::saved_comment_link(
+                codeyard_repositories::repositories::pull_requests::comments::saved_comment_link(
                     &ctx.state.pool,
                     &base,
                     &comment,
@@ -341,7 +343,7 @@ pub(crate) async fn native_detail(
             .map_err(|_| unavailable(&ctx))?
             .filter(|review| review.pull_request_id == pull.id && review.state != "pending")
             .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Review not found."))?;
-            let page = codeyard_repos_pulls::issues::discussion_page(
+            let page = codeyard_repositories::issues::discussion_page(
                 codeyard_db_repos::pull_requests::reviews::count_discussion_items_through(
                     &ctx.state.pool,
                     pull.id,
@@ -350,7 +352,7 @@ pub(crate) async fn native_detail(
                 .await,
             );
             let base = format!("{}/{}", repo.view.family_url(Kind::Pull), number);
-            let location = codeyard_repos_pulls::issues::discussion_link(
+            let location = codeyard_repositories::issues::discussion_link(
                 &base,
                 page,
                 &format!("review-{}", review.id),
@@ -462,13 +464,13 @@ pub(crate) async fn save_entry_change(
     text: EntryChange,
 ) -> Result<(), ApiFailure> {
     match kind {
-        Kind::Issue => codeyard_repos_pulls::issues::mutations::update_issue(
+        Kind::Issue => codeyard_repositories::issues::mutations::update_issue(
             &ctx.state.pool,
             &ctx.state.notification_broadcaster,
             actor_id,
             repository_id,
             number,
-            codeyard_repos_pulls::issues::mutations::UpdateIssueRequest {
+            codeyard_repositories::issues::mutations::UpdateIssueRequest {
                 expected_state: text.expected_state,
                 expected_updated: text.expected_updated,
                 title: text.title,
@@ -480,13 +482,13 @@ pub(crate) async fn save_entry_change(
         .await
         .map_err(crate::issues::operation_error)
         .map(|_| ()),
-        Kind::Pull => codeyard_repos_pulls::repositories::pull_requests::mutations::update_pull_request(
+        Kind::Pull => codeyard_repositories::repositories::pull_requests::mutations::update_pull_request(
             &ctx.state.pool,
             &ctx.state.ci_runs,
             &ctx.state.notification_broadcaster,
             actor_id,
             (repository_id, number),
-            codeyard_repos_pulls::repositories::pull_requests::mutations::UpdatePullRequestRequest {
+            codeyard_repositories::repositories::pull_requests::mutations::UpdatePullRequestRequest {
                 expected_state: text.expected_state,
                 expected_updated: text.expected_updated,
                 title: text.title,

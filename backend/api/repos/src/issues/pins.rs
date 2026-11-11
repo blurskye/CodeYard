@@ -95,7 +95,7 @@ pub(crate) async fn pinned_comment(
             let position =
                 codeyard_db_repos::issues::issue_comment_position(&ctx.state.pool, comment.id)
                     .await;
-            let href = codeyard_repos_pulls::issues::comment_link(&base, comment.id, position);
+            let href = codeyard_repositories::issues::comment_link(&base, comment.id, position);
             (comment.body, comment.author_id, href)
         }
         codeyard_db_repos::assignees::AssignedItem::PullRequest(id) => {
@@ -115,7 +115,7 @@ pub(crate) async fn pinned_comment(
                 return Ok(None);
             };
             let href =
-                codeyard_repos_pulls::repositories::pull_requests::comments::saved_comment_link(
+                codeyard_repositories::repositories::pull_requests::comments::saved_comment_link(
                     &ctx.state.pool,
                     &base,
                     &comment,

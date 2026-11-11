@@ -74,7 +74,7 @@ pub struct Operation {
 pub struct HookState {
     pub proposed: Option<Vec<RefUpdate>>,
     pub previous_refs: Vec<String>,
-    pub secret_bypasses: Vec<codeyard_repos::push_protection::ApprovedBypass>,
+    pub secret_bypasses: Vec<crate::repositories::push_protection::ApprovedBypass>,
     pub post_started: bool,
     pub dispatch_failed: bool,
     // Acquired in pre-receive through the description already inherited by the child.
@@ -707,7 +707,7 @@ impl Gateway {
             ReceiveCredential::DeployKey(id) => {
                 let _ = timeout(
                     Duration::from_secs(1),
-                    codeyard_repos::deploy_keys::record_use(&self.pool, id),
+                    crate::repositories::deploy_keys::record_use(&self.pool, id),
                 )
                 .await;
             }
@@ -753,7 +753,7 @@ impl Gateway {
         };
         let repo_id = repo.id;
         let write = command.write;
-        let observation = codeyard_repos::traffic::clone::Observation::default();
+        let observation = crate::repositories::traffic::clone::Observation::default();
         let observed = observation.clone();
         let session = async move {
             let mut child_input = observed.input(child_input);
@@ -789,7 +789,7 @@ impl Gateway {
         };
         if !write && status.success() && delivered && observation.initial_transfer() {
             if let Some(visitor) = visitor {
-                codeyard_repos::traffic::observe(
+                crate::repositories::traffic::observe(
                     &self.pool,
                     repo_id,
                     &visitor,

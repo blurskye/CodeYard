@@ -43,15 +43,15 @@ use codeyard_db_repos::discussions::ListFilter;
 use codeyard_db_repos::discussions::ListSort;
 use codeyard_db_repos::discussions::Pick;
 use codeyard_git_storage::repositories::store::repo_store;
-use codeyard_repos_pulls::issues::mutations::CreateIssueRequest;
-use codeyard_repos_pulls::repositories::issue_templates::compose_form_body;
-use codeyard_repos_pulls::repositories::issue_templates::first_missing_answer;
-use codeyard_repos_pulls::repositories::issue_templates::issue_templates;
-use codeyard_repos_pulls::repositories::issue_templates::pull_request_template;
-use codeyard_repos_pulls::repositories::issue_templates::FormElement;
-use codeyard_repos_pulls::repositories::issue_templates::FormKind;
-use codeyard_repos_pulls::repositories::issue_templates::IssueTemplate;
-use codeyard_repos_pulls::repositories::issue_templates::IssueTemplates;
+use codeyard_repositories::issues::mutations::CreateIssueRequest;
+use codeyard_repositories::repositories::issue_templates::compose_form_body;
+use codeyard_repositories::repositories::issue_templates::first_missing_answer;
+use codeyard_repositories::repositories::issue_templates::issue_templates;
+use codeyard_repositories::repositories::issue_templates::pull_request_template;
+use codeyard_repositories::repositories::issue_templates::FormElement;
+use codeyard_repositories::repositories::issue_templates::FormKind;
+use codeyard_repositories::repositories::issue_templates::IssueTemplate;
+use codeyard_repositories::repositories::issue_templates::IssueTemplates;
 use codeyard_webui::components::references::References;
 use codeyard_webui::components::task_lists::count_tasks;
 use codeyard_webui::pages::repos::issues as view;
@@ -67,7 +67,7 @@ pub async fn create_issue(
     Json(req): Json<CreateIssueRequest>,
 ) -> Result<(StatusCode, Json<IssueResponse>), (StatusCode, Json<ApiError>)> {
     let current_actor = get_current_user(&state.pool, &headers).await?;
-    let issue = codeyard_repos_pulls::issues::mutations::create_issue(
+    let issue = codeyard_repositories::issues::mutations::create_issue(
         &state.pool,
         &state.notification_broadcaster,
         codeyard_database::queries::credentials::Actor::from((
@@ -1250,13 +1250,13 @@ pub(crate) async fn native_create(
                 .iter()
                 .filter_map(|id| id.parse().ok())
                 .collect();
-            let created = codeyard_repos_pulls::issues::mutations::create_issue_with_metadata(
+            let created = codeyard_repositories::issues::mutations::create_issue_with_metadata(
                 &ctx.state.pool,
                 &ctx.state.notification_broadcaster,
                 ctx.database_actor(actor.id),
                 owner.clone(),
                 name.clone(),
-                codeyard_repos_pulls::issues::mutations::CreateIssueRequest {
+                codeyard_repositories::issues::mutations::CreateIssueRequest {
                     title: draft.title.clone(),
                     body: Some(draft.body.clone()),
                     repository_id: Some(repo.record.id),
@@ -1278,19 +1278,19 @@ pub(crate) async fn native_create(
             let session = codeyard_api_http::session::extract_session_id(&ctx.headers).unwrap_or_default();
             let source = codeyard_app::cells::pull_head_id(&ctx.state, &ctx.database_actor(actor.id), &session, head_repo.id)
                 .await.map_err(|error| (error.0, Json(ApiError::new("invalid_head", &error.1))))?;
-            codeyard_repos_pulls::repositories::pull_requests::mutations::create_pull_request(
+            codeyard_repositories::repositories::pull_requests::mutations::create_pull_request(
             &ctx.state.pool,
             &ctx.state.ci_runs,
             &ctx.state.notification_broadcaster,
             actor.id,
             owner,
             name,
-            codeyard_repos_pulls::repositories::pull_requests::mutations::CreatePullRequestRequest {
+            codeyard_repositories::repositories::pull_requests::mutations::CreatePullRequestRequest {
                 foreign_head: source.admission,
                 suppress_ci: false,
                 head_repo_id: Some(head_repo.id),
                 source:
-                    codeyard_repos_pulls::repositories::pull_requests::mutations::PullRequestSource::New {
+                    codeyard_repositories::repositories::pull_requests::mutations::PullRequestSource::New {
                         title: draft.title.clone(),
                         body: Some(draft.body.clone()),
                     },

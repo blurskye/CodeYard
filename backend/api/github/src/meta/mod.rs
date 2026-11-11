@@ -135,7 +135,7 @@ async fn octocat(Query(query): Query<HashMap<String, String>>) -> String {
 }
 
 pub(super) fn license_document(
-    template: &codeyard_repos::templates::Template,
+    template: &codeyard_git_storage::repositories::templates::Template,
     full: bool,
 ) -> Value {
     let key = template.name.to_ascii_lowercase();
@@ -205,7 +205,7 @@ async fn licenses(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let (offset, limit) = page.window()?;
-    let rows = codeyard_repos::templates::LICENSE_TEMPLATES
+    let rows = codeyard_git_storage::repositories::templates::LICENSE_TEMPLATES
         .iter()
         .skip(offset)
         .take(limit)
@@ -214,11 +214,11 @@ async fn licenses(
     page.response(
         &uri,
         rows,
-        codeyard_repos::templates::LICENSE_TEMPLATES.len() > offset + limit,
+        codeyard_git_storage::repositories::templates::LICENSE_TEMPLATES.len() > offset + limit,
     )
 }
 async fn license(Path(key): Path<String>) -> Result<Json<Value>> {
-    let template = codeyard_repos::templates::LICENSE_TEMPLATES
+    let template = codeyard_git_storage::repositories::templates::LICENSE_TEMPLATES
         .iter()
         .find(|template| template.name.eq_ignore_ascii_case(&key))
         .ok_or_else(Error::missing)?;
@@ -247,7 +247,8 @@ async fn repository_license(
     let path = entries
         .iter()
         .find(|entry| {
-            entry.entry_type == "file" && codeyard_repos::templates::is_license_file(&entry.name)
+            entry.entry_type == "file"
+                && codeyard_git_storage::repositories::templates::is_license_file(&entry.name)
         })
         .ok_or_else(Error::missing)?
         .path
@@ -271,7 +272,7 @@ async fn repository_license(
     );
     value["encoding"] = json!("base64");
     value["content"] = json!(STANDARD.encode(&blob.bytes));
-    value["license"] = codeyard_repos::templates::detect_license(&blob.bytes)
+    value["license"] = codeyard_git_storage::repositories::templates::detect_license(&blob.bytes)
         .map(|template| license_document(template, false))
         .unwrap_or(Value::Null);
     Ok(Json(value).into_response())
@@ -280,7 +281,7 @@ async fn repository_license(
 fn conduct(full: bool) -> Value {
     let mut value = json!({"key":"contributor_covenant","name":"Contributor Covenant","url":api_url("/codes_of_conduct/contributor_covenant"),"html_url":api_url("/codes_of_conduct/contributor_covenant")});
     if full {
-        value["body"] = json!(codeyard_repos::templates::CONTRIBUTOR_COVENANT);
+        value["body"] = json!(codeyard_git_storage::repositories::templates::CONTRIBUTOR_COVENANT);
     }
     value
 }
@@ -294,13 +295,16 @@ async fn conduct_code(Path(key): Path<String>) -> Result<Json<Value>> {
     Ok(Json(conduct(true)))
 }
 async fn ignores() -> Json<Value> {
-    Json(json!(codeyard_repos::templates::GITIGNORE_TEMPLATES
-        .iter()
-        .map(|template| template.name)
-        .collect::<Vec<_>>()))
+    Json(json!(
+        codeyard_git_storage::repositories::templates::GITIGNORE_TEMPLATES
+            .iter()
+            .map(|template| template.name)
+            .collect::<Vec<_>>()
+    ))
 }
 async fn ignore(Path(name): Path<String>, headers: HeaderMap) -> Result<Response> {
-    let template = codeyard_repos::templates::gitignore(&name).ok_or_else(Error::missing)?;
+    let template = codeyard_git_storage::repositories::templates::gitignore(&name)
+        .ok_or_else(Error::missing)?;
     if headers
         .get(header::ACCEPT)
         .and_then(|value| value.to_str().ok())

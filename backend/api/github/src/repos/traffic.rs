@@ -9,7 +9,7 @@ use axum::Json;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
 use codeyard_db_repos::repositories::traffic::Kind;
-use codeyard_repos::traffic::Refusal;
+use codeyard_git_storage::repositories::traffic::Refusal;
 use codeyard_types::github_error::Error;
 use codeyard_types::github_error::Result;
 use serde::Deserialize;
@@ -35,12 +35,13 @@ async fn views(
     Query(period): Query<Period>,
 ) -> Result<Json<Value>> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, false).await?;
-    let data = codeyard_repos::traffic::summary(
+    let data = codeyard_git_storage::repositories::traffic::summary(
         &state.pool,
         actor.as_ref().map(|actor| &actor.user),
         &repo,
         Kind::Views,
-        codeyard_repos::traffic::weekly(period.per.as_deref()).map_err(failure)?,
+        codeyard_git_storage::repositories::traffic::weekly(period.per.as_deref())
+            .map_err(failure)?,
     )
     .await
     .map_err(failure)?;
@@ -56,12 +57,13 @@ async fn clones(
     Query(period): Query<Period>,
 ) -> Result<Json<Value>> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, false).await?;
-    let data = codeyard_repos::traffic::summary(
+    let data = codeyard_git_storage::repositories::traffic::summary(
         &state.pool,
         actor.as_ref().map(|actor| &actor.user),
         &repo,
         Kind::Clones,
-        codeyard_repos::traffic::weekly(period.per.as_deref()).map_err(failure)?,
+        codeyard_git_storage::repositories::traffic::weekly(period.per.as_deref())
+            .map_err(failure)?,
     )
     .await
     .map_err(failure)?;
@@ -76,10 +78,13 @@ async fn paths(
     Path((owner, name)): Path<(String, String)>,
 ) -> Result<Json<Value>> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, false).await?;
-    let data =
-        codeyard_repos::traffic::paths(&state.pool, actor.as_ref().map(|actor| &actor.user), &repo)
-            .await
-            .map_err(failure)?;
+    let data = codeyard_git_storage::repositories::traffic::paths(
+        &state.pool,
+        actor.as_ref().map(|actor| &actor.user),
+        &repo,
+    )
+    .await
+    .map_err(failure)?;
     Ok(Json(Value::Array(
         data.iter()
             .map(codeyard_webhooks::payloads::content_traffic)
@@ -92,7 +97,7 @@ async fn referrers(
     Path((owner, name)): Path<(String, String)>,
 ) -> Result<Json<Value>> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, false).await?;
-    let data = codeyard_repos::traffic::referrers(
+    let data = codeyard_git_storage::repositories::traffic::referrers(
         &state.pool,
         actor.as_ref().map(|actor| &actor.user),
         &repo,

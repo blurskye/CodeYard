@@ -47,7 +47,7 @@ pub(super) async fn contract(
     assert_eq!(status, StatusCode::CREATED, "{key}");
     let id = key["id"].as_i64().unwrap();
     assert_eq!(
-        codeyard_repos::deploy_keys::authorize(f.pool(), id, first, true)
+        codeyard_git_storage::repositories::deploy_keys::authorize(f.pool(), id, first, true)
             .await
             .unwrap()
             .1,
@@ -64,11 +64,14 @@ pub(super) async fn contract(
     )
     .await;
     for write in [false, true] {
-        assert!(
-            codeyard_repos::deploy_keys::authorize(f.pool(), id, first, write)
-                .await
-                .is_err()
-        );
+        assert!(codeyard_git_storage::repositories::deploy_keys::authorize(
+            f.pool(),
+            id,
+            first,
+            write
+        )
+        .await
+        .is_err());
     }
     assert!(
         codeyard_db_identity::deploy_keys::get_deploy_key(f.pool(), id)
@@ -91,7 +94,7 @@ pub(super) async fn contract(
     )
     .await;
     assert!(
-        codeyard_repos::deploy_keys::authorize(f.pool(), id, first, true)
+        codeyard_git_storage::repositories::deploy_keys::authorize(f.pool(), id, first, true)
             .await
             .is_ok()
     );
@@ -111,13 +114,13 @@ pub(super) async fn contract(
     .await
     .unwrap();
     assert!(
-        codeyard_repos::deploy_keys::authorize(f.pool(), id, first, true)
+        codeyard_git_storage::repositories::deploy_keys::authorize(f.pool(), id, first, true)
             .await
             .is_err(),
         "a cached old organization must not bypass the destination key policy"
     );
     assert!(
-        codeyard_repos::deploy_keys::authorize(f.pool(), id, &moved, true)
+        codeyard_git_storage::repositories::deploy_keys::authorize(f.pool(), id, &moved, true)
             .await
             .is_err()
     );
@@ -207,7 +210,7 @@ pub(super) async fn contract(
         .await
         .unwrap()
         .unwrap();
-    let input = codeyard_repos::editor::FileWrite {
+    let input = codeyard_git_storage::repositories::editor::FileWrite {
         branch: "main".into(),
         path: "policy.txt".into(),
         message: "Prepared before enabling the policy".into(),
@@ -225,7 +228,7 @@ pub(super) async fn contract(
         .await
         .unwrap();
     prepared.web_commit = true;
-    let mut prepared: codeyard_repos::editor::PreparedFile =
+    let mut prepared: codeyard_git_storage::repositories::editor::PreparedFile =
         serde_json::from_value(serde_json::to_value(prepared).unwrap()).unwrap();
     request(
         router,

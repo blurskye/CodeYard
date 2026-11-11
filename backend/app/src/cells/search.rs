@@ -254,7 +254,7 @@ async fn packages(
     let transient = |kind| matches!(kind, ErrorKind::Unavailable | ErrorKind::Conflict);
     let reader = codeyard_db_security::dependency_graph::Reader::Viewer(None);
     let mut found = std::collections::BTreeSet::new();
-    match codeyard_repos_pulls::repositories::dependency_graph::inventory(
+    match codeyard_repositories::repositories::dependency_graph::inventory(
         state,
         &reader,
         repo,

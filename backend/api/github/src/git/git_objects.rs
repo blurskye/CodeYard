@@ -142,12 +142,12 @@ async fn create_blob(
     .map_err(|error| Error::new(error.status(), "Invalid blob request"))?;
     let bytes = match input.encoding.as_deref().unwrap_or("utf-8") {
         "utf-8" => input.content.into_bytes(),
-        "base64" => codeyard_repos_pulls::repositories::files::decode_base64(
+        "base64" => codeyard_repositories::repositories::files::decode_base64(
             &input.content,
             MAX_BLOB_WRITE_BYTES,
         )
         .map_err(|error| match error {
-            codeyard_repos_pulls::repositories::files::WriteFailure::TooLarge => {
+            codeyard_repositories::repositories::files::WriteFailure::TooLarge => {
                 Error::invalid("Blobs must not exceed 100 MiB")
             }
             _ => Error::invalid("Invalid base64 content"),

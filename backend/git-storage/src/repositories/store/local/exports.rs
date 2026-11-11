@@ -59,7 +59,7 @@ impl LocalStore {
             let (status, pack) = process::buffered(
                 command,
                 input.as_bytes(),
-                codeyard_repos::imports::MAX_IMPORT_PACK_BYTES,
+                crate::repositories::imports::MAX_IMPORT_PACK_BYTES,
                 process::RPC_TIMEOUT,
             )
             .await

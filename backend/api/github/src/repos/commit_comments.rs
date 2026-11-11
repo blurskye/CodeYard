@@ -19,8 +19,8 @@ use codeyard_app::app::AppState;
 use codeyard_database::models::Repository;
 use codeyard_git_storage::api_shared::github::contents::store_error;
 use codeyard_git_storage::repositories::store::repo_store;
-use codeyard_repos_pulls::repositories::commit_comments::CommentDetails;
-use codeyard_repos_pulls::repositories::commit_comments::CommentError;
+use codeyard_repositories::repositories::commit_comments::CommentDetails;
+use codeyard_repositories::repositories::commit_comments::CommentError;
 use codeyard_types::github_error::Error;
 use codeyard_types::github_error::Result;
 use codeyard_types::urls::repo_url;
@@ -110,14 +110,14 @@ async fn create(
     let Json(input) = Json::<Create>::from_request(request, &state)
         .await
         .map_err(|error| Error::new(error.status(), "Invalid commit comment"))?;
-    let entry = codeyard_repos_pulls::repositories::commit_comments::create(
+    let entry = codeyard_repositories::repositories::commit_comments::create(
         &state.pool,
         state.cluster.as_ref(),
         &state.notification_broadcaster,
         actor,
         repo.id,
         &reference,
-        codeyard_repos_pulls::repositories::commit_comments::CreateComment {
+        codeyard_repositories::repositories::commit_comments::CreateComment {
             body: input.body,
             path: input.path,
             position: input.position,
@@ -165,7 +165,7 @@ async fn item(
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
     if reading {
-        let entry = codeyard_repos_pulls::repositories::commit_comments::comment_details(
+        let entry = codeyard_repositories::repositories::commit_comments::comment_details(
             &state.pool,
             state.cluster.as_ref(),
             &repo,
@@ -179,7 +179,7 @@ async fn item(
     }
     let actor = actor.ok_or_else(codeyard_identity::github_auth::required)?;
     if method == Method::DELETE {
-        codeyard_repos_pulls::repositories::commit_comments::delete(
+        codeyard_repositories::repositories::commit_comments::delete(
             &state.pool,
             actor,
             repo.id,
@@ -193,7 +193,7 @@ async fn item(
     let Json(input) = Json::<Update>::from_request(request, &state)
         .await
         .map_err(|error| Error::new(error.status(), "Invalid commit comment"))?;
-    let entry = codeyard_repos_pulls::repositories::commit_comments::edit(
+    let entry = codeyard_repositories::repositories::commit_comments::edit(
         &state.pool,
         state.cluster.as_ref(),
         &state.notification_broadcaster,
@@ -252,7 +252,7 @@ async fn list(
         .await
         .map_err(Error::unavailable)?
         .is_empty();
-    let entries = codeyard_repos_pulls::repositories::commit_comments::comment_details(
+    let entries = codeyard_repositories::repositories::commit_comments::comment_details(
         &state.pool,
         state.cluster.as_ref(),
         &repo,

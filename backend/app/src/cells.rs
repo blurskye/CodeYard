@@ -43,7 +43,7 @@ impl Native {
         .filter(|repository| repository.forked_from_id == Some(binding.base_repo_id)) else {
             return Ok(None);
         };
-        if !codeyard_repos::maintainer_edit::publication_authorized(
+        if !codeyard_git_storage::repositories::maintainer_edit::publication_authorized(
             pool,
             Some(request.publisher_id),
             &repository,

@@ -8,10 +8,10 @@ use crate::support::http_client as http;
 
 use axum::http::StatusCode;
 
+use codeyard_git_storage::repositories::editor::FileWrite;
 use codeyard_git_storage::repositories::lifecycle::provision;
 use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_git_storage::repositories::store::RepoStore;
-use codeyard_repos::editor::FileWrite;
 use database::Database;
 
 /// Commits `bytes` as a new file at `path` on `main`, after `tip`, and returns the new tip.

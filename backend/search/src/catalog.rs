@@ -37,7 +37,7 @@ pub async fn git_facts(
         return Ok(facts);
     };
     let directories =
-        codeyard_repos_pulls::repositories::community::directories(&store, revision).await?;
+        codeyard_repositories::repositories::community::directories(&store, revision).await?;
     let mut read_readme = false;
     let mut read_license = false;
     for (_, mut entries) in directories {
@@ -49,7 +49,8 @@ pub async fn git_facts(
             let name = entry.name.to_ascii_lowercase();
             let is_readme =
                 readme && !read_readme && (name == "readme" || name.starts_with("readme."));
-            let is_license = !read_license && codeyard_repos::templates::is_license_file(&name);
+            let is_license = !read_license
+                && codeyard_git_storage::repositories::templates::is_license_file(&name);
             if !is_readme && !is_license {
                 continue;
             }
@@ -75,7 +76,8 @@ pub async fn git_facts(
             }
             if is_license {
                 facts.license =
-                    codeyard_repos::templates::detect_license(&blob.bytes).map(|t| t.name);
+                    codeyard_git_storage::repositories::templates::detect_license(&blob.bytes)
+                        .map(|t| t.name);
             }
         }
     }

@@ -94,7 +94,7 @@ pub(super) async fn resolve(
                 &method.to_ascii_lowercase(),
             )
             .ok_or_else(|| async_graphql::Error::new("Invalid merge method"))?;
-            let (headline, body) = codeyard_repos_pulls::repositories::pull_requests::merge::default_merge_text(&pull, method);
+            let (headline, body) = codeyard_repositories::repositories::pull_requests::merge::default_merge_text(&pull, method);
             Ok(json!(if field == "viewerMergeHeadlineText" {
                 headline
             } else {
@@ -230,7 +230,7 @@ pub(super) async fn resolve(
                         } else {
                             codeyard_git_storage::store_types::MergeMethod::Rebase
                         };
-                        if codeyard_repos_pulls::repositories::pull_requests::merge::page_blocker_messages(
+                        if codeyard_repositories::repositories::pull_requests::merge::page_blocker_messages(
                             &request.state.pool,
                             &request.state.ci_runs,
                             repo,
@@ -251,7 +251,7 @@ pub(super) async fn resolve(
             };
             Ok(json!(state))
         }
-        "reviewDecision" => Ok(json!(codeyard_repos_pulls::repositories::pull_requests::merge::review_decision(
+        "reviewDecision" => Ok(json!(codeyard_repositories::repositories::pull_requests::merge::review_decision(
             &request.state.pool,
             &request.state.ci_runs,
             repo,
@@ -260,9 +260,9 @@ pub(super) async fn resolve(
         .await
         .map_err(unavailable)?
         .map(|s| match s {
-            codeyard_repos_pulls::repositories::pull_requests::merge::ReviewDecision::Approved => "APPROVED",
-            codeyard_repos_pulls::repositories::pull_requests::merge::ReviewDecision::ChangesRequested => "CHANGES_REQUESTED",
-            codeyard_repos_pulls::repositories::pull_requests::merge::ReviewDecision::Required => "REVIEW_REQUIRED",
+            codeyard_repositories::repositories::pull_requests::merge::ReviewDecision::Approved => "APPROVED",
+            codeyard_repositories::repositories::pull_requests::merge::ReviewDecision::ChangesRequested => "CHANGES_REQUESTED",
+            codeyard_repositories::repositories::pull_requests::merge::ReviewDecision::Required => "REVIEW_REQUIRED",
         }))),
         "baseRef" => {
             crate::git_objects::reference(

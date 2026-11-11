@@ -12,9 +12,9 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 
 use codeyard_git_storage::repositories::lifecycle;
 use codeyard_git_storage::repositories::store::repo_store;
+use codeyard_git_storage::repositories::templates;
 use codeyard_identity::tokens;
 use codeyard_identity::tokens::TokenInput;
-use codeyard_repos::templates;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 

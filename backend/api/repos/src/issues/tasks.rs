@@ -25,9 +25,9 @@ use codeyard_api_http::error::ApiFailure;
 use codeyard_api_http::shared::repos::forms::authorize_post;
 use codeyard_api_http::shared::repos::forms::field;
 use codeyard_app::app::AppState;
-use codeyard_repos_pulls::issues::comment_link;
-use codeyard_repos_pulls::issues::comments::CommentTarget;
-use codeyard_repos_pulls::issues::comments::CreateCommentRequest;
+use codeyard_repositories::issues::comment_link;
+use codeyard_repositories::issues::comments::CommentTarget;
+use codeyard_repositories::issues::comments::CreateCommentRequest;
 use codeyard_webui::components::task_lists::toggle_task;
 use codeyard_webui::pages::repos::issues::DetailDraft;
 use codeyard_webui::pages::repos::issues::Kind;
@@ -204,7 +204,7 @@ async fn save_comment_text(
     };
     match kind {
         Kind::Issue => {
-            codeyard_repos_pulls::issues::comments::edit_issue_comment(
+            codeyard_repositories::issues::comments::edit_issue_comment(
                 pool,
                 broadcaster,
                 actor_id,
@@ -226,7 +226,7 @@ async fn save_comment_text(
         }
         Kind::Pull => {
             let comment =
-                codeyard_repos_pulls::repositories::pull_requests::comments::edit_pull_request_comment(
+                codeyard_repositories::repositories::pull_requests::comments::edit_pull_request_comment(
                     pool,
                     broadcaster,
                     actor_id,
@@ -237,7 +237,7 @@ async fn save_comment_text(
                 .await
                 .map_err(crate::pulls::operation_error)?;
             Ok(
-                codeyard_repos_pulls::repositories::pull_requests::comments::saved_comment_link(
+                codeyard_repositories::repositories::pull_requests::comments::saved_comment_link(
                     pool, base, &comment,
                 )
                 .await,

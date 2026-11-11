@@ -1,4 +1,5 @@
 use super::*;
+use crate::repositories::gists::GistCredential;
 use crate::repositories::store::local::refresh_storage_size;
 use crate::repositories::store::local::LocalStore;
 use codeyard_db_repos::gists::Admission;
@@ -6,7 +7,6 @@ use codeyard_db_repos::gists::GistRefusal;
 use codeyard_git::gist_types::GistEdit;
 use codeyard_git::gist_types::GistRevision;
 use codeyard_git::gist_types::GistSnapshot;
-use codeyard_repos::gists::GistCredential;
 use codeyard_types::credentials::AccountRestricted;
 
 fn failure(error: anyhow::Error) -> RepoError {

@@ -122,7 +122,7 @@ pub(super) async fn resolve(
             request.charge(pull.body.len() + pull.title.len())?;
             let owner = crate::repository::owner(repo, request).await?;
             let mut groups = std::collections::BTreeMap::<(String, String), Vec<i32>>::new();
-            for (owner, name, number) in codeyard_repos_pulls::issues::closing::referenced_targets(
+            for (owner, name, number) in codeyard_repositories::issues::closing::referenced_targets(
                 &pull.body,
                 &owner,
                 &repo.name,

@@ -113,7 +113,7 @@ pub(super) async fn resolve(
                 .map_err(unavailable)?
                 .ok_or_else(missing)?;
             let owner = crate::repository::owner(repo, request).await?;
-            let mut pulls = codeyard_repos_pulls::issues::closing::references(
+            let mut pulls = codeyard_repositories::issues::closing::references(
                 &request.state.pool,
                 Some(&request.auth.user),
                 &issue,
@@ -250,9 +250,9 @@ pub(super) async fn mutation(
             let name = input["name"]
                 .as_str()
                 .map(str::to_owned)
-                .unwrap_or_else(|| codeyard_repos_pulls::issues::branches::default_name(&issue));
+                .unwrap_or_else(|| codeyard_repositories::issues::branches::default_name(&issue));
             let oid = input["oid"].as_str().ok_or_else(missing)?;
-            let branch = codeyard_repos_pulls::issues::branches::create(
+            let branch = codeyard_repositories::issues::branches::create(
                 &request.state,
                 actor,
                 &issue,

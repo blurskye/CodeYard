@@ -162,7 +162,7 @@ async fn editor_and_streamed_admission_release_their_slots_at_the_deadline() {
         actor: Some(1),
         ci_run: None,
         operation: Operation::SaveFile {
-            write: codeyard_repos::editor::FileWrite {
+            write: codeyard_git_storage::repositories::editor::FileWrite {
                 branch: "main".into(),
                 path: "file.txt".into(),
                 expected_revision: "unborn".into(),

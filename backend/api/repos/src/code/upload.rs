@@ -14,11 +14,11 @@ use codeyard_api_http::context::PageContext;
 use codeyard_api_http::shared::repos::forms::field;
 use codeyard_api_http::shared::repos::forms::with_status;
 use codeyard_app::app::AppState;
-use codeyard_repos::editor::UploadFile;
-use codeyard_repos::editor::UploadWrite;
-use codeyard_repos::editor::MAX_UPLOAD_FILES;
-use codeyard_repos::editor::MAX_UPLOAD_FILE_BYTES;
-use codeyard_repos::editor::MAX_UPLOAD_TOTAL_BYTES;
+use codeyard_git_storage::repositories::editor::UploadFile;
+use codeyard_git_storage::repositories::editor::UploadWrite;
+use codeyard_git_storage::repositories::editor::MAX_UPLOAD_FILES;
+use codeyard_git_storage::repositories::editor::MAX_UPLOAD_FILE_BYTES;
+use codeyard_git_storage::repositories::editor::MAX_UPLOAD_TOTAL_BYTES;
 use codeyard_types::ref_path::branch_url;
 use codeyard_types::ref_path::compare_url;
 use codeyard_webui::pages::repos as view;
@@ -160,7 +160,7 @@ async fn target(
         ..Default::default()
     };
     if let Some(user) = ctx.user.as_ref() {
-        form.protected = codeyard_repos_pulls::repositories::files::direct_commit_refused(
+        form.protected = codeyard_repositories::repositories::files::direct_commit_refused(
             &ctx.state.pool,
             &loaded.repository,
             user,
@@ -168,7 +168,7 @@ async fn target(
             &form.expected_revision,
         )
         .await;
-        form.new_branch = codeyard_repos_pulls::repositories::files::free_branch_name(
+        form.new_branch = codeyard_repositories::repositories::files::free_branch_name(
             &user.username,
             &loaded.refs,
         );
@@ -368,7 +368,7 @@ pub(crate) async fn post(
         files,
     };
     let actor = ctx.database_actor(ctx.user.as_ref().expect("authenticated upload").id);
-    let saved = codeyard_repos_pulls::repositories::files::upload_files(
+    let saved = codeyard_repositories::repositories::files::upload_files(
         &ctx.state.pool,
         ctx.state.cluster.as_ref(),
         &ctx.state.ci_runs,
@@ -390,7 +390,7 @@ pub(crate) async fn post(
         }),
         Err(error) => {
             form.saved = error.kind
-                == codeyard_repos_pulls::repositories::files::WriteFailure::SavedFollowupFailed;
+                == codeyard_repositories::repositories::files::WriteFailure::SavedFollowupFailed;
             refusal(&ctx, &loaded, form, write_status(&error), &error.message)
         }
     }

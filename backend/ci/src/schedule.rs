@@ -79,10 +79,11 @@ impl CiRuns {
                 (actor, codeyard_database::models::AccessLevel::Owner)
             }
             codeyard_git::PublicationActor::DeployKey(key) => {
-                let (actor, cap) =
-                    codeyard_repos::deploy_keys::authorize(&self.pool, key, &repo, true)
-                        .await
-                        .map_err(|_| AdmissionError::Denied("CI repository access denied"))?;
+                let (actor, cap) = codeyard_git_storage::repositories::deploy_keys::authorize(
+                    &self.pool, key, &repo, true,
+                )
+                .await
+                .map_err(|_| AdmissionError::Denied("CI repository access denied"))?;
                 (actor.id, cap)
             }
         };

@@ -178,7 +178,7 @@ async fn contract(pg: bool) {
     )
     .await;
     assert_eq!(status["processing_status"], "pending");
-    assert!(codeyard_repos_pulls::code_scanning::process_next(f.pool())
+    assert!(codeyard_repositories::code_scanning::process_next(f.pool())
         .await
         .unwrap());
     let status = call(
@@ -373,7 +373,7 @@ async fn contract(pg: bool) {
             202,
         )
         .await;
-        assert!(codeyard_repos_pulls::code_scanning::process_next(f.pool())
+        assert!(codeyard_repositories::code_scanning::process_next(f.pool())
             .await
             .unwrap());
         let alert = call(
@@ -409,7 +409,7 @@ async fn contract(pg: bool) {
         202,
     )
     .await;
-    assert!(codeyard_repos_pulls::code_scanning::process_next(f.pool())
+    assert!(codeyard_repositories::code_scanning::process_next(f.pool())
         .await
         .unwrap());
     let reopened = call(
@@ -581,7 +581,7 @@ async fn contract(pg: bool) {
         202,
     )
     .await;
-    assert!(codeyard_repos_pulls::code_scanning::process_next(f.pool())
+    assert!(codeyard_repositories::code_scanning::process_next(f.pool())
         .await
         .unwrap());
     let status = call(
@@ -800,7 +800,7 @@ async fn workflow_tokens(
             202,
         )
         .await;
-        assert!(codeyard_repos_pulls::code_scanning::process_next(pool)
+        assert!(codeyard_repositories::code_scanning::process_next(pool)
             .await
             .unwrap());
         let analyses = call(

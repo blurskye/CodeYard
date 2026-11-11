@@ -9,7 +9,7 @@ use axum::http::Uri;
 use axum::response::Response;
 use codeyard_api_http::context::PageContext;
 use codeyard_app::app::AppState;
-use codeyard_repos::traffic::Refusal;
+use codeyard_git_storage::repositories::traffic::Refusal;
 use codeyard_webui::pages::repos::insights::traffic as view;
 use codeyard_webui::pages::repos::insights::Page as InsightsPage;
 use serde::Deserialize;
@@ -53,7 +53,7 @@ pub(super) async fn page(
         Ok(opened) => opened,
         Err(response) => return response,
     };
-    let weekly = match codeyard_repos::traffic::weekly(period.per.as_deref()) {
+    let weekly = match codeyard_git_storage::repositories::traffic::weekly(period.per.as_deref()) {
         Ok(value) => value,
         Err(error) => return failure(&ctx, error),
     };
@@ -61,22 +61,22 @@ pub(super) async fn page(
     let viewer = ctx.user.as_ref();
     let repo = &loaded.repository;
     let (views, clones, paths, referrers) = match tokio::try_join!(
-        codeyard_repos::traffic::summary(
+        codeyard_git_storage::repositories::traffic::summary(
             pool,
             viewer,
             repo,
             codeyard_db_repos::repositories::traffic::Kind::Views,
             weekly
         ),
-        codeyard_repos::traffic::summary(
+        codeyard_git_storage::repositories::traffic::summary(
             pool,
             viewer,
             repo,
             codeyard_db_repos::repositories::traffic::Kind::Clones,
             weekly
         ),
-        codeyard_repos::traffic::paths(pool, viewer, repo),
-        codeyard_repos::traffic::referrers(pool, viewer, repo)
+        codeyard_git_storage::repositories::traffic::paths(pool, viewer, repo),
+        codeyard_git_storage::repositories::traffic::referrers(pool, viewer, repo)
     ) {
         Ok(data) => data,
         Err(error) => return failure(&ctx, error),

@@ -7,7 +7,7 @@ use chrono::{Datelike, Utc};
 use codeyard_git_storage::repositories::lifecycle::provision_with_initial_files;
 use codeyard_git_storage::repositories::lifecycle::InitialFiles;
 use codeyard_git_storage::repositories::store::repo_store;
-use codeyard_repos::templates;
+use codeyard_git_storage::repositories::templates;
 use database::Database;
 
 async fn contract(pg: bool) {

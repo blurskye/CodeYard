@@ -109,7 +109,7 @@ async fn prepare_application(
     if serves_web {
         storage.prepare().await?;
     }
-    codeyard_repos_pulls::repositories::pull_requests::async_merge::recover(
+    codeyard_repositories::repositories::pull_requests::async_merge::recover(
         &pool,
         cluster.as_ref().map(|n| n.node_id),
     )
@@ -621,7 +621,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
         return started.map(|_| ()).and(stopped);
     }
     let (stop_traffic, traffic_stop) = tokio::sync::watch::channel(false);
-    let traffic = tokio::spawn(codeyard_repos::traffic::maintain(
+    let traffic = tokio::spawn(codeyard_git_storage::repositories::traffic::maintain(
         pool.clone(),
         traffic_stop,
     ));
@@ -634,7 +634,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
     });
     let (stop_scanning, scanning_stop) = tokio::sync::watch::channel(false);
     let scanning = config.roles.contains(NodeRole::Web).then(|| {
-        tokio::spawn(codeyard_repos_pulls::code_scanning::run(
+        tokio::spawn(codeyard_repositories::code_scanning::run(
             pool.clone(),
             scanning_stop,
         ))
@@ -662,7 +662,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
     let (stop_secret_scanning, secret_scanning_stop) = tokio::sync::watch::channel(false);
     let secret_scanning = config.roles.contains(NodeRole::Web).then(|| {
         tokio::spawn(
-            codeyard_repos_pulls::repositories::secret_scanning::jobs::run(
+            codeyard_repositories::repositories::secret_scanning::jobs::run(
                 Arc::new(state.clone()),
                 secret_scanning_stop,
             ),
@@ -671,7 +671,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
     let (stop_auto_merge, auto_merge_stop) = tokio::sync::watch::channel(false);
     let auto_merge = config.roles.contains(NodeRole::Web).then(|| {
         tokio::spawn(
-            codeyard_repos_pulls::repositories::pull_requests::auto_merge::run(
+            codeyard_repositories::repositories::pull_requests::auto_merge::run(
                 Arc::new(state.clone()),
                 auto_merge_stop,
             ),

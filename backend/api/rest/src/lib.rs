@@ -183,7 +183,7 @@ pub async fn run_web_listener(
         .await
     };
     let result = {
-        let workers = codeyard_repos_pulls::repositories::dependencies::worker::run(
+        let workers = codeyard_repositories::repositories::dependencies::worker::run(
             dependency_pool,
             dependency_ci,
             dependency_notifications,

@@ -4,9 +4,9 @@ use crate::support::database;
 use crate::support::organizations::applied;
 
 use codeyard_database::models::AccessLevel;
+use codeyard_git_storage::repositories::editor::FileWrite;
 use codeyard_git_storage::repositories::lifecycle::provision;
 use codeyard_git_storage::repositories::store::repo_store;
-use codeyard_repos::editor::FileWrite;
 use database::Database;
 
 fn write(branch: &str, path: &str, expected: &str) -> FileWrite {

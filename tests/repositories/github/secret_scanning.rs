@@ -8,7 +8,7 @@ use codeyard_db_security::secret_scanning as records;
 use codeyard_git_storage::repositories::lifecycle;
 use codeyard_identity::tokens;
 use codeyard_identity::tokens::TokenInput;
-use codeyard_repos_pulls::repositories::secret_scanning::jobs;
+use codeyard_repositories::repositories::secret_scanning::jobs;
 use codeyard_security::secrets::SecretEncryptor;
 use codeyard_storage::ObjectStore;
 use serde_json::{json, Value};

@@ -8,7 +8,7 @@ use axum::Json;
 use codeyard_api_http::error::ApiError;
 use codeyard_api_http::session::get_current_user;
 use codeyard_app::app::AppState;
-use codeyard_repos_pulls::repositories::pull_requests::reviews::RequestReviewerRequest;
+use codeyard_repositories::repositories::pull_requests::reviews::RequestReviewerRequest;
 use serde::Serialize;
 use std::sync::Arc;
 
@@ -19,7 +19,7 @@ pub async fn request_reviewer(
     Json(req): Json<RequestReviewerRequest>,
 ) -> Result<(StatusCode, Json<RequestedReviewer>), (StatusCode, Json<ApiError>)> {
     let current_actor = get_current_user(&state.pool, &headers).await?;
-    let result = codeyard_repos_pulls::repositories::pull_requests::reviews::request_reviewer(
+    let result = codeyard_repositories::repositories::pull_requests::reviews::request_reviewer(
         &state.pool,
         &state.notification_broadcaster,
         current_actor.id,
@@ -39,10 +39,10 @@ pub async fn request_reviewer(
     Ok((
         status,
         Json(match result.target {
-            codeyard_repos_pulls::repositories::pull_requests::reviews::ReviewerTarget::User(
+            codeyard_repositories::repositories::pull_requests::reviews::ReviewerTarget::User(
                 user,
             ) => RequestedReviewer::User(RequestedReviewerResponse::new(user)),
-            codeyard_repos_pulls::repositories::pull_requests::reviews::ReviewerTarget::Team(
+            codeyard_repositories::repositories::pull_requests::reviews::ReviewerTarget::Team(
                 team,
             ) => RequestedReviewer::Team(team),
         }),
@@ -55,7 +55,7 @@ pub async fn remove_requested_reviewer(
     Path((owner, repo, number, username)): Path<(String, String, i32, String)>,
 ) -> Result<StatusCode, (StatusCode, Json<ApiError>)> {
     let current_actor = get_current_user(&state.pool, &headers).await?;
-    codeyard_repos_pulls::repositories::pull_requests::reviews::remove_requested_reviewer(
+    codeyard_repositories::repositories::pull_requests::reviews::remove_requested_reviewer(
         &state.pool,
         current_actor.id,
         owner,

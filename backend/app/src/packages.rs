@@ -35,7 +35,7 @@ pub fn valid_package_name(kind: &str, name: &str) -> bool {
     if kind == "npm" {
         return !name.starts_with('@')
             && !name.contains('/')
-            && codeyard_repos::npm::package_name(name);
+            && codeyard_repositories::npm::package_name(name);
     }
     let part = |s: &str| {
         !s.is_empty()

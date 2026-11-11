@@ -63,12 +63,12 @@ pub(super) fn pull_error(
     };
     Error::new(error.to_string()).extend_with(|_, e| e.set("type", kind))
 }
-pub(super) fn issue_error(error: codeyard_repos_pulls::issues::OperationError) -> Error {
+pub(super) fn issue_error(error: codeyard_repositories::issues::OperationError) -> Error {
     let kind = match &error {
-        codeyard_repos_pulls::issues::OperationError::Missing { .. } => "NOT_FOUND",
-        codeyard_repos_pulls::issues::OperationError::Denied { .. }
-        | codeyard_repos_pulls::issues::OperationError::Unauthenticated { .. } => "FORBIDDEN",
-        codeyard_repos_pulls::issues::OperationError::Unavailable { .. } => "INTERNAL",
+        codeyard_repositories::issues::OperationError::Missing { .. } => "NOT_FOUND",
+        codeyard_repositories::issues::OperationError::Denied { .. }
+        | codeyard_repositories::issues::OperationError::Unauthenticated { .. } => "FORBIDDEN",
+        codeyard_repositories::issues::OperationError::Unavailable { .. } => "INTERNAL",
         _ => "UNPROCESSABLE",
     };
     Error::new(error.to_string()).extend_with(|_, e| e.set("type", kind))
@@ -76,13 +76,13 @@ pub(super) fn issue_error(error: codeyard_repos_pulls::issues::OperationError) -
 /// The viewer can read the repository, so a refused change to someone else's issue is
 /// GitHub's FORBIDDEN, not a missing repository.
 pub(super) fn issue_change_error(
-    error: codeyard_repos_pulls::issues::OperationError,
+    error: codeyard_repositories::issues::OperationError,
     author_id: i64,
     field: &str,
     request: &RequestContext,
 ) -> Error {
     match error {
-        codeyard_repos_pulls::issues::OperationError::Missing { .. }
+        codeyard_repositories::issues::OperationError::Missing { .. }
             if author_id != request.auth.user.id =>
         {
             crate::forbidden(field, request)
@@ -344,13 +344,13 @@ pub(super) async fn resolve(
                 let saved = if metadata_only {
                     current
                 } else {
-                    codeyard_repos_pulls::issues::mutations::update_issue_latest(
+                    codeyard_repositories::issues::mutations::update_issue_latest(
                         pool,
                         broadcaster,
                         actor,
                         repo.id,
                         current.number,
-                        codeyard_repos_pulls::issues::mutations::UpdateIssueRequest {
+                        codeyard_repositories::issues::mutations::UpdateIssueRequest {
                             expected_state: current.state,
                             expected_updated: current.updated_at.to_rfc3339(),
                             title: optional_text(&input, "title"),
@@ -385,7 +385,7 @@ pub(super) async fn resolve(
             boxed(|| async move {
                 let repo = crate::repository::by_id(target(&input, "repositoryId", "R")?, request).await?;
                 request.authorize(repo.id, "pull-requests", true).await?;
-                codeyard_repos_pulls::repositories::identity_interactions::prepare(
+                codeyard_repositories::repositories::identity_interactions::prepare(
                     &request.state,
                     &request.auth.user,
                     &repo,
@@ -416,7 +416,7 @@ pub(super) async fn resolve(
                 } else {
                     request.authorize(head.id, "contents", false).await?;
                 }
-                let saved = codeyard_repos_pulls::repositories::pull_requests::mutations::create_pull_request(
+                let saved = codeyard_repositories::repositories::pull_requests::mutations::create_pull_request(
                     pool,
                     &request.state.ci_runs,
                     broadcaster,
@@ -426,11 +426,11 @@ pub(super) async fn resolve(
                     },
                     crate::repository::owner(&repo, request).await?,
                     repo.name,
-                    codeyard_repos_pulls::repositories::pull_requests::mutations::CreatePullRequestRequest {
+                    codeyard_repositories::repositories::pull_requests::mutations::CreatePullRequestRequest {
                         foreign_head: source.admission,
                         suppress_ci: false,
                         head_repo_id,
-                        source: codeyard_repos_pulls::repositories::pull_requests::mutations::PullRequestSource::New {
+                        source: codeyard_repositories::repositories::pull_requests::mutations::PullRequestSource::New {
                             title: text(&input, "title")?.into(),
                             body: optional_text(&input, "body"),
                         },
@@ -467,7 +467,7 @@ pub(super) async fn resolve(
                 request.authorize(repo.id, "contents", true).await?;
                 request.require_oauth_scope("workflow")?;
                 let saved =
-                    codeyard_repos_pulls::repositories::pull_requests::revert::revert_pull_request(
+                    codeyard_repositories::repositories::pull_requests::revert::revert_pull_request(
                         pool,
                         &request.state.ci_runs,
                         broadcaster,
@@ -477,7 +477,7 @@ pub(super) async fn resolve(
                             repo.name,
                             current.number,
                         ),
-                        codeyard_repos_pulls::repositories::pull_requests::revert::RevertRequest {
+                        codeyard_repositories::repositories::pull_requests::revert::RevertRequest {
                             title: optional_text(&input, "title"),
                             body: optional_text(&input, "body"),
                             is_draft: input["draft"].as_bool().unwrap_or(false),
@@ -552,7 +552,7 @@ pub(super) async fn resolve(
                             })
                         })
                         .transpose()?;
-                    codeyard_repos_pulls::repositories::pull_requests::update_branch::update_branch(
+                    codeyard_repositories::repositories::pull_requests::update_branch::update_branch(
                         pool,
                         &request.state.ci_runs,
                         actor,
@@ -571,7 +571,7 @@ pub(super) async fn resolve(
                     field,
                     "markPullRequestReadyForReview" | "convertPullRequestToDraft"
                 ) {
-                    codeyard_repos_pulls::repositories::pull_requests::mutations::set_pull_request_draft(
+                    codeyard_repositories::repositories::pull_requests::mutations::set_pull_request_draft(
                         pool,
                         &request.state.ci_runs,
                         actor,
@@ -589,11 +589,11 @@ pub(super) async fn resolve(
                 } else if field == "mergePullRequest" {
                     request.authorize(repo.id, "contents", true).await?;
                     let method = merge_method(&input, &current)?;
-                    codeyard_repos_pulls::repositories::pull_requests::merge::merge_pull_request(
+                    codeyard_repositories::repositories::pull_requests::merge::merge_pull_request(
                         &request.state,
                         request.auth.database_actor(),
                         (owner, repo.name, current.number),
-                        codeyard_repos_pulls::repositories::pull_requests::merge::MergeRequest {
+                        codeyard_repositories::repositories::pull_requests::merge::MergeRequest {
                             expected_head: current.head_sha,
                             expected_base: current.base_sha,
                             expected_base_branch: Some(current.base_branch),
@@ -616,13 +616,13 @@ pub(super) async fn resolve(
                         "reopenPullRequest" => Some("open".into()),
                         _ => optional_text(&input, "state").map(|s| s.to_ascii_lowercase()),
                     };
-                    codeyard_repos_pulls::repositories::pull_requests::mutations::update_pull_request_latest(
+                    codeyard_repositories::repositories::pull_requests::mutations::update_pull_request_latest(
                         pool,
                         &request.state.ci_runs,
                         broadcaster,
                         actor,
                         (repo.id, current.number),
-                        codeyard_repos_pulls::repositories::pull_requests::mutations::UpdatePullRequestRequest {
+                        codeyard_repositories::repositories::pull_requests::mutations::UpdatePullRequestRequest {
                             expected_state: current.state,
                             expected_updated: current.updated_at.to_rfc3339(),
                             title: optional_text(&input, "title"),
@@ -668,7 +668,7 @@ pub(super) async fn resolve(
                 if field == "enablePullRequestAutoMerge" {
                     request.authorize(repo.id, "contents", true).await?;
                     let options =
-                    codeyard_repos_pulls::repositories::pull_requests::auto_merge::EnableRequest {
+                    codeyard_repositories::repositories::pull_requests::auto_merge::EnableRequest {
                         expected_head: optional_text(&input, "expectedHeadOid"),
                         token: Some(request.auth.token.id),
                         merge_method: merge_method(&input, &current)?,
@@ -676,13 +676,13 @@ pub(super) async fn resolve(
                         commit_message: optional_text(&input, "commitBody"),
                         author_email: optional_text(&input, "authorEmail"),
                     };
-                    codeyard_repos_pulls::repositories::pull_requests::auto_merge::enable(
+                    codeyard_repositories::repositories::pull_requests::auto_merge::enable(
                         pool, actor, &current, options,
                     )
                     .await
                     .map_err(pull_error)?;
                 } else {
-                    codeyard_repos_pulls::repositories::pull_requests::auto_merge::disable(
+                    codeyard_repositories::repositories::pull_requests::auto_merge::disable(
                         pool, actor, &current,
                     )
                     .await
@@ -709,7 +709,7 @@ pub(super) async fn resolve(
                         "UNSUBSCRIBED" => "participating",
                         _ => return Err(Error::new("Invalid subscription state")),
                     };
-                    codeyard_repos_pulls::repositories::engagement::set_level(
+                    codeyard_repositories::repositories::engagement::set_level(
                         pool,
                         actor,
                         id,
@@ -717,27 +717,31 @@ pub(super) async fn resolve(
                         &[],
                     )
                     .await
-                    .map_err(|error| match error {
-                        codeyard_repos_pulls::repositories::engagement::EngagementError::Access(
+                    .map_err(|error| {
+                        match error {
+                        codeyard_repositories::repositories::engagement::EngagementError::Access(
                             _,
                         ) => missing(),
                         _ => unavailable(()),
+                    }
                     })?;
                 } else {
-                    codeyard_repos_pulls::repositories::engagement::change(
+                    codeyard_repositories::repositories::engagement::change(
                         pool,
                         broadcaster,
                         actor,
                         id,
-                        codeyard_repos_pulls::repositories::engagement::Engagement::Star,
+                        codeyard_repositories::repositories::engagement::Engagement::Star,
                         field == "addStar",
                     )
                     .await
-                    .map_err(|error| match error {
-                        codeyard_repos_pulls::repositories::engagement::EngagementError::Access(
+                    .map_err(|error| {
+                        match error {
+                        codeyard_repositories::repositories::engagement::EngagementError::Access(
                             _,
                         ) => missing(),
                         _ => unavailable(()),
+                    }
                     })?;
                 }
                 payload[if field == "updateSubscription" {

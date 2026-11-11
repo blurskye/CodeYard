@@ -1405,6 +1405,27 @@ Codeyard Git reads and hardened Git commands.
 - `backend/git-storage/tests/branches.rs` — A refresh that started while a pull request was open still reads the fork after the pull request closed. The closed pull request takes nothing from…
 - `backend/git-storage/tests/store.rs` — The store against real bare repositories in temporary directories
 - `backend/git-storage/tests/writes.rs` — dev-only regression tests
+- `backend/git-storage/src/repositories/activity.rs` — Accepted ref activity shared by editor/branch/merge publication and Git HTTP/SSH hooks
+- `backend/git-storage/src/repositories/community.rs` — pinned community-file and license discovery
+- `backend/git-storage/src/repositories/deploy_keys.rs` — Deploy keys: who may manage a repository's keys, what a key may do over Git, and the settings section that lists them. A key acts only for its own…
+- `backend/git-storage/src/repositories/editor.rs` — Single-file commits for the web editor and the file API: write the blob and trees, create the commit, then move the branch only if it still points…
+- `backend/git-storage/src/repositories/gists.rs` — gist revision trees and publication recovery
+- `backend/git-storage/src/repositories/imports/archive.rs` — Reads migration records and Git object files without extracting an upstream tar to disk
+- `backend/git-storage/src/repositories/imports/archive/git.rs` — Repack only verified, reachable objects in a fresh quarantine repository
+- `backend/git-storage/src/repositories/imports/archive/tests.rs` — dev-only regression tests
+- `backend/git-storage/src/repositories/imports/forge.rs` — Bounded forge metadata reads. Upstream pagination links never choose a request destination
+- `backend/git-storage/src/repositories/imports/mod.rs` — domain module wiring
+- `backend/git-storage/src/repositories/maintainer_edit.rs` — Personal-fork consent is scoped to one open pull request, never general Git write access
+- `backend/git-storage/src/repositories/migration_archive.rs` — Migration records and bare repositories share one bounded tar.gz archive
+- `backend/git-storage/src/repositories/protection.rs` — The one decision about who may change which branch
+- `backend/git-storage/src/repositories/push_protection.rs` — Push protection refuses a publication that adds a secret, unless the actor holds an unused bypass for that exact secret. Receive hooks and file saves…
+- `backend/git-storage/src/repositories/ref_changes.rs` — immutable ref move events and webhook publication
+- `backend/git-storage/src/repositories/source.rs` — Fetch every advertised ref through Git's smart HTTP protocol, without following upstream URLs
+- `backend/git-storage/src/repositories/source/tests.rs` — dev-only regression tests
+- `backend/git-storage/src/repositories/stacks.rs` — Stacks: pull requests in one repository that build on each other, each one's base branch being the head branch of the pull request below it. A pull…
+- `backend/git-storage/src/repositories/templates.rs` — Templates for the files a new repository can start with: .gitignore files and licenses
+- `backend/git-storage/src/repositories/traffic.rs` — Traffic means observed native navigations and completed initial Git object transfers
+- `backend/git-storage/src/repositories/traffic/clone.rs` — Bounded streaming observation of initial Git object transfers, not advertisements/fetches
 
 ## `codeyard-identity` (`backend/identity/`)
 
@@ -1481,86 +1502,60 @@ Codeyard Git reads and hardened Git commands.
 - `backend/placement/src/tcp.rs` — Node connections over TCP. The listener takes TLS connections (see `tls`), checks the peer's key against membership, and passes the one request on…
 - `backend/placement/src/worker.rs` — Core addresses and the dialing-only context for a worker with no database
 
-## `codeyard-repos` (`backend/repos/`)
+## `codeyard-repositories` (`backend/repositories/`)
 
-- `backend/repos/src/activity.rs` — Accepted ref activity shared by editor/branch/merge publication and Git HTTP/SSH hooks
-- `backend/repos/src/collaborators.rs` — Collaborator invitations keep admission separate from permission grants
-- `backend/repos/src/commit_comments.rs` — immutable-commit discussions and author identity
-- `backend/repos/src/community.rs` — pinned community-file and license discovery
-- `backend/repos/src/dependencies/lockfiles.rs` — Read resolved versions without invoking package managers or following external files
-- `backend/repos/src/dependencies/mod.rs` — domain module wiring
-- `backend/repos/src/dependencies/npm.rs` — Bounded npm lockfiles and conservative registry patch updates, without running npm
-- `backend/repos/src/dependencies/npm/tests.rs` — dev-only regression tests
-- `backend/repos/src/deploy_keys.rs` — Deploy keys: who may manage a repository's keys, what a key may do over Git, and the settings section that lists them. A key acts only for its own…
-- `backend/repos/src/editor.rs` — Single-file commits for the web editor and the file API: write the blob and trees, create the commit, then move the branch only if it still points…
-- `backend/repos/src/gists.rs` — gist revision trees and publication recovery
-- `backend/repos/src/imports/archive.rs` — Reads migration records and Git object files without extracting an upstream tar to disk
-- `backend/repos/src/imports/archive/git.rs` — Repack only verified, reachable objects in a fresh quarantine repository
-- `backend/repos/src/imports/archive/tests.rs` — dev-only regression tests
-- `backend/repos/src/imports/forge.rs` — Bounded forge metadata reads. Upstream pagination links never choose a request destination
-- `backend/repos/src/imports/mod.rs` — domain module wiring
-- `backend/repos/src/lib.rs` — Crate root: module declarations and re-exports
-- `backend/repos/src/maintainer_edit.rs` — Personal-fork consent is scoped to one open pull request, never general Git write access
-- `backend/repos/src/migration_archive.rs` — Migration records and bare repositories share one bounded tar.gz archive
-- `backend/repos/src/npm.rs` — npm package-name grammar shared by hosted registries and dependency metadata
-- `backend/repos/src/protection.rs` — The one decision about who may change which branch
-- `backend/repos/src/push_protection.rs` — Push protection refuses a publication that adds a secret, unless the actor holds an unused bypass for that exact secret. Receive hooks and file saves…
-- `backend/repos/src/ref_changes.rs` — immutable ref move events and webhook publication
-- `backend/repos/src/source.rs` — Fetch every advertised ref through Git's smart HTTP protocol, without following upstream URLs
-- `backend/repos/src/source/tests.rs` — dev-only regression tests
-- `backend/repos/src/stacks.rs` — Stacks: pull requests in one repository that build on each other, each one's base branch being the head branch of the pull request below it. A pull…
-- `backend/repos/src/templates.rs` — Templates for the files a new repository can start with: .gitignore files and licenses
-- `backend/repos/src/traffic.rs` — Traffic means observed native navigations and completed initial Git object transfers
-- `backend/repos/src/traffic/clone.rs` — Bounded streaming observation of initial Git object transfers, not advertisements/fetches
-
-## `codeyard-repos-pulls` (`backend/repos-pulls/`)
-
-- `backend/repos-pulls/src/code_scanning.rs` — Open scanners submit SARIF; queued uploads survive restarts and commit atomically
-- `backend/repos-pulls/src/code_scanning/tests.rs` — dev-only regression tests
-- `backend/repos-pulls/src/issues/assignments.rs` — Assigning people to issues and pull requests. The REST and GraphQL APIs, the issue and pull request pages and issue creation all change assignees…
-- `backend/repos-pulls/src/issues/branches.rs` — Branch creation uses the normal ref publication checks before recording the link
-- `backend/repos-pulls/src/issues/closing.rs` — Closing keyword references in pull request descriptions
-- `backend/repos-pulls/src/issues/comments.rs` — discussion comment authorization and notification effects
-- `backend/repos-pulls/src/issues/mod.rs` — domain module wiring
-- `backend/repos-pulls/src/issues/mutations.rs` — shared issue/PR mutations and committed side effects
-- `backend/repos-pulls/src/issues/references.rs` — Resolve human issue references without exposing private repositories
-- `backend/repos-pulls/src/issues/suggestions.rs` — Shared post-commit effects for REST and native suggestion review
-- `backend/repos-pulls/src/lib.rs` — Crate root: module declarations and re-exports
-- `backend/repos-pulls/src/repositories/advisories.rs` — Temporary remediation forks reuse repository storage placement and checked fork initialization
-- `backend/repos-pulls/src/repositories/commit_comments.rs` — Discussions anchored to immutable commits, shared by REST and native forms
-- `backend/repos-pulls/src/repositories/commit_pulls.rs` — Associations are derived from published Git ancestry, not commit-message references
-- `backend/repos-pulls/src/repositories/community.rs` — Community standards are derived from real files at a pinned default-branch commit
-- `backend/repos-pulls/src/repositories/dependencies/mod.rs` — domain module wiring
-- `backend/repos-pulls/src/repositories/dependencies/registry.rs` — Registry downloads verify patch candidates; advisory matching belongs to vulnerabilities
-- `backend/repos-pulls/src/repositories/dependencies/updates.rs` — Verified proposals only. No package manager, repository script, force push or auto-merge
-- `backend/repos-pulls/src/repositories/dependencies/worker.rs` — Leased proposals consume the inventory and alerts maintained by the vulnerability worker
-- `backend/repos-pulls/src/repositories/dependency_graph.rs` — Dependency inventories pin Git before reading either file and never execute package managers
-- `backend/repos-pulls/src/repositories/engagement.rs` — Repository star/watch changes and explicit best-effort notices
-- `backend/repos-pulls/src/repositories/files.rs` — Web editor and API file writes: check who may write where, then have the store commit the file and move the branch, failing if it changed since the…
-- `backend/repos-pulls/src/repositories/identity_interactions.rs` — Git-derived proof preparation happens outside database transactions. Only the database decides whether a contribution may commit, using the live…
-- `backend/repos-pulls/src/repositories/imports.rs` — Git source imports retain no source credentials and publish only into empty repositories
-- `backend/repos-pulls/src/repositories/issue_templates.rs` — Issue and pull request templates kept in the repository. They are read from the default branch through the repository store, so they work on local…
-- `backend/repos-pulls/src/repositories/merges.rs` — Direct branch merges use normal ref-admission policy, not pull-request approval authority
-- `backend/repos-pulls/src/repositories/mod.rs` — Repository operations shared by the HTML pages, JSON API and SSH
-- `backend/repos-pulls/src/repositories/pull_requests/async_merge.rs` — Durable asynchronous requests, executed by the server's bounded, shutdown-drained Git tasks
-- `backend/repos-pulls/src/repositories/pull_requests/auto_merge.rs` — Auto-merge: a writer asks for a pull request to merge once its requirements pass. A background check then merges it through the ordinary merge path…
-- `backend/repos-pulls/src/repositories/pull_requests/comments.rs` — discussion comment authorization and notification effects
-- `backend/repos-pulls/src/repositories/pull_requests/comments/tests.rs` — dev-only regression tests
-- `backend/repos-pulls/src/repositories/pull_requests/merge.rs` — PR approval/protection checks and compare-and-swap publication
-- `backend/repos-pulls/src/repositories/pull_requests/mod.rs` — domain module wiring
-- `backend/repos-pulls/src/repositories/pull_requests/mutations.rs` — shared issue/PR mutations and committed side effects
-- `backend/repos-pulls/src/repositories/pull_requests/restack.rs` — Rebase stack: moves the open layers of a stack onto the layers below them. Each layer replays its own commits onto the new head of the layer below…
-- `backend/repos-pulls/src/repositories/pull_requests/revert.rs` — Revert through the normal branch publication and pull request creation paths
-- `backend/repos-pulls/src/repositories/pull_requests/reviews.rs` — review state, pending comments and thread publication
-- `backend/repos-pulls/src/repositories/pull_requests/update_branch.rs` — Bring a pull head up to date without merging or closing the pull request
-- `backend/repos-pulls/src/repositories/releases.rs` — Releases: a named, optionally annotated tag with notes and uploaded assets. Readers see the published releases of a repository they can read; writers…
-- `backend/repos-pulls/src/repositories/releases/notes.rs` — Release notes derived from a pinned Git range and the repository's real merged pull requests
-- `backend/repos-pulls/src/repositories/secret_scanning/jobs.rs` — Durable scan work survives process restarts; Git reads go through the repository store
-- `backend/repos-pulls/src/repositories/secret_scanning/mod.rs` — Credential detection shared by history scans and push protection
-- `backend/repos-pulls/src/services.rs` — injected domain resource operations (implemented by app)
-- `backend/repos-pulls/src/webhook_payloads/mod.rs` — domain module wiring
-- `backend/repos-pulls/src/webhook_payloads/release.rs` — release-note payload enrichment
-- `backend/repos-pulls/src/webhook_payloads/repository.rs` — pinned community-file/profile payload projection
+- `backend/repositories/src/code_scanning.rs` — Open scanners submit SARIF; queued uploads survive restarts and commit atomically
+- `backend/repositories/src/code_scanning/tests.rs` — dev-only regression tests
+- `backend/repositories/src/issues/assignments.rs` — Assigning people to issues and pull requests. The REST and GraphQL APIs, the issue and pull request pages and issue creation all change assignees…
+- `backend/repositories/src/issues/branches.rs` — Branch creation uses the normal ref publication checks before recording the link
+- `backend/repositories/src/issues/closing.rs` — Closing keyword references in pull request descriptions
+- `backend/repositories/src/issues/comments.rs` — discussion comment authorization and notification effects
+- `backend/repositories/src/issues/mod.rs` — domain module wiring
+- `backend/repositories/src/issues/mutations.rs` — shared issue/PR mutations and committed side effects
+- `backend/repositories/src/issues/references.rs` — Resolve human issue references without exposing private repositories
+- `backend/repositories/src/issues/suggestions.rs` — Shared post-commit effects for REST and native suggestion review
+- `backend/repositories/src/lib.rs` — Crate root: module declarations and re-exports
+- `backend/repositories/src/repositories/advisories.rs` — Temporary remediation forks reuse repository storage placement and checked fork initialization
+- `backend/repositories/src/repositories/commit_comments.rs` — Discussions anchored to immutable commits, shared by REST and native forms
+- `backend/repositories/src/repositories/commit_pulls.rs` — Associations are derived from published Git ancestry, not commit-message references
+- `backend/repositories/src/repositories/community.rs` — Community standards are derived from real files at a pinned default-branch commit
+- `backend/repositories/src/repositories/dependencies/mod.rs` — domain module wiring
+- `backend/repositories/src/repositories/dependencies/registry.rs` — Registry downloads verify patch candidates; advisory matching belongs to vulnerabilities
+- `backend/repositories/src/repositories/dependencies/updates.rs` — Verified proposals only. No package manager, repository script, force push or auto-merge
+- `backend/repositories/src/repositories/dependencies/worker.rs` — Leased proposals consume the inventory and alerts maintained by the vulnerability worker
+- `backend/repositories/src/repositories/dependency_graph.rs` — Dependency inventories pin Git before reading either file and never execute package managers
+- `backend/repositories/src/repositories/engagement.rs` — Repository star/watch changes and explicit best-effort notices
+- `backend/repositories/src/repositories/files.rs` — Web editor and API file writes: check who may write where, then have the store commit the file and move the branch, failing if it changed since the…
+- `backend/repositories/src/repositories/identity_interactions.rs` — Git-derived proof preparation happens outside database transactions. Only the database decides whether a contribution may commit, using the live…
+- `backend/repositories/src/repositories/imports.rs` — Git source imports retain no source credentials and publish only into empty repositories
+- `backend/repositories/src/repositories/issue_templates.rs` — Issue and pull request templates kept in the repository. They are read from the default branch through the repository store, so they work on local…
+- `backend/repositories/src/repositories/merges.rs` — Direct branch merges use normal ref-admission policy, not pull-request approval authority
+- `backend/repositories/src/repositories/mod.rs` — Repository operations shared by the HTML pages, JSON API and SSH
+- `backend/repositories/src/repositories/pull_requests/async_merge.rs` — Durable asynchronous requests, executed by the server's bounded, shutdown-drained Git tasks
+- `backend/repositories/src/repositories/pull_requests/auto_merge.rs` — Auto-merge: a writer asks for a pull request to merge once its requirements pass. A background check then merges it through the ordinary merge path…
+- `backend/repositories/src/repositories/pull_requests/comments.rs` — discussion comment authorization and notification effects
+- `backend/repositories/src/repositories/pull_requests/comments/tests.rs` — dev-only regression tests
+- `backend/repositories/src/repositories/pull_requests/merge.rs` — PR approval/protection checks and compare-and-swap publication
+- `backend/repositories/src/repositories/pull_requests/mod.rs` — domain module wiring
+- `backend/repositories/src/repositories/pull_requests/mutations.rs` — shared issue/PR mutations and committed side effects
+- `backend/repositories/src/repositories/pull_requests/restack.rs` — Rebase stack: moves the open layers of a stack onto the layers below them. Each layer replays its own commits onto the new head of the layer below…
+- `backend/repositories/src/repositories/pull_requests/revert.rs` — Revert through the normal branch publication and pull request creation paths
+- `backend/repositories/src/repositories/pull_requests/reviews.rs` — review state, pending comments and thread publication
+- `backend/repositories/src/repositories/pull_requests/update_branch.rs` — Bring a pull head up to date without merging or closing the pull request
+- `backend/repositories/src/repositories/releases.rs` — Releases: a named, optionally annotated tag with notes and uploaded assets. Readers see the published releases of a repository they can read; writers…
+- `backend/repositories/src/repositories/releases/notes.rs` — Release notes derived from a pinned Git range and the repository's real merged pull requests
+- `backend/repositories/src/repositories/secret_scanning/jobs.rs` — Durable scan work survives process restarts; Git reads go through the repository store
+- `backend/repositories/src/repositories/secret_scanning/mod.rs` — Credential detection shared by history scans and push protection
+- `backend/repositories/src/services.rs` — injected domain resource operations (implemented by app)
+- `backend/repositories/src/webhook_payloads/mod.rs` — domain module wiring
+- `backend/repositories/src/webhook_payloads/release.rs` — release-note payload enrichment
+- `backend/repositories/src/webhook_payloads/repository.rs` — pinned community-file/profile payload projection
+- `backend/repositories/src/collaborators.rs` — Collaborator invitations keep admission separate from permission grants
+- `backend/repositories/src/dependencies/lockfiles.rs` — Read resolved versions without invoking package managers or following external files
+- `backend/repositories/src/dependencies/mod.rs` — domain module wiring
+- `backend/repositories/src/dependencies/npm.rs` — Bounded npm lockfiles and conservative registry patch updates, without running npm
+- `backend/repositories/src/dependencies/npm/tests.rs` — dev-only regression tests
+- `backend/repositories/src/npm.rs` — npm package-name grammar shared by hosted registries and dependency metadata
 
 ## `codeyard-repos-rpc` (`backend/repos-rpc/`)
 

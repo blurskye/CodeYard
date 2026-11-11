@@ -50,11 +50,10 @@ no sqlx, Git, SSH or AWS code (`scripts/check-web-dependencies.py` checks this).
 | `router` | Cells router: directory client and routing of HTTP, SSH and GraphQL to a cell |
 | `notifications` | Notifications, broadcast hints and email |
 | `webhooks` | Webhook payloads, subscriptions and delivery |
-| `repos` | Repository policy, parsing, imports and editor preparation |
-| `git-storage` | `RepoStore` (local and remote), Git sessions and receive hooks, the RPC client, workflow readers and webhook enrichment |
+| `git-storage` | `RepoStore` (local and remote), Git sessions and receive hooks, branch policy, editor preparation, imports, templates, traffic, stacks, the RPC client, workflow readers and webhook enrichment |
 | `repos-rpc` | Storage-node RPC handlers and Git streams |
 | `ci` | CI configuration, admission, queues, workers, logs, credentials and environment values, code owners, pull request refresh |
-| `repos-pulls` | Pull requests, issues, repository operations and security workers |
+| `repositories` | Pull requests, issues, collaborator operations, dependency metadata and updates, repository operations and security workers |
 | `search` | Repository catalog search and live code and commit search |
 | `ssh` | Built-in SSH server and the host OpenSSH gateway |
 | `app` | Application state and the composition of domains (`backend/app/src/`) |
@@ -66,9 +65,10 @@ no sqlx, Git, SSH or AWS code (`scripts/check-web-dependencies.py` checks this).
 | `github-graphql` | Types and resolver traits generated from GitHub's schema by `scripts/github-graphql-types.py`; never edited by hand |
 | `testing` | Test fixtures; a dev-dependency only |
 
-`repos` and `repos-pulls` are the staging names of one future `repositories` crate above
-`git-storage`. Workflow readers and webhook enrichment still live in `git-storage` because
-the receive hooks call them.
+`repositories` composes repository operations above `git-storage` and CI. Git publication
+policy and preparation live in `git-storage`, so receive hooks, CI and repository services
+use the same checks without a dependency cycle. Workflow readers and webhook enrichment
+stay with the Git reads and receive hooks that use them.
 
 A type has one home: when two crates need it, it moves down to the lower one. Widen
 visibility item by item, only as far as a cross-crate use needs. Fixtures shared by several

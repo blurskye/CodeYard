@@ -21,7 +21,7 @@ use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
 use codeyard_database::models::AccessLevel;
-use codeyard_repos::collaborators::Error as MemberError;
+use codeyard_repositories::collaborators::Error as MemberError;
 use codeyard_types::github_error::Error;
 use codeyard_types::github_error::Result;
 use serde::Deserialize;
@@ -100,12 +100,12 @@ async fn list(
         .permission
         .as_deref()
         .map(|name| {
-            codeyard_repos::collaborators::permission(name)
+            codeyard_repositories::collaborators::permission(name)
                 .ok_or_else(|| Error::invalid("Invalid permission"))
         })
         .transpose()?;
     let (offset, limit) = page.window()?;
-    let rows = codeyard_repos::collaborators::list(
+    let rows = codeyard_repositories::collaborators::list(
         &state.pool,
         actor.id,
         repo.id,
@@ -144,7 +144,7 @@ async fn check(
     let actor = auth
         .ok_or_else(codeyard_identity::github_auth::required)?
         .user;
-    let rows = codeyard_repos::collaborators::list(
+    let rows = codeyard_repositories::collaborators::list(
         &state.pool,
         actor.id,
         repo.id,
@@ -205,10 +205,11 @@ async fn add(
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
     let actor = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     let input = input.unwrap_or_default();
-    let level =
-        codeyard_repos::collaborators::permission(input.permission.as_deref().unwrap_or("push"))
-            .ok_or_else(|| Error::invalid("Invalid permission"))?;
-    match codeyard_repos::collaborators::add(
+    let level = codeyard_repositories::collaborators::permission(
+        input.permission.as_deref().unwrap_or("push"),
+    )
+    .ok_or_else(|| Error::invalid("Invalid permission"))?;
+    match codeyard_repositories::collaborators::add(
         &state.pool,
         actor.database_actor(),
         repo.id,
@@ -237,7 +238,7 @@ async fn remove(
     let actor = auth
         .ok_or_else(codeyard_identity::github_auth::required)?
         .user;
-    codeyard_repos::collaborators::remove(&state.pool, actor.id, repo.id, &username)
+    codeyard_repositories::collaborators::remove(&state.pool, actor.id, repo.id, &username)
         .await
         .map_err(member_error)?;
     Ok(StatusCode::NO_CONTENT)
@@ -269,7 +270,7 @@ async fn invitations(
             )
         };
     let (offset, limit) = page.window()?;
-    let rows = codeyard_repos::collaborators::invitations(
+    let rows = codeyard_repositories::collaborators::invitations(
         &state.pool,
         actor.id,
         repo,
@@ -296,7 +297,7 @@ async fn respond(
         .await?
         .ok_or_else(codeyard_identity::github_auth::required)?;
     actor.require_write()?;
-    codeyard_repos::collaborators::respond(
+    codeyard_repositories::collaborators::respond(
         &state.pool,
         actor.database_actor(),
         id,
@@ -321,9 +322,9 @@ async fn update_invitation(
     let actor = auth
         .ok_or_else(codeyard_identity::github_auth::required)?
         .user;
-    let level = codeyard_repos::collaborators::permission(&input.permissions)
+    let level = codeyard_repositories::collaborators::permission(&input.permissions)
         .ok_or_else(|| Error::invalid("Invalid permission"))?;
-    let invitation = codeyard_repos::collaborators::update_invitation(
+    let invitation = codeyard_repositories::collaborators::update_invitation(
         &state.pool,
         actor.id,
         repo.id,
@@ -343,9 +344,15 @@ async fn delete_invitation(
     let actor = auth
         .ok_or_else(codeyard_identity::github_auth::required)?
         .user;
-    codeyard_repos::collaborators::update_invitation(&state.pool, actor.id, repo.id, id, None)
-        .await
-        .map_err(member_error)?;
+    codeyard_repositories::collaborators::update_invitation(
+        &state.pool,
+        actor.id,
+        repo.id,
+        id,
+        None,
+    )
+    .await
+    .map_err(member_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
 

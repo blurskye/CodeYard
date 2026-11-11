@@ -16,7 +16,7 @@ use codeyard_app::app::AppState;
 use codeyard_db_repos::pull_requests::records::StackJoin;
 use codeyard_db_repos::pull_requests::records::StackRefusal;
 use codeyard_git_storage::repositories::pull_requests::OperationError;
-use codeyard_repos_pulls::repositories::pull_requests::merge;
+use codeyard_repositories::repositories::pull_requests::merge;
 use codeyard_storage::ObjectStore;
 use database::{wait_until_blocked, Database};
 use pulls::Client;

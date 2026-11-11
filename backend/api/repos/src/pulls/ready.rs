@@ -31,7 +31,7 @@ pub async fn mark_pull_request_ready(
 ) -> Result<Json<PullRequestDetailResponse>, (StatusCode, Json<ApiError>)> {
     let current_actor = get_current_user(&state.pool, &headers).await?;
     let pull_request =
-        codeyard_repos_pulls::repositories::pull_requests::mutations::mark_pull_request_ready(
+        codeyard_repositories::repositories::pull_requests::mutations::mark_pull_request_ready(
             &state.pool,
             &state.ci_runs,
             current_actor.id,
@@ -69,7 +69,7 @@ pub(crate) async fn native_ready(
         )
         .await;
     }
-    match codeyard_repos_pulls::repositories::pull_requests::mutations::mark_pull_request_ready(
+    match codeyard_repositories::repositories::pull_requests::mutations::mark_pull_request_ready(
         &ctx.state.pool,
         &ctx.state.ci_runs,
         ctx.require_user()?.id,

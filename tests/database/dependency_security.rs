@@ -83,7 +83,7 @@ async fn contract(postgres: bool) {
         .await
         .unwrap();
     let sha = "a".repeat(40);
-    let inventory = codeyard_repos_pulls::repositories::dependency_graph::snapshot(
+    let inventory = codeyard_repositories::repositories::dependency_graph::snapshot(
         sha.clone(),
         "refs/heads/main".into(),
         vec![codeyard_types::repositories::Package {

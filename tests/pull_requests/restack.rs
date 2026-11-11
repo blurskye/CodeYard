@@ -16,7 +16,7 @@ use codeyard_ci::config::CiConfig;
 use codeyard_git_storage::repositories::pull_requests::OperationError;
 use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_git_storage::store_types::RestackMove;
-use codeyard_repos_pulls::repositories::pull_requests::restack;
+use codeyard_repositories::repositories::pull_requests::restack;
 use codeyard_storage::ObjectStore;
 use database::Database;
 use pulls::Client;

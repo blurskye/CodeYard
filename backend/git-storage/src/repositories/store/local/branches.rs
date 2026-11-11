@@ -1,13 +1,13 @@
 use super::*;
+use crate::repositories::protection::BranchWrite;
+use crate::repositories::protection::History;
+use crate::repositories::protection::WriteVia;
 use crate::repositories::store::local::live_read;
 use crate::repositories::store::local::live_write;
 use crate::repositories::store::local::record_branch_update;
 use crate::repositories::store::local::record_secret_bypasses;
 use crate::repositories::store::local::LocalStore;
 use codeyard_database::cells::authorization::inherit;
-use codeyard_repos::protection::BranchWrite;
-use codeyard_repos::protection::History;
-use codeyard_repos::protection::WriteVia;
 
 impl LocalStore {
     /// Boxed with an explicit `Send` bound. This rename and `publish_file` each spawn a future
@@ -208,10 +208,11 @@ impl LocalStore {
         .await?;
         let mut protected = repository.default_branch == old;
         for branch in [old, new] {
-            protected |= !codeyard_repos::protection::matching_rules(pool, &repository, branch)
-                .await
-                .map_err(|_| RepoError::authority_unavailable())?
-                .is_empty();
+            protected |=
+                !crate::repositories::protection::matching_rules(pool, &repository, branch)
+                    .await
+                    .map_err(|_| RepoError::authority_unavailable())?
+                    .is_empty();
         }
         // Renaming a protected or default branch needs a token's administration permission.
         if let Some(token) = authority.token_id() {
@@ -338,7 +339,7 @@ impl LocalStore {
             .await
             .map_err(|_| RepoError::write_denied())?;
         let quarantine = prepared.path().join("objects");
-        let bypasses = codeyard_repos::push_protection::refuse_blocked_secrets(
+        let bypasses = crate::repositories::push_protection::refuse_blocked_secrets(
             pool,
             &repository,
             actor,

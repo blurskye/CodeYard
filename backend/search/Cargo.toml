@@ -31,10 +31,7 @@ workspace = true
 [dependencies.codeyard-identity]
 workspace = true
 
-[dependencies.codeyard-repos]
-workspace = true
-
-[dependencies.codeyard-repos-pulls]
+[dependencies.codeyard-repositories]
 workspace = true
 
 [dependencies.codeyard-storage]

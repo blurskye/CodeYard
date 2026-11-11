@@ -2,7 +2,7 @@
 use anyhow::ensure;
 use anyhow::Result;
 use codeyard_git::error::ErrorKind;
-use codeyard_repos_pulls::services::RepositoryServices;
+use codeyard_repositories::services::RepositoryServices;
 use codeyard_types::vulnerabilities::Advisory;
 use codeyard_types::vulnerabilities::PreparedAdvisory;
 use codeyard_types::vulnerabilities::ECOSYSTEMS;
@@ -27,7 +27,7 @@ pub async fn scan(
     let reader = codeyard_db_security::dependency_graph::Reader::Scan(generation);
     let reference = format!("refs/heads/{}", repo.default_branch);
     let (sha, packages) =
-        match codeyard_repos_pulls::repositories::dependency_graph::native_inventory(
+        match codeyard_repositories::repositories::dependency_graph::native_inventory(
             state, &reader, repo, &reference,
         )
         .await
@@ -39,7 +39,7 @@ pub async fn scan(
             Err(error) => return Err(error.into()),
         };
     let snapshot =
-        codeyard_repos_pulls::repositories::dependency_graph::snapshot(sha, reference, packages);
+        codeyard_repositories::repositories::dependency_graph::snapshot(sha, reference, packages);
     codeyard_db_security::vulnerabilities::save_snapshot(
         state.pool(),
         repo.id,
@@ -247,7 +247,7 @@ mod tests {
             package_url: "pkg:pypi/example-package@1.0rc1".into(),
             scope: "runtime".into(),
         };
-        let snapshot = codeyard_repos_pulls::repositories::dependency_graph::snapshot(
+        let snapshot = codeyard_repositories::repositories::dependency_graph::snapshot(
             "a".repeat(40),
             "refs/heads/main".into(),
             vec![package],
@@ -287,7 +287,7 @@ mod tests {
             package_url: "pkg:maven/org.example/parser@1.0.0".into(),
             scope: "runtime".into(),
         };
-        let snapshot = codeyard_repos_pulls::repositories::dependency_graph::snapshot(
+        let snapshot = codeyard_repositories::repositories::dependency_graph::snapshot(
             "a".repeat(40),
             "refs/heads/main".into(),
             vec![package],

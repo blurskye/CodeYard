@@ -11,8 +11,8 @@ use codeyard_api_http::context::PageContext;
 use codeyard_api_http::shared::repos::chrome::load_database;
 use codeyard_api_http::shared::user::responses::field;
 use codeyard_app::app::AppState;
+use codeyard_git_storage::repositories::imports::ImportCredential;
 use codeyard_git_storage::repositories::store::repo_store;
-use codeyard_repos::imports::ImportCredential;
 use codeyard_webui::app::Page;
 use codeyard_webui::pages::discovery as view;
 use codeyard_webui::pages::discovery::FormError;
@@ -23,13 +23,13 @@ use std::sync::Arc;
 
 fn source_credentials(
     form: &HashMap<String, String>,
-) -> Option<codeyard_repos::imports::Credentials> {
+) -> Option<codeyard_git_storage::repositories::imports::Credentials> {
     let username = field(form, "source_username");
     let password = field(form, "source_token");
     if username.is_empty() && password.is_empty() {
         return None;
     }
-    Some(codeyard_repos::imports::Credentials {
+    Some(codeyard_git_storage::repositories::imports::Credentials {
         username: if username.is_empty() { "git" } else { username }.to_owned(),
         password: password.to_owned(),
     })
@@ -111,7 +111,8 @@ pub(super) async fn create(
         Ok(user) => user,
         Err(response) => return response,
     };
-    let source = codeyard_repos::imports::source_url(field(&input, "source_url"));
+    let source =
+        codeyard_git_storage::repositories::imports::source_url(field(&input, "source_url"));
     let form = MigrationForm {
         name: field(&input, "name").chars().take(100).collect(),
         source_url: source
@@ -229,7 +230,7 @@ pub(super) async fn create(
             )
         }
     };
-    match codeyard_repos_pulls::repositories::imports::start(
+    match codeyard_repositories::repositories::imports::start(
         ctx.state.clone(),
         repo,
         credential,
@@ -340,7 +341,7 @@ pub(super) async fn submit(
         None => return ctx.error(StatusCode::UNAUTHORIZED, "Sign in again."),
     };
     let credentials = source_credentials(&input);
-    let result = codeyard_repos_pulls::repositories::imports::start(
+    let result = codeyard_repositories::repositories::imports::start(
         ctx.state.clone(),
         loaded.repository.clone(),
         credential,
@@ -352,23 +353,30 @@ pub(super) async fn submit(
         Ok(_) => ctx.redirect(&base),
         Err(error) => {
             let status = match error {
-                codeyard_repos::imports::ImportError::Source
-                | codeyard_repos::imports::ImportError::Credentials => {
+                codeyard_git_storage::repositories::imports::ImportError::Source
+                | codeyard_git_storage::repositories::imports::ImportError::Credentials => {
                     StatusCode::UNPROCESSABLE_ENTITY
                 }
-                codeyard_repos::imports::ImportError::Running
-                | codeyard_repos::imports::ImportError::NotEmpty => StatusCode::CONFLICT,
-                codeyard_repos::imports::ImportError::Denied => StatusCode::FORBIDDEN,
-                codeyard_repos::imports::ImportError::Unavailable => {
+                codeyard_git_storage::repositories::imports::ImportError::Running
+                | codeyard_git_storage::repositories::imports::ImportError::NotEmpty => {
+                    StatusCode::CONFLICT
+                }
+                codeyard_git_storage::repositories::imports::ImportError::Denied => {
+                    StatusCode::FORBIDDEN
+                }
+                codeyard_git_storage::repositories::imports::ImportError::Unavailable => {
                     StatusCode::SERVICE_UNAVAILABLE
                 }
             };
             let form = MigrationForm {
                 repository_id: Some(loaded.repository.id),
                 name,
-                source_url: codeyard_repos::imports::source_url(field(&input, "source_url"))
-                    .map(|url| url.to_string())
-                    .unwrap_or_default(),
+                source_url: codeyard_git_storage::repositories::imports::source_url(field(
+                    &input,
+                    "source_url",
+                ))
+                .map(|url| url.to_string())
+                .unwrap_or_default(),
                 action: format!("{base}/migration"),
                 ..Default::default()
             };

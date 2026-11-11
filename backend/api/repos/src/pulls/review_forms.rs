@@ -30,14 +30,14 @@ use codeyard_db_repos::discussions::comment_revision;
 use codeyard_db_repos::pull_requests::reviews::PullRequestCommentEntry;
 use codeyard_db_repos::pull_requests::reviews::PullRequestReviewEntry;
 use codeyard_git_storage::repositories::store::repo_store;
-use codeyard_repos_pulls::issues::discussion_link;
-use codeyard_repos_pulls::issues::discussion_link_at;
-use codeyard_repos_pulls::issues::discussion_page;
-use codeyard_repos_pulls::issues::MAX_REVIEW_COMMENT_OFFSET;
-use codeyard_repos_pulls::repositories::pull_requests::comments::CreatePullRequestCommentRequest;
-use codeyard_repos_pulls::repositories::pull_requests::reviews::CreatePullRequestReviewRequest;
-use codeyard_repos_pulls::repositories::pull_requests::reviews::DismissPullRequestReviewRequest;
-use codeyard_repos_pulls::repositories::pull_requests::reviews::RequestReviewerRequest;
+use codeyard_repositories::issues::discussion_link;
+use codeyard_repositories::issues::discussion_link_at;
+use codeyard_repositories::issues::discussion_page;
+use codeyard_repositories::issues::MAX_REVIEW_COMMENT_OFFSET;
+use codeyard_repositories::repositories::pull_requests::comments::CreatePullRequestCommentRequest;
+use codeyard_repositories::repositories::pull_requests::reviews::CreatePullRequestReviewRequest;
+use codeyard_repositories::repositories::pull_requests::reviews::DismissPullRequestReviewRequest;
+use codeyard_repositories::repositories::pull_requests::reviews::RequestReviewerRequest;
 use codeyard_webui::pages::repos::issues as view;
 use codeyard_webui::pages::repos::issues::DetailDraft;
 use codeyard_webui::pages::repos::issues::Kind;
@@ -234,7 +234,7 @@ pub(crate) async fn page_reviews(
         ctx,
         "page",
         1,
-        1..=codeyard_repos_pulls::issues::MAX_COMMENT_PAGE,
+        1..=codeyard_repositories::issues::MAX_COMMENT_PAGE,
     )?;
     let base = format!(
         "{}/{}?page={page}",
@@ -494,7 +494,7 @@ pub(crate) async fn native_review(
         token: None,
     };
     let user = ctx.require_user()?.id;
-    match codeyard_repos_pulls::repositories::pull_requests::reviews::create_pull_request_review(
+    match codeyard_repositories::repositories::pull_requests::reviews::create_pull_request_review(
         &ctx.state.pool,
         ctx.state.cluster.as_ref(),
         &ctx.state.notification_broadcaster,
@@ -502,7 +502,7 @@ pub(crate) async fn native_review(
         &codeyard_database::queries::users::accounts::AccountCredential::Session(
             &codeyard_api_http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
         ),
-        codeyard_repos_pulls::repositories::pull_requests::reviews::ReviewTarget {
+        codeyard_repositories::repositories::pull_requests::reviews::ReviewTarget {
             owner: owner.clone(),
             name: name.clone(),
             number,
@@ -539,7 +539,7 @@ pub(crate) async fn native_dismiss_review(
     let request = DismissPullRequestReviewRequest {
         reason: (!reason.trim().is_empty()).then_some(reason),
     };
-    match codeyard_repos_pulls::repositories::pull_requests::reviews::dismiss_pull_request_review(
+    match codeyard_repositories::repositories::pull_requests::reviews::dismiss_pull_request_review(
         &ctx.state.pool,
         user,
         owner,
@@ -591,7 +591,7 @@ pub(crate) async fn native_request_reviewer(
     let request = RequestReviewerRequest {
         username: username.clone(),
     };
-    match codeyard_repos_pulls::repositories::pull_requests::reviews::request_reviewer_bound(
+    match codeyard_repositories::repositories::pull_requests::reviews::request_reviewer_bound(
         &ctx.state.pool,
         &ctx.state.notification_broadcaster,
         user,
@@ -638,7 +638,7 @@ pub(crate) async fn native_remove_requested_reviewer(
     let user = ctx.require_user()?.id;
     let base = format!("{}/{}", repo.view.family_url(Kind::Pull), number);
     require_reviewer_repository(&ctx, &form, repo.record.id)?;
-    match codeyard_repos_pulls::repositories::pull_requests::reviews::remove_requested_reviewer_bound(
+    match codeyard_repositories::repositories::pull_requests::reviews::remove_requested_reviewer_bound(
         &ctx.state.pool,
         user,
         (owner, name, number),
@@ -807,7 +807,7 @@ pub(crate) async fn native_pull_comment(
         review_id: None,
     };
     let user = ctx.require_user()?.id;
-    match codeyard_repos_pulls::repositories::pull_requests::comments::create_pull_request_comment(
+    match codeyard_repositories::repositories::pull_requests::comments::create_pull_request_comment(
         &ctx.state.pool,
         ctx.state.cluster.as_ref(),
         &ctx.state.notification_broadcaster,
@@ -827,7 +827,7 @@ pub(crate) async fn native_pull_comment(
                 // The composer posts to a URL that keeps `view=split` when the comment came from there.
                 Ok(ctx.redirect(&format!("{}#thread-{root}", diff_url(&ctx, &base))))
             } else {
-                let link = codeyard_repos_pulls::repositories::pull_requests::comments::saved_comment_link(
+                let link = codeyard_repositories::repositories::pull_requests::comments::saved_comment_link(
                     &ctx.state.pool,
                     &base,
                     &comment,
@@ -987,7 +987,7 @@ pub(crate) async fn native_discard_review(
         ""
     };
     let pending = field(&form, "pending_review").parse().ok();
-    match codeyard_repos_pulls::repositories::pull_requests::reviews::discard_pending_review(
+    match codeyard_repositories::repositories::pull_requests::reviews::discard_pending_review(
         &ctx.state.pool,
         user,
         owner,
@@ -1022,7 +1022,7 @@ async fn set_resolution(
     let user = ctx.require_user()?.id;
     let from_diff = field(&form, "from") == "diff";
     let base = format!("{}/{}", repo.view.family_url(Kind::Pull), number);
-    match codeyard_repos_pulls::repositories::pull_requests::comments::set_comment_resolved(
+    match codeyard_repositories::repositories::pull_requests::comments::set_comment_resolved(
         &ctx.state.pool,
         user,
         &owner,
@@ -1109,11 +1109,11 @@ pub(crate) async fn native_edit_conversation_comment(
         .await;
     }
     let result =
-        codeyard_repos_pulls::repositories::pull_requests::comments::edit_pull_request_comment(
+        codeyard_repositories::repositories::pull_requests::comments::edit_pull_request_comment(
             &ctx.state.pool,
             &ctx.state.notification_broadcaster,
             ctx.require_user()?.id,
-            codeyard_repos_pulls::issues::comments::CommentTarget {
+            codeyard_repositories::issues::comments::CommentTarget {
                 owner,
                 repo: name,
                 number,
@@ -1128,7 +1128,7 @@ pub(crate) async fn native_edit_conversation_comment(
         Ok(comment) => {
             let base = format!("{}/{}", repo.view.family_url(Kind::Pull), number);
             let link =
-                codeyard_repos_pulls::repositories::pull_requests::comments::saved_comment_link(
+                codeyard_repositories::repositories::pull_requests::comments::saved_comment_link(
                     &ctx.state.pool,
                     &base,
                     &comment,
@@ -1164,10 +1164,10 @@ pub(crate) async fn native_delete_conversation_comment(
     authorize_post(&ctx, &form)?;
     let repo = repository(&ctx, &owner, &name).await?;
     let result =
-        codeyard_repos_pulls::repositories::pull_requests::comments::delete_pull_request_comment(
+        codeyard_repositories::repositories::pull_requests::comments::delete_pull_request_comment(
             &ctx.state.pool,
             ctx.require_user()?.id,
-            codeyard_repos_pulls::issues::comments::CommentTarget {
+            codeyard_repositories::issues::comments::CommentTarget {
                 owner,
                 repo: name,
                 number,

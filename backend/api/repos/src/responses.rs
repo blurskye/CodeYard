@@ -281,9 +281,9 @@ pub(crate) fn ref_error(
 }
 
 pub(crate) fn engagement_error(
-    error: codeyard_repos_pulls::repositories::engagement::EngagementError,
+    error: codeyard_repositories::repositories::engagement::EngagementError,
 ) -> (StatusCode, Json<ApiError>) {
-    use codeyard_repos_pulls::repositories::engagement::EngagementError;
+    use codeyard_repositories::repositories::engagement::EngagementError;
     let message = match error {
         EngagementError::Access(error) => {
             return codeyard_api_http::shared::repos::access::access_error(error)

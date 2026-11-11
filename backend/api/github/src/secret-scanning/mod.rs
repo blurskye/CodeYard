@@ -220,10 +220,11 @@ async fn list_org(
             .into_iter()
             .map(|repo| (repo.id, repo))
             .collect::<HashMap<_, _>>();
-    let documents =
-        codeyard_repos_pulls::repositories::secret_scanning::jobs::Documents::load(&state, &alerts)
-            .await
-            .map_err(Error::unavailable)?;
+    let documents = codeyard_repositories::repositories::secret_scanning::jobs::Documents::load(
+        &state, &alerts,
+    )
+    .await
+    .map_err(Error::unavailable)?;
     let mut items = Vec::new();
     for alert in &alerts {
         let repo = repositories
@@ -271,10 +272,11 @@ async fn list(
     .map_err(error)?;
     let has_next = alerts.len() > limit;
     let alerts = alerts.into_iter().take(limit).collect::<Vec<_>>();
-    let documents =
-        codeyard_repos_pulls::repositories::secret_scanning::jobs::Documents::load(&state, &alerts)
-            .await
-            .map_err(Error::unavailable)?;
+    let documents = codeyard_repositories::repositories::secret_scanning::jobs::Documents::load(
+        &state, &alerts,
+    )
+    .await
+    .map_err(Error::unavailable)?;
     let items = alerts
         .iter()
         .map(|alert| {
@@ -311,7 +313,7 @@ async fn get_alert(
     .next()
     .ok_or_else(Error::missing)?;
     Ok(Json(
-        codeyard_repos_pulls::repositories::secret_scanning::jobs::document(
+        codeyard_repositories::repositories::secret_scanning::jobs::document(
             &state,
             &alert,
             owner,
@@ -367,7 +369,7 @@ async fn update(
     )
     .await
     .map_err(error)?;
-    codeyard_repos_pulls::repositories::secret_scanning::jobs::emit_alert(
+    codeyard_repositories::repositories::secret_scanning::jobs::emit_alert(
         &state,
         &repo,
         &alert,
@@ -388,7 +390,7 @@ async fn update(
     .await
     .map_err(Error::unavailable)?;
     Ok(Json(
-        codeyard_repos_pulls::repositories::secret_scanning::jobs::document(
+        codeyard_repositories::repositories::secret_scanning::jobs::document(
             &state, &alert, owner, name, false,
         )
         .await

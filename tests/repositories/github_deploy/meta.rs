@@ -201,8 +201,10 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    let license_text = codeyard_repos::templates::fill_license(
-        codeyard_repos::templates::license("MIT").unwrap().text,
+    let license_text = codeyard_git_storage::repositories::templates::fill_license(
+        codeyard_git_storage::repositories::templates::license("MIT")
+            .unwrap()
+            .text,
         2026,
         "Alice",
     );

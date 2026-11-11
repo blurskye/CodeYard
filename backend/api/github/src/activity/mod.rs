@@ -17,8 +17,8 @@ use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
 use codeyard_identity::repository_access::AccessError;
-use codeyard_repos_pulls::repositories::engagement::Engagement;
-use codeyard_repos_pulls::repositories::engagement::EngagementError;
+use codeyard_repositories::repositories::engagement::Engagement;
+use codeyard_repositories::repositories::engagement::EngagementError;
 use codeyard_types::github_error::Error;
 use codeyard_types::github_error::Result;
 use serde::Deserialize;
@@ -71,7 +71,7 @@ async fn change_star(
 ) -> Result<StatusCode> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
     let auth = auth.ok_or_else(codeyard_identity::github_auth::required)?;
-    codeyard_repos_pulls::repositories::engagement::change(
+    codeyard_repositories::repositories::engagement::change(
         &state.pool,
         &state.notification_broadcaster,
         auth.database_actor(),

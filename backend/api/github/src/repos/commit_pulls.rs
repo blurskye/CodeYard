@@ -14,8 +14,8 @@ use codeyard_database::models::PullRequest;
 use codeyard_database::models::Repository;
 use codeyard_database::models::User;
 use codeyard_git_storage::api_shared::github::contents::store_error;
-use codeyard_repos_pulls::repositories::commit_pulls::AssociationError;
-use codeyard_repos_pulls::repositories::commit_pulls::CommitPullQuery;
+use codeyard_repositories::repositories::commit_pulls::AssociationError;
+use codeyard_repositories::repositories::commit_pulls::CommitPullQuery;
 use codeyard_types::github_error::Error;
 use codeyard_types::github_error::Result;
 use serde_json::json;
@@ -177,7 +177,7 @@ async fn list(
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, false).await?;
     let (offset, limit) = page.window()?;
-    let result = codeyard_repos_pulls::repositories::commit_pulls::associated_pulls(
+    let result = codeyard_repositories::repositories::commit_pulls::associated_pulls(
         &state.pool,
         state.cluster.as_ref(),
         CommitPullQuery {
@@ -202,7 +202,7 @@ async fn list(
         .iter()
         .map(|pull| pull.author_id)
         .collect::<Vec<_>>();
-    let associations = codeyard_repos_pulls::repositories::commit_comments::author_associations(
+    let associations = codeyard_repositories::repositories::commit_comments::author_associations(
         &state.pool,
         state.cluster.as_ref(),
         &result.repository,

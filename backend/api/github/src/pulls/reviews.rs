@@ -126,14 +126,14 @@ async fn dismiss(
             "A dismissal message and DISMISS event are required",
         ));
     }
-    let review = codeyard_repos_pulls::repositories::pull_requests::reviews::dismiss_pull_request_review(
+    let review = codeyard_repositories::repositories::pull_requests::reviews::dismiss_pull_request_review(
         &state.pool,
         actor.id,
         owner.clone(),
         name.clone(),
         number,
         review_id,
-        codeyard_repos_pulls::repositories::pull_requests::reviews::DismissPullRequestReviewRequest {
+        codeyard_repositories::repositories::pull_requests::reviews::DismissPullRequestReviewRequest {
             reason: Some(input.message),
         },
     )

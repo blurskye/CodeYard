@@ -24,10 +24,10 @@ use codeyard_git::repository::PREVIEW_BYTES;
 use codeyard_git::repository::PREVIEW_LINES;
 use codeyard_git::MAX_BLAME_FILE_BYTES;
 use codeyard_git::MAX_BLAME_LINES;
+use codeyard_git_storage::repositories::editor::MAX_EDITOR_BYTES;
 use codeyard_git_storage::repositories::store::repo_store;
 use codeyard_git_storage::repositories::store::RepoStore;
 use codeyard_git_storage::store_types::BlobBytes;
-use codeyard_repos::editor::MAX_EDITOR_BYTES;
 use codeyard_storage::range::ByteRange as BlobRange;
 use codeyard_webui::pages::repos as view;
 use serde::Deserialize;
@@ -352,10 +352,10 @@ async fn blob_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
         && size <= MAX_EDITOR_BYTES as u64
     {
         if start == 0 && end == size {
-            codeyard_repos_pulls::repositories::files::editor_text(&bytes, false).is_ok()
+            codeyard_repositories::repositories::files::editor_text(&bytes, false).is_ok()
         } else {
             store.blob_by_id(&id).await.is_ok_and(|bytes| {
-                codeyard_repos_pulls::repositories::files::editor_text(&bytes, binary).is_ok()
+                codeyard_repositories::repositories::files::editor_text(&bytes, binary).is_ok()
             })
         }
     } else {
