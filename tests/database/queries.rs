@@ -854,7 +854,7 @@ async fn test_ci_queue_claim_heartbeat_finish_cancel_and_stale() {
 async fn test_fingerprint_calculation() {
     let public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl test@example.com";
 
-    let fingerprint = codeyard_db_identity::users::ssh_keys::calculate_fingerprint(public_key)
+    let fingerprint = codeyard_security::ssh_keys::calculate_fingerprint(public_key)
         .expect("Failed to calculate fingerprint");
 
     assert!(fingerprint.starts_with("SHA256:"));

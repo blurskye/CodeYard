@@ -2711,7 +2711,7 @@ impl LocalStore {
         crate::repositories::releases::immutable::check_current_tag_updates(
             pool,
             &repository,
-            &[codeyard_repos::validation::RefUpdate {
+            &[codeyard_git::protocol::RefUpdate {
                 reference: reference.to_owned(),
                 old: old.clone(),
                 new: new.clone(),
@@ -2932,7 +2932,7 @@ impl LocalStore {
         crate::repositories::releases::immutable::check_current_tag_updates(
             pool,
             &repository,
-            &[codeyard_repos::validation::RefUpdate {
+            &[codeyard_git::protocol::RefUpdate {
                 reference: reference.clone(),
                 old: codeyard_repos::editor::ZERO.to_owned(),
                 new: tag.sha.clone(),
@@ -3027,7 +3027,7 @@ impl LocalStore {
         crate::repositories::releases::immutable::check_current_tag_updates(
             pool,
             &repository,
-            &[codeyard_repos::validation::RefUpdate {
+            &[codeyard_git::protocol::RefUpdate {
                 reference: reference.clone(),
                 old: old.clone(),
                 new: codeyard_repos::editor::ZERO.to_owned(),
@@ -3411,13 +3411,11 @@ impl LocalStore {
                 .ok_or_else(|| anyhow::anyhow!("rule suite actor is unavailable"))?;
             let updates: Vec<_> = moves
                 .iter()
-                .map(
-                    |(reference, old, new)| codeyard_repos::validation::RefUpdate {
-                        reference: reference.clone(),
-                        old: old.clone(),
-                        new: new.clone(),
-                    },
-                )
+                .map(|(reference, old, new)| codeyard_git::protocol::RefUpdate {
+                    reference: reference.clone(),
+                    old: old.clone(),
+                    new: new.clone(),
+                })
                 .collect();
             crate::repositories::rule_suites::record_push(
                 pool,
@@ -5053,9 +5051,7 @@ impl LocalStore {
         if session.stateless {
             command.arg("--stateless-rpc");
         }
-        if let Some(protocol) =
-            codeyard_repos::validation::protocol(session.git_protocol.as_deref())?
-        {
+        if let Some(protocol) = codeyard_git::protocol::protocol(session.git_protocol.as_deref())? {
             command.env("GIT_PROTOCOL", protocol);
         }
         command.arg(&path);

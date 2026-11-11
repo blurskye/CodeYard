@@ -36,8 +36,8 @@ no sqlx, Git, SSH or AWS code (`scripts/check-web-dependencies.py` checks this).
 |---|---|
 | `webui` | Dioxus views and safe page models, server rendering and browser hydration |
 | `types` | Browser-safe types, syntax rules and limits; server-only models behind `cfg` |
-| `security` | Cryptography, token hashes, outbound address checks, secret detection, node keys, private state directories and their file locks |
-| `git` | libgit2 reads, hardened `git` processes, repository locks and ref publication |
+| `security` | Cryptography, token hashes, SSH public-key parsing and fingerprints, outbound address checks, secret detection, node keys, private state directories and their file locks |
+| `git` | Git transport parsing, libgit2 reads, hardened `git` processes, repository locks and ref publication |
 | `runner` | The Actions workflow runner (`codeyard-actions`), also usable on its own |
 | `database` | Pools, migrations, shared records, cross-domain transactions and cell id ranges |
 | `db-identity`, `db-orgs`, `db-repos`, `db-actions`, `db-security`, `db-placement` | Domain queries, each with `postgres/` and `sqlite/` implementations |

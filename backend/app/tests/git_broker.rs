@@ -10,7 +10,6 @@ use codeyard_git_storage::repositories::git_sessions::private_files;
 use codeyard_git_storage::repositories::git_sessions::protocol;
 use codeyard_git_storage::repositories::git_sessions::ReceiveCredential;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
-use codeyard_repos::validation;
 use std::os::unix::fs::PermissionsExt;
 use std::process::Output;
 use std::process::Stdio;
@@ -518,10 +517,8 @@ async fn host_openssh_deploy_keys_clone_push_and_keep_repository_scope() {
             &codeyard_db_identity::deploy_keys::NewDeployKey {
                 repo_id: repo.id,
                 title: "deploy".into(),
-                fingerprint: codeyard_db_identity::users::ssh_keys::calculate_fingerprint(
-                    &public_key,
-                )
-                .unwrap(),
+                fingerprint: codeyard_security::ssh_keys::calculate_fingerprint(&public_key)
+                    .unwrap(),
                 public_key: public_key.clone(),
                 can_write: writable,
                 created_by_id: owner.id,
@@ -2151,7 +2148,7 @@ use codeyard_git_storage::repositories::git_sessions::protocol::STDIN;
 
 use codeyard_git_storage::repositories::git_sessions::protocol::STDOUT;
 
-use codeyard_repos::validation::RefUpdate;
+use codeyard_git::protocol::RefUpdate;
 
 use anyhow::Result;
 

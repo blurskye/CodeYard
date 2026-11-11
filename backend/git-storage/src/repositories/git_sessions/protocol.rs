@@ -2,8 +2,8 @@
 //! No pack is accumulated: each frame is at most 32 KiB and IO is backpressured.
 use anyhow::ensure;
 use anyhow::Result;
-use codeyard_repos::validation::RefUpdate;
-use codeyard_repos::validation::MAX_HEADER;
+use codeyard_git::protocol::RefUpdate;
+use codeyard_git::protocol::MAX_HEADER;
 use serde::Deserialize;
 use serde::Serialize;
 use tokio::io::AsyncRead;

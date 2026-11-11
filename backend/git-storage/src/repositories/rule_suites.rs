@@ -24,9 +24,9 @@ use codeyard_database::queries::rulesets::ActorType;
 use codeyard_database::queries::rulesets::BypassMode;
 use codeyard_database::queries::rulesets::Enforcement;
 use codeyard_database::queries::rulesets::Rule;
+use codeyard_git::protocol::RefUpdate;
+use codeyard_git::protocol::ZERO_SHA;
 use codeyard_repos::protection::History;
-use codeyard_repos::validation::RefUpdate;
-use codeyard_repos::validation::ZERO_SHA;
 use codeyard_types::workflow_glob::WorkflowMatchBudget;
 use std::collections::HashSet;
 

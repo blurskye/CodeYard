@@ -13,6 +13,8 @@ use codeyard_database::models::Repository;
 use codeyard_database::models::User;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
+use codeyard_git::protocol::RefUpdate;
+use codeyard_git::protocol::ZERO_SHA;
 use codeyard_git::published_refs_in_use;
 use codeyard_git::ref_listing_bytes;
 use codeyard_git::RefsInUse;
@@ -23,8 +25,6 @@ use codeyard_repos::protection::History;
 use codeyard_repos::protection::Refusal;
 use codeyard_repos::protection::WriteVia;
 use codeyard_repos::ref_changes::RefMove;
-use codeyard_repos::validation::RefUpdate;
-use codeyard_repos::validation::ZERO_SHA;
 use codeyard_types::workflow_glob::WorkflowMatchBudget;
 use std::collections::HashMap;
 use std::path::Path;
@@ -156,7 +156,7 @@ impl Gateway {
         use crate::repositories::git_sessions::protocol::TransactionPhase;
 
         use codeyard_db_placement::cluster::writes as journal;
-        codeyard_repos::validation::validate_transaction_updates(updates)?;
+        codeyard_git::protocol::validate_transaction_updates(updates)?;
         if !operation
             .state
             .lock()
@@ -204,7 +204,7 @@ impl Gateway {
                         "reference transaction differs from admission"
                     );
                     ensure!(
-                        state.writes.len() < codeyard_repos::validation::MAX_UPDATES,
+                        state.writes.len() < codeyard_git::protocol::MAX_UPDATES,
                         "too many reference transactions"
                     );
                     state.quorum_started = true;
@@ -409,7 +409,7 @@ impl Gateway {
         updates: &[RefUpdate],
         quarantine: Option<&str>,
     ) -> Result<()> {
-        codeyard_repos::validation::validate_updates(updates)?;
+        codeyard_git::protocol::validate_updates(updates)?;
         #[cfg(any(test, feature = "test-hooks"))]
         crate::repositories::git_sessions::hook_barrier::before_authorize(operation, post).await;
         if post {

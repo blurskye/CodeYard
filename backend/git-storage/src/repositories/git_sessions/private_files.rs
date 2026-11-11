@@ -4,7 +4,7 @@ use anyhow::bail;
 use anyhow::ensure;
 use anyhow::Context;
 use anyhow::Result;
-use codeyard_repos::validation::shell_safe_path;
+use codeyard_git::protocol::shell_safe_path;
 use std::fs::DirBuilder;
 use std::fs::File;
 use std::fs::Metadata;

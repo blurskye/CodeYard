@@ -90,8 +90,8 @@ async fn real_fixture(act: Option<PathBuf>) {
         .tempdir()
         .unwrap();
     let ci_config = act.map(|act| {
-        let binary = validation::shell_safe_path(&act).unwrap();
-        let home = validation::shell_safe_path(act_home.path()).unwrap();
+        let binary = codeyard_git::protocol::shell_safe_path(&act).unwrap();
+        let home = codeyard_git::protocol::shell_safe_path(act_home.path()).unwrap();
         let wrapper = act_home.path().join("act-owned");
         std::fs::write(&wrapper, format!("#!/bin/sh\nexport HOME='{home}'\nexport XDG_CONFIG_HOME=\"$HOME/config\" XDG_CACHE_HOME=\"$HOME/cache\"\nunset DOCKER_HOST DOCKER_CONTEXT SSH_AUTH_SOCK GITHUB_TOKEN GH_TOKEN\nexec '{binary}' --no-cache-server --action-cache-path \"$HOME/actions\" \"$@\"\n")).unwrap();
         std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o700)).unwrap();

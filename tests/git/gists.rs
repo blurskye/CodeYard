@@ -384,8 +384,7 @@ async fn gists_http_ssh_remote_and_promotion() {
             .await
             .unwrap();
     let session = &sessions[0].id;
-    let fingerprint =
-        codeyard_db_identity::users::ssh_keys::calculate_fingerprint(&deploy_public).unwrap();
+    let fingerprint = codeyard_security::ssh_keys::calculate_fingerprint(&deploy_public).unwrap();
     let deployment = codeyard_db_identity::deploy_keys::NewDeployKey {
         repo_id: repo.id,
         title: "legacy".into(),

@@ -686,8 +686,7 @@ async fn native_claims_refuse_cross_cell_signup_email_and_ssh_duplicates_and_ret
             break;
         }
     }
-    let fingerprint =
-        codeyard_db_identity::users::ssh_keys::calculate_fingerprint(public_key).unwrap();
+    let fingerprint = codeyard_security::ssh_keys::calculate_fingerprint(public_key).unwrap();
     assert_eq!(
         directory
             .lookup(&Key::new(KeyKind::Ssh, &fingerprint).unwrap())

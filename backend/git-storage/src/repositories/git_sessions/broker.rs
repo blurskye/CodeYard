@@ -18,8 +18,8 @@ use codeyard_database::models::Repository;
 use codeyard_database::DbPool;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
+use codeyard_git::protocol::RefUpdate;
 use codeyard_git::repository::process as git_process;
-use codeyard_repos::validation::RefUpdate;
 use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -509,7 +509,7 @@ impl Gateway {
                     "hook identity mismatch"
                 );
                 if post {
-                    codeyard_repos::validation::validate_updates(&updates)?;
+                    codeyard_git::protocol::validate_updates(&updates)?;
                     let mut state = operation
                         .state
                         .lock()
@@ -569,8 +569,8 @@ impl Gateway {
         if user != self.git_user {
             return Ok(None);
         }
-        let supplied = codeyard_repos::validation::canonical_key(key_type, blob)?;
-        let fingerprint = codeyard_db_identity::users::ssh_keys::calculate_fingerprint(&supplied)?;
+        let supplied = codeyard_security::ssh_keys::canonical_key(key_type, blob)?;
+        let fingerprint = codeyard_security::ssh_keys::calculate_fingerprint(&supplied)?;
         let account = codeyard_db_identity::users::ssh_keys::get_user_by_key_fingerprint(
             &self.pool,
             &fingerprint,
@@ -598,11 +598,10 @@ impl Gateway {
             {
                 return Ok(None);
             }
-            let canonical =
-                codeyard_repos::validation::canonical_db_key(&key.public_key, key_type)?;
+            let canonical = codeyard_git::protocol::canonical_db_key(&key.public_key, key_type)?;
             ensure!(
                 canonical == supplied
-                    && codeyard_db_identity::users::ssh_keys::calculate_fingerprint(&canonical)?
+                    && codeyard_security::ssh_keys::calculate_fingerprint(&canonical)?
                         == key.fingerprint,
                 "stored key mismatch"
             );
@@ -621,13 +620,13 @@ impl Gateway {
         if identity.user.is_banned || identity.user.must_change_password {
             return Ok(None);
         }
-        let canonical = codeyard_repos::validation::canonical_db_key(
+        let canonical = codeyard_git::protocol::canonical_db_key(
             &identity.key.public_key,
             &identity.key.key_type,
         )?;
         ensure!(
             canonical == supplied
-                && codeyard_db_identity::users::ssh_keys::calculate_fingerprint(&canonical)?
+                && codeyard_security::ssh_keys::calculate_fingerprint(&canonical)?
                     == identity.key.fingerprint
                 && identity.key.id > 0,
             "stored key mismatch"
@@ -677,8 +676,8 @@ impl Gateway {
         git_protocol: Option<&str>,
         slot: OwnedSemaphorePermit,
     ) -> Result<()> {
-        let command = codeyard_repos::validation::parse_command(raw_command)?;
-        let git_protocol = codeyard_repos::validation::protocol(git_protocol)?;
+        let command = codeyard_git::protocol::parse_command(raw_command)?;
+        let git_protocol = codeyard_git::protocol::protocol(git_protocol)?;
         let repo = codeyard_db_repos::repositories::records::get_git_repository(
             &self.pool,
             &command.owner,
@@ -876,9 +875,7 @@ impl Gateway {
             None => self.git_command(&operation, &token, write, options.stateless)?,
         };
         drop(publication_lease);
-        if let Some(protocol) =
-            codeyard_repos::validation::protocol(options.git_protocol.as_deref())?
-        {
+        if let Some(protocol) = codeyard_git::protocol::protocol(options.git_protocol.as_deref())? {
             command_process.env("GIT_PROTOCOL", protocol);
         }
         let mut output = ReceiveOutput {
@@ -961,7 +958,7 @@ impl Gateway {
             .arg("-c")
             .arg(format!(
                 "core.hooksPath={}",
-                codeyard_repos::validation::shell_safe_path(operation.hooks.path())?
+                codeyard_git::protocol::shell_safe_path(operation.hooks.path())?
             ))
             .arg(if write { "receive-pack" } else { "upload-pack" });
         if stateless {
@@ -977,13 +974,13 @@ impl Gateway {
         let directory = tempfile::Builder::new()
             .prefix("receive-hooks-")
             .tempdir_in(self.socket.parent().context("socket parent required")?)?;
-        codeyard_repos::validation::shell_safe_path(directory.path())?;
+        codeyard_git::protocol::shell_safe_path(directory.path())?;
         // The hook checks the socket's directories up to the same trusted state directory.
         let state_dir = match crate::repositories::git_sessions::private_files::trusted_state_dir()
         {
             Some(state) => format!(
                 " --state-dir {}",
-                codeyard_repos::validation::shell_safe_path(state)?
+                codeyard_git::protocol::shell_safe_path(state)?
             ),
             None => String::new(),
         };
@@ -998,10 +995,10 @@ impl Gateway {
                 writeln!(
                     file,
                     "#!/bin/sh\nexec {}{} ssh {} --socket {} --key-id {} --repo-id {}{}",
-                    codeyard_repos::validation::shell_safe_path(&self.executable)?,
+                    codeyard_git::protocol::shell_safe_path(&self.executable)?,
                     state_dir,
                     name,
-                    codeyard_repos::validation::shell_safe_path(&self.socket)?,
+                    codeyard_git::protocol::shell_safe_path(&self.socket)?,
                     key_id,
                     repo_id,
                     if name == "reference-transaction" {
@@ -1109,7 +1106,7 @@ fn published_updates(path: &Path, updates: &[RefUpdate]) -> Result<bool> {
             Ok(id) if id.to_string() == update.new => return Ok(true),
             Err(error)
                 if error.code() == git2::ErrorCode::NotFound
-                    && update.new == codeyard_repos::validation::ZERO_SHA =>
+                    && update.new == codeyard_git::protocol::ZERO_SHA =>
             {
                 return Ok(true)
             }

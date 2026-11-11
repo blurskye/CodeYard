@@ -214,8 +214,7 @@ async fn contract(pg: bool) {
         ssh_key::PrivateKey::random(&mut ssh_key::rand_core::OsRng, ssh_key::Algorithm::Ed25519)
             .unwrap();
     let public = private.public_key().to_openssh().unwrap();
-    let fingerprint =
-        codeyard_db_identity::users::ssh_keys::calculate_fingerprint(&public).unwrap();
+    let fingerprint = codeyard_security::ssh_keys::calculate_fingerprint(&public).unwrap();
     let barrier = Arc::new(tokio::sync::Barrier::new(8));
     let mut tasks = tokio::task::JoinSet::new();
     for index in 0..8 {
@@ -659,8 +658,7 @@ async fn postgres_enrollment_locks_accounts_before_rows_and_fingerprints() {
         .public_key()
         .to_openssh()
         .unwrap();
-        let fingerprint =
-            codeyard_db_identity::users::ssh_keys::calculate_fingerprint(&public).unwrap();
+        let fingerprint = codeyard_security::ssh_keys::calculate_fingerprint(&public).unwrap();
         let mut gate = raw.begin().await.unwrap();
         let holder: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
             .fetch_one(&mut *gate)

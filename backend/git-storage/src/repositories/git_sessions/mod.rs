@@ -274,7 +274,7 @@ impl ReceiveCredential {
         self,
         pool: &DbPool,
         repo: &codeyard_database::models::Repository,
-        updates: Option<&[codeyard_repos::validation::RefUpdate]>,
+        updates: Option<&[codeyard_git::protocol::RefUpdate]>,
     ) -> Result<(
         codeyard_database::models::User,
         codeyard_database::models::AccessLevel,
@@ -298,7 +298,7 @@ impl ReceiveCredential {
         pool: &DbPool,
         repo: &codeyard_database::models::Repository,
         write: bool,
-        receive: Option<Option<&[codeyard_repos::validation::RefUpdate]>>,
+        receive: Option<Option<&[codeyard_git::protocol::RefUpdate]>>,
     ) -> Result<(
         codeyard_database::models::User,
         codeyard_database::models::AccessLevel,
@@ -361,12 +361,12 @@ impl ReceiveCredential {
                     !identity.user.is_banned && !identity.user.must_change_password,
                     CredentialRefusal::Credential
                 );
-                let canonical = codeyard_repos::validation::canonical_db_key(
+                let canonical = codeyard_git::protocol::canonical_db_key(
                     &identity.key.public_key,
                     &identity.key.key_type,
                 )?;
                 anyhow::ensure!(
-                    codeyard_db_identity::users::ssh_keys::calculate_fingerprint(&canonical)?
+                    codeyard_security::ssh_keys::calculate_fingerprint(&canonical)?
                         == identity.key.fingerprint,
                     CredentialRefusal::Credential
                 );
@@ -520,7 +520,7 @@ async fn maintainer_edits(
     credential: ReceiveCredential,
     actor: &codeyard_database::models::User,
     head: &codeyard_database::models::Repository,
-    updates: Option<&[codeyard_repos::validation::RefUpdate]>,
+    updates: Option<&[codeyard_git::protocol::RefUpdate]>,
 ) -> Result<bool> {
     use std::collections::BTreeSet;
     let Some(base_id) = head.forked_from_id else {
@@ -542,7 +542,7 @@ async fn maintainer_edits(
                 let Some(branch) = update.reference.strip_prefix("refs/heads/") else {
                     return Ok(false);
                 };
-                if update.new == codeyard_repos::validation::ZERO_SHA {
+                if update.new == codeyard_git::protocol::ZERO_SHA {
                     return Ok(false);
                 }
                 wanted.insert(branch.to_owned());

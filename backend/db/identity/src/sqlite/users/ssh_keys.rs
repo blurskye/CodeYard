@@ -1,4 +1,3 @@
-use crate::users::ssh_keys::calculate_fingerprint;
 use crate::users::ssh_keys::valid_stored_key;
 use anyhow::Result;
 use codeyard_database::models::SshKey;
@@ -6,6 +5,7 @@ use codeyard_database::models::User;
 use codeyard_database::models::UserWithKey;
 use codeyard_database::pool::SqlitePool;
 use codeyard_database::queries::users::accounts::AccountCredential;
+use codeyard_security::ssh_keys::calculate_fingerprint;
 use codeyard_types::credentials::AccountRestricted;
 use codeyard_types::identity::SshKeyWriteRefusal;
 use tracing::debug;

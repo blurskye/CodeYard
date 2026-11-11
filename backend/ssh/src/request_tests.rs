@@ -338,7 +338,7 @@ async fn route_entry(name: &str, fixture: &Fixture) -> (String, String, SocketAd
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect();
-    let fingerprint = codeyard_db_identity::users::ssh_keys::calculate_fingerprint(
+    let fingerprint = codeyard_security::ssh_keys::calculate_fingerprint(
         &fixture.key.public_key().to_openssh().unwrap(),
     )
     .unwrap();
@@ -529,7 +529,7 @@ async fn foreign_collaborator_pushes_and_clones_through_public_ssh_then_loses_ac
     });
     let alice = Fixture::with_router("alice", 62, Some(authorization.clone())).await;
     let bob = Fixture::with_router("bob", 63, Some(authorization)).await;
-    let fingerprint = codeyard_db_identity::users::ssh_keys::calculate_fingerprint(
+    let fingerprint = codeyard_security::ssh_keys::calculate_fingerprint(
         &bob.key.public_key().to_openssh().unwrap(),
     )
     .unwrap();

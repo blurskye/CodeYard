@@ -1326,6 +1326,7 @@ Codeyard Git reads and hardened Git commands.
 - `backend/git/src/maintenance.rs` — Packing after writes. Git's automatic gc is off for every command this server runs, so nothing else packs a repository. A repository that keeps…
 - `backend/git/src/mirror.rs` — Whole-repository copies for backups and restores, the Git checks and repairs that follow a restore, and the `deleted/` directory that keeps deleted…
 - `backend/git/src/oauth.rs` — Credentials without the workflows permission may not change the workflows they publish
+- `backend/git/src/protocol.rs` — Git transport commands, protocol settings and bounded ref-update input
 - `backend/git/src/objects.rs` — Git database objects are written without publishing a reference
 - `backend/git/src/publications.rs` — Server-owned branch publication provenance. Metadata tags end at an empty tree, so Git GC retains live-branch history without adding synthetic…
 - `backend/git/src/ref_names.rs` — Canonical public reference names used at publication boundaries
@@ -1511,7 +1512,6 @@ Codeyard Git reads and hardened Git commands.
 - `backend/repos/src/templates.rs` — Templates for the files a new repository can start with: .gitignore files and licenses
 - `backend/repos/src/traffic.rs` — Traffic means observed native navigations and completed initial Git object transfers
 - `backend/repos/src/traffic/clone.rs` — Bounded streaming observation of initial Git object transfers, not advertisements/fetches
-- `backend/repos/src/validation.rs` — repository identifiers and safe Git command parsing
 
 ## `codeyard-repos-pulls` (`backend/repos-pulls/`)
 
@@ -1644,6 +1644,7 @@ Codeyard cryptography, tokens, outbound address checks and secret detection.
 - `backend/security/src/lib.rs` — Cryptography, token hashes, outbound address checks, secret detection, node keys and private state directories with their exclusive file locks
 - `backend/security/src/locks.rs` — Filesystem ownership and evicting keyed process locks
 - `backend/security/src/node_identity.rs` — The node's key. Its public half is the node's identity in the cluster (the iroh endpoint id). The secret half stays on this machine
+- `backend/security/src/ssh_keys.rs` — SSH public-key parsing, canonical encoding and fingerprints shared by enrollment and transports
 - `backend/security/src/outbound.rs` — Where a webhook may send. Private, loopback, link-local and metadata addresses are refused unless `WEBHOOKS_ALLOW_PRIVATE=true`. The addresses are…
 - `backend/security/src/secret_detection/mod.rs` — Credential detection shared by history scans and push protection
 - `backend/security/src/secret_detection/patterns.rs` — Custom pattern validation and matching use the same bounded Rust regex engine as built-ins

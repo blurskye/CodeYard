@@ -8,6 +8,7 @@ pub mod maintenance;
 pub mod mirror;
 pub mod oauth;
 pub mod objects;
+pub mod protocol;
 mod publications;
 pub mod ref_names;
 pub mod repository;

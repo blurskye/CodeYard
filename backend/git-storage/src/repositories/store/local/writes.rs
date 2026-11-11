@@ -214,7 +214,7 @@ impl LocalStore {
             crate::repositories::releases::immutable::check_current_tag_updates(
                 pool,
                 &repository,
-                &[codeyard_repos::validation::RefUpdate {
+                &[codeyard_git::protocol::RefUpdate {
                     reference: reference.to_owned(),
                     old: old.unwrap_or(editor::ZERO).to_owned(),
                     new: new.unwrap_or(editor::ZERO).to_owned(),

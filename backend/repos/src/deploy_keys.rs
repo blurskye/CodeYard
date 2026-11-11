@@ -81,7 +81,7 @@ pub async fn add_key(
     if title.is_empty() || title.chars().count() > 255 || title.contains('\0') {
         return Err(DeployKeyError::InvalidTitle);
     }
-    let parsed = codeyard_db_identity::users::ssh_keys::parse_public_key(public_key)?;
+    let parsed = codeyard_security::ssh_keys::parse_public_key(public_key)?;
     let key = NewDeployKey {
         repo_id: repo.id,
         title: title.to_owned(),

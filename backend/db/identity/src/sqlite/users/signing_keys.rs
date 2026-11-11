@@ -1,9 +1,9 @@
 use crate::users::signing_keys::SigningKey;
 use crate::users::signing_keys::SigningKeyOwner;
-use crate::users::ssh_keys::parse_public_key;
 use anyhow::Result;
 use codeyard_database::pool::SqlitePool;
 use codeyard_database::queries::users::accounts::AccountCredential;
+use codeyard_security::ssh_keys::parse_public_key;
 use codeyard_types::identity::SshKeyWriteRefusal;
 
 pub async fn list_signing_key_summaries(

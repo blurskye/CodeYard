@@ -128,7 +128,7 @@ async fn contract(pg: bool) {
     // A Git receive by the base owner may move this pull head branch, and nothing else.
     {
         use codeyard_git_storage::repositories::git_sessions::ReceiveCredential;
-        let push = |reference: &str| codeyard_repos::validation::RefUpdate {
+        let push = |reference: &str| codeyard_git::protocol::RefUpdate {
             old: fork_sha.clone(),
             new: "c".repeat(40),
             reference: reference.into(),

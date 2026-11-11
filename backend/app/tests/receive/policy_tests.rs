@@ -7,13 +7,13 @@ mod fixture {
     use base64::Engine;
     use codeyard_ci::runs::CiRuns;
     use codeyard_database::DbPool;
+    use codeyard_git::protocol::ZERO_SHA;
     use codeyard_git_storage::repositories::git_sessions::receive_session;
     use codeyard_git_storage::repositories::git_sessions::ReceiveCredential;
     use codeyard_git_storage::repositories::store::repo_store;
     use codeyard_git_storage::store_types::GitService;
     use codeyard_git_storage::store_types::GitSession;
     use codeyard_git_storage::store_types::GitStreams;
-    use codeyard_repos::validation::ZERO_SHA;
     use std::path::Path;
     use std::path::PathBuf;
     use std::sync::Arc;

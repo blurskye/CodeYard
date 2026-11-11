@@ -1306,7 +1306,7 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         .await
         .unwrap()
         .unwrap();
-    let update = |reference: &str, new: &str| codeyard_repos::validation::RefUpdate {
+    let update = |reference: &str, new: &str| codeyard_git::protocol::RefUpdate {
         old: followed_tip.clone(),
         new: new.into(),
         reference: reference.into(),
@@ -1333,7 +1333,7 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         vec![update("refs/heads/main", &"c".repeat(40))],
         vec![update(
             "refs/heads/foreign-topic",
-            codeyard_repos::validation::ZERO_SHA,
+            codeyard_git::protocol::ZERO_SHA,
         )],
         vec![update("refs/tags/maintainer", &"c".repeat(40))],
         vec![

@@ -209,7 +209,7 @@ impl GitSshHandler {
             }
         }
         let key = public_key.to_openssh()?;
-        let fingerprint = codeyard_db_identity::users::ssh_keys::calculate_fingerprint(&key)?;
+        let fingerprint = codeyard_security::ssh_keys::calculate_fingerprint(&key)?;
         let account = get_user_by_key_fingerprint(&self.pool, &fingerprint).await?;
         let deploy = codeyard_db_identity::deploy_keys::get_deploy_key_by_fingerprint(
             &self.pool,
@@ -397,7 +397,7 @@ impl GitSshHandler {
                 self.foreign_key = user
                     .is_stub
                     .then(|| {
-                        codeyard_db_identity::users::ssh_keys::calculate_fingerprint(
+                        codeyard_security::ssh_keys::calculate_fingerprint(
                             &public_key.to_openssh()?,
                         )
                     })
@@ -548,7 +548,7 @@ impl russh::server::Handler for GitSshHandler {
                             self.foreign_key = user
                                 .is_stub
                                 .then(|| {
-                                    codeyard_db_identity::users::ssh_keys::calculate_fingerprint(
+                                    codeyard_security::ssh_keys::calculate_fingerprint(
                                         variable_value,
                                     )
                                 })
@@ -584,7 +584,7 @@ impl russh::server::Handler for GitSshHandler {
             .filter(|state| state.channel.is_some())
             .filter(|_| variable_name == "GIT_PROTOCOL")
             .and_then(|state| {
-                let protocol = codeyard_repos::validation::protocol(Some(variable_value)).ok()?;
+                let protocol = codeyard_git::protocol::protocol(Some(variable_value)).ok()?;
                 state.git_protocol = protocol.map(str::to_owned);
                 Some(())
             })
@@ -678,7 +678,7 @@ impl russh::server::Handler for GitSshHandler {
             return Ok(());
         }
         // Parse git command
-        let git_cmd = match codeyard_repos::validation::parse_command(&command) {
+        let git_cmd = match codeyard_git::protocol::parse_command(&command) {
             Ok(cmd) => cmd,
             Err(_) => {
                 self.refuse_command(
@@ -933,28 +933,21 @@ mod tests {
         ] {
             for (service, write) in [("git-upload-pack", false), ("git-receive-pack", true)] {
                 let parsed =
-                    codeyard_repos::validation::parse_command(&format!("{service} '{path}'"))
-                        .unwrap();
+                    codeyard_git::protocol::parse_command(&format!("{service} '{path}'")).unwrap();
                 assert_eq!(parsed.owner, "owner");
                 assert_eq!(parsed.repo, expected);
                 assert_eq!(parsed.write, write);
             }
         }
-        assert!(
-            codeyard_repos::validation::parse_command("git-upload-pack 'owner/a/b.git'").is_err()
-        );
-        assert!(codeyard_repos::validation::parse_command("not-git 'owner/project.git'").is_err());
+        assert!(codeyard_git::protocol::parse_command("git-upload-pack 'owner/a/b.git'").is_err());
+        assert!(codeyard_git::protocol::parse_command("not-git 'owner/project.git'").is_err());
     }
 
     #[test]
     fn builtin_git_commands_use_the_shared_parser() {
         // The built-in server uses the OpenSSH helper's parser, which refuses extra slashes.
-        assert!(
-            codeyard_repos::validation::parse_command("git-upload-pack //alice/repo.git").is_err()
-        );
-        assert!(
-            codeyard_repos::validation::parse_command("git-upload-pack 'alice/repo.git'").is_ok()
-        );
+        assert!(codeyard_git::protocol::parse_command("git-upload-pack //alice/repo.git").is_err());
+        assert!(codeyard_git::protocol::parse_command("git-upload-pack 'alice/repo.git'").is_ok());
     }
 
     #[tokio::test]

@@ -17,6 +17,9 @@ pub mod fs;
 pub mod node_identity;
 
 #[cfg(not(target_arch = "wasm32"))]
+pub mod ssh_keys;
+
+#[cfg(not(target_arch = "wasm32"))]
 pub mod token_hash;
 
 #[cfg(not(target_arch = "wasm32"))]

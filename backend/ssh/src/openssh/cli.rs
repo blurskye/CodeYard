@@ -1,6 +1,11 @@
 use crate::openssh::Commands;
 use anyhow::ensure;
 use anyhow::Result;
+use codeyard_git::protocol::parse_command;
+use codeyard_git::protocol::parse_updates;
+use codeyard_git::protocol::protocol as git_protocol;
+use codeyard_git::protocol::shell_safe_path;
+use codeyard_git::protocol::MAX_HOOK_BYTES;
 use codeyard_git_storage::repositories::git_sessions::private_files::connect as connect_private;
 use codeyard_git_storage::repositories::git_sessions::protocol::Request;
 use codeyard_git_storage::repositories::git_sessions::protocol::CHUNK;
@@ -9,12 +14,7 @@ use codeyard_git_storage::repositories::git_sessions::protocol::EXIT;
 use codeyard_git_storage::repositories::git_sessions::protocol::STDERR;
 use codeyard_git_storage::repositories::git_sessions::protocol::STDIN;
 use codeyard_git_storage::repositories::git_sessions::protocol::STDOUT;
-use codeyard_repos::validation::canonical_key;
-use codeyard_repos::validation::parse_command;
-use codeyard_repos::validation::parse_updates;
-use codeyard_repos::validation::protocol as git_protocol;
-use codeyard_repos::validation::shell_safe_path;
-use codeyard_repos::validation::MAX_HOOK_BYTES;
+use codeyard_security::ssh_keys::canonical_key;
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::Read;
@@ -257,7 +257,7 @@ async fn hook_request(
             repo_id,
             token,
             phase,
-            updates: codeyard_repos::validation::parse_transaction_updates(&bytes)?,
+            updates: codeyard_git::protocol::parse_transaction_updates(&bytes)?,
         });
     }
     let updates = parse_updates(&bytes)?;

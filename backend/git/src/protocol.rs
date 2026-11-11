@@ -1,3 +1,4 @@
+//! Git transport commands, protocol settings and bounded ref-update input.
 use anyhow::bail;
 use anyhow::ensure;
 use anyhow::Result;
@@ -104,13 +105,8 @@ pub fn protocol(value: Option<&str>) -> Result<Option<&str>> {
     }
 }
 
-/// Parse and re-encode the wire key, never echo caller input or a DB comment/options.
-pub fn canonical_key(key_type: &str, blob: &str) -> Result<String> {
-    codeyard_db_identity::users::ssh_keys::canonical_key(key_type, blob)
-}
-
 pub fn canonical_db_key(public_key: &str, key_type: &str) -> Result<String> {
-    let key = codeyard_db_identity::users::ssh_keys::parse_public_key(public_key)?;
+    let key = codeyard_security::ssh_keys::parse_public_key(public_key)?;
     ensure!(
         key.algorithm().to_string() == key_type,
         "stored SSH key type mismatch"
@@ -141,10 +137,7 @@ pub fn validate_updates(updates: &[RefUpdate]) -> Result<()> {
                 && (update.old != ZERO_SHA || update.new != ZERO_SHA),
             "invalid SHA"
         );
-        ensure!(
-            codeyard_git::is_canonical_ref(&update.reference),
-            "invalid ref"
-        );
+        ensure!(crate::is_canonical_ref(&update.reference), "invalid ref");
         ensure!(names.insert(&update.reference), "duplicate ref update");
     }
     ensure!(bytes <= MAX_HOOK_BYTES, "hook input too large");
@@ -215,6 +208,7 @@ fn sha(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use codeyard_security::ssh_keys::canonical_key;
 
     #[test]
     fn commands_are_a_single_service_and_repository_not_a_shell() {

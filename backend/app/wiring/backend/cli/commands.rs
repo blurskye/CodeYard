@@ -159,7 +159,7 @@ pub async fn add_key_from_file_cmd(
     key_path: &std::path::Path,
 ) -> Result<()> {
     use tokio::io::AsyncReadExt;
-    let limit = codeyard_db_identity::users::ssh_keys::MAX_PUBLIC_KEY_BYTES + 1;
+    let limit = codeyard_security::ssh_keys::MAX_PUBLIC_KEY_BYTES + 1;
     let mut public_key = String::new();
     tokio::fs::File::open(key_path)
         .await?

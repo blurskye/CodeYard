@@ -77,7 +77,7 @@ impl Handler {
             return Ok(None);
         }
         let public = key.to_openssh()?;
-        let fingerprint = codeyard_db_identity::users::ssh_keys::calculate_fingerprint(&public)?;
+        let fingerprint = codeyard_security::ssh_keys::calculate_fingerprint(&public)?;
         let known = tokio::time::timeout(
             Duration::from_secs(10),
             self.directory.resolve(None, &fingerprint),
@@ -98,7 +98,7 @@ impl Handler {
         let fingerprint = self.fingerprint.clone().context("Missing SSH identity")?;
         let owner = command
             .as_ref()
-            .map(|command| codeyard_repos::validation::parse_command(command))
+            .map(|command| codeyard_git::protocol::parse_command(command))
             .transpose()?;
         let target = tokio::time::timeout(
             Duration::from_secs(10),
@@ -276,7 +276,7 @@ impl russh::server::Handler for Handler {
         session: &mut Session,
     ) -> Result<()> {
         let accepted = if name == "GIT_PROTOCOL" {
-            match codeyard_repos::validation::protocol(Some(value)) {
+            match codeyard_git::protocol::protocol(Some(value)) {
                 Ok(protocol) => self
                     .channels
                     .get_mut(&u32::from(channel))
@@ -327,7 +327,7 @@ impl russh::server::Handler for Handler {
     ) -> Result<()> {
         let command = std::str::from_utf8(bytes)
             .ok()
-            .filter(|command| codeyard_repos::validation::parse_command(command).is_ok())
+            .filter(|command| codeyard_git::protocol::parse_command(command).is_ok())
             .map(str::to_owned);
         match command {
             Some(command) => {
