@@ -203,3 +203,70 @@ async fn a_busy_node_makes_a_session_wait_and_only_then_fails() {
         .unwrap_err();
     assert!(error.is::<SessionsBusy>());
 }
+
+#[tokio::test]
+async fn a_repository_cannot_enable_shallow_receive_for_hardened_commands() {
+    let executable = executable().unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let repository = directory.path().join("repo.git");
+    let mut init = command(&executable).unwrap();
+    init.args(["init", "--bare", "--quiet"]).arg(&repository);
+    let output = run(init, b"", 1024, Duration::from_secs(10)).await.unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // A repository-local value is the only way a copy could turn the setting back on.
+    let mut configure = command(&executable).unwrap();
+    configure.arg("--git-dir").arg(&repository).args([
+        "config",
+        "--local",
+        "receive.shallowUpdate",
+        "true",
+    ]);
+    let output = run(configure, b"", 1024, Duration::from_secs(10))
+        .await
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Positive control: the local file really holds true. --local excludes the -c value.
+    let mut local = command(&executable).unwrap();
+    local.arg("--git-dir").arg(&repository).args([
+        "config",
+        "--local",
+        "--bool",
+        "--get",
+        "receive.shallowUpdate",
+    ]);
+    let output = run(local, b"", 1024, Duration::from_secs(10))
+        .await
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.stdout, b"true\n");
+
+    // The hardened command's own -c value wins over repository config.
+    let mut read = command(&executable).unwrap();
+    read.arg("--git-dir").arg(&repository).args([
+        "config",
+        "--bool",
+        "--get",
+        "receive.shallowUpdate",
+    ]);
+    let output = run(read, b"", 1024, Duration::from_secs(10)).await.unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.stdout, b"false\n");
+}

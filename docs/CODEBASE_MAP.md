@@ -551,6 +551,7 @@ GitHub GraphQL types and resolver traits derived from the published schema.
 - `backend/app/tests/git_broker/openssh_daemon.rs` — Real sshd broker fixture
 - `backend/app/tests/receive/mod.rs` — Receive-hook integration fixture assembly
 - `backend/app/tests/receive/policy_tests.rs` — Push permission checks in the receive hooks, on a throwaway SQLite database
+- `backend/app/tests/receive/prepared_authority.rs` — Live Prepared authority and pre-admission durability-budget refusal on SQLite and PostgreSQL
 - `backend/app/tests/receive/quorum_tests.rs` — Receive-hook quorum refusal contracts
 
 ## `codeyard-cache` (`backend/cache/`)
@@ -1326,13 +1327,14 @@ Codeyard Git reads and hardened Git commands.
 - `backend/git/src/maintenance.rs` — Packing after writes. Git's automatic gc is off for every command this server runs, so nothing else packs a repository. A repository that keeps…
 - `backend/git/src/mirror.rs` — Whole-repository copies for backups and restores, the Git checks and repairs that follow a restore, and the `deleted/` directory that keeps deleted…
 - `backend/git/src/oauth.rs` — Credentials without the workflows permission may not change the workflows they publish
-- `backend/git/src/protocol.rs` — Git transport commands, protocol settings and bounded ref-update input
+- `backend/git/src/protocol.rs` — Git transport commands, pkt-line headers, protocol settings and bounded ref-update input
 - `backend/git/src/objects.rs` — Git database objects are written without publishing a reference
 - `backend/git/src/publications.rs` — Server-owned branch publication provenance. Metadata tags end at an empty tree, so Git GC retains live-branch history without adding synthetic…
 - `backend/git/src/ref_names.rs` — Canonical public reference names used at publication boundaries
 - `backend/git/src/repository.rs` — bounded Git repository tree/blob/history/ref operations
 - `backend/git/src/repository/blob_preview.rs` — One bounded cat-file stream owns line counting and forward/backward preview boundaries
 - `backend/git/src/repository/checked.rs` — Merge commits, repository creation and CI checkouts from exact revisions
+- `backend/git/src/repository/durable.rs` — Bounded synchronization of repository metadata, reference ancestors and object-store directory entries
 - `backend/git/src/repository/history_tests.rs` — dev-only regression tests
 - `backend/git/src/repository/locks.rs` — Repository serialization. Ordinary operations use the process mutex and Git CAS; branch provenance additionally uses an interprocess lease.…
 - `backend/git/src/repository/process.rs` — Running `git`: scrubbed environment, hooks off, bounded output and timeouts
@@ -1588,6 +1590,8 @@ Runs GitHub Actions workflows: Codeyard's job runner, also usable on its own.
 
 - `backend/runner/tests/compat/` — workflow fixtures for the runner compatibility tests.
 - `backend/runner/scripts/windows-base-image/build.sh` — QEMU image provisioning is Codeyard-specific, not ported from actions/runner
+- `backend/runner/scripts/windows-base-image/Provision.ps1` — Signed Windows tools, runner account and seed-task installation
+- `backend/runner/scripts/windows-base-image/Import-JobKey.ps1` — Per-job SSH keys, gateway-scoped guest firewall and fail-closed SSH startup
 - `backend/runner/src/expressions/eval.rs` — Ported from actions/runner's `src/Sdk/Expressions/EvaluationResult.cs` and `Sdk/{Operators,Functions}`
 - `backend/runner/src/expressions/hash_files.rs` — Ported from actions/runner's `src/Misc/expressionFunc/hashFiles/src/hashFiles.ts` and its bundled `@actions/glob`
 - `backend/runner/src/expressions/mod.rs` — Ported from actions/runner's `src/Sdk/Expressions` and `src/Sdk/DTExpressions2`
@@ -2432,6 +2436,7 @@ Codeyard Dioxus views: server rendering and browser hydration.
 - `tests/storage/remote_store/associations.rs` — Association parity gets its own fixture so it does not enlarge the broad RPC contract future
 - `tests/storage/remote_store/imports.rs` — Source imports are publishers, not a way to import somebody else's server attestations
 - `tests/storage/remote_store/publications.rs` — Real publishers, primary-only reads and no-op/ABA identity parity across storage RPC
+- `tests/support/act_fixture.rs` — Verification for the pinned `act` executable that the opt-in real-runner tests execute
 - `tests/support/database.rs` — Selects the existing disposable SQLite or seeded PostgreSQL fixture
 - `tests/support/fake_s3.rs` — Bucket startup only; object operations must fail rather than pretend to store bytes
 - `tests/support/fake_webui_bundle.rs` — A tiny stand-in for the generated browser bundle (`WEBUI_DIST`), so a test can render full HTML pages without building the WASM application
@@ -2447,6 +2452,10 @@ Codeyard Dioxus views: server rendering and browser hydration.
 - `tests/support/production_ci.rs` — A throwaway PostgreSQL schema (from GITSERV_TEST_DATABASE_URL) with one user, one repository and a workflow commit, dropped when the fixture ends
 - `tests/support/rpc_operations.rs` — Every repository operation, with whether a worker may read it while claimed
 - `tests/support/server.rs` — Starting the `codeyard` binary as a child process on free local ports
+- `tests/vm/guest.nix` — Disposable Linux guest with persistent Git and database storage, no host mounts
+- `tests/vm/hard-reset.sh` — Acknowledged pushes, immediate guest kernel resets and post-boot clone/fsck checks
+- `tests/vm/test-windows-firewall.ps1` — Mocked guest firewall policy and failure-propagation checks; not runtime acceptance
+- `tests/vm/test-windows-image.py` — Image-builder acceleration, readiness-marker publication and failed-install cleanup without Windows media
 - `tests/web/crawler_policy.rs` — robots.txt, ai.txt and X-Robots-Tag follow the administrator's AI crawler setting
 - `tests/web/error_pages.rs` — Error pages over HTTP: repository errors keep the repository header for a viewer who may read it, a private repository stays a plain 404, and a…
 - `tests/web/form_body.rs` — A form whose body has been read gives its slot back while its handler waits for the database

@@ -1,4 +1,8 @@
 use super::*;
+
+#[path = "../../../../tests/support/act_fixture.rs"]
+mod act_fixture;
+
 async fn output(mut command: Command) -> Output {
     timeout(
         Duration::from_secs(45),
@@ -48,6 +52,54 @@ async fn git(broker: &Broker, config: &Path, cwd: &Path, arguments: &[&str]) -> 
     output(command).await
 }
 
+const CI_RUN_TIMEOUT: Duration = Duration::from_secs(90);
+const CI_LOG_LIMIT: i64 = 1000;
+const CI_DIAGNOSTIC_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Wait for one admitted run to finish. The 90-second budget is unchanged; on expiry,
+/// include the current run query and bounded logs so a scheduling miss or an engine
+/// failure is visible instead of only the elapsed time.
+async fn wait_for_ci_run(
+    pool: &codeyard_database::DbPool,
+    run: &codeyard_database::models::CiRun,
+) -> codeyard_database::models::CiRun {
+    match timeout(CI_RUN_TIMEOUT, async {
+        loop {
+            let current = codeyard_db_actions::ci::get_ci_run_by_run_id(pool, run.run_id)
+                .await
+                .unwrap()
+                .unwrap();
+            if !matches!(current.status.as_str(), "queued" | "running") {
+                break current;
+            }
+            sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    {
+        Ok(finished) => finished,
+        Err(_) => {
+            // Keep the full timeout/query Result so a diagnostic failure is not reported
+            // as an absent row or an empty log.
+            let current = timeout(
+                CI_DIAGNOSTIC_TIMEOUT,
+                codeyard_db_actions::ci::get_ci_run_by_run_id(pool, run.run_id),
+            )
+            .await;
+            let logs = timeout(
+                CI_DIAGNOSTIC_TIMEOUT,
+                codeyard_db_actions::ci::list_ci_logs(pool, run.id, CI_LOG_LIMIT),
+            )
+            .await;
+            panic!(
+                "CI run {} did not finish within {}s; run={run:?}; current={current:?}; logs={logs:?}",
+                run.run_id,
+                CI_RUN_TIMEOUT.as_secs()
+            );
+        }
+    }
+}
+
 #[tokio::test]
 #[ignore = "needs sshd, cc and an unprivileged user"]
 async fn real_openssh_signed_key_forced_commands_streamed_git_and_revocation() {
@@ -55,17 +107,19 @@ async fn real_openssh_signed_key_forced_commands_streamed_git_and_revocation() {
 }
 
 #[tokio::test]
-#[ignore = "requires GITSERV_TEST_ACT_BINARY set to the pinned act; trusted fixture only"]
+#[ignore = "requires digest-verified GITSERV_TEST_ACT_BINARY and delegated CI_PROCESS_CGROUP_ROOT; trusted fixture only"]
 async fn real_openssh_push_ci_outlives_helper() {
-    use sha2::Digest;
-    let act = PathBuf::from(
-        std::env::var("GITSERV_TEST_ACT_BINARY").expect("verified act fixture required"),
+    // This current-thread fixture also captures warnings from its CI tasks. Setup errors
+    // stay out of public run records, but must remain visible when this test fails.
+    let _logs = tracing::subscriber::set_default(
+        tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::WARN)
+            .without_time()
+            .with_ansi(false)
+            .with_test_writer()
+            .finish(),
     );
-    assert_eq!(
-        hex::encode(sha2::Sha256::digest(std::fs::read(&act).unwrap())),
-        "6be37b104430efc210d5130495bedcff2dc7cd6780a38d88f3d205e7f1185cc1"
-    );
-    real_fixture(Some(act)).await;
+    real_fixture(Some(act_fixture::pinned_act_fixture_from_env())).await;
 }
 
 async fn real_fixture(act: Option<PathBuf>) {
@@ -89,17 +143,41 @@ async fn real_fixture(act: Option<PathBuf>) {
         .prefix("openssh-act-")
         .tempdir()
         .unwrap();
+    // The pool keeps a weak object-store reference. Attach it before starting workers,
+    // and retain the owner until all runs and their final log flushes have stopped.
+    let _log_objects = if run_ci {
+        let objects = Arc::new(
+            codeyard_storage::ObjectStore::open(act_home.path(), None)
+                .await
+                .expect("open real CI fixture object storage"),
+        );
+        database.pool.set_log_objects(objects.clone());
+        Some(objects)
+    } else {
+        None
+    };
     let ci_config = act.map(|act| {
         let binary = codeyard_git::protocol::shell_safe_path(&act).unwrap();
         let home = codeyard_git::protocol::shell_safe_path(act_home.path()).unwrap();
         let wrapper = act_home.path().join("act-owned");
         std::fs::write(&wrapper, format!("#!/bin/sh\nexport HOME='{home}'\nexport XDG_CONFIG_HOME=\"$HOME/config\" XDG_CACHE_HOME=\"$HOME/cache\"\nunset DOCKER_HOST DOCKER_CONTEXT SSH_AUTH_SOCK GITHUB_TOKEN GH_TOKEN\nexec '{binary}' --no-cache-server --action-cache-path \"$HOME/actions\" \"$@\"\n")).unwrap();
         std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o700)).unwrap();
+        // The real CI path must use the harness's delegated cgroup, not the test
+        // process's own /proc membership (the unit's init subgroup).
+        let process_cgroup_root = PathBuf::from(
+            std::env::var("CI_PROCESS_CGROUP_ROOT")
+                .expect("CI_PROCESS_CGROUP_ROOT is required for the real act fixture"),
+        );
+        assert!(
+            process_cgroup_root.is_absolute() && process_cgroup_root.is_dir(),
+            "CI_PROCESS_CGROUP_ROOT must name an existing delegated cgroup"
+        );
+        // Local mode claims the standard Ubuntu labels; act maps them to host steps.
         codeyard_ci::config::CiConfig {
             mode: codeyard_ci::config::CiExecutionMode::Local,
             trusted_actor_ids: [actor.id].into(),
             act_binary: wrapper.to_str().unwrap().to_owned(),
-            act_platform_map: [("gitserv-owned-fixture".to_owned(), "-self-hosted".to_owned())].into(),
+            process_cgroup_root: Some(process_cgroup_root),
             ..Default::default()
         }
     });
@@ -237,6 +315,20 @@ async fn real_fixture(act: Option<PathBuf>) {
     )
     .await
     .unwrap();
+    if run_ci {
+        // The site default is codeyard-actions; this fixture must prove the real act engine.
+        codeyard_db_actions::actions::save_repo_actions_settings(
+            &database.pool,
+            actor.id,
+            repo.id,
+            &codeyard_db_actions::actions::RepoActionsSettings {
+                engine: Some("act".to_owned()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    }
     let source_path = broker.directory.path().join("source");
     options.bare(false);
     let local = git2::Repository::init_opts(&source_path, &options).unwrap();
@@ -251,12 +343,12 @@ async fn real_fixture(act: Option<PathBuf>) {
         let digest = hex::encode(sha2::Sha256::digest(&binary));
         std::fs::create_dir_all(source_path.join(".github/workflows")).unwrap();
         std::fs::write(source_path.join(".github/workflows/ci.yml"), format!(
-            "name: Owned SSH push\non:\n  push:\n    branches: [main]\njobs:\n  proof:\n    runs-on: gitserv-owned-fixture\n    steps:\n      - shell: bash\n        run: |\n          set -eu\n          n=0\n          while [ ! -f '{0}' ] && [ \"$n\" -lt 300 ]; do n=$((n + 1)); sleep 0.1; done\n          test -f '{0}'\n          git clone -q --no-local -- '{1}' verified\n          git -C verified checkout --detach \"$GITHUB_SHA\"\n          test \"$(git -C verified rev-parse HEAD)\" = \"$GITHUB_SHA\"\n          printf '%s  verified/binary.dat\\n' '{digest}' | sha256sum -c -\n          printf 'OPENSSH_PUSH_CI_PASSED HEAD=%s\\n' \"$GITHUB_SHA\"\n", release.display(), bare_path.display())).unwrap();
+            "name: Owned SSH push\non:\n  push:\n    branches: [main]\njobs:\n  proof:\n    runs-on: ubuntu-latest\n    steps:\n      - shell: bash\n        run: |\n          set -eu\n          n=0\n          while [ ! -f '{0}' ] && [ \"$n\" -lt 300 ]; do n=$((n + 1)); sleep 0.1; done\n          test -f '{0}'\n          git clone -q --no-local -- '{1}' verified\n          git -C verified checkout --detach \"$GITHUB_SHA\"\n          test \"$(git -C verified rev-parse HEAD)\" = \"$GITHUB_SHA\"\n          printf '%s  verified/binary.dat\\n' '{digest}' | sha256sum -c -\n          printf 'OPENSSH_PUSH_CI_PASSED HEAD=%s\\n' \"$GITHUB_SHA\"\n", release.display(), bare_path.display())).unwrap();
         index
             .add_path(Path::new(".github/workflows/ci.yml"))
             .unwrap();
         std::fs::write(source_path.join(".github/workflows/tags.yml"), format!(
-            "name: Owned SSH tag\non:\n  push:\n    tags: ['release-*']\njobs:\n  check:\n    runs-on: gitserv-owned-fixture\n    steps:\n      - shell: bash\n        run: |\n          set -eu\n          case \"$GITHUB_REF\" in refs/tags/release-*) ;; *) exit 1 ;; esac\n          git clone -q --no-local -- '{}' verified\n          git -C verified checkout -q --detach \"$GITHUB_SHA\"\n          test \"$(git -C verified rev-parse HEAD)\" = \"$GITHUB_SHA\"\n          test \"$(git -C verified cat-file -t \"$GITHUB_SHA\")\" = commit\n          test -f verified/.github/workflows/tags.yml\n          printf 'OPENSSH_TAG_CI_PASSED HEAD=%s REF=%s\\n' \"$GITHUB_SHA\" \"$GITHUB_REF\"\n", bare_path.display())).unwrap();
+            "name: Owned SSH tag\non:\n  push:\n    tags: ['release-*']\njobs:\n  check:\n    runs-on: ubuntu-latest\n    steps:\n      - shell: bash\n        run: |\n          set -eu\n          case \"$GITHUB_REF\" in refs/tags/release-*) ;; *) exit 1 ;; esac\n          git clone -q --no-local -- '{}' verified\n          git -C verified checkout -q --detach \"$GITHUB_SHA\"\n          test \"$(git -C verified rev-parse HEAD)\" = \"$GITHUB_SHA\"\n          test \"$(git -C verified cat-file -t \"$GITHUB_SHA\")\" = commit\n          test -f verified/.github/workflows/tags.yml\n          printf 'OPENSSH_TAG_CI_PASSED HEAD=%s REF=%s\\n' \"$GITHUB_SHA\" \"$GITHUB_REF\"\n", bare_path.display())).unwrap();
         index
             .add_path(Path::new(".github/workflows/tags.yml"))
             .unwrap();
@@ -304,25 +396,12 @@ async fn real_fixture(act: Option<PathBuf>) {
         );
         // The real SSH client/helper has exited; only now may the workflow finish.
         std::fs::write(&release, b"SSH helper exited\n").unwrap();
-        let finished = timeout(Duration::from_secs(90), async {
-            loop {
-                let current =
-                    codeyard_db_actions::ci::get_ci_run_by_run_id(&database.pool, run.run_id)
-                        .await
-                        .unwrap()
-                        .unwrap();
-                if !matches!(current.status.as_str(), "queued" | "running") {
-                    break current;
-                }
-                sleep(Duration::from_millis(100)).await;
-            }
-        })
-        .await
-        .expect("persistent real act workflow timeout");
-        let logs = codeyard_db_actions::ci::list_ci_logs(&database.pool, run.id, 1000)
+        let finished = wait_for_ci_run(&database.pool, run).await;
+        let logs = codeyard_db_actions::ci::list_ci_logs(&database.pool, run.id, CI_LOG_LIMIT)
             .await
             .unwrap();
         assert_eq!(finished.status, "success", "{finished:?}\n{logs:?}");
+        assert_eq!(finished.engine.as_deref(), Some("act"), "{finished:?}");
         let marker = format!("OPENSSH_PUSH_CI_PASSED HEAD={head}");
         assert!(
             logs.iter().any(|line| line.line.contains(&marker)),
@@ -379,10 +458,6 @@ async fn real_fixture(act: Option<PathBuf>) {
             let run = runs[0];
             assert_eq!(run.head_sha.as_deref(), Some(head.to_string().as_str()));
             assert_eq!(run.workflow_path, ".github/workflows/tags.yml");
-            assert_eq!(
-                run.workflow_blobs[".github/workflows/tags.yml"],
-                expected_blob
-            );
             assert!(codeyard_db_actions::ci::has_ci_accepted_push(
                 &database.pool,
                 repo.id,
@@ -401,25 +476,17 @@ async fn real_fixture(act: Option<PathBuf>) {
             )
             .await
             .unwrap());
-            let finished = timeout(Duration::from_secs(90), async {
-                loop {
-                    let current =
-                        codeyard_db_actions::ci::get_ci_run_by_run_id(&database.pool, run.run_id)
-                            .await
-                            .unwrap()
-                            .unwrap();
-                    if !matches!(current.status.as_str(), "queued" | "running") {
-                        break current;
-                    }
-                    sleep(Duration::from_millis(100)).await;
-                }
-            })
-            .await
-            .expect("tag workflow timeout");
-            let logs = codeyard_db_actions::ci::list_ci_logs(&database.pool, run.id, 1000)
+            let finished = wait_for_ci_run(&database.pool, run).await;
+            let logs = codeyard_db_actions::ci::list_ci_logs(&database.pool, run.id, CI_LOG_LIMIT)
                 .await
                 .unwrap();
             assert_eq!(finished.status, "success", "{finished:?}\n{logs:?}");
+            assert_eq!(finished.engine.as_deref(), Some("act"), "{finished:?}");
+            // History listings omit workflow snapshots; the terminal lookup loads them.
+            assert_eq!(
+                finished.workflow_blobs[".github/workflows/tags.yml"],
+                expected_blob
+            );
             let marker = format!("OPENSSH_TAG_CI_PASSED HEAD={head} REF={reference}");
             assert!(
                 logs.iter().any(|line| line.line.contains(&marker)),

@@ -52,6 +52,7 @@ codeyard-db-actions.workspace = true
 codeyard-db-identity.workspace = true
 codeyard-ssh.workspace = true
 codeyard-api-rest.workspace = true
+tracing-subscriber.workspace = true
 
 [lints]
 workspace = true

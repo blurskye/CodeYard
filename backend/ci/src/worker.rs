@@ -167,7 +167,10 @@ pub(super) async fn run(
                 if *stop.borrow() {
                     break;
                 }
-                if error.to_string() == "not an active runner" {
+                // A database worker can see its membership restored without restarting.
+                if matches!(&service.queue, RunQueue::Remote { .. })
+                    && error.to_string() == "not an active runner"
+                {
                     service.request_stop();
                     break;
                 }
@@ -305,7 +308,9 @@ async fn execute(
                     if error.to_string().contains("not an active runner") {
                         let _ = force_tx.send(true);
                         let _ = cancel_tx.send(true);
-                        service.request_stop();
+                        if matches!(&service.queue, RunQueue::Remote { .. }) {
+                            service.request_stop();
+                        }
                     }
                     warn!(%error, "CI heartbeat failed");
                 }
@@ -1399,7 +1404,7 @@ impl ContainerOwnership {
     async fn remove_containers(&self) -> Result<()> {
         self.fence().await?;
         if let Some(group) = &self.group {
-            group.cleanup(Duration::from_secs(30)).await?;
+            group.wait_empty(Duration::from_secs(30)).await?;
         }
         Ok(())
     }
@@ -1419,6 +1424,9 @@ impl ContainerOwnership {
     }
 
     async fn remove_workspace(&self) -> Result<()> {
+        if let Some(group) = &self.group {
+            group.cleanup(Duration::from_secs(30)).await?;
+        }
         let directory = self.path.with_extension("workspace");
         let mut locks = Vec::new();
         match tokio::fs::read_dir(&directory).await {
@@ -2301,6 +2309,10 @@ fn file_name(workflow: &str) -> &str {
 }
 
 #[cfg(test)]
+#[path = "../../../tests/support/act_fixture.rs"]
+mod act_fixture;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::CiConfig;
@@ -2811,16 +2823,11 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires the pinned act 0.2.89 binary (GITSERV_TEST_ACT_BINARY)"]
+    #[ignore = "requires the pinned, digest-verified act fixture (GITSERV_TEST_ACT_BINARY)"]
     async fn pinned_act_reads_complex_dotenv_values_losslessly() {
         use sha2::{Digest, Sha256};
 
-        let act = std::env::var("GITSERV_TEST_ACT_BINARY")
-            .expect("GITSERV_TEST_ACT_BINARY must name the pinned act binary");
-        assert_eq!(
-            hex::encode(Sha256::digest(std::fs::read(&act).unwrap())),
-            "6be37b104430efc210d5130495bedcff2dc7cd6780a38d88f3d205e7f1185cc1"
-        );
+        let act = super::act_fixture::pinned_act_fixture_from_env();
 
         let workspace = secret_workspace();
         let complex = complex_secret_value();

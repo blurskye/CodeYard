@@ -2,6 +2,8 @@
 use crate::receive_ci::CiRunRequest;
 use crate::repositories::git_sessions::broker::Gateway;
 use crate::repositories::git_sessions::broker::Operation;
+#[cfg(any(test, feature = "test-hooks"))]
+use crate::repositories::git_sessions::hook_barrier;
 use crate::repositories::git_sessions::ReceiveCredential;
 use crate::repositories::protection::check_branch_write_with;
 use crate::repositories::protection::load_rules;
@@ -34,6 +36,19 @@ use std::sync::Mutex;
 
 fn quorum_refusal() -> anyhow::Error {
     RepoError::new(ErrorKind::Invalid, "write quorum unavailable").into()
+}
+
+fn sync_deadline() -> std::time::Instant {
+    std::time::Instant::now() + codeyard_git::repository::durable::SYNC_TIMEOUT
+}
+
+/// How a receive publishes: a deploy key is never a maintainer edit.
+fn receive_via(credential: ReceiveCredential) -> WriteVia {
+    if matches!(credential, ReceiveCredential::DeployKey(_)) {
+        WriteVia::DeployKey
+    } else {
+        WriteVia::Direct
+    }
 }
 
 /// The directory where Git holds the objects of a push it has not accepted yet. The helper
@@ -142,8 +157,40 @@ fn admit_updates(
             .map(|(_, oid)| oid)
             .collect();
     }
+    // The broker releases the report-status only after these files and the object entries a
+    // push may have created are durable, for every admitted push, not only a quorum write.
+    state.admitted = updates
+        .iter()
+        .map(|update| update.reference.clone())
+        .collect();
     state.proposed = Some(updates.to_vec());
     Ok(())
+}
+
+/// The ref names one receive publication barrier covers: the names pre-receive admitted,
+/// which the broker's report-status barrier syncs, and the names this reference transaction
+/// commits. Every barrier expands each unique name into directories once, so a symbolic
+/// `HEAD` alias and any repeated update are charged once for the whole plan.
+fn publication_ref_names(admitted: &[String], updates: &[RefUpdate]) -> Vec<String> {
+    let mut names = admitted.to_vec();
+    for update in updates {
+        if !names.contains(&update.reference) {
+            names.push(update.reference.clone());
+        }
+    }
+    names
+}
+
+/// The update set pre-receive admitted. Git may add a symbolic `HEAD` alias to its
+/// reference transaction; policy judges the names the user actually asked to update.
+fn admitted_updates(operation: &Operation) -> Result<Vec<RefUpdate>> {
+    operation
+        .state
+        .lock()
+        .map_err(|_| anyhow::anyhow!("operation state unavailable"))?
+        .proposed
+        .clone()
+        .context("missing pre-receive admission")
 }
 
 impl Gateway {
@@ -157,13 +204,71 @@ impl Gateway {
 
         use codeyard_db_placement::cluster::writes as journal;
         codeyard_git::protocol::validate_transaction_updates(updates)?;
-        if !operation
+        let quorum = operation
             .state
             .lock()
             .map_err(|_| anyhow::anyhow!("operation state unavailable"))?
-            .quorum
-        {
-            return Ok(());
+            .quorum;
+        let via = receive_via(operation.credential);
+        // Git has migrated the object files, but has not committed any ref yet.
+        // Both standalone and quorum publication need their names durable at this point.
+        if matches!(phase, TransactionPhase::Prepared) {
+            // The barrier that syncs these names runs after Git commits them, and a legal push
+            // can expand into more ancestor directories than its budget holds. Plan the same
+            // names both publication paths cover on the same accounting, so a predictable
+            // refusal is a failed push instead of a report-status written over moved refs.
+            let admitted = operation
+                .state
+                .lock()
+                .map_err(|_| anyhow::anyhow!("operation state unavailable"))?
+                .admitted
+                .clone();
+            let names = publication_ref_names(&admitted, updates);
+            codeyard_git::repository::durable::RepositorySync::refs(names)
+                .preflight(&operation.path, sync_deadline())
+                .await?;
+            codeyard_git::repository::durable::RepositorySync::new()
+                .objects()
+                .sync(&operation.path, sync_deadline())
+                .await?;
+            #[cfg(any(test, feature = "test-hooks"))]
+            hook_barrier::before_phase(operation, hook_barrier::Phase::Prepared).await;
+        }
+        if !quorum {
+            // A standalone push has no journal, but Git still publishes its refs through this
+            // transaction: Prepared runs after receive-pack migrated the pushed objects and
+            // before it commits the refs, and Committed runs after they are written. Read live
+            // authority and branch policy again in Prepared, after the durability barrier and
+            // immediately before Git is allowed to commit; admission may be stale by then.
+            // Committed only makes the refs it wrote durable in Git's own order.
+            return match phase {
+                TransactionPhase::Prepared => {
+                    let admitted = admitted_updates(operation)?;
+                    self.authorize_publication(
+                        operation,
+                        &admitted,
+                        &History::Stored {
+                            repository: &operation.path,
+                        },
+                        via,
+                    )
+                    .await?;
+                    Ok(())
+                }
+                TransactionPhase::Committed => {
+                    let names = updates
+                        .iter()
+                        .map(|update| update.reference.clone())
+                        .collect();
+                    codeyard_git::repository::durable::sync_refs(
+                        &operation.path,
+                        names,
+                        sync_deadline(),
+                    )
+                    .await
+                }
+                TransactionPhase::Aborted => Ok(()),
+            };
         }
         // HEAD may be included as an alias for the branch Git is updating. Receive-pack
         // cannot change symbolic HEAD itself; only the branch's oid enters this batch.
@@ -209,12 +314,10 @@ impl Gateway {
                     );
                     state.quorum_started = true;
                 }
-                let (repo, _) = self.operation_repository(operation).await?;
-                let (actor, _) = operation
-                    .credential
-                    .authorize_receive(&self.pool, &repo, Some(updates))
-                    .await?;
-                ensure!(actor.id == operation.actor_id, "identity changed");
+                // Read again after the durability barrier, before this publication acquires
+                // its journal entry.
+                let admitted = admitted_updates(operation)?;
+                let (repo, _) = self.authorize_admitted_actor(operation, &admitted).await?;
                 let cluster = self.ci.cluster().context("cluster unavailable")?;
                 let primary = cluster.node_id;
                 let repository = crate::wire::repository_uuid(&repo.disk_path)?;
@@ -260,27 +363,13 @@ impl Gateway {
                         .unwrap_or(false);
                 // Recheck after network and disk waits, immediately before the decision.
                 let authorized = async {
-                    let (repo, path) = self.operation_repository(operation).await?;
-                    let (actor, _) = operation
-                        .credential
-                        .authorize_receive(&self.pool, &repo, Some(updates))
-                        .await?;
-                    ensure!(actor.id == operation.actor_id, "identity changed");
-                    let via = if matches!(operation.credential, ReceiveCredential::DeployKey(_)) {
-                        WriteVia::DeployKey
-                    } else {
-                        WriteVia::Direct
-                    };
-                    self.check_publication_branches(
-                        &repo,
-                        &actor,
-                        updates,
-                        &History::Stored { repository: &path },
+                    self.authorize_publication(
+                        operation,
+                        &admitted,
+                        &History::Stored {
+                            repository: &operation.path,
+                        },
                         via,
-                    )
-                    .await?;
-                    crate::repositories::releases::immutable::check_current_tag_updates(
-                        &self.pool, &repo, updates,
                     )
                     .await?;
                     Ok::<_, anyhow::Error>(())
@@ -411,7 +500,15 @@ impl Gateway {
     ) -> Result<()> {
         codeyard_git::protocol::validate_updates(updates)?;
         #[cfg(any(test, feature = "test-hooks"))]
-        crate::repositories::git_sessions::hook_barrier::before_authorize(operation, post).await;
+        hook_barrier::before_phase(
+            operation,
+            if post {
+                hook_barrier::Phase::PostReceive
+            } else {
+                hook_barrier::Phase::PreReceive
+            },
+        )
+        .await;
         if post {
             self.post_receive(operation, updates).await
         } else {
@@ -463,6 +560,42 @@ impl Gateway {
         };
         ensure!(path == operation.path, "repository location changed");
         Ok((repo, path))
+    }
+
+    /// The admitted credential must still resolve to the admitted actor under the
+    /// repository's current access policy, at the location it was admitted at.
+    async fn authorize_admitted_actor(
+        &self,
+        operation: &Operation,
+        updates: &[RefUpdate],
+    ) -> Result<(Repository, User)> {
+        let (repo, _) = self.operation_repository(operation).await?;
+        let (actor, _) = operation
+            .credential
+            .authorize_receive(&self.pool, &repo, Some(updates))
+            .await?;
+        ensure!(actor.id == operation.actor_id, "identity changed");
+        Ok((repo, actor))
+    }
+
+    /// Live write authority, branch policy and immutable-tag policy for the admitted
+    /// updates. Callers run it immediately before permission to publish, after durability
+    /// work and network waits. Immutable-tag validation only reads its owner's reservations.
+    async fn authorize_publication(
+        &self,
+        operation: &Operation,
+        updates: &[RefUpdate],
+        history: &History<'_>,
+        via: WriteVia,
+    ) -> Result<Repository> {
+        let (repo, actor) = self.authorize_admitted_actor(operation, updates).await?;
+        self.check_publication_branches(&repo, &actor, updates, history, via)
+            .await?;
+        crate::repositories::releases::immutable::check_current_tag_updates(
+            &self.pool, &repo, updates,
+        )
+        .await?;
+        Ok(repo)
     }
 
     async fn check_publication_branches(
@@ -523,6 +656,15 @@ impl Gateway {
         updates: &[RefUpdate],
         quarantine: Option<&str>,
     ) -> Result<()> {
+        // A receive that reaches pre-receive has updates to judge, even when it refuses them.
+        // Only a receive that never reached it is an "everything up to date" answer.
+        {
+            let mut state = operation
+                .state
+                .lock()
+                .map_err(|_| anyhow::anyhow!("operation state unavailable"))?;
+            state.pre_receive_started = true;
+        }
         // Lock the same open description the receive child inherited before negotiation.
         // If this backend dies after admission, the child still owns the publication lock.
         let publication = operation
@@ -584,11 +726,7 @@ impl Gateway {
             repository: &path,
             quarantine: quarantine.as_deref(),
         };
-        let via = if matches!(operation.credential, ReceiveCredential::DeployKey(_)) {
-            WriteVia::DeployKey
-        } else {
-            WriteVia::Direct
-        };
+        let via = receive_via(operation.credential);
         self.check_publication_branches(&repo, &identity, updates, &history, via)
             .await?;
         // The stored default can lag behind Git, so the default that Git advertises is
@@ -609,6 +747,19 @@ impl Gateway {
             )
             .into());
         }
+        // Refuse a plan the publication barrier cannot fit before admitting it. The broker's
+        // report-status barrier syncs the admitted names after the receive, so admitting a
+        // plan that cannot fit would turn this known refusal into an unknown outcome. Planning
+        // in pre-receive also keeps Git from creating the deep ref lock ancestors it would
+        // only make after this hook succeeds.
+        codeyard_git::repository::durable::RepositorySync::refs(
+            updates
+                .iter()
+                .map(|update| update.reference.clone())
+                .collect::<Vec<_>>(),
+        )
+        .preflight(&operation.path, sync_deadline())
+        .await?;
         let check_workflows = !operation.credential.allows_workflows(&self.pool).await?;
         let ref_change = crate::repositories::store::local::begin_coordinated_ref_change(
             &self.pool,
@@ -713,13 +864,7 @@ impl Gateway {
             let result = publication
                 .scope(
                     cluster.publish_ref_changes(uuid, &path, repo.id, term, &changes, async {
-                        let (repo, _) = self.operation_repository(operation).await?;
-                        let (actor, _) = operation
-                            .credential
-                            .authorize_receive(&self.pool, &repo, Some(updates))
-                            .await?;
-                        ensure!(actor.id == operation.actor_id, "identity changed");
-                        self.check_publication_branches(&repo, &actor, updates, &history, via)
+                        self.authorize_publication(operation, updates, &history, via)
                             .await?;
                         Ok(())
                     }),
@@ -737,13 +882,8 @@ impl Gateway {
             }
         }
         // An intent written before a slow batch is not authority to publish after revocation.
-        let (current, _) = self.operation_repository(operation).await?;
-        let (identity, _) = operation
-            .credential
-            .authorize_receive(&self.pool, &current, Some(updates))
-            .await?;
-        ensure!(identity.id == operation.actor_id, "identity changed");
-        self.check_publication_branches(&current, &identity, updates, &history, via)
+        let current = self
+            .authorize_publication(operation, updates, &history, via)
             .await?;
         // A failed creation deletes its repository only while no write has reached it, so the
         // version moves before Git takes the push.
@@ -1414,5 +1554,29 @@ mod tests {
         // The first push ends, and its reservation ends with it.
         operations.lock().unwrap().remove("first");
         admit_updates(&operations, &third, &path, &creates("third", 1)).unwrap();
+    }
+
+    /// The planned barrier must cover the names of both the broker's report-status barrier
+    /// (the admitted pre-receive set) and the reference transaction, charging a symbolic
+    /// `HEAD` alias and every repeated reference once.
+    #[test]
+    fn publication_names_cover_admitted_and_transaction_refs_once() {
+        let admitted = vec!["refs/heads/main".to_owned(), "HEAD".to_owned()];
+        let updates = [
+            ("refs/heads/main", ZERO_SHA),
+            ("HEAD", ZERO_SHA),
+            ("refs/tags/v1", ZERO_SHA),
+        ]
+        .map(|(reference, old)| RefUpdate {
+            old: old.to_owned(),
+            new: "1".repeat(40),
+            reference: reference.to_owned(),
+        });
+        let expected = vec![
+            "refs/heads/main".to_owned(),
+            "HEAD".to_owned(),
+            "refs/tags/v1".to_owned(),
+        ];
+        assert_eq!(publication_ref_names(&admitted, &updates), expected);
     }
 }

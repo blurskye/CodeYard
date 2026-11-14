@@ -1,5 +1,7 @@
 # Codeyard image provisioning, not ported from actions/runner.
 $ErrorActionPreference = 'Stop'
+# Progress redraws are expensive under software emulation; failures still stop provisioning.
+$ProgressPreference = 'SilentlyContinue'
 New-Item -ItemType Directory -Force C:\ProgramData\Codeyard | Out-Null
 Start-Transcript -Path C:\ProgramData\Codeyard\provision.log -Force
 
@@ -57,10 +59,7 @@ Subsystem sftp C:/Windows/System32/OpenSSH/sftp-server.exe
     # would collapse native exit codes (for example 7) to 1.
     New-ItemProperty -Path HKLM:\SOFTWARE\OpenSSH -Name DefaultShell -Value 'C:\Windows\System32\cmd.exe' -PropertyType String -Force | Out-Null
     New-ItemProperty -Path HKLM:\SOFTWARE\OpenSSH -Name DefaultShellCommandOption -Value '/c' -PropertyType String -Force | Out-Null
-    if (!(Get-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -ErrorAction SilentlyContinue)) {
-        New-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -DisplayName 'OpenSSH Server' -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22 | Out-Null
-    }
-    Enable-NetFirewallRule -Name 'OpenSSH-Server-In-TCP'
+    # The seed task configures the gateway-scoped SSH rule before starting sshd.
 
     $random = New-Object byte[] 48
     $rng = [Security.Cryptography.RandomNumberGenerator]::Create()

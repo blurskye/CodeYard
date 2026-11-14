@@ -4,5 +4,8 @@
 #[path = "policy_tests.rs"]
 pub mod policy_tests;
 #[cfg(test)]
+#[path = "prepared_authority.rs"]
+mod prepared_authority;
+#[cfg(test)]
 #[path = "quorum_tests.rs"]
 mod quorum_tests;

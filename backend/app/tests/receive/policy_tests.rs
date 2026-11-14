@@ -1,7 +1,7 @@
 //! Push permission checks in the receive hooks, on a throwaway SQLite database.
 
 #[cfg(test)]
-mod fixture {
+pub(crate) mod fixture {
     use anyhow::ensure;
     use anyhow::Result;
     use base64::Engine;
@@ -20,9 +20,7 @@ mod fixture {
     use tempfile::TempDir;
     use tokio::time::timeout;
 
-    use codeyard_git_storage::repositories::git_sessions::hook_barrier::hold_next_hook;
-    use codeyard_git_storage::repositories::git_sessions::hook_barrier::Barrier;
-    use codeyard_git_storage::repositories::git_sessions::hook_barrier::BARRIERS;
+    use codeyard_git_storage::repositories::git_sessions::hook_barrier::{hold_next_hook, Phase};
     use tokio::sync::oneshot;
 
     /// Waits until the push reaches its hook. If the push ends first, say why
@@ -435,7 +433,7 @@ mod fixture {
                 &fixture.oid.to_string(),
                 &next.to_string(),
             );
-            let (reached, release) = hold_next_hook(fixture.path.clone(), true);
+            let (reached, release) = hold_next_hook(fixture.path.clone(), Phase::PostReceive);
             let mut task = fixture.receive();
             hook_reached(reached, &mut task).await;
             match change {
@@ -716,7 +714,7 @@ mod fixture {
                 .await
         });
         tokio::task::yield_now().await;
-        let (reached, release) = hold_next_hook(fixture.path.clone(), false);
+        let (reached, release) = hold_next_hook(fixture.path.clone(), Phase::PreReceive);
         let mut push = fixture.receive();
         hook_reached(reached, &mut push).await;
         release.send(()).unwrap();
@@ -763,7 +761,7 @@ mod fixture {
             ZERO_SHA,
             &fixture.oid.to_string(),
         );
-        let (reached, release) = hold_next_hook(fixture.path.clone(), true);
+        let (reached, release) = hold_next_hook(fixture.path.clone(), Phase::PostReceive);
         let mut task = fixture.receive();
         hook_reached(reached, &mut task).await;
         assert!(codeyard_db_identity::users::ssh_keys::delete_ssh_key(
@@ -822,15 +820,7 @@ mod fixture {
                 _ => Fixture::new().await,
             };
             fixture.delete_spare_branch();
-            let (entered, reached) = oneshot::channel();
-            let (release, wait) = oneshot::channel();
-            BARRIERS.lock().unwrap().insert(
-                (fixture.path.clone(), false),
-                Barrier {
-                    entered,
-                    release: wait,
-                },
-            );
+            let (reached, release) = hold_next_hook(fixture.path.clone(), Phase::PreReceive);
             let mut task = fixture.receive();
             hook_reached(reached, &mut task).await;
             // Both session/command admission and native unpacking have completed.
@@ -1012,13 +1002,13 @@ mod fixture {
         fixture.pool.close().await;
     }
 
-    fn receive_request(path: &Path, reference: &str, old: &str, new: &str) -> Vec<u8> {
+    pub(crate) fn receive_request(path: &Path, reference: &str, old: &str, new: &str) -> Vec<u8> {
         receive_requests(path, &[(reference, old, new)])
     }
 
     /// One receive request that carries every `(reference, old, new)` command and the objects
     /// of the new tips.
-    fn receive_requests(path: &Path, updates: &[(&str, &str, &str)]) -> Vec<u8> {
+    pub(crate) fn receive_requests(path: &Path, updates: &[(&str, &str, &str)]) -> Vec<u8> {
         use std::io::Write;
         let mut request = Vec::new();
         for (index, (reference, old, new)) in updates.iter().enumerate() {
@@ -1907,15 +1897,7 @@ mod fixture {
                 first.to_string()
             };
             fixture.request = request(&fixture.path, &fixture.oid.to_string(), &accepted);
-            let (entered, reached) = oneshot::channel();
-            let (release, wait) = oneshot::channel();
-            BARRIERS.lock().unwrap().insert(
-                (fixture.path.clone(), true),
-                Barrier {
-                    entered,
-                    release: wait,
-                },
-            );
+            let (reached, release) = hold_next_hook(fixture.path.clone(), Phase::PostReceive);
             let mut task = fixture.receive();
             hook_reached(reached, &mut task).await;
             assert_eq!(
@@ -2065,15 +2047,7 @@ mod fixture {
     async fn post_receive_failure_is_reported_without_rolling_back() {
         let mut fixture = Fixture::new().await;
         fixture.delete_spare_branch();
-        let (entered, reached) = oneshot::channel();
-        let (release, wait) = oneshot::channel();
-        BARRIERS.lock().unwrap().insert(
-            (fixture.path.clone(), true),
-            Barrier {
-                entered,
-                release: wait,
-            },
-        );
+        let (reached, release) = hold_next_hook(fixture.path.clone(), Phase::PostReceive);
         let mut task = fixture.receive();
         hook_reached(reached, &mut task).await;
         assert!(git2::Repository::open_bare(&fixture.path)

@@ -10,7 +10,17 @@ fi
 for tool in qemu-img qemu-system-x86_64 xorriso python3 setsid timeout; do
     command -v "$tool" >/dev/null || { echo "Missing $tool" >&2; exit 1; }
 done
-[[ -r /dev/kvm && -w /dev/kvm ]] || { echo 'Usable /dev/kvm is required to build the image.' >&2; exit 1; }
+accel=kvm
+cpu=host
+if [[ ! -r /dev/kvm || ! -w /dev/kvm ]]; then
+    [[ ${WINDOWS_ALLOW_TCG:-0} == 1 ]] || {
+        echo 'KVM is unavailable; set WINDOWS_ALLOW_TCG=1 to permit slow software emulation.' >&2
+        exit 1
+    }
+    accel=tcg
+    cpu=max
+    echo 'KVM is unavailable: using TCG software emulation for image installation.' >&2
+fi
 iso=$(realpath "$2")
 output=$(realpath -m "$3")
 [[ -f "$iso" && ! -e "$output" ]] || { echo 'ISO must exist; output must not already exist.' >&2; exit 1; }
@@ -54,7 +64,7 @@ echo 'Installing Windows. Follow the console at 127.0.0.1:5901 (VNC); installati
 echo 'A failed provisioning step leaves Windows running; inspect C:\ProgramData\Codeyard\provision.log in the console.'
 # timeout terminates a hung installation and the EXIT trap deletes the partial image.
 setsid timeout --foreground --kill-after=10s "${WINDOWS_INSTALL_TIMEOUT:-2h}" qemu-system-x86_64 \
-    -name codeyard-windows-install -machine q35,accel=kvm -cpu host -smp 4 -m 8192 \
+    -name codeyard-windows-install -machine "q35,accel=$accel" -cpu "$cpu" -smp 4 -m 8192 \
     -drive "file=$(escape_path "$image"),format=qcow2,if=ide,index=0" \
     -drive "file=$(escape_path "$iso"),media=cdrom,readonly=on,if=ide,index=2" \
     -drive "file=$(escape_path "$stage/unattended.iso"),media=cdrom,readonly=on,if=ide,index=3" \
@@ -70,4 +80,4 @@ chmod 0400 "$image"
 # Publishing a new directory entry is atomic and never replaces another build's image.
 ln -T -- "$image" "$output"
 echo "Candidate base image: $output"
-echo 'Validate with the ignored windows_boot_step_and_copy test before enabling workflows.'
+echo 'Validate with the ignored windows_boot_step_and_copy test; workflow integration is not supported.'

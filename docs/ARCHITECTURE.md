@@ -100,9 +100,10 @@ errors. Authorization is read again in the transaction that writes.
   requests merge their open lower layers in the same `update-ref` transaction.
 - **Branch moves.** Every path that moves a branch (push, save, merge, branch API) calls
   `branches_moved`, which updates the open pull requests with compare-and-swap writes.
-- **Fork pull requests.** The head is fetched into the base repository's
-  `refs/pull/<n>/head` through a quarantined `receive-pack`, with the author's read access
-  checked before and after.
+- **Fork pull requests.** The head is fetched into isolated storage, with the author's read
+  access checked before and after. After the live authority check, its objects are copied
+  and made durable in the base repository before a compare-and-swap publishes
+  `refs/pull/<n>/head`.
 - **Git over SSH and HTTP.** The built-in SSH server checks the key, HTTP checks a token
   (Basic auth). Both call `RepoStore::git_session`, which runs `git upload-pack` or
   `receive-pack` on the storage node that holds the repository. Pre-receive enforces branch

@@ -385,6 +385,25 @@ fn commit(repository: &git2::Repository, contents: &str) -> git2::Oid {
         .unwrap()
 }
 
+/// The complete pack a Git client sends for `oid` and its history.
+fn push_pack(source: &Path, oid: &str) -> Vec<u8> {
+    use std::io::Write;
+    let mut pack = std::process::Command::new("git")
+        .arg("-C")
+        .arg(source)
+        .args(["pack-objects", "--stdout", "--revs"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut input = pack.stdin.take().unwrap();
+    writeln!(input, "{oid}").unwrap();
+    drop(input);
+    let output = pack.wait_with_output().unwrap();
+    assert!(output.status.success());
+    output.stdout
+}
+
 /// A new Git session during shutdown is refused: Git never runs, and the broker says why.
 fn assert_refused(output: &Output) {
     assert!(output.stdout.is_empty(), "refused session reached Git");
@@ -428,7 +447,8 @@ async fn missing_post_hook_is_reported_after_git_publishes() {
     let source = git2::Repository::init(&source_path).unwrap();
     let id = commit(&source, "published\n");
     {
-        let (reached, release) = hook_barrier::hold_next_hook(path.clone(), false);
+        let (reached, release) =
+            hook_barrier::hold_next_hook(path.clone(), hook_barrier::Phase::PreReceive);
         let push = broker.git(
             &source_path,
             owner_key.id,
@@ -1192,8 +1212,10 @@ async fn stop_lets_a_running_push_finish_its_hooks() {
     .await
     .unwrap();
     // The push is held at its pre-receive hook, after Git has received the pack.
-    let (reached, release) =
-        hook_barrier::hold_next_hook(std::fs::canonicalize(&bare_path).unwrap(), false);
+    let (reached, release) = hook_barrier::hold_next_hook(
+        std::fs::canonicalize(&bare_path).unwrap(),
+        hook_barrier::Phase::PreReceive,
+    );
 
     let source_path = broker.directory.path().join("source");
     let source = git2::Repository::init(&source_path).unwrap();
@@ -1248,7 +1270,6 @@ async fn stop_lets_a_running_push_finish_its_hooks() {
 
 #[tokio::test]
 async fn stop_finishes_a_push_after_its_helper_disconnects() {
-    use std::io::Write;
     let database = database().await;
     let mut broker = Broker::new(database.pool.clone()).await;
     let user =
@@ -1279,26 +1300,16 @@ async fn stop_finishes_a_push_after_its_helper_disconnects() {
     let source = git2::Repository::init(&source_path).unwrap();
     let oid = commit(&source, "drain\n");
     // The complete pack for the new branch, as a Git client sends it after the commands.
-    let mut pack = std::process::Command::new("git")
-        .arg("-C")
-        .arg(&source_path)
-        .args(["pack-objects", "--stdout", "--revs"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap();
-    let mut input = pack.stdin.take().unwrap();
-    writeln!(input, "{oid}").unwrap();
-    drop(input);
-    let output = pack.wait_with_output().unwrap();
-    assert!(output.status.success());
+    let pack = push_pack(&source_path, &oid.to_string());
     let command = format!("{ZERO_SHA} {oid} refs/heads/main\0report-status\n");
     let mut request = format!("{:04x}{command}0000", command.len() + 4).into_bytes();
-    request.extend_from_slice(&output.stdout);
+    request.extend_from_slice(&pack);
 
     // The push is held at its pre-receive hook, after Git has the complete pack.
-    let (reached, release) =
-        hook_barrier::hold_next_hook(std::fs::canonicalize(&bare_path).unwrap(), false);
+    let (reached, release) = hook_barrier::hold_next_hook(
+        std::fs::canonicalize(&bare_path).unwrap(),
+        hook_barrier::Phase::PreReceive,
+    );
     let mut connection = private_files::connect(&broker.gateway.socket)
         .await
         .unwrap();
@@ -1358,6 +1369,114 @@ async fn stop_finishes_a_push_after_its_helper_disconnects() {
     assert!(!broker.gateway.socket.exists());
     broker.workers.shutdown().await.unwrap();
     broker.notifications.shutdown().await;
+}
+
+#[tokio::test]
+async fn stateful_receive_advertises_before_commands_and_reports_after_the_barrier() {
+    let database = database().await;
+    let broker = Broker::new(database.pool.clone()).await;
+    let owner =
+        codeyard_db_identity::users::accounts::create_user(&database.pool, "advertise-owner", None)
+            .await
+            .unwrap();
+    let key = codeyard_db_identity::users::ssh_keys::add_ssh_key(
+        &database.pool,
+        owner.id,
+        "advertise",
+        &key(47),
+    )
+    .await
+    .unwrap();
+    let bare_path = broker.gateway.repos_root.join("advertise.git");
+    git2::Repository::init_bare(&bare_path).unwrap();
+    codeyard_db_repos::repositories::records::create_repository(
+        &database.pool,
+        owner.id,
+        "advertise",
+        None,
+        true,
+        bare_path.to_str().unwrap(),
+    )
+    .await
+    .unwrap();
+    let source_path = broker.directory.path().join("source");
+    let source = git2::Repository::init(&source_path).unwrap();
+    let oid = commit(&source, "advertise\n");
+    let pack = push_pack(&source_path, &oid.to_string());
+
+    let mut connection = private_files::connect(&broker.gateway.socket)
+        .await
+        .unwrap();
+    protocol::write_request(
+        &mut connection,
+        &Request::Serve {
+            credential: ReceiveCredential::SshKey(key.id),
+            command: "git-receive-pack 'advertise-owner/advertise.git'".to_owned(),
+            git_protocol: None,
+        },
+    )
+    .await
+    .unwrap();
+    // Receive-pack advertises before it reads commands. The broker must forward that
+    // advertisement, or the client waits for refs while Git waits for the client.
+    let mut advertisement = Vec::new();
+    timeout(Duration::from_secs(5), async {
+        loop {
+            let (tag, bytes) = protocol::read_frame(&mut connection).await.unwrap();
+            if tag == STDOUT {
+                advertisement.extend_from_slice(&bytes);
+                if advertisement.ends_with(b"0000") {
+                    break;
+                }
+            }
+        }
+    })
+    .await
+    .expect("stateful receive withheld its advertisement");
+    assert!(
+        advertisement
+            .windows(b"report-status".len())
+            .any(|window| window == b"report-status".as_slice()),
+        "advertisement lacks the report-status capability"
+    );
+
+    let command = format!("{ZERO_SHA} {oid} refs/heads/main\0report-status\n");
+    let mut request = format!("{:04x}{command}0000", command.len() + 4).into_bytes();
+    request.extend_from_slice(&pack);
+    protocol::write_frame(&mut connection, STDIN, &request)
+        .await
+        .unwrap();
+    protocol::write_frame(&mut connection, EOF, b"")
+        .await
+        .unwrap();
+
+    let mut status = Vec::new();
+    let code = timeout(Duration::from_secs(15), async {
+        loop {
+            let (tag, bytes) = protocol::read_frame(&mut connection).await.unwrap();
+            if tag == STDOUT {
+                status.extend_from_slice(&bytes);
+            } else if tag == protocol::EXIT {
+                break i32::from_be_bytes(bytes.try_into().unwrap());
+            }
+        }
+    })
+    .await
+    .expect("stateful receive did not finish");
+    let report = String::from_utf8_lossy(&status);
+    assert_eq!(code, 0, "stateful push failed: {report}");
+    assert!(report.contains("unpack ok"), "{report}");
+    assert!(report.contains("ok refs/heads/main"), "{report}");
+    assert_eq!(
+        git2::Repository::open_bare(&bare_path)
+            .unwrap()
+            .find_reference("refs/heads/main")
+            .unwrap()
+            .target(),
+        Some(oid)
+    );
+    broker.no_hooks_left().await;
+    broker.stop().await;
 }
 
 struct PushFixture {
@@ -1613,7 +1732,7 @@ async fn disconnected_push_drains(pool: DbPool, ssh: bool) {
     let (address, stop, mut running) = fixture.start(ssh).await;
     let (reached, release) = hook_barrier::hold_next_hook(
         std::fs::canonicalize(&fixture.repo.disk_path).unwrap(),
-        true,
+        hook_barrier::Phase::PostReceive,
     );
     let mut http = None;
     let mut client = None;
@@ -1659,13 +1778,15 @@ async fn concurrent_first_pushes(pool: DbPool) {
     let fixture = PushFixture::new(pool.clone()).await;
     let (address, stop, running) = fixture.start(false).await;
     let path = std::fs::canonicalize(&fixture.repo.disk_path).unwrap();
-    let (first_reached, first_release) = hook_barrier::hold_next_hook(path.clone(), true);
+    let (first_reached, first_release) =
+        hook_barrier::hold_next_hook(path.clone(), hook_barrier::Phase::PostReceive);
     let mut first = fixture.http_push(address, "trunk").await;
     timeout(Duration::from_secs(15), first_reached)
         .await
         .unwrap()
         .unwrap();
-    let (second_reached, second_release) = hook_barrier::hold_next_hook(path.clone(), true);
+    let (second_reached, second_release) =
+        hook_barrier::hold_next_hook(path.clone(), hook_barrier::Phase::PostReceive);
     let mut second = fixture.http_push(address, "topic").await;
     timeout(Duration::from_secs(15), second_reached)
         .await

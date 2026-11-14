@@ -1,5 +1,27 @@
 # Codeyard seed-CD contract, not ported from actions/runner.
 $ErrorActionPreference = 'Stop'
+
+function Set-JobSshFirewall {
+    # Windows can classify the disposable QEMU network as Public. Only the fixed
+    # user-network host gateway may reach SSH, regardless of that classification.
+    $rule = @{
+        Name = 'OpenSSH-Server-In-TCP'
+        Enabled = 'True'
+        Direction = 'Inbound'
+        Action = 'Allow'
+        Profile = 'Any'
+        Protocol = 'TCP'
+        LocalPort = 22
+        RemoteAddress = '10.0.2.2'
+        Program = 'C:\Windows\System32\OpenSSH\sshd.exe'
+    }
+    if (Get-NetFirewallRule -Name $rule.Name -ErrorAction SilentlyContinue) {
+        Set-NetFirewallRule @rule | Out-Null
+    } else {
+        New-NetFirewallRule @rule -DisplayName 'Codeyard job SSH' | Out-Null
+    }
+}
+
 Start-Transcript -Path C:\ProgramData\Codeyard\job-key.log -Force
 try {
     Stop-Service sshd -ErrorAction SilentlyContinue
@@ -26,6 +48,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Failed to generate SSH host keys' }
     & C:\Windows\System32\OpenSSH\sshd.exe -t
     if ($LASTEXITCODE -ne 0) { throw 'Invalid sshd configuration' }
+    Set-JobSshFirewall
     Start-Service sshd
 } catch {
     Stop-Service sshd -ErrorAction SilentlyContinue

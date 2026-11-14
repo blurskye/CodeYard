@@ -186,13 +186,9 @@ impl Cgroup {
         Ok(())
     }
 
-    pub async fn cleanup(&self, timeout: Duration) -> Result<()> {
+    /// Wait for descendants to stop without waiting on filesystem cleanup.
+    pub async fn wait_empty(&self, timeout: Duration) -> Result<()> {
         let deadline = Instant::now() + timeout;
-        match self.kill() {
-            Ok(()) => {}
-            Err(error) if removed(&error) => return Ok(()),
-            Err(error) => return Err(error),
-        }
         loop {
             match self.populated() {
                 Ok(false) => break,
@@ -206,6 +202,17 @@ impl Cgroup {
             );
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
+        Ok(())
+    }
+
+    pub async fn cleanup(&self, timeout: Duration) -> Result<()> {
+        let deadline = Instant::now() + timeout;
+        match self.kill() {
+            Ok(()) => {}
+            Err(error) if removed(&error) => return Ok(()),
+            Err(error) => return Err(error),
+        }
+        self.wait_empty(timeout).await?;
         let path = self.path.clone();
         tokio::task::spawn_blocking(move || remove_empty_tree(&path, deadline)).await??;
         Ok(())

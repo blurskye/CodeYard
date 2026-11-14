@@ -254,8 +254,8 @@ Each node resumes its drain during heartbeats. Core nodes also finish idle runne
 running jobs retain their normal timeout, and the drain cancels remaining jobs after
 `CI_RUN_TIMEOUT_SECONDS`. `CLUSTER_DRAIN_MAX_REPOSITORIES` bounds a preflight (default
 10,000, maximum 1,000,000); node lists support at most 1,000 nodes. REST drain, authority,
-promotion, metrics and native/hydrated browser checks pass. Finished-CI drain
-acceptance still needs a writable delegated cgroup.
+promotion, metrics, native/hydrated browser checks and completed-CI drain/resume pass
+with delegated host execution.
 
 ## Provisioning and automatic scaling
 
@@ -455,7 +455,7 @@ after immediate primary SIGKILL, plus majority-loss refusal and recovery.
 `E2E_DATABASES=quorum bash scripts/e2e.sh` selects these checks without requiring a
 completed CI job. Single-node fsync, backup, restore, verify and rebuild and cluster plan
 items 3 and 11 are reused. The [VM hard-reset check](STORAGE_ARCHITECTURE.md#crash-durability-check)
-still needs a disposable target.
+runs in a disposable Linux guest; its recorded result is separate from process-loss acceptance.
 
 ## Runners
 
@@ -596,7 +596,7 @@ rounds crash that owned database during `gh issue create`, check `/ready` goes 5
 200 without restarting Codeyard, and verify every acknowledged issue remains. They never
 restart an external database. `E2E_REQUIRE_PG_RESTART=1` makes a missing owned fixture a
 failure. Helm lint and render checks pass, including the pool-size setting and credential
-isolation. The session-pool round passes all 17 Git and HTTP checks. Owned PostgreSQL
+isolation. The transaction-pool round passes its Git and HTTP checks. Owned PostgreSQL
 crash checks pass during `gh issue create`, including readiness recovery and retained
 acknowledged writes, both on one server and across cluster web nodes.
 
@@ -622,7 +622,31 @@ CI latency includes admission and queue time. `CODEYARD_ACTIONS_BIN` overrides t
 client slots, not 500 new accounts. Record the server and PostgreSQL CPU, RAM, disk and
 network alongside results; this is a small workload, not a proven cell capacity.
 It drops its database and removes temporary files on exit. `BENCH_KEEP=1` retains private
-logs and fixture credentials for diagnosis. Neither script should target production.
+logs and fixture credentials for diagnosis. Do not target production.
+
+### Recorded debug sample
+
+On 2026-11-11, the repository-consolidation debug build completed this workload on the
+shared builder: AMD EPYC-Genoa, 16 visible logical CPUs and approximately 63 GiB host
+RAM, with an 8-CPU quota, 24 GiB memory limit and no swap for the client, server and
+owned PostgreSQL together. The fixture used ZFS with 128 KiB blocks; all traffic,
+including PostgreSQL, used loopback. Four local CI slots and 512 page-render waiters
+were enabled. Measurement and CI completion took 32.39 seconds. This sample predates
+the subsequent Git directory-durability barriers; it is not a measurement of their cost.
+
+| Operation | Samples | p50 ms | p95 ms | p99 ms | Operations/s |
+|---|---:|---:|---:|---:|---:|
+| Push | 15 | 1089.04 | 3046.64 | 3046.64 | 0.46 |
+| Clone | 15 | 228.97 | 1426.74 | 1426.74 | 0.46 |
+| API read | 50 | 393.43 | 477.24 | 486.28 | 1.54 |
+| Page read | 5500 | 1972.03 | 2722.95 | 3079.24 | 169.83 |
+| Organization invitation | 50 | 1475.95 | 1671.09 | 1794.56 | 1.54 |
+| Successful CI job | 16 | 836.06 | 2755.68 | 2755.68 | 0.49 |
+
+Clone object throughput was 0.49 MiB/s. Every expected CI job succeeded, and all 50
+concurrent invitations persisted. This is a short debug-build sample on shared hardware,
+not a release-build capacity guarantee or a multi-host network measurement. Repeat it
+with the intended deployment and production's page-render limit before sizing a cell.
 
 ## Organization login and API controls
 
@@ -677,16 +701,16 @@ for issue and pull request GET content. The server checks database identity and 
 once per request and falls back to primary when it cannot prove the copy current within
 two seconds. Authentication, permission checks and writes stay on primary; the same
 credential's reads stay there for five seconds after a write. Other content families still
-use primary. Workspace, Clippy and WASM checks pass; replica runtime acceptance is
-pending.
+use primary. Workspace, Clippy and WASM checks pass. Physical-replica acceptance
+covers reads after writes, lag and fallback when the replica stops.
 `DATABASE_POOL_SIZE` sets each process's primary pool and optional read pool separately
 (1–1,000 each, default 20); metrics include both. The primary has a five-second
 acquisition deadline; replica selection and acquisition have a two-second deadline.
 Both validate connections before reuse. Lost
 connections reconnect through `DATABASE_URL`; writes with an uncertain result are
-not automatically replayed. The debug load workload completed its 500-reader traffic
-and 50 simultaneous invitations, but CI jobs failed without cgroup delegation. There
-is no completed capacity measurement; size the installation from your own measurements.
+not automatically replayed. The [debug benchmark](#recorded-debug-sample) completes
+500-reader traffic, 50 simultaneous invitations and all scheduled CI jobs. Size the
+installation from measurements on its intended hardware, build and workload.
 
 Majority writes require both fixed storage voters before acknowledgement. Additional
 copies and the explicit `--write-quorum 1` policy are asynchronous; there is no

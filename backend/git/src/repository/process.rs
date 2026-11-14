@@ -113,12 +113,18 @@ pub fn std_command(executable: &Path) -> std::process::Command {
             "commit.gpgSign=false",
             "-c",
             "receive.autogc=false",
+            // The default already rejects new shallow roots; the explicit value keeps a
+            // repository's own config from re-enabling them for the commands hardened here.
+            "-c",
+            "receive.shallowUpdate=false",
             "-c",
             "gc.auto=0",
             "-c",
             "maintenance.auto=false",
-            // An acknowledged push survives a crash or power loss: objects, packs and refs
-            // reach the disk before Git reports success, in one flush per batch.
+            // Git's fsync components cover file contents and ref files, not the directory
+            // entries that name them. repository::durable is the one owner of that second
+            // guarantee: it syncs the object entries, the ref names and their ancestors
+            // before an acknowledged publication is reported complete.
             "-c",
             "core.fsync=all",
             "-c",

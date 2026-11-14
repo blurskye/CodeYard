@@ -2,6 +2,7 @@
 """Exercise the disposable runner-settings fixture with and without hydration."""
 import json
 import os
+import re
 import sys
 
 from playwright.sync_api import expect, sync_playwright
@@ -16,6 +17,10 @@ def hydrated(page):
     except Exception:
         print("Hydration failed:", page.url, page.title(), page.locator("script[src]").evaluate_all("nodes => nodes.map(n => n.src)"), flush=True)
         raise
+
+def group_heading(page, name):
+    return page.get_by_role("heading", name=re.compile(rf"^{re.escape(name)} \(#[0-9]+\)$"))
+
 
 with sync_playwright() as pw:
     browser = pw.chromium.launch(executable_path=os.environ["CODEYARD_BROWSER_CHROMIUM"], args=["--no-sandbox"])
@@ -48,8 +53,8 @@ with sync_playwright() as pw:
         create.get_by_label("Name", exact=True).fill(name)
         select_access(create, "selected", "Selected repositories")
         create.get_by_role("button", name="Create group", exact=True).click()
-        article = page.locator("article").filter(has=page.get_by_role("heading", name=name, exact=True))
-        article.get_by_role("heading", name=name, exact=True).wait_for()
+        article = page.locator("article").filter(has=group_heading(page, name))
+        group_heading(page, name).wait_for()
         if javascript:
             hydrated(page)
         edit = article.locator('form:has(button:text-is("Save group"))')
@@ -58,8 +63,8 @@ with sync_playwright() as pw:
         edit.get_by_label("Restrict to selected workflows", exact=True).check()
         edit.get_by_label("Allowed workflows").fill("browser-org/repo/.github/workflows/ci.yml@main")
         edit.get_by_role("button", name="Save group", exact=True).click()
-        article = page.locator("article").filter(has=page.get_by_role("heading", name=name + " renamed", exact=True))
-        article.get_by_role("heading", name=name + " renamed", exact=True).wait_for()
+        article = page.locator("article").filter(has=group_heading(page, name + " renamed"))
+        group_heading(page, name + " renamed").wait_for()
         expect(article.locator('select[name="visibility"]')).to_have_value("private")
         expect(article.get_by_label("Restrict to selected workflows", exact=True)).to_be_checked()
         expect(article.get_by_label("Allowed workflows")).to_have_value("browser-org/repo/.github/workflows/ci.yml@main")
@@ -74,7 +79,7 @@ with sync_playwright() as pw:
         assert credential["token"] not in page.content()
         article.get_by_label("Confirm deletion (runners return to Default)", exact=True).check()
         article.get_by_role("button", name="Delete group", exact=True).click()
-        expect(page.get_by_role("heading", name=name + " renamed", exact=True)).to_have_count(0)
+        expect(group_heading(page, name + " renamed")).to_have_count(0)
         assert not errors, errors
         print(f"PASS runner settings {'hydrated navigation' if javascript else 'without JavaScript'}: create, edit, private workflow selection, credential download, delete", flush=True)
         context.close()

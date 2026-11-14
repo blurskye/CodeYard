@@ -92,7 +92,8 @@ class Deployment:
         assert name not in self.processes
         log = (self.root / name / "server.log").open("a")
         self.logs.append(log)
-        self.processes[name] = subprocess.Popen([str(self.args.binary), *map(str, arguments)],
+        binary = self.args.router_binary if name == "router" and self.args.router_binary else self.args.binary
+        self.processes[name] = subprocess.Popen([str(binary), *map(str, arguments)],
                                               env=self.settings[name], cwd=self.root / name,
                                               stdin=subprocess.DEVNULL, stdout=log, stderr=log,
                                               start_new_session=True)
@@ -878,6 +879,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run", type=Path, required=True)
     parser.add_argument("--binary", type=Path, required=True)
+    parser.add_argument("--router-binary", type=Path, default=os.environ.get("E2E_PREVIOUS_ROUTER_BINARY"),
+                        help="Run this router binary against the current directory and cells")
     args = parser.parse_args()
     def interrupted(signum, _frame):
         raise SystemExit(128 + signum)

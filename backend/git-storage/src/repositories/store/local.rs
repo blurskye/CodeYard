@@ -846,17 +846,13 @@ pub(super) async fn recover_term(
             "recovery term changed"
         );
         tokio::fs::rename(stage.path(), &target).await?;
-        let parent = parent.to_owned();
-        let root = root.to_owned();
-        process::blocking_until(Instant::now() + process::RPC_TIMEOUT, move || {
-            for directory in parent.ancestors() {
-                std::fs::File::open(directory)?.sync_all()?;
-                if directory == root {
-                    break;
-                }
-            }
-            Ok(())
-        })
+        // The staged directories were durable under the staging name; the entries that now
+        // name them, all the way to the storage root, are not.
+        codeyard_git::repository::durable::sync_ancestors(
+            parent,
+            root,
+            Instant::now() + process::RPC_TIMEOUT,
+        )
         .await?;
     }
     crate::context::literal_directory(root, &target).await?;
@@ -966,6 +962,12 @@ impl LocalStore {
             remove.push_str(&format!("delete {name}\n"));
         }
         remove.push_str("prepare\ncommit\n");
+        // The objects this install names are already stored; their entries must be durable
+        // before the refs that point at them are written.
+        codeyard_git::repository::durable::RepositorySync::new()
+            .objects()
+            .sync(self.path(), Instant::now() + process::RPC_TIMEOUT)
+            .await?;
         self.recovery_refs(&remove).await?;
         let mut install = String::from("start\n");
         for value in refs {
@@ -983,6 +985,14 @@ impl LocalStore {
                 anyhow::ensure!(status.success(), "could not restore canonical symbolic ref");
             }
         }
+        // The database record this installs must not name a ref, nested namespace or object
+        // entry that a crash can drop. A restore also replaces names, so all of them count.
+        codeyard_git::repository::durable::sync_refs(
+            self.path(),
+            refs.iter().map(|value| value.name.clone()).collect(),
+            Instant::now() + process::RPC_TIMEOUT,
+        )
+        .await?;
         self.verify_canonical(refs).await?;
         Ok(())
     }
@@ -4398,6 +4408,12 @@ impl LocalStore {
         if !status.success() {
             return Err(unavailable("Git could not store the replica pack"));
         }
+        // index-pack syncs the pack's bytes, not the objects/pack entry that names it.
+        codeyard_git::repository::durable::RepositorySync::new()
+            .objects()
+            .sync(self.path(), Instant::now() + process::RPC_TIMEOUT)
+            .await
+            .map_err(RepoError::from)?;
         Ok(())
     }
 
@@ -4406,6 +4422,14 @@ impl LocalStore {
     /// The objects they name must already be stored.
     pub(super) async fn set_refs(&self, refs: &HashMap<String, String>) -> Result<(), RepoError> {
         let mut current = self.mirror_refs().await?;
+        // The caller stored these objects first. Their entries must be durable before any
+        // ref that names them is written or removed.
+        codeyard_git::repository::durable::RepositorySync::new()
+            .objects()
+            .sync(self.path(), Instant::now() + process::RPC_TIMEOUT)
+            .await
+            .map_err(RepoError::from)?;
+        let mut published: Vec<String> = refs.keys().cloned().collect();
         // Symbolic aliases are not object-id listings. Remove them literally so an
         // obsolete alias cannot dangle, or delete its target through update-ref.
         for name in self.blocking(git::list_mirror_ref_names).await? {
@@ -4414,6 +4438,7 @@ impl LocalStore {
                 if !status.success() {
                     return Err(unavailable("Git could not remove a symbolic replica ref"));
                 }
+                published.push(name);
             }
         }
         let names: std::collections::BTreeSet<&str> = refs.keys().map(String::as_str).collect();
@@ -4441,6 +4466,7 @@ impl LocalStore {
                 return Err(unavailable("Git could not remove an obsolete replica ref"));
             }
             current.remove(&name);
+            published.push(name);
         }
         let mut script = String::from("start\n");
         for (name, sha) in refs {
@@ -4460,6 +4486,7 @@ impl LocalStore {
         }
         for name in current.keys().filter(|name| !refs.contains_key(*name)) {
             script.push_str(&format!("delete {name}\n"));
+            published.push(name.clone());
         }
         script.push_str("prepare\ncommit\n");
         let mut command = process::git_command().map_err(RepoError::from)?;
@@ -4478,6 +4505,16 @@ impl LocalStore {
         if !status.success() {
             return Err(unavailable("Git could not set the replica's refs"));
         }
+        // The database names these refs, so a crash must not drop the directory entries that
+        // hold them, including nested names and the entries a replacement removed.
+        published.sort();
+        published.dedup();
+        codeyard_git::repository::durable::sync_refs(
+            self.path(),
+            published,
+            Instant::now() + process::RPC_TIMEOUT,
+        )
+        .await?;
         Ok(())
     }
 
@@ -4946,16 +4983,7 @@ impl LocalStore {
                 if must_restore {
                     let restored = match previous_head.as_deref() {
                         Some(head) => publication.scope(self.set_head_target(head)).await,
-                        None => self
-                            .git(&["update-ref", "--no-deref", "HEAD", &previous_oid])
-                            .await
-                            .and_then(|(status, _)| {
-                                if status.success() {
-                                    Ok(())
-                                } else {
-                                    Err(unavailable("Git could not restore HEAD"))
-                                }
-                            }),
+                        None => self.restore_detached_head(&previous_oid).await,
                     };
                     if restored.is_err() {
                         return Err(unavailable("Repository update failed and HEAD could not be restored; reconciliation is required"));
@@ -5004,7 +5032,32 @@ impl LocalStore {
         if !status.success() {
             return Err(unavailable("Git could not set HEAD"));
         }
-        Ok(())
+        self.sync_head().await
+    }
+
+    /// Restores a detached HEAD after a refused settings write. It must be as durable as the
+    /// branch it replaced, or a crash can leave the repository on a branch it no longer has.
+    async fn restore_detached_head(&self, oid: &str) -> Result<(), RepoError> {
+        let (status, _) = self.git(&["update-ref", "--no-deref", "HEAD", oid]).await?;
+        if !status.success() {
+            return Err(unavailable("Git could not restore HEAD"));
+        }
+        self.sync_head().await
+    }
+
+    /// Makes a completed HEAD change durable. These HEAD writes go through the hardened
+    /// `git symbolic-ref`/`update-ref` process, which Git 2.54 syncs for neither the file nor
+    /// its directory (libgit2's own ref writes do fsync the file and its immediate parent, but
+    /// none of them sync directories they had to create). So the file, its repository
+    /// directory and that directory's parent are synced here: a create or rename replaces the
+    /// parent entry, so it is not safe to assume the entry that names this repository exists.
+    async fn sync_head(&self) -> Result<(), RepoError> {
+        codeyard_git::repository::durable::RepositorySync::new()
+            .required_file("HEAD")
+            .parent()
+            .sync(self.path(), Instant::now() + process::RPC_TIMEOUT)
+            .await
+            .map_err(|_| unavailable("Git could not make HEAD durable"))
     }
 
     pub(super) async fn git_session(

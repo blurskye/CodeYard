@@ -16,6 +16,8 @@ Start with the [README](../README.md) for setup.
 - [GitHub API plan](GITHUB_API_PLAN.md): making `/api/v3` and GraphQL match GitHub, what stays unsupported, and the worker split.
 - [Pages and repository security](PAGES_AND_SECURITY.md): Pages control-plane limits, pinned dependency/SBOM reports and confidential advisory workflows.
 - [CI local runner](CI_LOCAL_RUNNER.md): running jobs with `act` through Podman, and the trust limits.
+- [Experimental Windows VM API](../backend/runner/scripts/windows-base-image/README.md):
+  building a guest image and testing the library directly; not workflow execution.
 - [Host OpenSSH](OPENSSH.md): the `SSH_MODE` settings and the installer for host OpenSSH.
 - [Storage](STORAGE_ARCHITECTURE.md): where data lives, uploads, backups and moving data.
 - [Database-owned authentication](POSTGRES_AUTH.md): sessions, CSRF, OAuth state and login admission.

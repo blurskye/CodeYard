@@ -8,6 +8,10 @@ container. Installing Podman in the container alone is not enough.
 and mount host paths with your user's privileges. Separate storage is not a
 sandbox. Do not expose the socket over TCP and do not run untrusted workflows.
 
+The [experimental Windows VM API](../backend/runner/scripts/windows-base-image/README.md)
+is separate from these workflow engines. `vm:` platform mappings remain rejected;
+Windows guest API tests do not establish Windows workflow support.
+
 ## Host execution containment
 
 `CI_EXECUTION_MODE=local` requires Linux 5.14 or newer, unified cgroup v2, and a
@@ -20,9 +24,11 @@ This does not make trusted host execution a sandbox.
 The worker migrates the runner before exec, so new sessions and process groups stay in
 its run-owned subtree. It kills that subtree and waits for it to become empty before
 releasing execution ownership or removing the workspace. Recovery records include the
-cgroup path, and abandoned executions are recovered before slot reuse. Cleanup failures
-retain local ownership and the checkout; normal cleanup retries retain the heartbeat and
-run lease. Temporary runner files also live beneath the recoverable workspace.
+cgroup path, and abandoned executions are recovered before slot reuse. Process cleanup
+retries retain the heartbeat and run lease. Once the subtree is empty, the worker records
+the result; directory and checkout cleanup can finish afterward. Shutdown waits for that
+cleanup and reports a timeout if it remains blocked. Temporary runner files also live
+beneath the recoverable workspace.
 
 Each job runs its host steps in a cgroup of its own below the run's. Like on GitHub, a
 process a step leaves running in the background stays alive for the later steps and ends
@@ -301,9 +307,17 @@ work. Never put either credential in argv or source control.
 Groups restrict organization workers to all, private or selected organization
 repositories. Public repositories also require explicit public access. Workflow
 restrictions use `owner/repository/.github/workflows/file.yml@ref`; a commit SHA pins
-an exact revision. Custom labels are case-insensitive literal selectors, not software
-installation or container-image configuration. Podman labels still need the normal
-`CI_ACT_PLATFORM_MAP` configuration. `self-hosted` is immutable.
+an exact revision. Custom labels are case-insensitive literal selectors, not
+software installation or container-image configuration. `self-hosted` is
+immutable and needs no explicit runner-label registration; Podman still needs
+its image mapping. Eligibility depends on how the worker was admitted. A server-owned or operator-invited unscoped worker runs only ungrouped
+jobs; in local mode it can claim only `ubuntu-latest`, `ubuntu-24.04`,
+`ubuntu-22.04`, `ubuntu-20.04` and implicit `self-hosted`, and
+`CI_ACT_PLATFORM_MAP` does not add another local label for it. In Podman mode
+every run label, including `self-hosted`, needs a `CI_ACT_PLATFORM_MAP` entry.
+A registered scoped runner uses its stored runner labels: in local mode those
+configured labels are claimable without a platform-map entry; in Podman mode
+they also need their map entries.
 
 Use `runs-on: {group: Builders, labels: [self-hosted, linux]}` to select an organization
 group. Scheduling remains whole-workflow: a run must use a single group and the worker

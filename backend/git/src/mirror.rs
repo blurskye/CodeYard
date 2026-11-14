@@ -127,9 +127,7 @@ pub async fn mirror(source: &Path, copy: &Path) -> Result<()> {
     let source = std::path::absolute(source)?;
     if !copy.join("HEAD").is_file() {
         std::fs::create_dir_all(copy)?;
-        let mut init = process::git_command()?;
-        init.args(["init", "--quiet", "--bare"]).arg(copy);
-        run(init, b"").await?;
+        crate::repository::initialize_repository(copy, None, "main").await?;
     }
     // The object files go first. The fetch then finds the objects its refs need already there
     // and writes no second pack of them.
@@ -167,9 +165,16 @@ pub async fn mirror(source: &Path, copy: &Path) -> Result<()> {
     let mut prune = git(copy)?;
     prune.arg("prune-packed");
     run(prune, b"").await?;
-    std::fs::File::open(copy.join("HEAD"))?.sync_all()?;
-    std::fs::File::open(copy)?.sync_all()?;
-    Ok(())
+    // The fetch and prune-packed changed ref files, nested ref namespaces and the object
+    // entries that name new packs and loose objects. Nothing there is synced by Git; sync the
+    // copied refs and the fixed object-store entries, with HEAD, before the copy is used.
+    let refs = crate::repository::list_mirror_refs(copy)?
+        .into_keys()
+        .collect::<Vec<String>>();
+    crate::repository::durable::RepositorySync::refs(refs)
+        .parent()
+        .sync(copy, std::time::Instant::now() + TIMEOUT)
+        .await
 }
 
 /// Whether HEAD names a commit in the repository at `path`.

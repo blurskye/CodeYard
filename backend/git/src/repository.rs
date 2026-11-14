@@ -13,6 +13,7 @@ use tokio::process::ChildStdout;
 mod blob_preview;
 pub use blob_preview::{read_blob_preview, PREVIEW_BYTES, PREVIEW_LINES};
 mod checked;
+pub mod durable;
 #[cfg(test)]
 mod history_tests;
 pub mod locks;

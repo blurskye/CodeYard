@@ -147,6 +147,70 @@ with SQLite and PostgreSQL on the guest. Record the filesystem, virtual disk cac
 database engine and commit id with the result. A process kill does not satisfy this
 check; it leaves the guest's disk cache intact.
 
+The disposable Linux guest fixture resets after two pushes and one default-branch
+change per database engine.
+On the builder, run:
+
+```sh
+nix develop .#vm --command tests/vm/hard-reset.sh \
+  /absolute/path/to/codeyard /absolute/path/to/webui-dist
+```
+
+Use the application binary and browser bundle from the same build. The fixture
+prefers KVM and falls back to QEMU TCG when unavailable. Each guest has 2 CPUs,
+4 GiB RAM, a 12 GiB persistent ext4 disk with QEMU's `writeback` cache, and no host
+mounts. Only loopback SSH and HTTP ports are forwarded. After each acknowledged
+push it resets the guest kernel without syncing, verifies a new boot ID, clones
+and checks both repositories with `git fsck --full`, and verifies nested branch refs,
+HEAD, payload bytes, repository metadata and issue metadata. A third reset immediately
+after a default-branch API change checks symbolic HEAD independently of receive-pack.
+Output records the database, mount options and commit ID. This is guest hard-reset acceptance, not a claim about whole-host power loss.
+
+The 2026-11-11 builder TCG run booted, accepted an HTTP push, hard-reset and reached
+readiness again, but the following HTTP clone returned 503 (`Git operation unavailable`).
+Post-reset diagnostics found an empty bare-repository `HEAD`, with correct ownership.
+Repository initialization now explicitly syncs its metadata and directory entries;
+`core.fsync=all` alone did not persist the initial `HEAD`. Follow-up review also found
+missing directory syncs after ref and object publication; those paths now use a shared,
+bounded objects-before-refs barrier.
+
+The 2026-11-12 builder rerun passed all six resets under TCG: two acknowledged pushes
+and one default-branch change on each of SQLite and PostgreSQL. Every recovery passed
+the clone, bare-repository fsck, exact object/ref/HEAD and database metadata assertions.
+The tested server SHA-256 was
+`cde7495cbc4ceb5a7fa153f5a10c3104911142021db1e0a93cfa028456248f6b`.
+A second six-reset run passed after the receive-stream and durability-plan changes, on
+`bf4e703c72df696860b83e94c917a2e295640565bcec7539f68a6872a7565a71`.
+Both runs precede the Prepared authorization and pre-admission budget follow-ups.
+A third run on the final native-acceptance binary passed all six resets at
+2026-11-12T10:57:18Z, after the full broker, CI, browser and end-to-end suites passed.
+Its server SHA-256 was
+`43bb5ecc50c6a9d0403f928484049f6f17f83f87e8e1486f6aa916fae107bcdb`.
+SQLite recovered commits `9072e877d1f81403eb4017eede486ec29929b6c8` and
+`9c90d88e56f1350b5a075a30bf0d6f527151cb99`; PostgreSQL recovered
+`683fe3f86ff4d06704fed390b6ba05faf92dc7ec` and
+`0ad32b549bc8635b8099ae97fcf5773fdd233e90`. Each engine also recovered the
+symbolic-HEAD change to `topic/nested`. Both guests used ext4 (`rw,relatime`)
+and QEMU writeback caching under TCG.
+These finite single-node guest-reset checks do not establish whole-host power-loss
+durability or replace cluster quorum and storage-device acceptance.
+
+A Git client's `Everything up-to-date` is not a fresh write acknowledgment.
+Smart HTTP can return that result after reading the ref advertisement, without
+sending a receive request. After an unknown write outcome, fetching or repeating
+a no-op push observes current refs; it does not independently prove their durability.
+
+Receive admission preflights the proposed ref names against the shared durability-plan
+budget before recording them as admitted. Prepared checks the union with Git's actual
+transaction names and syncs objects before permitting ref publication. These named plans
+do not prove that later filesystem I/O or repository-wide inventory will succeed.
+After the durability wait, Prepared rechecks live credentials, repository access, branch
+policy and immutable-tag reservations. This is not an atomic database/filesystem commit:
+a revocation after that last read can still race the hook reply and Git's ref write.
+Accepted-push bookkeeping retains the admitted actor; it is not discarded by a later
+revocation. A nonzero Git exit can include partial writes, so it does not by itself justify
+skipping the final durability barrier.
+
 ## Moving data
 
 Changing `DATABASE_URL`, `REPOS_PATH`, `GITSERV_STATE_DIR` or the `S3_*` settings does

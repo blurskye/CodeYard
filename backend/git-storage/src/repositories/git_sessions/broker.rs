@@ -84,6 +84,14 @@ pub struct HookState {
     pub quorum: bool,
     pub quorum_started: bool,
     pub quorum_unknown: bool,
+    /// The ref names a successful pre-receive admitted. The report-status for them is held
+    /// until the refs and the object entries the push wrote are durable, whether or not this
+    /// node runs a quorum write.
+    pub admitted: Vec<String>,
+    /// A pre-receive hook judged this push. A receive that never reached it carried no ref
+    /// update at all, so its "everything up to date" answer has to account for the refs the
+    /// repository already has.
+    pub pre_receive_started: bool,
     pub writes: Vec<codeyard_database::models::WriteRecord>,
     pub transaction: Option<usize>,
 }
@@ -881,6 +889,13 @@ impl Gateway {
         let mut output = ReceiveOutput {
             output: streams.output,
             operation: operation.clone(),
+            phase: if !write {
+                ReceivePhase::PassThrough
+            } else if options.stateless {
+                ReceivePhase::Stateless
+            } else {
+                ReceivePhase::Stateful(Advertisement::default())
+            },
             held: Vec::new(),
         };
         let status = git_process::stream(
@@ -892,8 +907,18 @@ impl Gateway {
         )
         .await;
         let completion = self.complete_quorum(&operation).await;
+        // Git acknowledged its own ref writes to this process, but a crash can still drop the
+        // directory entry that names them. Hold the client's report-status until the barrier
+        // has run, so a standalone push cannot report success before its refs are durable.
+        // Only a Git process that could not be run has no status here; a nonzero child exit
+        // still reaches the barrier because its report-status may carry partial success.
+        let durable = if status.is_ok() {
+            self.durable_receive(&operation, write).await
+        } else {
+            Ok(())
+        };
         let committed = completion.as_ref().is_ok_and(|committed| *committed);
-        if completion.is_err() || (committed && status.is_err()) {
+        if completion.is_err() || durable.is_err() || (committed && status.is_err()) {
             let _ = timeout(Duration::from_secs(5), output.unknown()).await;
             let _ = timeout(
                 Duration::from_secs(5),
@@ -942,6 +967,39 @@ impl Gateway {
             return Err(crate::repositories::git_sessions::PostReceiveFailed.into());
         }
         Ok(status)
+    }
+
+    /// Gates report-status and receive-session completion on durable metadata. A session
+    /// without updates repairs the current inventory; a refused push changed nothing.
+    /// This does not gate advertisements: a stateful push needs its ref advertisement
+    /// before it can send commands, and a smart-HTTP client can report "up to date" after
+    /// GET/info/refs without a receive POST. That client-side comparison is not a fresh
+    /// server durability acknowledgment. No Git process slot is taken here, since hooks
+    /// may still be talking to this broker.
+    async fn durable_receive(&self, operation: &Operation, receive: bool) -> Result<()> {
+        if !receive {
+            return Ok(());
+        }
+        let (admitted, judged) = {
+            let state = operation
+                .state
+                .lock()
+                .map_err(|_| anyhow::anyhow!("operation state unavailable"))?;
+            (state.admitted.clone(), state.pre_receive_started)
+        };
+        let sync = if !admitted.is_empty() {
+            codeyard_git::repository::durable::RepositorySync::refs(admitted)
+        } else if judged {
+            return Ok(());
+        } else {
+            codeyard_git::repository::durable::RepositorySync::refs(Vec::<String>::new())
+                .inventory()
+        };
+        sync.sync(
+            &operation.path,
+            std::time::Instant::now() + codeyard_git::repository::durable::SYNC_TIMEOUT,
+        )
+        .await
     }
 
     fn git_command(
@@ -1015,11 +1073,80 @@ impl Gateway {
 }
 
 // Git ignores committed-hook failures. Hold its terminal output until the broker has
-// independently checked the durable decision, while negotiation still streams normally.
+// independently checked the durable decision, while negotiation and the initial ref
+// advertisement still stream normally.
 struct ReceiveOutput<'a> {
     output: &'a mut (dyn AsyncWrite + Unpin + Send),
     operation: Arc<Operation>,
+    phase: ReceivePhase,
     held: Vec<u8>,
+}
+
+/// What a Git session's stdout carries before its terminal answer.
+enum ReceivePhase {
+    /// Not a receive: output streams through.
+    PassThrough,
+    /// Smart HTTP POST: the advertisement was a separate GET, so all output is the terminal
+    /// report-status and is held from the first byte.
+    Stateless,
+    /// SSH and storage RPC: receive-pack writes the ref advertisement before it reads any
+    /// command. Forward it, then hold the terminal report-status that follows.
+    Stateful(Advertisement),
+}
+
+impl ReceivePhase {
+    fn advertisement(&mut self) -> Option<&mut Advertisement> {
+        match self {
+            Self::Stateful(advertisement) => Some(advertisement),
+            Self::PassThrough | Self::Stateless => None,
+        }
+    }
+}
+
+/// Finds the end of the ref advertisement in a stateful receive-pack stream. The
+/// advertisement is a sequence of pkt-lines ending with a flush packet; the client's commands
+/// and the server's report-status follow it.
+#[derive(Clone, Default)]
+struct Advertisement {
+    header: [u8; 4],
+    header_len: usize,
+    remaining: usize,
+    complete: bool,
+}
+
+impl Advertisement {
+    fn complete(&self) -> bool {
+        self.complete
+    }
+
+    /// Feeds bytes in order and returns how many belong to the advertisement, including the
+    /// flush packet that ends it. Bytes after that are the terminal report.
+    fn split(&mut self, bytes: &[u8]) -> usize {
+        for (index, byte) in bytes.iter().enumerate() {
+            if self.complete {
+                return index;
+            }
+            if self.remaining > 0 {
+                self.remaining -= 1;
+                continue;
+            }
+            self.header[self.header_len] = *byte;
+            self.header_len += 1;
+            if self.header_len < self.header.len() {
+                continue;
+            }
+            self.header_len = 0;
+            match codeyard_git::protocol::parse_packet_length(&self.header) {
+                Ok(0) => self.complete = true,
+                Ok(length) if length >= 4 => self.remaining = length - 4,
+                // Push never uses the protocol-v2 packet kinds. A header this broker cannot
+                // follow ends the forwarded phase, so a report-status it cannot locate stays
+                // held rather than escaping before the barrier.
+                _ => self.complete = true,
+            }
+        }
+        bytes.len()
+    }
 }
 
 impl ReceiveOutput<'_> {
@@ -1057,17 +1184,52 @@ impl AsyncWrite for ReceiveOutput<'_> {
         cx: &mut std::task::Context<'_>,
         bytes: &[u8],
     ) -> std::task::Poll<std::io::Result<usize>> {
-        let hold = self
-            .operation
-            .state
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .quorum_started;
+        if bytes.is_empty() {
+            return std::task::Poll::Ready(Ok(0));
+        }
+        let this = &mut *self;
+        // Receive-pack advertises its refs before it reads the client's commands. Forward that
+        // advertisement now: holding it would leave the client waiting for refs while Git waits
+        // for the client. Only what follows the advertisement is terminal output.
+        if let Some(advertisement) = this
+            .phase
+            .advertisement()
+            .filter(|advertisement| !advertisement.complete())
+        {
+            let mut boundary = advertisement.clone();
+            let forwarded = boundary.split(bytes);
+            let output = std::pin::Pin::new(&mut *this.output);
+            return match output.poll_write(cx, &bytes[..forwarded]) {
+                std::task::Poll::Ready(Ok(written)) if written > 0 => {
+                    // Advance by what the client's stream actually took. A retry of the rest
+                    // scans from the same pkt-line position.
+                    advertisement.split(&bytes[..written]);
+                    std::task::Poll::Ready(Ok(written))
+                }
+                std::task::Poll::Ready(Ok(_)) => {
+                    std::task::Poll::Ready(Err(std::io::Error::from(std::io::ErrorKind::WriteZero)))
+                }
+                other => other,
+            };
+        }
+        // A receive holds its terminal output until the broker's barrier has run, so a
+        // successful standalone report-status cannot escape before a barrier failure is known.
+        // A quorum write also holds it until the durable decision exists.
+        let hold = match &this.phase {
+            ReceivePhase::PassThrough => {
+                this.operation
+                    .state
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .quorum_started
+            }
+            ReceivePhase::Stateless | ReceivePhase::Stateful(_) => true,
+        };
         if hold {
-            if bytes.len() > codeyard_database::limits::MAX_JSON.saturating_sub(self.held.len()) {
+            if bytes.len() > codeyard_database::limits::MAX_JSON.saturating_sub(this.held.len()) {
                 // Receive-pack drains after output errors. Do not release a truncated status
                 // merely because that draining process later exits successfully.
-                self.operation
+                this.operation
                     .state
                     .lock()
                     .unwrap_or_else(|error| error.into_inner())
@@ -1076,10 +1238,10 @@ impl AsyncWrite for ReceiveOutput<'_> {
                     "receive status exceeds limit",
                 )));
             }
-            self.held.extend_from_slice(bytes);
+            this.held.extend_from_slice(bytes);
             std::task::Poll::Ready(Ok(bytes.len()))
         } else {
-            std::pin::Pin::new(&mut *self.output).poll_write(cx, bytes)
+            std::pin::Pin::new(&mut *this.output).poll_write(cx, bytes)
         }
     }
 
@@ -1187,12 +1349,44 @@ mod admission_tests {
         })
     }
 
+    fn admitted_operation() -> Arc<Operation> {
+        Arc::new(Operation {
+            credential: ReceiveCredential::SshKey(1),
+            actor_id: 1,
+            repo_id: 1,
+            owner: "owner".into(),
+            path: PathBuf::new(),
+            publication_lease: None,
+            hooks: tempfile::tempdir().unwrap(),
+            state: Mutex::new(HookState {
+                admitted: vec!["refs/heads/topic/nested".into()],
+                ..HookState::default()
+            }),
+        })
+    }
+
+    fn packet(payload: &[u8]) -> Vec<u8> {
+        let mut packet = format!("{:04x}", payload.len() + 4).into_bytes();
+        packet.extend_from_slice(payload);
+        packet
+    }
+
+    fn advertised_refs() -> Vec<u8> {
+        let mut advertisement = packet(b"version 1\n");
+        advertisement.extend_from_slice(&packet(
+            b"0000000000000000000000000000000000000000 capabilities^{}\0report-status side-band-64k\n",
+        ));
+        advertisement.extend_from_slice(b"0000");
+        advertisement
+    }
+
     #[tokio::test]
     async fn receive_terminal_output_is_held_until_release() {
         let (mut output, mut reader) = tokio::io::duplex(1024);
         let mut gate = ReceiveOutput {
             output: &mut output,
             operation: pending_operation(),
+            phase: ReceivePhase::Stateless,
             held: Vec::new(),
         };
         gate.write_all(b"ok refs/heads/main\n").await.unwrap();
@@ -1206,11 +1400,243 @@ mod admission_tests {
     }
 
     #[tokio::test]
+    async fn admitted_standalone_receive_holds_status_until_release() {
+        let (mut output, mut reader) = tokio::io::duplex(1024);
+        let mut gate = ReceiveOutput {
+            output: &mut output,
+            operation: admitted_operation(),
+            phase: ReceivePhase::Stateless,
+            held: Vec::new(),
+        };
+        gate.write_all(b"ok refs/heads/topic/nested\n")
+            .await
+            .unwrap();
+        let mut bytes = [0; 29];
+        assert!(timeout(Duration::from_millis(10), reader.read(&mut bytes))
+            .await
+            .is_err());
+        gate.release().await.unwrap();
+        let count = reader.read(&mut bytes).await.unwrap();
+        assert_eq!(&bytes[..count], b"ok refs/heads/topic/nested\n");
+    }
+
+    #[tokio::test]
+    async fn stateful_receive_forwards_the_advertisement_and_holds_the_report() {
+        let (mut output, mut reader) = tokio::io::duplex(1024);
+        let mut gate = ReceiveOutput {
+            output: &mut output,
+            operation: admitted_operation(),
+            phase: ReceivePhase::Stateful(Advertisement::default()),
+            held: Vec::new(),
+        };
+        let advertisement = advertised_refs();
+        gate.write_all(&advertisement).await.unwrap();
+        let mut bytes = vec![0; advertisement.len()];
+        timeout(Duration::from_millis(100), reader.read_exact(&mut bytes))
+            .await
+            .expect("stateful receive withheld its advertisement")
+            .unwrap();
+        assert_eq!(bytes, advertisement);
+
+        let status = [
+            packet(b"unpack ok\n"),
+            packet(b"ok refs/heads/main\n"),
+            b"0000".to_vec(),
+        ]
+        .concat();
+        gate.write_all(&status).await.unwrap();
+        let mut held = vec![0; status.len()];
+        assert!(
+            timeout(Duration::from_millis(10), reader.read_exact(&mut held))
+                .await
+                .is_err(),
+            "report-status escaped before the barrier"
+        );
+        gate.release().await.unwrap();
+        reader.read_exact(&mut held).await.unwrap();
+        assert_eq!(held, status);
+    }
+
+    #[tokio::test]
+    async fn stateful_receive_splits_an_advertisement_and_report_in_one_write() {
+        let (mut output, mut reader) = tokio::io::duplex(1024);
+        let mut gate = ReceiveOutput {
+            output: &mut output,
+            operation: admitted_operation(),
+            phase: ReceivePhase::Stateful(Advertisement::default()),
+            held: Vec::new(),
+        };
+        let advertisement = advertised_refs();
+        let status = [packet(b"unpack ok\n"), b"0000".to_vec()].concat();
+        let mut stream = advertisement.clone();
+        stream.extend_from_slice(&status);
+        gate.write_all(&stream).await.unwrap();
+
+        let mut bytes = vec![0; advertisement.len()];
+        timeout(Duration::from_millis(100), reader.read_exact(&mut bytes))
+            .await
+            .expect("advertisement was not forwarded")
+            .unwrap();
+        assert_eq!(bytes, advertisement);
+        let mut held = vec![0; status.len()];
+        assert!(
+            timeout(Duration::from_millis(10), reader.read_exact(&mut held))
+                .await
+                .is_err(),
+            "report-status escaped before the barrier"
+        );
+        gate.release().await.unwrap();
+        reader.read_exact(&mut held).await.unwrap();
+        assert_eq!(held, status);
+    }
+
+    #[tokio::test]
+    async fn stateful_receive_forwarding_survives_short_writes() {
+        let (mut output, mut reader) = tokio::io::duplex(8);
+        let mut gate = ReceiveOutput {
+            output: &mut output,
+            operation: admitted_operation(),
+            phase: ReceivePhase::Stateful(Advertisement::default()),
+            held: Vec::new(),
+        };
+        let advertisement = advertised_refs();
+        let write = gate.write_all(&advertisement);
+        let mut forwarded = vec![0; advertisement.len()];
+        let read = reader.read_exact(&mut forwarded);
+        let (written, read) = timeout(Duration::from_secs(1), async { tokio::join!(write, read) })
+            .await
+            .expect("short advertisement write stalled");
+        written.unwrap();
+        read.unwrap();
+        assert_eq!(forwarded, advertisement);
+
+        let status = packet(b"unpack ok\n");
+        gate.write_all(&status).await.unwrap();
+        let mut held = vec![0; status.len()];
+        assert!(
+            timeout(Duration::from_millis(10), reader.read_exact(&mut held))
+                .await
+                .is_err(),
+            "report-status escaped before the barrier"
+        );
+        let release = gate.release();
+        let read = reader.read_exact(&mut held);
+        let (released, read) = timeout(Duration::from_secs(1), async {
+            tokio::join!(release, read)
+        })
+        .await
+        .expect("held report stalled");
+        released.unwrap();
+        read.unwrap();
+        assert_eq!(held, status);
+    }
+
+    #[tokio::test]
+    async fn stateful_receive_replaces_a_held_error_report_on_unknown_outcome() {
+        let (mut output, mut reader) = tokio::io::duplex(1024);
+        let mut gate = ReceiveOutput {
+            output: &mut output,
+            operation: admitted_operation(),
+            phase: ReceivePhase::Stateful(Advertisement::default()),
+            held: Vec::new(),
+        };
+        let advertisement = advertised_refs();
+        gate.write_all(&advertisement).await.unwrap();
+        let mut forwarded = vec![0; advertisement.len()];
+        timeout(
+            Duration::from_millis(100),
+            reader.read_exact(&mut forwarded),
+        )
+        .await
+        .expect("advertisement was not forwarded")
+        .unwrap();
+        assert_eq!(forwarded, advertisement);
+
+        // A receive-pack error report after the advertisement is a terminal answer too.
+        let error = packet(b"ERR push declined\n");
+        gate.write_all(&error).await.unwrap();
+        let mut held = vec![0; error.len()];
+        assert!(
+            timeout(Duration::from_millis(10), reader.read_exact(&mut held))
+                .await
+                .is_err(),
+            "error report escaped before the barrier"
+        );
+        gate.unknown().await.unwrap();
+        drop(gate);
+        drop(output);
+        let mut unknown = Vec::new();
+        reader.read_to_end(&mut unknown).await.unwrap();
+        let text = String::from_utf8_lossy(&unknown);
+        assert!(text.contains("write outcome unknown; fetch before retrying"));
+        assert!(!text.contains("push declined"));
+    }
+
+    #[test]
+    fn advertisement_scanner_finds_the_flush_packet_across_writes() {
+        let advertisement = advertised_refs();
+        let status = packet(b"unpack ok\n");
+        let stream = [advertisement.clone(), status.clone()].concat();
+        for chunk in [1, 2, 3, 4, 5, 7, 16, stream.len()] {
+            let mut scanner = Advertisement::default();
+            let boundary: usize = stream.chunks(chunk).map(|part| scanner.split(part)).sum();
+            assert_eq!(boundary, advertisement.len(), "chunk size {chunk}");
+            assert!(scanner.complete());
+            assert_eq!(scanner.split(&status), 0);
+        }
+    }
+
+    #[test]
+    fn advertisement_scanner_holds_the_rest_of_an_unparseable_stream() {
+        let mut scanner = Advertisement::default();
+        assert_eq!(scanner.split(b"0001"), 4);
+        assert!(scanner.complete());
+    }
+
+    #[tokio::test]
+    async fn read_session_output_is_not_held() {
+        let (mut output, mut reader) = tokio::io::duplex(1024);
+        let mut gate = ReceiveOutput {
+            output: &mut output,
+            operation: pending_operation(),
+            phase: ReceivePhase::PassThrough,
+            held: Vec::new(),
+        };
+        *gate.operation.state.lock().unwrap() = HookState::default();
+        gate.write_all(b"PACK data\n").await.unwrap();
+        let mut bytes = [0; 10];
+        let count = reader.read(&mut bytes).await.unwrap();
+        assert_eq!(&bytes[..count], b"PACK data\n");
+    }
+
+    #[tokio::test]
+    async fn up_to_date_receive_holds_status_until_release() {
+        let (mut output, mut reader) = tokio::io::duplex(1024);
+        let mut gate = ReceiveOutput {
+            output: &mut output,
+            operation: pending_operation(),
+            phase: ReceivePhase::Stateless,
+            held: Vec::new(),
+        };
+        let state = HookState::default();
+        *gate.operation.state.lock().unwrap() = state;
+        gate.write_all(b"Everything up-to-date\n").await.unwrap();
+        let mut bytes = [0; 23];
+        assert!(timeout(Duration::from_millis(10), reader.read(&mut bytes))
+            .await
+            .is_err());
+        gate.release().await.unwrap();
+        let count = reader.read(&mut bytes).await.unwrap();
+        assert_eq!(&bytes[..count], b"Everything up-to-date\n");
+    }
+
+    #[tokio::test]
     async fn discarded_receive_status_never_reports_success() {
         let (mut output, mut reader) = tokio::io::duplex(1024);
         let mut gate = ReceiveOutput {
             output: &mut output,
             operation: pending_operation(),
+            phase: ReceivePhase::Stateless,
             held: Vec::new(),
         };
         gate.write_all(b"ok refs/heads/main\n").await.unwrap();
@@ -1231,6 +1657,7 @@ mod admission_tests {
             let mut gate = ReceiveOutput {
                 output: &mut output,
                 operation: pending_operation(),
+                phase: ReceivePhase::Stateless,
                 held: status.to_vec(),
             };
             gate.unknown().await.unwrap();
@@ -1252,6 +1679,7 @@ mod admission_tests {
         let mut gate = ReceiveOutput {
             output: &mut output,
             operation: operation.clone(),
+            phase: ReceivePhase::Stateless,
             held: vec![0; codeyard_database::limits::MAX_JSON],
         };
         assert!(gate.write_all(b"x").await.is_err());

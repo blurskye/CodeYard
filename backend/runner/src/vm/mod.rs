@@ -734,18 +734,43 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "needs kvm and a windows image"]
+    #[ignore = "needs qemu and a provisioned Windows image; KVM or explicitly allowed TCG"]
     async fn windows_boot_step_and_copy() {
         let base = std::env::var("CODEYARD_WINDOWS_IMAGE").expect("set CODEYARD_WINDOWS_IMAGE");
         let platform: Platform = format!("vm:{base}").parse().unwrap();
-        let mut vm = JobVm::start(&platform, &Options::default()).await.unwrap();
+        let mut options = Options {
+            allow_tcg: std::env::var("CODEYARD_VM_ALLOW_TCG").as_deref() == Ok("1"),
+            ..Options::default()
+        };
+        if let Ok(seconds) = std::env::var("CODEYARD_VM_BOOT_TIMEOUT_SECONDS") {
+            let seconds: u64 = seconds.parse().expect("VM boot timeout must be seconds");
+            assert!(
+                (1..=7200).contains(&seconds),
+                "VM boot timeout must be 1..=7200 seconds"
+            );
+            options.boot_timeout = Duration::from_secs(seconds);
+        }
+        let mut vm = JobVm::start(&platform, &options).await.unwrap();
+        let exit = vm
+            .run(
+                "if (-not $IsWindows) { throw 'Expected a Windows guest' }\nWrite-Output ([Environment]::OSVersion.VersionString)\nWrite-Output ('PowerShell ' + $PSVersionTable.PSVersion)\ngit --version\nif ($LASTEXITCODE -ne 0) { throw 'Git is unavailable' }\nnode --version\nif ($LASTEXITCODE -ne 0) { throw 'Node is unavailable' }",
+                &BTreeMap::new(),
+                WORKSPACE,
+                |stream, line| eprintln!("{stream:?}: {line}"),
+            )
+            .await
+            .unwrap();
+        assert_eq!(exit, 0);
         let input = tempfile::tempdir().unwrap();
         fs::write(input.path().join(".hidden"), "input").unwrap();
         vm.copy_in(input.path(), WORKSPACE).await.unwrap();
         let mut output = Vec::new();
         let env = BTreeMap::from([("TEST_VALUE".into(), "hello ' world".into())]);
         let exit = vm.run("Get-Content .hidden\nWrite-Output $env:TEST_VALUE\nSet-Content result.txt 'copied back'\nexit 7", &env, WORKSPACE,
-            |stream, line| output.push((stream, line.to_owned()))).await.unwrap();
+            |stream, line| {
+                eprintln!("{stream:?}: {line}");
+                output.push((stream, line.to_owned()));
+            }).await.unwrap();
         assert_eq!(exit, 7);
         assert!(output.contains(&(Stream::Stdout, "input".into())));
         assert!(output.contains(&(Stream::Stdout, "hello ' world".into())));
@@ -757,5 +782,8 @@ mod tests {
         let files = vm.files.0.path().to_path_buf();
         vm.stop().await.unwrap();
         assert!(!files.exists());
+        eprintln!(
+            "Windows boot, tools, upload, environment, exit status, download and cleanup passed"
+        );
     }
 }

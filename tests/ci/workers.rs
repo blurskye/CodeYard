@@ -385,7 +385,10 @@ async fn repository_refused_with_claim(
     match reply.result {
         Err(codeyard_git_storage::wire::Failure::Repository(error)) => {
             assert_eq!(error.kind, ErrorKind::Invalid);
-            assert!(error.message.contains(message), "{error}");
+            assert!(
+                error.message.contains(message),
+                "expected {message:?}: {error}"
+            );
         }
         result => panic!("expected repository RPC refusal, got {result:?}"),
     }
@@ -923,6 +926,9 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
         let message = match operation {
             codeyard_git_storage::wire::Operation::ReplicaPack { .. } => {
                 "holds no copy of this repository"
+            }
+            codeyard_git_storage::wire::Operation::Initialize { source: None, .. } => {
+                "running CI claim"
             }
             _ => "requires a web or ssh node",
         };
@@ -2838,7 +2844,7 @@ async fn shutdown_with_blocked_workspace_cleanup(pool: &codeyard_database::DbPoo
         let workers = workers.clone();
         async move { workers.shutdown().await }
     });
-    tokio::time::timeout(Duration::from_secs(10), async {
+    let finished = tokio::time::timeout(Duration::from_secs(10), async {
         loop {
             let run = codeyard_db_actions::ci::get_ci_run_by_run_id(pool, run.run_id)
                 .await
@@ -2850,8 +2856,14 @@ async fn shutdown_with_blocked_workspace_cleanup(pool: &codeyard_database::DbPoo
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     })
-    .await
-    .unwrap();
+    .await;
+    assert!(
+        finished.is_ok(),
+        "shutdown did not fail the run: {:?}",
+        codeyard_db_actions::ci::get_ci_run_by_run_id(pool, run.run_id)
+            .await
+            .unwrap()
+    );
     assert!(workspace.join("home/dependencies/artifact").exists());
     assert!(!stopping.is_finished());
     if matches!(pool, codeyard_database::DbPool::Sqlite(_)) {
@@ -3097,7 +3109,7 @@ async fn database_workers_recheck_membership_before_consuming_runs() {
                 .await
                 .unwrap();
             }
-            tokio::time::timeout(Duration::from_secs(15), async {
+            let finished = tokio::time::timeout(Duration::from_secs(15), async {
                 loop {
                     let current =
                         codeyard_db_actions::ci::get_ci_run_by_run_id(pool, queued.run_id)
@@ -3119,8 +3131,14 @@ async fn database_workers_recheck_membership_before_consuming_runs() {
                     tokio::time::sleep(Duration::from_millis(50)).await;
                 }
             })
-            .await
-            .unwrap();
+            .await;
+            assert!(
+                finished.is_ok(),
+                "{state}: {:?}",
+                codeyard_db_actions::ci::get_ci_run_by_run_id(pool, queued.run_id)
+                    .await
+                    .unwrap()
+            );
         }
         workers.shutdown().await.unwrap();
         context.iroh.close().await;
@@ -5289,7 +5307,7 @@ struct LogReplyProxy {
     peer: iroh::EndpointAddr,
     stall: bool,
     heartbeat: bool,
-    logs: mpsc::UnboundedSender<()>,
+    logs: mpsc::UnboundedSender<i64>,
 }
 
 impl ProtocolHandler for LogReplyProxy {
@@ -5304,10 +5322,14 @@ impl ProtocolHandler for LogReplyProxy {
                 .unwrap();
         let request: serde_json::Value = serde_json::from_slice(&header).unwrap();
         let logs = request["operation"].get("Logs").is_some();
+        let id = request["operation"]
+            .get("Logs")
+            .or_else(|| request["operation"].get("Heartbeat"))
+            .and_then(|operation| operation["id"].as_i64());
         if (logs && self.stall)
             || (self.heartbeat && request["operation"].get("Heartbeat").is_some())
         {
-            let _ = self.logs.send(());
+            let _ = self.logs.send(id.expect("log or heartbeat run id"));
             let _ = recv.read_to_end(1).await;
             connection.closed().await;
             return Ok(());
@@ -5331,7 +5353,7 @@ impl ProtocolHandler for LogReplyProxy {
                 .await
                 .unwrap();
         if logs {
-            let _ = self.logs.send(());
+            let _ = self.logs.send(id.expect("log run id"));
             connection.close(0u32.into(), b"lost log reply");
         } else {
             codeyard_nodes::link::write_frame(
@@ -5701,10 +5723,11 @@ async fn stalled_remote_logs_fail_success_and_do_not_delay_timeout_or_cancellati
         let workers = CiWorkers::new(queue.clone(), config.clone(), true, fixture.root.path());
         workers.startup().await.unwrap();
         // Claiming and starting the run only has to finish; the bounds under test follow.
-        tokio::time::timeout(Duration::from_secs(30), received.recv())
-            .await
-            .unwrap()
-            .unwrap();
+        tokio::time::timeout(Duration::from_secs(30), async {
+            while received.recv().await.unwrap() != run.id {}
+        })
+        .await
+        .unwrap();
         if outcome == "shutdown" {
             tokio::time::timeout(Duration::from_secs(5), workers.shutdown())
                 .await
@@ -5739,14 +5762,11 @@ async fn stalled_remote_logs_fail_success_and_do_not_delay_timeout_or_cancellati
             .unwrap();
             workers.shutdown().await.unwrap();
         }
-        assert!(
-            codeyard_db_actions::ci::get_ci_run_by_run_id(fixture.pool(), run.run_id)
-                .await
-                .unwrap()
-                .unwrap()
-                .completed_at
-                .is_some()
-        );
+        let current = codeyard_db_actions::ci::get_ci_run_by_run_id(fixture.pool(), run.run_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(current.completed_at.is_some(), "{outcome}: {current:?}");
     }
     endpoint.close().await;
     router.shutdown().await.unwrap();

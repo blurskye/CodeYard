@@ -105,6 +105,23 @@ pub fn protocol(value: Option<&str>) -> Result<Option<&str>> {
     }
 }
 
+/// Git's largest pkt-line, including its four-byte header.
+const MAX_PACKET_LENGTH: usize = 65520;
+
+/// The length encoded in a pkt-line header. The header is exactly four hexadecimal digits and
+/// the length includes them. Values below four are the protocol's flush and delimiter markers
+/// (or invalid); each caller decides which ones it accepts. A non-hex or oversized header is
+/// not a pkt-line.
+pub fn parse_packet_length(header: &[u8]) -> Result<usize> {
+    ensure!(
+        header.len() == 4 && header.iter().all(|byte| byte.is_ascii_hexdigit()),
+        "invalid Git packet header"
+    );
+    let length = usize::from_str_radix(std::str::from_utf8(header)?, 16)?;
+    ensure!(length <= MAX_PACKET_LENGTH, "invalid Git packet length");
+    Ok(length)
+}
+
 pub fn canonical_db_key(public_key: &str, key_type: &str) -> Result<String> {
     let key = codeyard_security::ssh_keys::parse_public_key(public_key)?;
     ensure!(
@@ -241,6 +258,35 @@ mod tests {
             "sh alice/repo",
         ] {
             assert!(parse_command(command).is_err(), "{command}");
+        }
+    }
+
+    #[test]
+    fn packet_lengths_are_four_hex_digits_within_git_limits() {
+        for (header, length) in [
+            (&b"0000"[..], 0),
+            (&b"0001"[..], 1),
+            (&b"0002"[..], 2),
+            (&b"0004"[..], 4),
+            (&b"000e"[..], 14),
+            (&b"000E"[..], 14),
+            (&b"fff0"[..], 65520),
+        ] {
+            assert_eq!(parse_packet_length(header).unwrap(), length, "{header:?}");
+        }
+        // `from_str_radix` accepts a leading sign; a pkt-line header does not.
+        for header in [
+            &b"+001"[..],
+            &b"-001"[..],
+            &b" 001"[..],
+            &b"0x01"[..],
+            &b"00g0"[..],
+            &b"000"[..],
+            &b"00000"[..],
+            &b"fff1"[..],
+            &b"ffff"[..],
+        ] {
+            assert!(parse_packet_length(header).is_err(), "{header:?}");
         }
     }
 

@@ -17,15 +17,12 @@ const MAX_ADVERTISEMENT_BYTES: usize = 8 * 1024 * 1024;
 
 fn packet(input: &mut &[u8]) -> Result<Option<Vec<u8>>> {
     ensure!(input.len() >= 4, "Truncated Git packet");
-    let size = usize::from_str_radix(std::str::from_utf8(&input[..4])?, 16)?;
+    let size = codeyard_git::protocol::parse_packet_length(&input[..4])?;
     *input = &input[4..];
     if size == 0 {
         return Ok(None);
     }
-    ensure!(
-        (4..=65520).contains(&size) && input.len() >= size - 4,
-        "Invalid Git packet"
-    );
+    ensure!(size >= 4 && input.len() >= size - 4, "Invalid Git packet");
     let payload = input[..size - 4].to_vec();
     *input = &input[size - 4..];
     Ok(Some(payload))
@@ -149,13 +146,13 @@ fn unpack(mut input: Vec<u8>) -> Result<Vec<u8>> {
     let mut acknowledged = false;
     while read < input.len() {
         ensure!(input.len() - read >= 4, "Truncated Git packet");
-        let size = usize::from_str_radix(std::str::from_utf8(&input[read..read + 4])?, 16)?;
+        let size = codeyard_git::protocol::parse_packet_length(&input[read..read + 4])?;
         read += 4;
         if size == 0 {
             continue;
         }
         ensure!(
-            (4..=65520).contains(&size) && input.len() - read >= size - 4,
+            size >= 4 && input.len() - read >= size - 4,
             "Invalid Git packet"
         );
         let end = read + size - 4;

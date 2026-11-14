@@ -32,6 +32,8 @@
 #   E2E_BUILD_ONLY  1: build, then stop.
 #   E2E_GITHUB_ONLY 1: run only the real GitHub clients and their single-node fixtures.
 #   E2E_ACTIONS_ONLY 1: run only real cache/artifact actions on SQLite and PostgreSQL.
+#   E2E_PREVIOUS_BINARY  optional previous codeyard binary for mixed-version cluster checks.
+#   E2E_PREVIOUS_ROUTER_BINARY  optional older router binary for the public cells round.
 #   E2E_KEEP        1: keep the temporary directory (server log, repositories).
 #   E2E_VERBOSE     1: print the log of passing steps as well.
 #   E2E_TIMEOUT     seconds after which the whole run is stopped (default 1500), so a
@@ -96,7 +98,7 @@ RESULTS=()
 STEP_NO=0
 ROUND=build
 ROUND_BLOCKED=0
-declare -A SERVER_PIDS=() HTTP_PORTS=() SSH_PORTS=() IROH_PORTS=()
+declare -A SERVER_PIDS=() HTTP_PORTS=() SSH_PORTS=() IROH_PORTS=() NODE_BINARIES=()
 CLUSTER_NODES=(web1 store1 store2 ci1)
 PG_DB=''
 PG_OWNED=()
@@ -500,7 +502,10 @@ configure_node() {
         "CI_MAX_ACTIVE_RUNS=2" "CI_RUN_TIMEOUT_SECONDS=300" "WEBHOOKS_ALLOW_PRIVATE=true"
     )
     if [[ -n ${CI_PROCESS_CGROUP_ROOT:-} ]]; then
-        NODE_ENV+=("CI_PROCESS_CGROUP_ROOT=$CI_PROCESS_CGROUP_ROOT")
+        local cgroup_root=$CI_PROCESS_CGROUP_ROOT/$node
+        mkdir -p "$cgroup_root" || return 1
+        printf '+cpu +memory +pids' >"$cgroup_root/cgroup.subtree_control" || return 1
+        NODE_ENV+=("CI_PROCESS_CGROUP_ROOT=$cgroup_root")
     fi
     # node_exec clears inherited variables; explicitly retain a requested debug stack
     # budget, just as the integration-test processes do.
@@ -523,7 +528,12 @@ configure_node() {
         case $node in
             web1) NODE_ENV+=("CLUSTER_NODES=$(get store2_public):storage:store2") ;;
             store2) NODE_ENV+=("NODE_KEY=$(get store2_key)") ;;
-            ci1) NODE_ENV+=("CLUSTER_JOIN_TOKEN=$(get worker_token)") ;;
+            ci1)
+                NODE_ENV+=("CLUSTER_JOIN_TOKEN=$(get worker_token)")
+                if [[ -s $STATE/runner_peers ]]; then
+                    NODE_ENV+=("CLUSTER_PEERS=$(get runner_peers)")
+                fi
+                ;;
             # One run at a time each, so queued runs spread over both runners.
             r1 | r2) NODE_ENV+=("CLUSTER_JOIN_TOKEN=$(get runner_token)" "CI_MAX_ACTIVE_RUNS=1") ;;
         esac
@@ -630,7 +640,7 @@ start_server() { # inline: starts a node and waits for its actual services
         # hide the server PID from this harness's signal and cleanup ownership.
         NODE_ENV+=("LD_PRELOAD=$CODEYARD_TEST_FAKETIME_LIBRARY" "FAKETIME=+5m" "FAKETIME_DONT_FAKE_MONOTONIC=1")
     fi
-    (cd "$dir" && node_exec "$BIN" serve < /dev/null) >>"$dir/server.log" 2>&1 &
+    (cd "$dir" && node_exec "${NODE_BINARIES[$node]:-$BIN}" serve < /dev/null) >>"$dir/server.log" 2>&1 &
     pid=$!
     SERVER_PIDS[$node]=$pid
     while ((waited < 120)); do
@@ -2823,6 +2833,14 @@ t_cluster_github_clients() {
     SSH_URL=ssh://git@127.0.0.1:${SSH_PORTS[web2]}
     start_server web2 || return 1
     CLUSTER_NODES+=(web2)
+    # Database-free runners need both core addresses before testing core loss.
+    local primary_key backup_key
+    primary_key=$(pg_query "SELECT public_key FROM nodes WHERE name='web1'") || return 1
+    backup_key=$(pg_query "SELECT public_key FROM nodes WHERE name='web2'") || return 1
+    [[ $primary_key =~ ^[0-9a-f]{64}$ && $backup_key =~ ^[0-9a-f]{64}$ ]] || return 1
+    put runner_peers "$primary_key@127.0.0.1:${IROH_PORTS[web1]},$backup_key@127.0.0.1:${IROH_PORTS[web2]}"
+    stop_server ci1 || return 1
+    start_server ci1 || return 1
     # The helper drives real gh and Git clients through web2, kills web1 during
     # traffic, and verifies every acknowledged issue and clone afterward.
     E2E_STOP_WEB_PID=$old_pid t_github_clients || rc=$?
@@ -2835,6 +2853,28 @@ t_cluster_github_clients() {
         SSH_URL=ssh://git@127.0.0.1:${SSH_PORTS[web1]}
     fi
     ((rc == 0))
+}
+
+t_cluster_rolling_upgrade() {
+    needs_ci_runs || return
+    local node destination expected sha id
+    for node in web1 store1 store2 ci1; do
+        expected=$(git_with_token read ls-remote "$BASE/alice/ci-demo.git" refs/heads/main | cut -f1) || return 1
+        [[ $expected =~ ^[0-9a-f]{40}$ ]] || return 1
+        stop_server "$node" || return 1
+        unset "NODE_BINARIES[$node]"
+        start_server "$node" || return 1
+        destination=$RUN/work/upgrade-$node
+        git_with_token read clone -q "$BASE/alice/ci-demo.git" "$destination" || return 1
+        [[ $(git_as alice -C "$destination" rev-parse HEAD) == "$expected" ]] || return 1
+        git_as alice -C "$destination" commit -q --allow-empty -m "CI after upgrading $node" || return 1
+        git_with_token write -C "$destination" push -q origin main || return 1
+        sha=$(git_as alice -C "$destination" rev-parse HEAD) || return 1
+        id=$(pg_query "SELECT run_id FROM ci_runs WHERE head_sha='$sha' AND event='push'") || return 1
+        [[ $id =~ ^[0-9a-f-]{36}$ ]] || return 1
+        wait_ci_run "$id" || return 1
+        assert_ci_worker "$id" || return 1
+    done
 }
 
 # Existing asynchronous repositories keep their fixtures. New repositories use three
@@ -2994,7 +3034,7 @@ PYDATA
 
 t_cluster_graceful_shutdown() {
     needs_ci_runs || return
-    local source=$RUN/work/shutdown-ci name=quorum-survival-http publisher=$RUN/work/quorum-survival-http
+    local source=$RUN/work/shutdown-ci name=quorum-survival-http publisher=$RUN/work/shutdown-push
     local id deadline child primary pid old new reply status
     as alice req POST /api/repos --accept json --status 201 --json '{"name":"shutdown-ci","is_private":true}'
     mkdir -p "$source/.github/workflows"
@@ -3023,8 +3063,7 @@ YAML
     done
     [[ $id =~ ^[0-9a-f-]{36}$ && $child =~ ^[0-9]+$ ]]
     as alice req GET "/api/ci/jobs/$id" --accept json --json-eq status=running
-    git_with_token read -C "$publisher" fetch -q "$BASE/alice/$name.git" main || return 1
-    git_as alice -C "$publisher" merge --ff-only -q FETCH_HEAD || return 1
+    git_with_token read clone -q "$BASE/alice/$name.git" "$publisher" || return 1
     old=$(git_with_token read ls-remote "$BASE/alice/$name.git" refs/heads/main | cut -f1)
     # A fresh 20 MiB object guarantees the pause occurs before the push is complete.
     "$PYTHON" -I - "$publisher/shutdown.bin" <<'PYDATA' || return 1
@@ -3057,6 +3096,7 @@ PYDATA
     fi
     start_server "$primary" || return 1
     start_server ci1 || return 1
+    wait_quorum_ready "$name" || return 1
     # Another write proves both the repository locks and quorum admission were released.
     git_as alice -C "$publisher" commit -q --allow-empty -m 'Write after graceful shutdown' || return 1
     git_with_token write -C "$publisher" push -q "$BASE/alice/$name.git" main
@@ -3276,6 +3316,13 @@ run_round() {
 
 run_cluster_round() {
     CLUSTER_NODES=(web1 store1 store2 ci1)
+    NODE_BINARIES=()
+    if [[ -n ${E2E_PREVIOUS_BINARY:-} ]]; then
+        local previous node
+        previous=$(realpath -e -- "$E2E_PREVIOUS_BINARY") || return 1
+        [[ -f $previous && -x $previous ]] || { echo 'The previous binary is not executable' >&2; return 1; }
+        for node in "${CLUSTER_NODES[@]}"; do NODE_BINARIES[$node]=$previous; done
+    fi
     ROUND=cluster
     ROUND_BLOCKED=0
     STEP_NO=0
@@ -3314,6 +3361,9 @@ run_cluster_round() {
     step -f 'ci: workflow pushed through web1 with a disposable secret' t_cluster_ci_push
     step -f 'ci: ci1 runs it; logs, page and commit status reach web1' t_cluster_ci_result
     step 'ci: fork waits for approval, runs on ci1 without secrets' t_cluster_fork_ci
+    if [[ -n ${E2E_PREVIOUS_BINARY:-} ]]; then
+        step -f -i 'upgrade: Git and completed CI after each node upgrade' t_cluster_rolling_upgrade
+    fi
     step 'organization: created for real GitHub clients' t_org
     step -i 'web loss: real gh and Git continue through web2 while web1 dies' t_cluster_github_clients
     step -f 'replica: setting 2 keeps a current copy on store2' t_replica_create

@@ -47,8 +47,8 @@ impl ProcessGroup {
         Ok(())
     }
 
-    /// Sends SIGINT, as a terminal's Ctrl+C does, and waits up to `grace` for the group to end.
-    /// True when it ended.
+    /// Sends SIGINT and lets the command finish its cleanup before stopping descendants.
+    /// True when the command exited within `grace`.
     pub async fn interrupt(
         &mut self,
         child: &mut tokio::process::Child,
@@ -58,11 +58,13 @@ impl ProcessGroup {
             return Ok(true);
         };
         signal_group(id, INT)?;
-        if wait_for_group(child, id, grace).await? {
-            self.disarm();
-            return Ok(true);
+        match tokio::time::timeout(grace, child.wait()).await {
+            Ok(status) => {
+                status?;
+                Ok(true)
+            }
+            Err(_) => Ok(false),
         }
-        Ok(false)
     }
 
     pub async fn stop(&mut self, child: &mut tokio::process::Child) -> std::io::Result<()> {

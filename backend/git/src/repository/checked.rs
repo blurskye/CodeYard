@@ -1,7 +1,8 @@
 //! Merge commits, repository creation and CI checkouts from exact revisions.
 //! Ref updates go through `update-ref` transactions that check the old value.
 use super::{
-    find_commit_checked, open_quarantined, process, COMMIT_WALK_TIMEOUT, MAX_COMMIT_WALK_BYTES,
+    durable, find_commit_checked, open_quarantined, process, COMMIT_WALK_TIMEOUT,
+    MAX_COMMIT_WALK_BYTES,
 };
 use anyhow::{anyhow, bail, ensure, Result};
 use std::{
@@ -544,7 +545,7 @@ pub(super) async fn commit_tree_bytes(
     oid_output(&output)
 }
 
-/// Creates a bare repository. Forks fetch refs into a fresh repository instead
+/// Creates a durable bare repository. Forks fetch refs into a fresh repository instead
 /// of copying the source's config, hooks or alternates.
 pub async fn initialize_repository(
     path: &Path,
@@ -573,7 +574,12 @@ async fn join_pool(path: &Path, pool: &Path, source: &str) -> Result<()> {
     );
     let _lock = super::locks::lock(pool).await;
     if !tokio::fs::try_exists(pool.join("objects")).await? {
-        tokio::fs::create_dir_all(pools).await?;
+        let directory = pools.to_owned();
+        process::blocking_until(Instant::now() + COMMAND_TIMEOUT, move || {
+            codeyard_security::fs::durable_dir(&directory)?;
+            Ok(())
+        })
+        .await?;
         // A pool appears only complete, with its no-prune settings, so no Git command ever
         // collects a member's objects from it.
         let staging = tempfile::Builder::new()
@@ -593,7 +599,9 @@ async fn join_pool(path: &Path, pool: &Path, source: &str) -> Result<()> {
             let (status, _) = command(staging.path(), &["config", key, value], b"", None).await?;
             ensure!(status.success(), "Git object pool configuration failed");
         }
-        tokio::fs::rename(staging.keep(), pool).await?;
+        sync_initialized_repository(staging.path()).await?;
+        tokio::fs::rename(staging.path(), pool).await?;
+        durable::sync_ancestors(pool, pools, Instant::now() + COMMAND_TIMEOUT).await?;
     }
     let (status, _) = command(
         pool,
@@ -612,6 +620,9 @@ async fn join_pool(path: &Path, pool: &Path, source: &str) -> Result<()> {
     )
     .await?;
     ensure!(status.success(), "Git object pool update failed");
+    // A member borrows whatever the pool holds, so the pool's refs and object entries must
+    // be durable before a member ref is.
+    sync_fetched_refs(pool, Instant::now() + COMMAND_TIMEOUT).await?;
     // Relative, so a backup or a restored copy of the whole storage root keeps working.
     tokio::fs::write(
         path.join("objects/info/alternates"),
@@ -635,6 +646,7 @@ pub async fn initialize_repository_copy(
     if !status.success() {
         bail!("Git repository initialization failed");
     }
+    let fetched = source.is_some();
     if let Some(source) = source {
         ensure!(
             tokio::fs::try_exists(source).await?,
@@ -678,7 +690,39 @@ pub async fn initialize_repository_copy(
             "The source default branch changed while copying"
         );
     }
+    sync_initialized_repository(path).await?;
+    if fetched {
+        sync_fetched_refs(path, Instant::now() + COMMAND_TIMEOUT).await?;
+    }
     Ok(())
+}
+
+// core.fsync=all covers Git objects and refs, but not the HEAD/config created by init
+// or an alternates file we write. Sync that bounded metadata set, and the directory that
+// names the new repository, before publishing it. The fixed ref directories are required:
+// a rename replaces their entries, so a missing one is a failure, not a skip.
+async fn sync_initialized_repository(path: &Path) -> Result<()> {
+    durable::RepositorySync::new()
+        .required_file("HEAD")
+        .required_file("config")
+        .optional_file("shallow")
+        .optional_file("objects/info/alternates")
+        .required_dir("refs")
+        .required_dir("refs/heads")
+        .required_dir("refs/tags")
+        .objects()
+        .parent()
+        .sync(path, Instant::now() + COMMAND_TIMEOUT)
+        .await
+}
+
+/// Makes the refs a fetch just wrote durable, including nested names and the object entries
+/// the transfer created. `sync_initialized_repository` covers only the fixed init set, and a
+/// fetch can write `refs/heads/topic/nested` and a new pack.
+async fn sync_fetched_refs(path: &Path, deadline: Instant) -> Result<()> {
+    let owned = path.to_owned();
+    let refs = process::blocking_until(deadline, move || super::list_mirror_refs(&owned)).await?;
+    durable::sync_refs(path, refs.into_keys().collect(), deadline).await
 }
 
 /// The refs of a repository with their objects, and its HEAD, as Git prints them.
@@ -708,9 +752,7 @@ pub async fn copy_repository(path: &Path, source: &Path, timeout: Duration) -> R
     let branch = head
         .strip_prefix("refs/heads/")
         .ok_or_else(|| anyhow!("Git HEAD is not a branch"))?;
-    validate_merge_revision(branch, "0000000000000000000000000000000000000000")?;
-    let (status, _) = command(path, &["init", "--bare", "--quiet"], b"", None).await?;
-    ensure!(status.success(), "Git repository initialization failed");
+    initialize_repository(path, None, branch).await?;
     let mut fetch = process::git_command()?;
     fetch.arg("--git-dir").arg(path).args([
         "-c",
@@ -725,9 +767,8 @@ pub async fn copy_repository(path: &Path, source: &Path, timeout: Duration) -> R
     ]);
     let (status, _) = process::buffered(fetch, b"", MAX_OUTPUT, timeout).await?;
     ensure!(status.success(), "Git repository copy failed");
-    let (status, _) = command(path, &["symbolic-ref", "HEAD", &head], b"", None).await?;
-    ensure!(status.success(), "Git HEAD update failed");
-    same_refs(path, source).await
+    same_refs(path, source).await?;
+    sync_fetched_refs(path, Instant::now() + timeout).await
 }
 
 /// Fails unless both repositories list the same refs at the same objects and the same HEAD.
@@ -826,7 +867,10 @@ pub async fn rewrite_template_history(
         status.success() && output.is_empty(),
         "Template contains unreachable history"
     );
-    Ok(())
+    // The ref rewrites and `gc` changed ref files, the directories that hold them and the
+    // object entries of the repacked store. None of that is synced by Git, so make the
+    // finished template durable before it is copied or published.
+    sync_fetched_refs(path, Instant::now() + COMMAND_TIMEOUT).await
 }
 
 #[cfg(test)]
@@ -1168,52 +1212,64 @@ async fn publish_prepared_ref(
     ensure!(prepared.head == head, "Prepared commit changed");
     let current = current_reference(path, reference).await?;
     if current.as_deref() == Some(head) {
-        return Ok(());
+        // A retry after an interrupted publication still makes the earlier ref durable.
+        return sync_prepared_ref(path, reference).await;
     }
     if current.as_deref() != expected_head {
         return Err(PullHeadConflict.into());
     }
 
-    let destination = std::path::absolute(path)?;
-    ensure!(destination.is_dir(), "Repository storage is unavailable");
-    let destination = destination
+    let source = std::path::absolute(prepared.path())?;
+    let source = source
         .to_str()
-        .ok_or_else(|| anyhow!("Invalid destination storage path"))?;
-    let lease = format!(
-        "--force-with-lease={reference}:{}",
-        expected_head.unwrap_or_default()
-    );
-    let refspec = format!("{TEMPORARY_PULL_HEAD}:{reference}");
+        .ok_or_else(|| anyhow!("Invalid source storage path"))?;
+    // Transfer only objects, not a ref. The shared CAS publisher makes their directory
+    // entries durable before exposing the commit; a receive-pack push cannot provide that
+    // ordering when its hooks are disabled.
     let (status, _) = command(
-        prepared.path(),
+        path,
         &[
-            "push",
-            "--porcelain",
-            "--no-verify",
-            &lease,
+            "-c",
+            "fetch.fsckObjects=true",
+            "fetch",
+            "--no-tags",
+            "--no-write-fetch-head",
+            "--refmap=",
             "--",
-            destination,
-            &refspec,
+            source,
+            head,
         ],
         b"",
         None,
     )
     .await?;
-    if status.success() {
-        ensure!(
-            current_reference(path, reference).await?.as_deref() == Some(head),
-            "Git pull request publication returned the wrong commit"
-        );
-        return Ok(());
+    ensure!(status.success(), "Git prepared object transfer failed");
+    let absent = git2::Oid::ZERO_SHA1.to_string();
+    match publish_ref(
+        path,
+        "publish prepared commit",
+        reference,
+        Some(head),
+        expected_head.unwrap_or(&absent),
+    )
+    .await
+    {
+        Ok(()) => Ok(()),
+        Err(error) if error.is::<RefConflict>() => {
+            if current_reference(path, reference).await?.as_deref() == Some(head) {
+                sync_prepared_ref(path, reference).await
+            } else {
+                Err(PullHeadConflict.into())
+            }
+        }
+        Err(error) => Err(error),
     }
-    let current = current_reference(path, reference).await?;
-    if current.as_deref() == Some(head) {
-        return Ok(());
-    }
-    if current.as_deref() != expected_head {
-        return Err(PullHeadConflict.into());
-    }
-    bail!("Git pull request publication failed")
+}
+
+/// Repeats the barrier when a previous prepared publication already moved its ref.
+async fn sync_prepared_ref(path: &Path, reference: &str) -> Result<()> {
+    let names = vec![reference.to_owned()];
+    durable::sync_refs(path, names, Instant::now() + COMMAND_TIMEOUT).await
 }
 
 pub async fn publish_ref(
@@ -1270,6 +1326,14 @@ pub async fn publish_branch_rename(path: &Path, old: &str, new: &str, target: &s
         if current_reference(path, &new_ref).await?.as_deref() == Some(target)
             && (prefix_related || current_reference(path, &old_ref).await?.is_none())
         {
+            // The move may have committed before the timeout, and its barrier then never
+            // ran. Both names matter: one is now a file and the other a directory entry.
+            durable::sync_refs(
+                path,
+                vec![old_ref.clone(), new_ref.clone()],
+                Instant::now() + COMMAND_TIMEOUT,
+            )
+            .await?;
             return Ok(());
         }
     }
@@ -1425,6 +1489,23 @@ async fn run_ref_command(
     failure: &str,
     expected: &[(&str, Option<&str>)],
 ) -> Result<()> {
+    // The refs this command publishes and syncs afterwards. A multi-ref transaction can
+    // expand into more ancestor directories than one barrier holds, so plan the same names
+    // before the refs move rather than discovering the limit after the command committed.
+    let names = expected
+        .iter()
+        .map(|(reference, _)| (*reference).to_owned())
+        .collect::<Vec<_>>();
+    durable::RepositorySync::refs(names.clone())
+        .preflight(path, Instant::now() + COMMAND_TIMEOUT)
+        .await?;
+    // A ref must never be published before the object entries that hold its target. The
+    // objects exist by now (a merge commit, a fetched pack, an imported write); make their
+    // entries durable first, then write the refs, then sync the ref entries themselves.
+    durable::RepositorySync::new()
+        .objects()
+        .sync(path, Instant::now() + COMMAND_TIMEOUT)
+        .await?;
     let mut command = process::git_command()?;
     command.arg("--git-dir").arg(path).args(args);
     let output = process::run(command, input, MAX_OUTPUT, COMMAND_TIMEOUT).await?;
@@ -1445,7 +1526,9 @@ async fn run_ref_command(
         }
         bail!("Git ref publication failed: {diagnostics}");
     }
-    Ok(())
+    // Git makes the ref files durable and nothing else: the directory entry that names a
+    // new ref, a new nested namespace, a rename and a deleted old name all stay unsynced.
+    durable::sync_refs(path, names, Instant::now() + COMMAND_TIMEOUT).await
 }
 
 /// Fetches only `sha` and its reachable objects into a new, isolated `destination`
@@ -1507,6 +1590,195 @@ mod tests {
     use super::*;
 
     const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+
+    fn head_commit(repo: &git2::Repository, parent: Option<git2::Oid>) -> git2::Oid {
+        let signature = git2::Signature::now("Test", "test@example.invalid").unwrap();
+        let tree = repo
+            .find_tree(repo.treebuilder(None).unwrap().write().unwrap())
+            .unwrap();
+        let parent = parent.map(|oid| repo.find_commit(oid).unwrap());
+        repo.commit(
+            Some("HEAD"),
+            &signature,
+            &signature,
+            "test",
+            &tree,
+            &parent.iter().collect::<Vec<_>>(),
+        )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn prepared_publication_transfers_objects_without_extra_refs_and_preserves_cas() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source.git");
+        let base = root.path().join("base.git");
+        initialize_repository(&source, None, "main").await.unwrap();
+        initialize_repository(&base, None, "main").await.unwrap();
+        let source_repo = git2::Repository::open_bare(&source).unwrap();
+        let base_repo = git2::Repository::open_bare(&base).unwrap();
+        let first = head_commit(&source_repo, None);
+        let first_text = first.to_string();
+        let prepared = prepare_pull_head(&base, &source, &first_text)
+            .await
+            .unwrap();
+        assert!(base_repo.find_commit(first).is_err());
+        publish_pull_head(&base, 7, &first_text, None, &prepared)
+            .await
+            .unwrap();
+        publish_pull_head(&base, 7, &first_text, None, &prepared)
+            .await
+            .unwrap();
+        assert_eq!(base_repo.refname_to_id("refs/pull/7/head").unwrap(), first);
+        assert!(base_repo.find_commit(first).is_ok());
+        assert_eq!(base_repo.references().unwrap().count(), 1);
+        assert!(!base.join("FETCH_HEAD").exists());
+
+        let second = head_commit(&source_repo, Some(first));
+        let second_text = second.to_string();
+        let prepared = prepare_pull_head(&base, &source, &second_text)
+            .await
+            .unwrap();
+        let error = publish_pull_head(&base, 7, &second_text, None, &prepared)
+            .await
+            .unwrap_err();
+        assert!(error.is::<PullHeadConflict>());
+        assert_eq!(base_repo.refname_to_id("refs/pull/7/head").unwrap(), first);
+        publish_pull_head(&base, 7, &second_text, Some(&first_text), &prepared)
+            .await
+            .unwrap();
+        publish_pull_head(&base, 7, &second_text, Some(&first_text), &prepared)
+            .await
+            .unwrap();
+        assert_eq!(base_repo.refname_to_id("refs/pull/7/head").unwrap(), second);
+        assert_eq!(base_repo.references().unwrap().count(), 1);
+        assert!(!base.join("FETCH_HEAD").exists());
+
+        publish_ref(
+            &base,
+            "seed branch",
+            "refs/heads/main",
+            Some(&first_text),
+            &git2::Oid::ZERO_SHA1.to_string(),
+        )
+        .await
+        .unwrap();
+        publish_pull_branch_update(&base, "main", &first_text, &prepared)
+            .await
+            .unwrap();
+        assert_eq!(base_repo.refname_to_id("refs/heads/main").unwrap(), second);
+    }
+
+    #[tokio::test]
+    async fn initialization_sync_requires_head_and_refuses_symlink_metadata() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("repository.git");
+        initialize_repository(&path, None, "main").await.unwrap();
+        assert_eq!(
+            std::fs::read_to_string(path.join("HEAD")).unwrap(),
+            "ref: refs/heads/main\n"
+        );
+        std::fs::remove_file(path.join("HEAD")).unwrap();
+        assert!(sync_initialized_repository(&path).await.is_err());
+        std::os::unix::fs::symlink("config", path.join("HEAD")).unwrap();
+        assert!(sync_initialized_repository(&path).await.is_err());
+        std::fs::remove_file(path.join("HEAD")).unwrap();
+        std::fs::create_dir(path.join("HEAD")).unwrap();
+        assert!(sync_initialized_repository(&path).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn repository_copy_preserves_an_unborn_and_populated_nested_default_branch() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source.git");
+        initialize_repository(&source, None, "topic/nested")
+            .await
+            .unwrap();
+        copy_repository(&root.path().join("empty.git"), &source, COMMAND_TIMEOUT)
+            .await
+            .unwrap();
+        let repo = git2::Repository::open_bare(&source).unwrap();
+        let oid = head_commit(&repo, None);
+        repo.tag_lightweight("v1", repo.find_commit(oid).unwrap().as_object(), false)
+            .unwrap();
+        let destination = root.path().join("populated.git");
+        copy_repository(&destination, &source, COMMAND_TIMEOUT)
+            .await
+            .unwrap();
+        let copied = git2::Repository::open_bare(destination).unwrap();
+        assert_eq!(
+            copied.head().unwrap().name().unwrap(),
+            "refs/heads/topic/nested"
+        );
+        assert_eq!(copied.head().unwrap().target(), Some(oid));
+        assert_eq!(copied.refname_to_id("refs/tags/v1").unwrap(), oid);
+    }
+
+    #[tokio::test]
+    async fn branch_rename_into_and_out_of_a_namespace_syncs_the_replaced_names() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("repository.git");
+        initialize_repository(&path, None, "main").await.unwrap();
+        let repo = git2::Repository::open_bare(&path).unwrap();
+        let target = head_commit(&repo, None).to_string();
+        publish_branch_rename(&path, "main", "topic/nested", &target)
+            .await
+            .unwrap();
+        assert_eq!(
+            current_branch_head(&path, "topic/nested").await.unwrap(),
+            Some(target.clone())
+        );
+        assert!(current_branch_head(&path, "main").await.unwrap().is_none());
+        // The reverse move replaces the nested namespace and leaves `main` as a file beside
+        // it; both directory entries need syncing.
+        publish_branch_rename(&path, "topic/nested", "main", &target)
+            .await
+            .unwrap();
+        assert_eq!(
+            current_branch_head(&path, "main").await.unwrap(),
+            Some(target)
+        );
+    }
+
+    #[tokio::test]
+    async fn native_multi_ref_publication_refuses_an_expanded_budget_before_git_runs() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("repository.git");
+        initialize_repository(&path, None, "main").await.unwrap();
+        // A restack or merge batch can name many byte-legal refs whose ancestors do not fit
+        // one barrier. The plan is refused before update-ref runs, so no ref moves and no
+        // directory entry is created.
+        let names = (0..256)
+            .map(|index| {
+                let mut name = format!("refs/heads/{index:02x}/");
+                while name.len() + 3 <= crate::ref_names::MAX_REF_BYTES {
+                    name.push_str("x/");
+                }
+                name.push('y');
+                name
+            })
+            .collect::<Vec<_>>();
+        let expected = names
+            .iter()
+            .map(|name| (name.as_str(), None))
+            .collect::<Vec<(&str, Option<&str>)>>();
+        let error = run_ref_command(
+            &path,
+            &["update-ref", "--stdin"],
+            b"",
+            "reference changed",
+            &expected,
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("Too many repository directories"),
+            "{error}"
+        );
+        assert!(!path.join("refs/heads/00").exists());
+    }
 
     #[tokio::test]
     async fn quarantined_ancestry_reads_a_repository_path_containing_a_colon() {

@@ -355,40 +355,6 @@ async fn write_refs(path: &Path, script: &str, limit: Duration) -> Result<()> {
     Ok(())
 }
 
-// Sync only the files and ancestors this operation changed, never a repository walk.
-async fn sync_refs(path: &Path, names: Vec<String>) -> Result<()> {
-    let path = path.to_owned();
-    tokio::task::spawn_blocking(move || {
-        let mut directories = std::collections::BTreeSet::new();
-        directories.insert(path.clone());
-        for name in names
-            .into_iter()
-            .chain(std::iter::once("packed-refs".into()))
-        {
-            let file = path.join(name);
-            match std::fs::File::open(&file) {
-                Ok(file) => file.sync_all()?,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => return Err(error.into()),
-            }
-            let mut parent = file.parent();
-            while let Some(directory) = parent.filter(|directory| directory.starts_with(&path)) {
-                directories.insert(directory.to_owned());
-                parent = directory.parent();
-            }
-        }
-        for directory in directories.into_iter().rev() {
-            match std::fs::File::open(directory) {
-                Ok(file) => file.sync_all()?,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => return Err(error.into()),
-            }
-        }
-        Ok::<_, anyhow::Error>(())
-    })
-    .await?
-}
-
 fn write_manifest(write: &WriteRecord) -> Result<Vec<u8>> {
     let manifest = serde_json::to_vec(&serde_json::json!({
         "id": write.id, "repository_id": write.repository_id, "term": write.term,
@@ -469,22 +435,15 @@ pub async fn retain_write(path: &Path, write: &WriteRecord, limits: WriteLimits)
         .last()
         .context("missing pack hash")?;
     ensure!(codeyard_git::is_full_commit_id(hash), "invalid pack hash");
+    // The pack and index bytes are durable; the entries that name them are not. A voter keeps
+    // its pack past a crash only after this barrier.
+    let mut published = codeyard_git::repository::durable::RepositorySync::new().objects();
     for suffix in ["pack", "idx"] {
-        tokio::fs::File::open(
-            path.join("objects/pack")
-                .join(format!("pack-{hash}.{suffix}")),
-        )
-        .await?
-        .sync_all()
+        published = published.required_file(format!("objects/pack/pack-{hash}.{suffix}"));
+    }
+    published
+        .sync(path, std::time::Instant::now() + limits.timeout)
         .await?;
-    }
-    for directory in [
-        path.join("objects/pack"),
-        path.join("objects"),
-        path.to_owned(),
-    ] {
-        tokio::fs::File::open(directory).await?.sync_all().await?;
-    }
     let repository = path.to_owned();
     let changes = write.changes.clone();
     let committed = write.decision == "commit";
@@ -557,7 +516,12 @@ pub async fn retain_write(path: &Path, write: &WriteRecord, limits: WriteLimits)
     }
     script.push_str("prepare\ncommit\n");
     write_refs(path, &script, limits.timeout).await?;
-    sync_refs(path, pins.into_iter().map(|(name, _)| name).collect()).await?;
+    codeyard_git::repository::durable::sync_refs(
+        path,
+        pins.into_iter().map(|(name, _)| name).collect(),
+        std::time::Instant::now() + limits.timeout,
+    )
+    .await?;
     let manifest = write_manifest(write)?;
     let target = directory.clone();
     tokio::task::spawn_blocking(move || -> Result<()> {
@@ -721,7 +685,7 @@ impl NodeContext {
         // The deleted name may now traverse a ref file rather than a directory.
         // Syncing the new name and packed-refs covers the namespace replacement.
         let renamed = branch_namespace_rename(&current.changes).map(|(old, _)| old.name.as_str());
-        sync_refs(
+        codeyard_git::repository::durable::sync_refs(
             path,
             current
                 .changes
@@ -729,6 +693,7 @@ impl NodeContext {
                 .filter(|change| renamed != Some(change.name.as_str()))
                 .map(|change| change.name.clone())
                 .collect(),
+            std::time::Instant::now() + git_process::RPC_TIMEOUT,
         )
         .await?;
         ensure!(
@@ -780,7 +745,12 @@ impl NodeContext {
         }
         script.push_str("prepare\ncommit\n");
         write_refs(path, &script, limits.timeout).await?;
-        sync_refs(path, present.into_iter().map(|(name, _)| name).collect()).await?;
+        codeyard_git::repository::durable::sync_refs(
+            path,
+            present.into_iter().map(|(name, _)| name).collect(),
+            std::time::Instant::now() + limits.timeout,
+        )
+        .await?;
         match tokio::fs::remove_dir_all(preparation_path(path, write)?).await {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -894,5 +864,23 @@ pub async fn apply_refs(path: &Path, write: &WriteRecord, limit: Duration) -> Re
         Ok(script)
     })
     .await??;
-    write_refs(path, &script, limit).await
+    // The objects a committed write imported must be durable before a ref names them. The
+    // caller has already indexed them; this makes their entries durable first.
+    codeyard_git::repository::durable::RepositorySync::new()
+        .objects()
+        .sync(path, std::time::Instant::now() + limit)
+        .await?;
+    write_refs(path, &script, limit).await?;
+    // The database decision is durable before this runs, so a replica's acknowledgement must
+    // not name a ref or object entry that a crash can drop.
+    codeyard_git::repository::durable::sync_refs(
+        path,
+        write
+            .changes
+            .iter()
+            .map(|change| change.name.clone())
+            .collect(),
+        std::time::Instant::now() + limit,
+    )
+    .await
 }

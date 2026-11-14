@@ -109,7 +109,7 @@ try:
     url = parts._replace(path='/' + database, query=u.urlencode(query)).geturl()
     http_port, ssh_port = ports()
     base = f'http://127.0.0.1:{http_port}'
-    env = {key: os.environ[key] for key in ('PATH', 'LANG', 'TZ') if key in os.environ}
+    env = {key: os.environ[key] for key in ('PATH', 'LANG', 'TZ', 'RUST_MIN_STACK') if key in os.environ}
     env.update(DATABASE_URL=url, GITSERV_STATE_DIR=str(work / 'state'), REPOS_PATH=str(work / 'repos'),
                HOME=str(work), HOST_KEY_PATH=str(work / 'host_key'), GITSERV_NODE_ROLES='server,runner',
                HTTP_ADDR=f'127.0.0.1:{http_port}', SSH_ADDR=f'127.0.0.1:{ssh_port}', SSH_MODE='builtin',

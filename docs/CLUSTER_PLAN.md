@@ -6,21 +6,47 @@ to check in the cluster code that exists, what is still missing, and the decisio
 every open question. The [cells plan](#cells-plan) at the end holds the stages and their
 acceptance lists; [Architecture](ARCHITECTURE.md) describes what is built.
 
-Items 1–9, 11 and 12 have source implementations and acceptance tests. Workspace,
-Clippy and WASM checks pass, including the fault-test source and full-disk placement fix.
-Library checks (1,058 tests), identity checks (161 tests), CI checks (211 passed,
-19 ignored), focused runner isolation and Helm rendering pass.
-Storage checks pass (99 passed, 3 ignored). Before cell work, all 221 cluster integration
-checks passed, including full-disk failure/retry and interrupted cluster backup/restore.
-Stage 0's alias fix passes workspace, Clippy and WASM checks, 307 focused library/store
-tests and all 225 cluster tests. The dedicated quorum client round passes all 20 checks
-without skips: HTTP/SSH push, editor save, gh branch creation and merge survive primary
-SIGKILL; majority loss refuses a push. VM hard-reset acceptance needs a disposable target.
-Browser bundle publication, delivery, native and hydrated cluster forms, and live
-cross-node issue updates pass. The builder needs a writable delegated cgroup for finished-CI acceptance. Rolling upgrades need a previous-release target, and A16
-has no measured limits yet.
+The results below are accepted checkpoints, not a release sign-off for every later edit.
+The 2026-11-12 final native checkpoint passed 57 broker tests, including both real
+OpenSSH tests and the four Prepared authority/pre-admission budget tests; eight fork
+tests; 238 CI tests; a separate browser test; five executable-verifier tests; and the
+pinned-act dotenv test. None failed or remained ignored in these selected suites.
+Earlier native attempts failed in the OpenSSH/act fixture setup and then its
+workflow-snapshot assertion; the repaired fixture passed both a focused diagnostic
+and this full native run. These named results do not replace historical workspace
+totals with a fresh all-targets test claim.
+
+Items 1–9, 11 and 12 have implementations and runtime acceptance. The final end-to-end
+run passed 241 checks with no failures or skips: two build checks, SQLite 59,
+PostgreSQL 73, PgBouncer 15, physical read-replica 16, rolling cluster 55, quorum 18
+and public cells 3. The four-node round starts from published source `49241c9c`,
+checks Git continuity and completed CI after each node upgrade, then performs the
+fault-injection checks. The cells round uses that published router against the current
+directory and cells. Earlier 56/57-check cluster and five-check mixed-router results
+remain historical checkpoints, not the counts of this run.
+Six final-source Linux guest hard resets also passed on both database engines.
+HTTP guest resets do not cover stateful SSH/RPC receives; those have separate
+broker and process-kill acceptance above.
+
+Current native formatting and workspace Clippy pass. Earlier WASM checks and the
+repository-service consolidation's 243 affected unit tests passed. CI checks cover
+both database engines, restored
+membership, log replay and owned-process cleanup; runner settings pass hydrated and
+JavaScript-disabled browser flows. Transient systemd services provide delegated cgroups
+without persistent host policy changes.
+
+The earlier 500-reader/50-invitation benchmark completed all 16 CI jobs. It predates
+the later receive/durability changes. Its debug build, hardware, resource limits and
+latency sample are recorded in
+[Cluster operations](CLUSTER.md#one-cell-benchmark), not presented as production capacity.
+The builder boots disposable Linux guests under QEMU TCG without KVM. On 2026-11-12,
+all six single-node hard-reset checks passed: two pushes and one default-branch change
+on each of SQLite and PostgreSQL, followed by clone, fsck and exact data checks.
+This is guest-reset evidence, not whole-host power-loss acceptance.
+Separate-region recovery still needs disposable targets.
 Cluster mode requires PostgreSQL; the owner removed the experimental environment gate
-when authorizing cells. Outstanding acceptance above remains open.
+when authorizing cells. Separate-region recovery and deployment-capacity acceptance
+remain open.
 
 ## Where we are
 
@@ -34,22 +60,30 @@ The write path selects up to three fixed storage voters, PostgreSQL decisions an
 journal. Cluster files use two storage-node copies or optional shared S3. Repository initialization
 and copy use the same quorum path and pass runtime checks on both database engines.
 
-Not complete: finished-CI drain and shutdown, rolling upgrades and measured load limits.
-The latest cluster round has 48 passes, one CI execution failure and six CI-dependent
-skips on the builder without cgroup delegation.
+Finished-CI drain/resume, revocation, interrupted-push shutdown and the published-source
+rolling-upgrade fixture pass. After two historical maintained-image checks, a fresh
+Windows Server 2025 Evaluation image completed unattended provisioning without manual
+input. Its experimental guest API test passed under TCG in 1,034.19 seconds, checking
+boot, tools, transfers, environment, exit status and cleanup; the image digest was
+unchanged. See the [image acceptance record](../backend/runner/scripts/windows-base-image/README.md#validate-before-use).
+Windows workflow execution remains unsupported. Final-source single-node Linux
+VM hard-reset checks pass on both database engines; separate-region recovery remains open.
+The published-version router passes against current cells. Production capacity requires
+measurements on the intended deployment; the recorded shared-builder debug sample is
+only a bounded workload check.
 
 Current acceptance status:
 
 - 1: hiding-switch CLI refusal checks pass.
 - 2: storage-node copies, capacity, loss, retry, drain and private access pass HTTP checks on both engines; native startup without S3 passes. Single-node uploads remain readable after runner transport starts and after restore.
 - 3: quorum initialization, copy, default selection, voter replacement, primary loss and full-disk retry pass.
-- 4: drain REST, authority, promotion and native/hydrated browser checks pass. Finished-CI drain acceptance needs a delegated cgroup.
+- 4: drain REST, authority, promotion, completed-CI drain/resume and native/hydrated browser checks pass.
 - 5: quorum, drain, bounded scraping and acquisition waiter metrics pass HTTP acceptance.
 - 6: bounded invitations and environment-only provisioning pass library and REST checks.
 - 7: policy forms, lease leader, pause, dry run and storage rules pass on both database engines.
 - 8: mover reservations, bandwidth limits and busy-reader retirement retry pass.
-- 9: pool, Helm and the 17-check PgBouncer session round pass. The debug workload completes 500-reader traffic and 50 simultaneous invitations; CI jobs fail without a delegated cgroup, so no completed load measurement is recorded.
-- 10: previous-release target needs confirmation before compatibility work.
+- 9: pool, Helm, PgBouncer and physical-replica rounds pass. The debug workload completes 500-reader traffic, 50 simultaneous invitations and every CI job; measurements are recorded in `CLUSTER.md`.
+- 10: rolling replacement from published source `49241c9c` passes Git and CI checks after every node. Its router also passes public two-cell acceptance against the current directory and cells. Older tagged protocols remain incompatible.
 - 11: primary snapshots, object copies, interrupted fenced import and per-node restore pass CLI acceptance.
 - 12: cross-node REST account/IP, audit, OIDC membership and private enrollment CLI checks pass; OIDC also passes across web processes with five-minute skew.
 
@@ -61,7 +95,7 @@ part B that closes it. "Expected" is what the documents imply, not something alr
 
 | # | Check | Pass when | Current check |
 |---|---|---|---|
-| A1 | `scripts/e2e.sh` cluster round | green | 48 passes; one CI execution failure and six CI-dependent skips need a delegated cgroup |
+| A1 | `scripts/e2e.sh` cluster round | green | The final 241-check E2E run includes 55 published-predecessor rolling-cluster checks, without failures or skips |
 | A2 | Push over HTTP and SSH, `kill -9` the storage primary the moment the push returns | within 2 minutes `git clone` has the commit, no `--force` | HTTP and SSH acknowledgements survive immediate storage-primary SIGKILL; both clone paths recover the acknowledged commit |
 | A3 | Upload a package or CI artifact through web node 1, download it through web node 2 | same bytes | cross-node file and CI-artifact HTTP checks pass |
 | A4 | Stop one web node while clients run `gh` and `git` | other nodes keep serving, sessions survive, no half-written state | gh/Git traffic survives web1 SIGKILL through web2; saved browser sessions work on web2 |
@@ -70,13 +104,13 @@ part B that closes it. "Expected" is what the documents imply, not something alr
 | A7 | Restart PostgreSQL under load | `/ready` goes 503 then 200, nodes reconnect without restart, no lost acknowledged write | owned PostgreSQL crashes during gh issue create; readiness recovers and every acknowledged write remains |
 | A8 | Revoke a node key | the node is refused on its next call, within 60 seconds | TCP/QUIC revocation checks pass |
 | A9 | Send an oversized, truncated, replayed and unauthorised frame to the node port | refused, bounded memory, logged without secrets | hostile transport and pairing checks pass |
-| A10 | A compromised runner node asks for another run's token, another repository, another job's logs | refused every time | network isolation passes without local CI execution: forged claims, credentials, repository access, logs and reused-connection revocation |
+| A10 | A compromised runner node asks for another run's token, another repository, another job's logs | refused every time | claim, credential, repository, log and reused-connection revocation checks pass; delegated host CI executes real workflows |
 | A11 | Comment on an issue on web node 1 with a browser open on node 2 | page updates within 2 seconds | browser acceptance passes: posts on web1 and updates Bob's open issue on web2 within two seconds |
-| A12 | SIGTERM during running CI and a push | stops within 90 seconds, jobs end failed with a reason, no leaked containers or locks | e2e runs CI with an owned child, interrupts a pack and checks shutdown, failure reason and a later write; runtime pending |
-| A13 | Old and new release side by side | refused with a clear message, or both work | older protocol refused; B10 pending |
+| A12 | SIGTERM during running CI and a push | stops within 90 seconds, jobs end failed with a reason, no leaked containers or locks | host-CI child termination, interrupted PACK, failed-job reason, clone continuity and a later quorum write pass |
+| A13 | Old and new release side by side | refused with a clear message, or both work | published source `49241c9c` upgrades one node at a time with Git and completed CI; older tagged ALPN versions are not rolling-compatible |
 | A14 | Join token: reuse, expiry, cancel, wrong role | each behaves as `CLUSTER.md` says | invitation and role checks pass |
-| A15 | Clock skew of 5 minutes on one node | tokens, leases and take-over still behave | five-minute skew passes cross-node OIDC, gh/Git and browser checks; finished-CI checks remain blocked |
-| A16 | Load test on stated hardware: pushes, clones, API reads, CI jobs, 50 organizations inviting at once | numbers recorded in `CLUSTER.md` limits | 500-reader traffic and 50 simultaneous invitations complete; CI jobs need a delegated cgroup before measurements are valid |
+| A15 | Clock skew of 5 minutes on one node | tokens, leases and take-over still behave | five-minute skew passes OIDC, gh/Git, browser and completed-CI cluster checks |
+| A16 | Load test on stated hardware: pushes, clones, API reads, CI jobs, 50 organizations inviting at once | numbers recorded in `CLUSTER.md` limits | debug benchmark completes 5,500 page reads, 50 API reads, 15 pushes/clones, 50 invitations and 16 successful CI jobs; hardware and latencies recorded |
 
 Each of A2 to A10, A12 and A15 becomes a test in `tests/`, driven through HTTP, SSH and
 Git, or an `e2e.sh` step when it needs several processes. A check that cannot be automated
@@ -135,14 +169,21 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
    a voting copy, waits until it is current, and switches the primary with a write pause
    of a few seconds. A zero-pause move is not planned; GitHub pauses writes the same way.
 9. **PostgreSQL high availability.** The operator runs Patroni, PgBouncer or a managed
-   service; Codeyard does not manage it. Codeyard's part: the pool size is configurable
-   (it is fixed at 20 today), connections recover after a failover, and the documents give
+   service; Codeyard does not manage it. Codeyard's part: the pool size is configurable,
+   connections recover after a failover, and the documents give
    a tested setup. Stage 0 check 6 in the [cells plan](#cells-plan) (kill the primary during
    `gh issue create`) is the acceptance test. Reads to replicas come with stage 1.
 10. **Rolling upgrades.** The node protocol accepts the previous release. After the first
     public release, schema changes are additive and a release is deployed in two steps
     (add, then remove). Acceptance: old and new binaries serve together while `e2e.sh`
     traffic runs. This replaces "cores and workers must match" in the limits.
+    Set `E2E_PREVIOUS_BINARY` to an absolute previous executable path and select
+    `E2E_DATABASES=cluster` to enable the fixture. It starts four old nodes, then
+    replaces web1, store1, store2 and ci1 while checking the Git head, a new push and
+    a successful CI run after each replacement. Fault injection follows the upgrades.
+    Set `E2E_PREVIOUS_ROUTER_BINARY` with `E2E_DATABASES=cells` to run the complete
+    public cells fixture through an older router against the current directory and cells.
+    The verified baseline is published source `49241c9c`, not the older tagged ALPN.
 11. **Cluster backup and restore.** `codeyard backup` stops refusing a cluster. The
     database comes from the operator's PostgreSQL backup tool; repositories are fetched
     from their primaries into a mirror; files come from the object store. Restore is tested
@@ -151,9 +192,10 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     organizations, an audit log for organization and site actions, and the abuse controls
     in [ABUSE_PREVENTION.md](ABUSE_PREVENTION.md), all checked in the cluster round.
 13. **Cells.** The owner lifted A16 on 2026-11-05. Stage 0 reuses items 3 and 11;
-    automated durability acceptance passes. Hard reset is runtime pending, needs a
-    disposable VM. Stage 1's 51 PgBouncer/replica/quorum e2e checks pass without skips;
-    finished-CI shutdown and capacity measurements need a writable delegated cgroup.
+    automated durability acceptance and six single-node TCG guest hard-reset checks pass.
+    Whole-host power loss remains distinct. Stage 1's PgBouncer, replica and quorum rounds
+    pass. Delegated host
+    CI shutdown passes, and the bounded debug workload now includes successful CI.
     Stage 2 runnable acceptance passes in runtime 15c77f36a9794468ac72f976e6c78209:
     five real public two-cell checks, 68 repos-core library tests, 61 store tests and
     all 234 cluster tests, without skips. Real clients cover standalone cell-zero
@@ -277,8 +319,8 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     addresses; `cells_regions` checks routers follow. The real restart is runtime pending,
     needs a second region with a PostgreSQL standby and Git copies. (3) `cell directory
     rollout` updates cells in waves and stops at a failing canary (e2e); old routers read
-    new cell records. Running the previous release beside this one is runtime pending,
-    needs the previous release binary. (4) Directory shards move between clusters
+    new cell records. The published `49241c9c` predecessor passes four-node upgrades and the
+    public two-cell round with its old router against the current directory and cells. (4) Directory shards move between clusters
     (`cell directory move-shard`): each shard keeps its own object copies, writes hold the
     map row until they commit, and the database test moves shards while lookups run without
     a miss; job 1c765ab87a7d480d8e09d95f28068432 passes all 186 database tests.
@@ -514,12 +556,8 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
       not move; the user signs in again. A token deleted after the move keeps its key,
       which only routes: the home refuses the token. When the directory cannot be asked,
       a router sends the token to its issuing cell.
-    Job df0177cea8d847309db8022760c6f687 passes the 10 move tests, the 11 cells cluster
-    tests (with `cells_moves`), the other 189 database tests and the library tests.
-    End-to-end rounds on this branch: PgBouncer 17 passed (228a251a), replica 18 (03370c95),
-    quorum 20 (9b813575), cells 5 (8f11fc48). Cluster (9bbbc657): 48 passed, 7 skipped
-    because the builder has no delegated cgroup v2 for CI runs, and 1 failed: a `gh api` ref
-    create got 503 right after a restarted primary rejoined (fixed in the stage 7 merge).
+    Account and repository moves have database and public two-cell client coverage.
+    Regional restart acceptance still needs separate regional PostgreSQL and storage targets.
     - Repositories on cluster storage nodes. The command copies each from its placement
       primary at the current write term; a quorum repository must have no write in
       progress and the copy must hold exactly its committed refs. A target in cluster mode
@@ -596,17 +634,7 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
       clocks.
     - The debug quorum e2e round runs with the cluster round's 32 MiB worker stack; its
       primary overflowed the default 2 MiB while merging a pull request.
-    Check, Clippy and WASM e101074f pass. Runtime 4124aa41: db-core and identity libraries 64,
-    database 199 on both engines, cluster 239 of 240; c289a42f: all library tests (269),
-    writes, Valkey and the GraphQL type check. E2E rounds: PgBouncer 17 (714787de),
-    replica 18 (afa58063), quorum 20 (76ad0f32), cells 5 (914b63cf), cluster 49 passed
-    with 7 skipped for the missing delegated cgroup (135b6731). Still intermittent under
-    the full cluster target: `cells_frontend` (a foreign proof ran out mid-request once
-    in three runs; 4 of 4 passed alone) and `quorum::*_three_voters_keep_a_majority`
-    (once in four runs, with a 2-second write timeout).
-
-    Stage 7, written so far (job 1c765ab87a7d480d8e09d95f28068432 passes maintenance,
-    database and the cluster search tests): (2) packing is a geometric repack with a
+    Stage 7 implementation: (2) packing is a geometric repack with a
     multi-pack index, a bitmap (not for pool forks) and a split commit-graph instead of
     `git gc` (`backend/git/src/maintenance.rs`). (3) Shared PostgreSQL search uses `simple`
     word vectors and GIN indexes for descriptions, issue/pull titles, bodies and comments,
@@ -615,9 +643,8 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     comments contribute at most 1,024 characters each; pending review comments are excluded.
     Comment edits, deletion and review publication queue reindexing. Parsed input is bounded
     by directory config; totals and pages stop at 1,000. File text stays deduplicated in
-    `search_blobs`. Ranking passes workspace `8eaf9092`, Clippy `0b73be53` and WASM
-    `f4727b35`. Job `c930fb55` passes the ranked cells transport test, seven directory
-    database tests and 15 existing search contracts without skips; library checks continue.
+    `search_blobs`. Ranked transport, directory database and search contract tests cover
+    these rules.
     (1, part) `DATABASE_DIRECT_URL` carries the serving, maintenance and
     package-collection leases and migrations past a transaction-pooling PgBouncer, and the
     PgBouncer e2e round sets it. Not written: keyset paging (the GitHub API pages by
@@ -625,35 +652,12 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     write position (token
     clients carry no position, so a primary-free check needs shared state such as the
     optional cache). Items 4 and 5 are the side lane above.
-    The e2e run (job 34215ceffd2d4150b4cc419834481210) stopped at its 140-minute cap in
-    the PostgreSQL round's `gh auth login` check, which waited for a device code without
-    the cell prefix; that check and a profile 503 for signed-out visitors are fixed, and the
-    SQLite round then passes 55 checks with 6 skipped (job
-    51adf28cea65421eb9fe79b685ad5f44; the builder has no delegated cgroup for CI runs).
-    Each remaining round has its own `scripts/test-cell-e2e-<round>.sh` entry point
-    with a 25-minute timeout; `scripts/test-cell-e2e.sh` runs all five, or named rounds,
-    without stopping at the first failure. Runtime 52f1aef2 finishes without stalls:
-    PgBouncer 17, replica 18 and quorum 20 pass without skips. Cluster has 46 passes,
-    five failures and five skips: web2 overflows its debug worker stack, CI needs a
-    delegated cgroup, and the editor-survival write gets 503. Cells reaches global
-    discovery and fails because its private dependency graph was not enabled. The
-    fixture now enables it through REST without weakening the privacy assertions, and
-    the debug cluster runner uses the integration tests' 32 MiB worker-stack budget.
-    Runtime 4edbb000 passes all five cells checks without skips, including discovery,
-    search rebuild/outage, cross-cell gh/Git and rollout waves. Cluster repeats its
-    failures: node startup cleared the requested stack budget. The fixture now retains
-    that explicit setting. Checks 3b3abdba (workspace), 97efb73b (Clippy) and a2761a58
-    (WASM) pass. Runtime de1c7469 completes cluster in 435 seconds: 48 passes,
-    two failures and six skips, with no stack overflow. Runner drain/resume reaches
-    execution but fails without a delegated cgroup. The editor-survival write still
-    returns 503 after the interrupted-storage checks; this is not a pass.
-    The interrupted-storage fixture now waits for three recovered voters and the
-    frontend's failed-dial backoff before starting another publisher, as the other
-    fault fixtures already do. Workspace 5d0a566e, Clippy 141a5cf3 and WASM 70f94efc
-    pass. Runtime 7363a215 completes in 536 seconds: 49 passes, one failure and six
-    skips. Editor, gh branch and gh merge durability now pass; only finished-CI
-    drain/resume fails because the builder has no delegated cgroup. No assertion
-    was removed or weakened.
+    `scripts/e2e.sh` runs individual rounds selected through `E2E_DATABASES`. PostgreSQL
+    rounds use the owned database supplied by `scripts/builder-test.sh`; completed host
+    CI requires a delegated cgroup parent. The fixtures retain the debug worker stack
+    budget, enable private dependency discovery explicitly, and wait for current voters
+    before the next fault. Current runtime results are listed under
+    [Where we are](#where-we-are).
 
     Owner follow-ups, outside this acceptance work:
     committed range renewal; scheduled bounded expired directory-claim collection.
@@ -691,8 +695,9 @@ Two findings set the order of work:
 - **Durability comes before cells.** Git processes set `core.fsync=all` and
   `core.fsyncMethod=batch`, libgit2 fsync is enabled, and cluster plan items 3 and 11
   provide quorum publication, copies, backups and fenced restore. Stage 0 extends
-  acceptance to three voters and every ref publisher; VM hard-reset acceptance remains
-  an operator check.
+  acceptance to three voters and every ref publisher. Shared bounded barriers sync
+  objects before refs and their directory entries. The single-node TCG fixture passes
+  six guest hard resets across SQLite and PostgreSQL.
 - **One large cell still needs work.** Account authority locks are scoped by account,
   organizations use row locks, names and email addresses reserve their own keys, and
   package reads use snapshots without package locks. Attestation and metadata changes
@@ -720,12 +725,14 @@ Stage 0 needs no cells or router. It closes every gap where acknowledged data ca
   `codeyard restore`, `codeyard repo verify [--repair]`, `codeyard repo rebuild`, and the
   7-day restore window for deleted repositories and uploads. `scripts/e2e.sh` checks
   acceptance items 5, 8 and 9 on SQLite and PostgreSQL and item 7 on PostgreSQL. Item 4
-  needs a VM hard reset and is checked by hand. Operations are described in
+  passes six single-node TCG guest hard resets, including nested refs and symbolic HEAD.
+  Operations are described in
   [Storage architecture](STORAGE_ARCHITECTURE.md#backups).
 - **Cluster part:** fixed-voter ref quorum, PostgreSQL arbitration and
   ref journals, snapshot backups and fenced offline restore are implemented. Operators
-  provide PostgreSQL HA. Three-voter process-loss acceptance passes; VM hard-reset
-  acceptance and measured limits remain pending;
+  provide PostgreSQL HA. Three-voter process-loss and single-node VM hard-reset
+  acceptance pass; whole-host power loss and deployment-specific measured limits
+  remain unverified;
   [Where we are](#where-we-are) is the current acceptance list.
 
 | Store | Decision | RPO | RTO |
@@ -748,8 +755,9 @@ the legacy asynchronous path. Initialization, copy and promotion share this coor
 See [Quorum push preparation](CLUSTER.md#quorum-push-preparation) for limits and recovery.
 Three-voter preparation and stale-voter recovery pass on SQLite and PostgreSQL.
 The real-process quorum round passes HTTP/SSH pushes, editor saves, gh branch creation
-and merges after immediate primary loss, and majority-loss refusal. The VM hard-reset
-check remains open.
+and merges after immediate primary loss, and majority-loss refusal. The single-node
+VM hard-reset check passes on both database engines; it does not simulate simultaneous
+power loss across the voting nodes.
 
 **Backup and restore.** `codeyard backup <dir>` runs while the installation serves: the
 database first (`VACUUM INTO`, `pg_dump`, or only the restore time when pgBackRest or WAL-G

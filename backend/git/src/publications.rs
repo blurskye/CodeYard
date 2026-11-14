@@ -13,6 +13,8 @@ use uuid::Uuid;
 
 const MAX_TAG_BYTES: usize = 32 * 1024;
 const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+/// How long one prepared publication may spend making its metadata refs and objects durable.
+const PUBLICATION_SYNC_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(tag = "kind", content = "id", rename_all = "snake_case")]
@@ -301,6 +303,19 @@ fn prepare_at_mode(
             changes.retain(|previous| previous.reference != change.reference);
             changes.push(change);
         }
+    }
+    if apply && !changes.is_empty() {
+        // libgit2 syncs a metadata ref's file and its immediate parent after the rename, but
+        // not the ancestor directories it had to create. A first publication's
+        // refs/codeyard/publications chain, and the tag object's fanout directory, would
+        // otherwise be lost while the ref file survives. Pruned obsolete names are in
+        // `changes` too, so their removed entries are synced as well.
+        let names = changes
+            .iter()
+            .map(|change| change.reference.clone())
+            .collect::<Vec<String>>();
+        super::repository::durable::RepositorySync::refs(names)
+            .sync_blocking(path, std::time::Instant::now() + PUBLICATION_SYNC_TIMEOUT)?;
     }
     Ok(changes)
 }
