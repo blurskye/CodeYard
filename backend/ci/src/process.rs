@@ -186,6 +186,12 @@ where
             _ = &mut forwarding => {}
         }
     }
+    // The command has exited and its group is stopped, but its last lines may still sit in the
+    // pipes: a handler that prints on SIGINT exits as soon as the stop returns. Read them out. A
+    // process outside the group can hold the pipes open, so the wait is bounded.
+    if !futures_util::future::FusedFuture::is_terminated(&forwarding) {
+        let _ = tokio::time::timeout(codeyard_runner::process::KILL_GRACE, &mut forwarding).await;
+    }
     if result.is_ok() {
         if let Ok(error) = error_rx.try_recv() {
             return Err(error);
@@ -598,6 +604,58 @@ pub(super) mod tests {
             Some(Stopped::Cancelled)
         ));
         assert!(cancelled_at.elapsed() < Duration::from_secs(10));
+        assert_eq!(*lines.lock().unwrap(), ["cleaned up"]);
+    }
+
+    #[tokio::test]
+    async fn an_interrupted_commands_last_line_reaches_a_slow_handler() {
+        // The command exits as soon as it prints, so the stop is finished while the handler is
+        // still busy with that line; the line must not be dropped with it.
+        let directory = tempfile::tempdir().unwrap();
+        let ready = directory.path().join("ready");
+        let mut child = command("/bin/sh");
+        child
+            .args([
+                "-c",
+                "trap 'echo cleaned up; exit 0' INT; : > \"$1\"; while :; do sleep .1; done",
+                "sh",
+            ])
+            .arg(&ready);
+        let (tx, cancel) = watch::channel(false);
+        let (_force_tx, force) = watch::channel(false);
+        let grace = Grace {
+            interrupt: Duration::from_secs(20),
+            terminate: TERM_GRACE,
+        };
+        let lines = std::sync::Mutex::new(Vec::new());
+        let (result, ()) = tokio::join!(
+            run_with_grace(
+                child,
+                Duration::from_secs(60),
+                grace,
+                None,
+                force,
+                cancel,
+                |line, _| {
+                    let lines = &lines;
+                    async move {
+                        tokio::time::sleep(Duration::from_millis(300)).await;
+                        lines.lock().unwrap().push(line);
+                        Ok(())
+                    }
+                }
+            ),
+            async {
+                while !ready.exists() {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+                tx.send(true).unwrap();
+            }
+        );
+        assert!(matches!(
+            result.unwrap_err().downcast_ref(),
+            Some(Stopped::Cancelled)
+        ));
         assert_eq!(*lines.lock().unwrap(), ["cleaned up"]);
     }
 
