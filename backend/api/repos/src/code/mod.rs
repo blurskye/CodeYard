@@ -23,7 +23,6 @@ pub mod upload;
 /// into reversible path identities instead; account/repository names must still be UTF-8.
 pub struct GitPathParams(pub std::collections::HashMap<String, String>);
 
-#[axum::async_trait]
 impl<S: Send + Sync> axum::extract::FromRequestParts<S> for GitPathParams {
     type Rejection = axum::http::StatusCode;
     async fn from_request_parts(

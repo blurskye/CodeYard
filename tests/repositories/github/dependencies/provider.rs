@@ -95,8 +95,8 @@ impl Provider {
             tamper: tamper.clone(),
         };
         let router = Router::new()
-            .route("/fixture/-/:file", get(tarball))
-            .route("/:name/:version", get(metadata))
+            .route("/fixture/-/{file}", get(tarball))
+            .route("/{name}/{version}", get(metadata))
             .with_state(data.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let origin = format!("http://{}/", listener.local_addr().unwrap());

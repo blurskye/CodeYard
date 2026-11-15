@@ -46,14 +46,14 @@ pub async fn handle_socket(
         tokio::select! {
             message = receiver.next() => {
                 match message {
-                    Some(Ok(Message::Pong(payload))) if payload.as_slice() == b"heartbeat" => awaiting_pong = false,
+                    Some(Ok(Message::Pong(payload))) if &payload[..] == b"heartbeat" => awaiting_pong = false,
                     Some(Ok(Message::Ping(_) | Message::Pong(_))) => {},
                     _ => break,
                 }
             }
             _ = heartbeat.tick() => {
                 if awaiting_pong { break; }
-                if !matches!(tokio::time::timeout(Duration::from_secs(5), sender.send(Message::Ping(b"heartbeat".to_vec()))).await, Ok(Ok(()))) { break; }
+                if !matches!(tokio::time::timeout(Duration::from_secs(5), sender.send(Message::Ping(axum::body::Bytes::from_static(b"heartbeat")))).await, Ok(Ok(()))) { break; }
                 awaiting_pong = true;
                 let identity = tokio::time::timeout(Duration::from_secs(5), codeyard_db_identity::users::sessions::get_session_user(&pool, &session_id)).await;
                 if !matches!(identity, Ok(Ok(Some(user))) if user.id == user_id) { break; }
@@ -75,7 +75,7 @@ pub async fn handle_socket(
                     json = smaller;
                 }
                 if json.len() > MAX_EVENT_JSON { break; }
-                if !matches!(tokio::time::timeout(Duration::from_secs(5), sender.send(Message::Text(json))).await, Ok(Ok(()))) { break; }
+                if !matches!(tokio::time::timeout(Duration::from_secs(5), sender.send(Message::Text(json.into()))).await, Ok(Ok(()))) { break; }
             }
         }
     }

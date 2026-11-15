@@ -7,7 +7,12 @@
                             PostgreSQL 18 cluster, PgBouncer and an ingress on <name>.<ip>.nip.io
   kube-ha.py test [STEP..]  steps (default all): basic (setup, Git over HTTP and SSH, issues),
                             kill (crash the primary pod), drain (cordon and drain its node),
-                            restart (rolling restart of web), scale (web 2 -> 4 under load)
+                            restart (rolling restart of web), scale (web 2 -> 4 under load);
+                            `chaos` adds double (primary and a standby die together), storage
+                            (one, then two storage pods), edge (poolers and web, then SSH),
+                            operator (operator and primary together), partition (primary cut
+                            off from the network for a minute) and storm (random pod kills for
+                            five minutes), each under writes, Git pushes and reads
   kube-ha.py down           delete the namespace; the operator and its CRDs stay
 
 Settings: KUBE_CONTEXT (default: the current context), NAMESPACE (codeyard-test),
@@ -306,6 +311,9 @@ def cmd_up(image):
                 break
             time.sleep(15)
     wait_healthy(f"http://{host}")
+    # The storage pods start one after another and PostgreSQL joins its standbys last; a test
+    # that begins before then meets a deployment that is still forming.
+    wait_whole()
     log(f"ready: http://{host}")
 
 
@@ -505,11 +513,14 @@ class Result:
 class Traffic:
     """One issue write a second and steady issue-page reads, each result recorded."""
 
-    def __init__(self, forge, label, readers=1, read_interval=1.0):
+    def __init__(self, forge, label, readers=1, read_interval=1.0, pushes=False):
         self.forge, self.label = forge, label
         self.stop = threading.Event()
-        self.writes, self.reads = [], []
+        self.writes, self.reads, self.pushes = [], [], []
         self.threads = [threading.Thread(target=self.write_loop)]
+        self.pushing = pushes
+        if pushes:
+            self.threads.append(threading.Thread(target=self.push_loop))
         self.threads += [threading.Thread(target=self.read_loop, args=(read_interval,)) for _ in range(readers)]
 
     def __enter__(self):
@@ -536,6 +547,27 @@ class Traffic:
             self.writes.append(Result(start, time.time(), number is not None, status, number, title))
             self.stop.wait(max(0.0, start + 1 - time.time()))
 
+    def push_loop(self):
+        """One new branch a second over HTTP: the repository's Git data lives on the storage pods."""
+        work = self.forge.work / f"push-{self.label}"
+        work.mkdir()
+        git(self.forge, "init", "-q", "-b", "main", cwd=work)
+        url = f"{self.forge.base}/{self.forge.repo}.git"
+        sequence = 0
+        while not self.stop.is_set():
+            sequence += 1
+            branch, start, commit, status = f"{self.label}-{sequence}", time.time(), None, "ok"
+            try:
+                git(self.forge, "commit", "-q", "--allow-empty", "-m", branch, cwd=work)
+                head = git(self.forge, "rev-parse", "HEAD", cwd=work)
+                git(self.forge, "-c", "http.lowSpeedLimit=1000", "-c", "http.lowSpeedTime=15",
+                    "push", "-q", url, f"HEAD:refs/heads/{branch}", cwd=work)
+                commit = head
+            except BaseException as error:  # a failed or timed-out push is unacknowledged
+                status = type(error).__name__
+            self.pushes.append(Result(start, time.time(), commit is not None, status, commit, branch))
+            self.stop.wait(max(0.0, start + 1 - time.time()))
+
     def read_loop(self, interval):
         while not self.stop.is_set():
             start = time.time()
@@ -548,7 +580,9 @@ class Traffic:
 
     def recovered(self, since, streak=10):
         later = [write.ok for write in self.writes if write.start > since]
-        return len(later) >= streak and all(later[-streak:])
+        pushes = [push.ok for push in self.pushes if push.start > since]
+        return (len(later) >= streak and all(later[-streak:])
+                and (not self.pushing or (len(pushes) >= 3 and all(pushes[-3:]))))
 
 
 class PrimaryWatch(threading.Thread):
@@ -593,6 +627,13 @@ def report(forge, name, traffic, since, before, watch=None, note=""):
     titles = forge.issue_titles()
     acked = [write for write in traffic.writes if write.ok]
     missing = [write.number for write in acked if titles.get(write.number) != write.title]
+    pushed = [push for push in traffic.pushes if push.ok]
+    lost_pushes = []
+    if pushed:
+        refs = {ref: commit for commit, ref in (line.split() for line in git(
+            forge, "ls-remote", f"{forge.base}/{forge.repo}.git", "refs/heads/*",
+            cwd=forge.work / f"push-{traffic.label}").splitlines())}
+        lost_pushes = [push.title for push in pushed if refs.get(f"refs/heads/{push.title}") != push.number]
     write_back, write_failed = gap(traffic.writes, since)
     read_back, read_failed = gap(traffic.reads, since)
     after = web_restarts()
@@ -608,7 +649,12 @@ def report(forge, name, traffic, since, before, watch=None, note=""):
           f"{slowest:.1f} s), {len(acked)} acknowledged, {len(missing)} missing {missing[:10]}; reads back after "
           f"{read_back} s ({read_failed} failed of {len(traffic.reads)}, {len(traffic.reads) / duration:.0f}/s); "
           f"web container restarts {restarts}{promoted}{note}", flush=True)
+    if traffic.pushing:
+        push_back, push_failed = gap(traffic.pushes, since)
+        print(f"{name}: Git pushes back after {push_back} s ({push_failed} failed of {len(traffic.pushes)}), "
+              f"{len(pushed)} acknowledged, {len(lost_pushes)} missing {lost_pushes[:10]}", flush=True)
     expect(not missing, f"{name}: acknowledged issues are missing")
+    expect(not lost_pushes, f"{name}: acknowledged Git pushes are missing")
 
 
 def wait_cluster_whole():
@@ -705,11 +751,130 @@ def step_scale(forge):
     kubectl("scale", "deployment/codeyard-web", "--replicas=2")
 
 
+# ----------------------------------------------------------------- chaos --
+
+def ready_pods(selector):
+    return [pod["metadata"]["name"] for pod in kube_json("get", "pods", "-l", selector)["items"]]
+
+
+def wait_whole():
+    """Every component back at full strength."""
+    wait_cluster_whole()
+    kubectl("wait", "--for=condition=Ready", "pod", "-l", "app.kubernetes.io/component=storage", "--timeout=300s")
+    kubectl("wait", "--for=condition=Ready", "pod", "-l", "app.kubernetes.io/component=pooler", "--timeout=300s")
+    kubectl("rollout", "status", "deployment/codeyard-web", "--timeout=300s")
+    kubectl("rollout", "status", "deployment/codeyard-ssh", "--timeout=300s")
+
+
+def kill_pods(*names, namespace=True):
+    log(f"deleting {', '.join(names)} with a 1 s grace period")
+    kubectl("delete", "pod", *names, "--grace-period=1", "--wait=false", namespaced=namespace)
+
+
+def ordeal(forge, name, act, *, settle=10, timeout=600, readers=2):
+    """Run `act` under write, push and read traffic, then check nothing acknowledged was lost."""
+    before = web_restarts()
+    with Traffic(forge, name, readers=readers, read_interval=0.5, pushes=True) as traffic, PrimaryWatch() as watch:
+        time.sleep(10)
+        since = time.time()
+        act()
+        wait_for(f"writes and pushes after {name}", lambda: traffic.recovered(since), timeout, 1)
+        time.sleep(settle)
+    report(forge, name, traffic, since, before, watch)
+    wait_whole()
+
+
+def standbys():
+    primary = pg_cluster()["status"]["currentPrimary"]
+    return primary, [name for name in ready_pods(f"cnpg.io/cluster={PG},cnpg.io/podRole=instance") if name != primary]
+
+
+def step_double(forge):
+    """The primary and one standby die at the same moment; the last instance must carry on."""
+    def act():
+        primary, others = standbys()
+        kill_pods(primary, others[0])
+    ordeal(forge, "double-kill", act)
+
+
+def step_storage(forge):
+    """One, then two of the three storage pods die; Git data must stay readable and writable."""
+    def one():
+        kill_pods(ready_pods("app.kubernetes.io/component=storage")[0])
+    ordeal(forge, "storage-one", one)
+
+    def two():
+        kill_pods(*ready_pods("app.kubernetes.io/component=storage")[:2])
+    ordeal(forge, "storage-two", two)
+
+
+def step_edge(forge):
+    """Every pooler and every web pod at once, then the SSH pod."""
+    def act():
+        kill_pods(*ready_pods("app.kubernetes.io/component=pooler"), *ready_pods("app.kubernetes.io/component=web"))
+    ordeal(forge, "poolers-and-web", act)
+    ordeal(forge, "ssh", lambda: kill_pods(*ready_pods("app.kubernetes.io/component=ssh")))
+
+
+def step_operator(forge):
+    """The operator dies together with the primary: nothing can promote until it is back."""
+    def act():
+        operator = kube_json("get", "pods", "-l", "app.kubernetes.io/name=cloudnative-pg", "-n", "cnpg-system", namespaced=False)
+        names = [pod["metadata"]["name"] for pod in operator["items"]]
+        log(f"deleting the operator {names}")
+        kubectl("-n", "cnpg-system", "delete", "pod", *names, "--grace-period=1", "--wait=false", namespaced=False)
+        kill_pods(pg_cluster()["status"]["currentPrimary"])
+    ordeal(forge, "operator-and-primary", act)
+
+
+def step_partition(forge):
+    """Cut the primary off from every other pod for a minute, then heal: no split brain, no loss."""
+    policy = {"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "metadata": {"name": "chaos-isolate"},
+              "spec": {"podSelector": {"matchLabels": {}}, "policyTypes": ["Ingress", "Egress"]}}
+
+    def act():
+        primary = pg_cluster()["status"]["currentPrimary"]
+        policy["spec"]["podSelector"]["matchLabels"] = {"cnpg.io/instanceName": primary}
+        log(f"isolating {primary} from the network for 60 s")
+        kubectl("apply", "-f", "-", input=json.dumps(policy))
+        time.sleep(60)
+        kubectl("delete", "networkpolicy", "chaos-isolate", "--ignore-not-found")
+        log("network healed")
+    try:
+        ordeal(forge, "partition", act, settle=20)
+    finally:
+        kubectl("delete", "networkpolicy", "chaos-isolate", "--ignore-not-found")
+
+
+def step_storm(forge):
+    """Five minutes of killing a random pod every few seconds, now and then two at once."""
+    import random
+    prefixes = ("codeyard-web", "codeyard-ssh", "codeyard-pgbouncer", "codeyard-pg-", "codeyard-storage")
+
+    def act():
+        deadline, killed = time.time() + 300, 0
+        while time.time() < deadline:
+            pods = [pod["metadata"]["name"] for pod in kube_json("get", "pods")["items"]
+                    if pod["metadata"]["name"].startswith(prefixes) and not pod["metadata"].get("deletionTimestamp")]
+            victims = random.sample(pods, min(len(pods), 2 if random.random() < 0.2 else 1))
+            kubectl("delete", "pod", *victims, "--grace-period=1", "--wait=false")
+            killed += len(victims)
+            time.sleep(random.uniform(3, 8))
+        log(f"the storm killed {killed} pods")
+    ordeal(forge, "storm", act, timeout=900, settle=20)
+
+
 STEPS = {"basic": step_basic, "kill": step_kill, "drain": step_drain, "restart": step_restart, "scale": step_scale}
 
 
+CHAOS = {"double": step_double, "storage": step_storage, "edge": step_edge, "operator": step_operator,
+         "partition": step_partition, "storm": step_storm}
+
+
 def cmd_test(names):
-    names = names or list(STEPS)
+    """`chaos` stands for every destructive step below; they run in a fixed order after `basic`."""
+    names = [step for name in (names or list(STEPS)) for step in (CHAOS if name == "chaos" else [name])]
+    STEPS.update(CHAOS)
     expect(all(name in STEPS for name in names), f"steps are {', '.join(STEPS)}")
     host = kubectl("get", "ingress", RELEASE, "-o", "jsonpath={.spec.rules[0].host}")
     with tempfile.TemporaryDirectory() as work:

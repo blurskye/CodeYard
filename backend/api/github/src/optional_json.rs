@@ -1,5 +1,4 @@
 //! A JSON request body that may be left out, for endpoints whose fields are all optional.
-use axum::async_trait;
 use axum::body::Bytes;
 use axum::extract::FromRequest;
 use axum::extract::Request;
@@ -21,7 +20,6 @@ pub(super) fn decode<T: DeserializeOwned>(
     serde_json::from_slice(bytes).map_err(json_parse_error)
 }
 
-#[async_trait]
 impl<T, S> FromRequest<S> for OptionalJson<T>
 where
     T: DeserializeOwned,

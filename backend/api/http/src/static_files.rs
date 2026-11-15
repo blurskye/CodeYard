@@ -373,7 +373,7 @@ mod tests {
     }
     #[tokio::test]
     async fn head_has_headers_and_no_body() {
-        let app = Router::new().route("/assets/*path", get(asset));
+        let app = Router::new().route("/assets/{*path}", get(asset));
         let response = app
             .oneshot(
                 axum::http::Request::builder()
@@ -409,7 +409,7 @@ mod tests {
                     async move { serve_runtime(&root, &uri, &headers).await }
                 }),
             )
-            .route("/assets/*path", get(asset))
+            .route("/assets/{*path}", get(asset))
             .layer(CompressionLayer::new());
         let mut runtime_tag = String::new();
         for path in [

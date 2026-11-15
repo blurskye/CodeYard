@@ -179,7 +179,7 @@ codeyard-git = { path = "backend/git" }
 codeyard-webui = { path = "webui" }
 tokio = { version = "1", features = ["full"] }
 http = "1"
-axum = { version = "0.7", features = ["macros", "ws", "multipart"] }
+axum = { version = "0.8", features = ["macros", "ws", "multipart"] }
 tower-http = { version = "0.7", features = ["cors", "trace", "limit", "compression-gzip", "compression-br"] }
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = { version = "1", features = ["arbitrary_precision"] }
