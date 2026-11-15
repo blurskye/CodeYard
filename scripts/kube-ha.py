@@ -446,6 +446,8 @@ def port_forward(target, remote):
 def git(forge, *args, cwd=None, ssh=None):
     env = {"PATH": os.environ["PATH"], "HOME": str(forge.work), "GIT_CONFIG_GLOBAL": "/dev/null",
            "GIT_CONFIG_NOSYSTEM": "1", "GIT_TERMINAL_PROMPT": "0",
+           # A credential prompt must fail, never pop up a desktop askpass dialog.
+           "GIT_ASKPASS": "true", "SSH_ASKPASS": "true", "SSH_ASKPASS_REQUIRE": "never",
            "GIT_AUTHOR_NAME": forge.owner, "GIT_AUTHOR_EMAIL": f"{forge.owner}@example.test",
            "GIT_COMMITTER_NAME": forge.owner, "GIT_COMMITTER_EMAIL": f"{forge.owner}@example.test"}
     if ssh:
