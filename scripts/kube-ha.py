@@ -10,7 +10,7 @@
                             restart (rolling restart of web), scale (web 2 -> 4 under load);
                             `chaos` adds double (primary and a standby die together), storage
                             (one, then two storage pods), edge (poolers and web, then SSH),
-                            operator (operator and primary together), partition (primary cut
+                            operator (operator and primary together), partition (primary pod cut
                             off from the network for a minute) and storm (random pod kills for
                             five minutes), each under writes, Git pushes and reads
   kube-ha.py down           delete the namespace; the operator and its CRDs stay
@@ -827,23 +827,42 @@ def step_operator(forge):
     ordeal(forge, "operator-and-primary", act)
 
 
+def node_ssh(node, script):
+    """Run a shell script as root on a node; the address is the node's external (else internal) one."""
+    address = next(address for name, address, _ in nodes() if name == node)
+    command = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "StrictHostKeyChecking=accept-new"]
+    if os.environ.get("NODE_SSH_KEY"):
+        command += ["-i", os.environ["NODE_SSH_KEY"], "-o", "IdentitiesOnly=yes"]
+    return run(command + [f"{os.environ.get('NODE_SSH_USER', 'root')}@{address}", script], timeout=60)
+
+
 def step_partition(forge):
-    """Cut the primary off from every other pod for a minute, then heal: no split brain, no loss."""
-    policy = {"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "metadata": {"name": "chaos-isolate"},
-              "spec": {"podSelector": {"matchLabels": {}}, "policyTypes": ["Ingress", "Egress"]}}
+    """Cut the primary's pod off the network for a minute, then heal: no split brain, no loss.
+    A NetworkPolicy does not do this: the node's firewall keeps established connections alive,
+    so the cut drops that one pod's packets in the node's FORWARD chain instead."""
+    cut = {}
+
+    def drop(action):
+        # The address and node are remembered, so healing removes the rules even if the pod moved.
+        rules = [f"iptables -{action} FORWARD {'1 ' if action == 'I' else ''}-{flag} {cut['ip']} -j DROP" for flag in "sd"]
+        node_ssh(cut["node"], " && ".join(rules))
 
     def act():
-        primary = pg_cluster()["status"]["currentPrimary"]
-        policy["spec"]["podSelector"]["matchLabels"] = {"cnpg.io/instanceName": primary}
-        log(f"isolating {primary} from the network for 60 s")
-        kubectl("apply", "-f", "-", input=json.dumps(policy))
+        cut["pod"] = pg_cluster()["status"]["currentPrimary"]
+        pod = kube_json("get", "pod", cut["pod"])
+        cut["ip"], cut["node"] = pod["status"]["podIP"], pod["spec"]["nodeName"]
+        log(f"cutting {cut['pod']} off the network for 60 s")
+        drop("I")
+        cut["on"] = True
         time.sleep(60)
-        kubectl("delete", "networkpolicy", "chaos-isolate", "--ignore-not-found")
+        drop("D")
+        cut["on"] = False
         log("network healed")
     try:
         ordeal(forge, "partition", act, settle=20)
     finally:
-        kubectl("delete", "networkpolicy", "chaos-isolate", "--ignore-not-found")
+        if cut.get("on"):
+            drop("D")
 
 
 def step_storm(forge):
