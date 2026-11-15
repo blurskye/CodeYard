@@ -347,6 +347,35 @@ pub async fn decide_write(
     Ok(result)
 }
 
+pub async fn abort_expired_write(pool: &SqlitePool, repo: i64) -> Result<Option<WriteRecord>> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let controlled: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM repository_write_control WHERE repository_id=$1)",
+    )
+    .bind(repo)
+    .fetch_one(&mut *tx)
+    .await?;
+    if !controlled {
+        return Ok(None);
+    }
+    // The same lock order as decide_write: a commit decision cannot interleave with this abort.
+    lock_control(&mut tx, repo).await?;
+    sqlx::query("UPDATE repository_writes SET decision='abort' WHERE repository_id=$1 AND finished=0 AND decision='pending' AND julianday(deadline)<=julianday('now')")
+        .bind(repo).execute(&mut *tx).await?;
+    let id: Option<String> = sqlx::query_scalar(
+        "SELECT id FROM repository_writes WHERE repository_id=$1 AND finished=0 AND decision='abort'",
+    )
+    .bind(repo)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let write = match id {
+        Some(id) => record(&mut tx, &id).await?,
+        None => None,
+    };
+    tx.commit().await?;
+    Ok(write)
+}
+
 pub async fn load_write(pool: &SqlitePool, id: &str) -> Result<Option<WriteRecord>> {
     crate::cluster::writes::validate_id(id)?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;

@@ -37,6 +37,9 @@ impl NodeContext {
         let pool = self.database()?;
         let limits = crate::git_transport::WriteLimits::load(pool).await?;
         let id = Uuid::new_v4().to_string();
+        if let Err(error) = self.settle_stale_write(repository, path, repo).await {
+            tracing::warn!(%error, "could not release an abandoned write");
+        }
         let write =
             codeyard_nodes::writes::begin(pool, repo, self.node_id, term, &id, changes).await?;
         let prepared = self
@@ -107,6 +110,45 @@ impl NodeContext {
             self.remove_write_preparation(path, write, limits).await
         })
         .await?
+    }
+
+    /// A coordinator that died between its begin and its decision leaves a write pending, and the
+    /// repository's one unfinished slot taken. After the deadline that write can never commit, so
+    /// it is aborted, its preparation is removed here and on the voters, and the slot is released.
+    /// The caller holds the publication lease. A failure leaves the slot as it was.
+    pub(crate) async fn settle_stale_write(
+        &self,
+        repository: Uuid,
+        path: &std::path::Path,
+        repo: i64,
+    ) -> anyhow::Result<()> {
+        use codeyard_db_placement::cluster::writes as journal;
+        let pool = self.database()?;
+        let Some(write) = journal::abort_expired_write(pool, repo).await? else {
+            return Ok(());
+        };
+        tracing::warn!(repository = repo, write = %write.id, "released a write abandoned past its deadline");
+        self.abort_push_write(repository, path, &write).await?;
+        journal::finish_write(pool, &write.id, write.term).await?;
+        Ok(())
+    }
+
+    /// The periodic form of `settle_stale_write`, for the repository's primary: it takes the
+    /// publication lease itself, and gives up quietly when a push holds it.
+    pub async fn sweep_stale_write(
+        &self,
+        repository: Uuid,
+        repo: i64,
+        term: i64,
+    ) -> anyhow::Result<()> {
+        let path = crate::context::term_path(&self.repos_path, repository, term);
+        let held = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            codeyard_git::locks::publication(&path),
+        )
+        .await??;
+        held.scope(self.settle_stale_write(repository, &path, repo))
+            .await
     }
 
     pub(crate) async fn abort_push_write(

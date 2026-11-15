@@ -751,6 +751,21 @@ async fn copy_one(
         }
         let view =
             codeyard_db_placement::cluster::writes::recovery_view(pool, row.repository_id).await?;
+        // A push whose coordinator died leaves its write pending, and no later write can begin.
+        // Past the deadline it can never commit; the primary aborts it, cleans up and releases it.
+        if view.primary_id == context.node_id
+            && view.unfinished.as_ref().is_some_and(|write| {
+                write.decision == "abort"
+                    || (write.decision == "pending" && write.deadline <= chrono::Utc::now())
+            })
+        {
+            if let Err(error) = context
+                .sweep_stale_write(uuid, row.repository_id, view.term)
+                .await
+            {
+                tracing::warn!(repository = row.repository_id, %error, "could not release an abandoned write");
+            }
+        }
         if !view.serving
             && view.voters.iter().any(|voter| {
                 voter.node_id == context.node_id && voter.applied_version != view.committed_version

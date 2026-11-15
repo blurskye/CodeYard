@@ -54,6 +54,13 @@ native_operation!(crate::postgres::cluster::writes::decide_write,
     crate::sqlite::cluster::writes::decide_write,
     /// Failed commit preconditions decide abort. An existing decision is returned unchanged.
     fn decide_write(pool: &DbPool, id: &str, primary: i64, term: i64, commit: bool) -> Result<WriteRecord>);
+native_operation!(crate::postgres::cluster::writes::abort_expired_write,
+    crate::sqlite::cluster::writes::abort_expired_write,
+    /// A write still pending after its deadline can never commit (the deciding update requires an
+    /// unexpired deadline), so it is aborted under the repository's control lock, the one
+    /// `decide_write` holds. Returns the unfinished aborted write, whether aborted now or earlier,
+    /// for the caller to clean up and finish. A repository without a quorum term returns None.
+    fn abort_expired_write(pool: &DbPool, repo: i64) -> Result<Option<WriteRecord>>);
 native_operation!(crate::postgres::cluster::writes::load_write,
     crate::sqlite::cluster::writes::load_write,
     fn load_write(pool: &DbPool, id: &str) -> Result<Option<WriteRecord>>);

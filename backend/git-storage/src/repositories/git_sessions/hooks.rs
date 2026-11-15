@@ -323,6 +323,14 @@ impl Gateway {
                 let repository = crate::wire::repository_uuid(&repo.disk_path)?;
                 let view = journal::recovery_view(&self.pool, repo.id).await?;
                 let id = uuid::Uuid::new_v4().to_string();
+                if let Some(lease) = operation.publication_lease.as_ref() {
+                    if let Err(error) = lease
+                        .scope(cluster.settle_stale_write(repository, &operation.path, repo.id))
+                        .await
+                    {
+                        tracing::warn!(%error, "could not release an abandoned write");
+                    }
+                }
                 let write = match codeyard_nodes::writes::begin(
                     &self.pool, repo.id, primary, view.term, &id, &changes,
                 )

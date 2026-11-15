@@ -275,3 +275,188 @@ async fn prepared_hook_waits_for_a_decision_and_missing_voter_refuses_without_mo
     );
     gateway.complete_quorum(&operation).await.unwrap();
 }
+
+/// A coordinator that died between its begin and its decision leaves the repository's one
+/// unfinished slot taken. After the deadline the primary's sweep aborts the write, removes its
+/// preparation and releases the slot, so the next push is no longer refused.
+#[tokio::test]
+async fn an_abandoned_write_is_released_by_the_primarys_sweep() {
+    let directory = tempfile::tempdir().unwrap();
+    let native = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(4)
+        .connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(directory.path().join("fixture.sqlite"))
+                .create_if_missing(true)
+                .foreign_keys(true),
+        )
+        .await
+        .map(codeyard_database::pool::Pool::from)
+        .unwrap();
+    let pool = DbPool::from(native.clone());
+    codeyard_database::run_migrations(&pool).await.unwrap();
+    codeyard_db_placement::node_config::upsert_node_configuration(&pool, "public", true)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE node_configuration SET write_quorum='1',write_timeout_seconds=5 WHERE id=1",
+    )
+    .execute(&native)
+    .await
+    .unwrap();
+    let key = NodeKey::generate();
+    let primary = codeyard_db_placement::cluster::register_own_node(
+        &pool,
+        &key.public_hex(),
+        "primary",
+        &["storage".into()],
+        "test",
+    )
+    .await
+    .unwrap()
+    .id;
+    let owner = codeyard_db_identity::users::accounts::create_user(&pool, "owner", None)
+        .await
+        .unwrap();
+    let root = directory.path().join("repos");
+    std::fs::create_dir(&root).unwrap();
+    let uuid = uuid::Uuid::new_v4();
+    let path = codeyard_git_storage::context::term_path(&root, uuid, 1);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let repository = git2::Repository::init_bare(&path).unwrap();
+    let old = commit(&repository, "old");
+    let new = commit(&repository, "new");
+    repository
+        .reference(
+            "refs/heads/main",
+            git2::Oid::from_str(&old).unwrap(),
+            true,
+            "initial",
+        )
+        .unwrap();
+    repository.set_head("refs/heads/main").unwrap();
+    let repo = codeyard_db_repos::repositories::records::create_repository(
+        &pool,
+        owner.id,
+        "repo",
+        None,
+        false,
+        path.to_str().unwrap(),
+    )
+    .await
+    .unwrap();
+    assert!(
+        codeyard_db_placement::cluster::place_repository(&pool, repo.id, primary)
+            .await
+            .unwrap()
+    );
+    let initial = [
+        RefValue {
+            name: "HEAD".into(),
+            kind: "symbolic".into(),
+            target: "refs/heads/main".into(),
+        },
+        RefValue {
+            name: "refs/heads/main".into(),
+            kind: "oid".into(),
+            target: old.clone(),
+        },
+    ];
+    codeyard_db_placement::cluster::writes::bootstrap_writes(
+        &pool,
+        repo.id,
+        primary,
+        &[primary],
+        &initial,
+    )
+    .await
+    .unwrap();
+    assert!(codeyard_db_placement::cluster::writes::mark_write_applied(
+        &pool, repo.id, primary, 1, 0
+    )
+    .await
+    .unwrap());
+    assert!(
+        codeyard_db_placement::cluster::writes::enable_write_family(&pool, &[(repo.id, 1)])
+            .await
+            .unwrap()
+    );
+    let context = NodeContext {
+        pool: Some(pool.clone()),
+        rpc: std::sync::Arc::new(codeyard_repos_rpc::RpcFactory),
+        iroh: IrohDialer::new(Relay::Off, key.clone()),
+        key,
+        node_id: primary,
+        repos_path: root.clone(),
+        peers: Arc::new(RwLock::new(HashMap::new())),
+        unreachable: Arc::new(Mutex::new(HashMap::new())),
+        clone_cursor: Default::default(),
+        ci_replicas: Arc::new(RwLock::new(HashMap::new())),
+    };
+    let change = codeyard_database::models::RefChange {
+        name: "refs/heads/main".into(),
+        kind: "oid".into(),
+        old_target: Some(old),
+        new_target: Some(new),
+    };
+    let abandoned = uuid::Uuid::new_v4().to_string();
+    let begun = codeyard_db_placement::cluster::writes::begin_write(
+        &pool,
+        repo.id,
+        primary,
+        1,
+        &abandoned,
+        std::slice::from_ref(&change),
+    )
+    .await
+    .unwrap();
+    // Its coordinator "died" here: the preparation directory exists, no decision was made.
+    let preparation = codeyard_git_storage::git_transport::create_preparation(&path, &begun)
+        .await
+        .unwrap();
+    assert!(preparation.exists());
+    let next = uuid::Uuid::new_v4().to_string();
+    assert!(codeyard_db_placement::cluster::writes::begin_write(
+        &pool,
+        repo.id,
+        primary,
+        1,
+        &next,
+        std::slice::from_ref(&change),
+    )
+    .await
+    .is_err());
+    // Before the deadline the sweep leaves a live write alone.
+    context.sweep_stale_write(uuid, repo.id, 1).await.unwrap();
+    assert!(preparation.exists());
+    sqlx::query("UPDATE repository_writes SET deadline='2000-01-01T00:00:00.000000Z' WHERE id=$1")
+        .bind(&abandoned)
+        .execute(&native)
+        .await
+        .unwrap();
+    context.sweep_stale_write(uuid, repo.id, 1).await.unwrap();
+    assert!(
+        !preparation.exists(),
+        "the abandoned preparation is removed"
+    );
+    let view = codeyard_db_placement::cluster::writes::recovery_view(&pool, repo.id)
+        .await
+        .unwrap();
+    assert!(view.unfinished.is_none(), "the slot is released");
+    assert_eq!(view.committed_version, 0);
+    let record = codeyard_db_placement::cluster::writes::load_write(&pool, &abandoned)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!((record.decision.as_str(), record.finished), ("abort", true));
+    codeyard_db_placement::cluster::writes::begin_write(
+        &pool,
+        repo.id,
+        primary,
+        1,
+        &next,
+        &[change],
+    )
+    .await
+    .expect("the next write begins");
+}

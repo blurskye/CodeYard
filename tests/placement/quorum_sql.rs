@@ -1831,6 +1831,191 @@ async fn legacy_publishers_refused(pool: &DbPool) {
     );
 }
 
+/// Moves one write's deadline to `milliseconds` from now (negative: already past).
+async fn deadline_in(pool: &DbPool, id: &str, milliseconds: i64) {
+    match pool {
+        DbPool::Postgres(raw) => {
+            sqlx::query("UPDATE repository_writes SET deadline=clock_timestamp()+($2::bigint * INTERVAL '1 millisecond') WHERE id=$1")
+                .bind(id)
+                .bind(milliseconds)
+                .execute(raw)
+                .await
+                .unwrap();
+        }
+        DbPool::Sqlite(raw) => {
+            sqlx::query("UPDATE repository_writes SET deadline=strftime('%Y-%m-%dT%H:%M:%f000Z','now',printf('%+.3f seconds',$2/1000.0)) WHERE id=$1")
+                .bind(id)
+                .bind(milliseconds)
+                .execute(raw)
+                .await
+                .unwrap();
+        }
+    }
+}
+
+/// A coordinator that died after its begin leaves the write pending; once the deadline has
+/// passed the slot is released, and a push that was blocked behind it goes through.
+async fn abandoned_write_is_released_after_its_deadline(pool: &DbPool) {
+    let f = setup(pool, 3, "majority").await;
+    let abandoned = begin(pool, &f).await;
+    let next = Uuid::new_v4().to_string();
+    let writes = codeyard_db_placement::cluster::writes::abort_expired_write;
+    // Not yet expired: left alone, and the slot still refuses a second write.
+    assert!(writes(pool, f.repo).await.unwrap().is_none());
+    assert!(codeyard_db_placement::cluster::writes::begin_write(
+        pool,
+        f.repo,
+        f.primary,
+        1,
+        &next,
+        &[change()]
+    )
+    .await
+    .is_err());
+    let still = codeyard_db_placement::cluster::writes::load_write(pool, &abandoned)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(still.decision, "pending");
+    deadline_in(pool, &abandoned, -1_000).await;
+    // Expired: aborted, reported for cleanup, nothing committed.
+    let aborted = writes(pool, f.repo).await.unwrap().unwrap();
+    assert_eq!(
+        (aborted.id.as_str(), aborted.decision.as_str()),
+        (abandoned.as_str(), "abort")
+    );
+    assert!(!aborted.finished);
+    let view = codeyard_db_placement::cluster::writes::recovery_view(pool, f.repo)
+        .await
+        .unwrap();
+    assert_eq!(view.committed_version, 0);
+    // The aborted write still holds the slot until its cleanup finishes it, and it is reported again.
+    assert!(codeyard_db_placement::cluster::writes::begin_write(
+        pool,
+        f.repo,
+        f.primary,
+        1,
+        &next,
+        &[change()]
+    )
+    .await
+    .is_err());
+    assert_eq!(writes(pool, f.repo).await.unwrap().unwrap().id, abandoned);
+    // A late vote or commit cannot revive it.
+    assert!(
+        !codeyard_db_placement::cluster::writes::vote_write(pool, &abandoned, f.voters[0], 1)
+            .await
+            .unwrap()
+    );
+    let decided =
+        codeyard_db_placement::cluster::writes::decide_write(pool, &abandoned, f.primary, 1, true)
+            .await
+            .unwrap();
+    assert_eq!(decided.decision, "abort");
+    assert!(
+        codeyard_db_placement::cluster::writes::finish_write(pool, &abandoned, 1)
+            .await
+            .unwrap()
+    );
+    assert!(writes(pool, f.repo).await.unwrap().is_none());
+    let begun = codeyard_db_placement::cluster::writes::begin_write(
+        pool,
+        f.repo,
+        f.primary,
+        1,
+        &next,
+        &[change()],
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        (begun.base_version, begun.decision.as_str()),
+        (0, "pending")
+    );
+}
+
+/// A write that was already decided is never touched by the sweep, and a repository with no
+/// quorum term has nothing to sweep.
+async fn sweep_ignores_decided_writes(pool: &DbPool) {
+    let f = setup(pool, 3, "majority").await;
+    let id = begin(pool, &f).await;
+    votes(pool, &f, &id).await;
+    let committed =
+        codeyard_db_placement::cluster::writes::decide_write(pool, &id, f.primary, 1, true)
+            .await
+            .unwrap();
+    assert_eq!(committed.decision, "commit");
+    deadline_in(pool, &id, -1_000).await;
+    assert!(
+        codeyard_db_placement::cluster::writes::abort_expired_write(pool, f.repo)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let after = codeyard_db_placement::cluster::writes::load_write(pool, &id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (after.decision.as_str(), after.committed_version),
+        ("commit", Some(1))
+    );
+    assert!(
+        codeyard_db_placement::cluster::writes::abort_expired_write(pool, i64::MAX)
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+/// A commit decision and the sweep race around the deadline: whichever wins, the control row and
+/// the write agree, so a repository never advances its version for an aborted write.
+async fn sweep_and_commit_race_leave_one_outcome(pool: &DbPool) {
+    let mut committed = 0;
+    let mut aborted = 0;
+    for round in 0..24_i64 {
+        let f = setup(pool, 3, "majority").await;
+        let id = begin(pool, &f).await;
+        votes(pool, &f, &id).await;
+        deadline_in(pool, &id, 30 + round * 3).await;
+        tokio::time::sleep(std::time::Duration::from_millis(25 + (round as u64) * 3)).await;
+        let (decided, swept) = tokio::join!(
+            codeyard_db_placement::cluster::writes::decide_write(pool, &id, f.primary, 1, true),
+            codeyard_db_placement::cluster::writes::abort_expired_write(pool, f.repo),
+        );
+        let decided = decided.unwrap();
+        swept.unwrap();
+        let view = codeyard_db_placement::cluster::writes::recovery_view(pool, f.repo)
+            .await
+            .unwrap();
+        let after = codeyard_db_placement::cluster::writes::load_write(pool, &id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(after.decision, decided.decision, "round {round}");
+        match after.decision.as_str() {
+            "commit" => {
+                committed += 1;
+                assert_eq!(view.committed_version, 1, "round {round}");
+                assert_eq!(
+                    view.refs.iter().find(|v| v.name == MAIN).unwrap().target,
+                    NEW
+                );
+            }
+            "abort" => {
+                aborted += 1;
+                assert_eq!(view.committed_version, 0, "round {round}");
+                assert_eq!(
+                    view.refs.iter().find(|v| v.name == MAIN).unwrap().target,
+                    OLD
+                );
+            }
+            other => panic!("round {round}: write is still {other}"),
+        }
+    }
+    eprintln!("race rounds: {committed} committed, {aborted} aborted");
+}
+
 macro_rules! engine_pair {
     ($sqlite:ident, $postgres:ident, $contract:ident) => {
         #[tokio::test]
@@ -1992,4 +2177,20 @@ engine_pair!(
     sqlite_replacement_voter_current_at_switch,
     postgres_replacement_voter_current_at_switch,
     replacement_voter_must_have_current_copy_at_the_switch
+);
+
+engine_pair!(
+    sqlite_abandoned_write_is_released_after_its_deadline,
+    postgres_abandoned_write_is_released_after_its_deadline,
+    abandoned_write_is_released_after_its_deadline
+);
+engine_pair!(
+    sqlite_sweep_ignores_decided_writes,
+    postgres_sweep_ignores_decided_writes,
+    sweep_ignores_decided_writes
+);
+engine_pair!(
+    sqlite_sweep_and_commit_race_leave_one_outcome,
+    postgres_sweep_and_commit_race_leave_one_outcome,
+    sweep_and_commit_race_leave_one_outcome
 );
