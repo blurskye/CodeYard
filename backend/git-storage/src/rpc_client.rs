@@ -125,11 +125,40 @@ impl NodeContext {
         use codeyard_db_placement::cluster::writes as journal;
         let pool = self.database()?;
         let Some(write) = journal::abort_expired_write(pool, repo).await? else {
-            return Ok(());
+            return self.finish_decided_commit(repository, repo).await;
         };
         tracing::warn!(repository = repo, write = %write.id, "released a write abandoned past its deadline");
         self.abort_push_write(repository, path, &write).await?;
         journal::finish_write(pool, &write.id, write.term).await?;
+        Ok(())
+    }
+
+    /// A coordinator that died after the commit decision but before the primary published it
+    /// leaves the primary behind the committed version, and no later write can begin. The voters
+    /// that prepared the write still hold its objects: asking them to apply it makes a current
+    /// copy the primary's voter pass then catches up from.
+    async fn finish_decided_commit(&self, repository: Uuid, repo: i64) -> anyhow::Result<()> {
+        use codeyard_db_placement::cluster::writes as journal;
+        let view = journal::recovery_view(self.database()?, repo).await?;
+        let Some(write) = view
+            .unfinished
+            .as_ref()
+            .filter(|write| write.decision == "commit")
+        else {
+            return Ok(());
+        };
+        let behind = view.primary_id == self.node_id
+            && view.voters.iter().any(|voter| {
+                voter.node_id == self.node_id
+                    && voter.term == view.term
+                    && voter.applied_version != view.committed_version
+            });
+        if behind {
+            tracing::warn!(repository = repo, write = %write.id, "asking the voters to apply a committed write its coordinator did not publish");
+            // The result only says whether enough voters answered; the primary's own catch-up
+            // and the finish that follows it read the outcome from the journal.
+            let _ = self.write_followers(repository, write, false).await;
+        }
         Ok(())
     }
 

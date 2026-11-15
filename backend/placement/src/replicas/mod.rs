@@ -753,10 +753,16 @@ async fn copy_one(
             codeyard_db_placement::cluster::writes::recovery_view(pool, row.repository_id).await?;
         // A push whose coordinator died leaves its write pending, and no later write can begin.
         // Past the deadline it can never commit; the primary aborts it, cleans up and releases it.
+        // A committed write its coordinator never published is finished through the voters.
         if view.primary_id == context.node_id
             && view.unfinished.as_ref().is_some_and(|write| {
                 write.decision == "abort"
                     || (write.decision == "pending" && write.deadline <= chrono::Utc::now())
+                    || (write.decision == "commit"
+                        && view.voters.iter().any(|voter| {
+                            voter.node_id == context.node_id
+                                && voter.applied_version != view.committed_version
+                        }))
             })
         {
             if let Err(error) = context
