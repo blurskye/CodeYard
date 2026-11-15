@@ -1969,51 +1969,64 @@ async fn sweep_ignores_decided_writes(pool: &DbPool) {
 }
 
 /// A commit decision and the sweep race around the deadline: whichever wins, the control row and
-/// the write agree, so a repository never advances its version for an aborted write.
-async fn sweep_and_commit_race_leave_one_outcome(pool: &DbPool) {
-    let mut committed = 0;
-    let mut aborted = 0;
-    for round in 0..24_i64 {
-        let f = setup(pool, 3, "majority").await;
-        let id = begin(pool, &f).await;
-        votes(pool, &f, &id).await;
-        deadline_in(pool, &id, 30 + round * 3).await;
-        tokio::time::sleep(std::time::Duration::from_millis(25 + (round as u64) * 3)).await;
-        let (decided, swept) = tokio::join!(
-            codeyard_db_placement::cluster::writes::decide_write(pool, &id, f.primary, 1, true),
-            codeyard_db_placement::cluster::writes::abort_expired_write(pool, f.repo),
-        );
-        let decided = decided.unwrap();
-        swept.unwrap();
-        let view = codeyard_db_placement::cluster::writes::recovery_view(pool, f.repo)
-            .await
-            .unwrap();
-        let after = codeyard_db_placement::cluster::writes::load_write(pool, &id)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(after.decision, decided.decision, "round {round}");
-        match after.decision.as_str() {
-            "commit" => {
-                committed += 1;
-                assert_eq!(view.committed_version, 1, "round {round}");
-                assert_eq!(
-                    view.refs.iter().find(|v| v.name == MAIN).unwrap().target,
-                    NEW
-                );
-            }
-            "abort" => {
-                aborted += 1;
-                assert_eq!(view.committed_version, 0, "round {round}");
-                assert_eq!(
-                    view.refs.iter().find(|v| v.name == MAIN).unwrap().target,
-                    OLD
-                );
-            }
-            other => panic!("round {round}: write is still {other}"),
+/// the write agree, so a repository never advances its version for an aborted write. Each round
+/// runs on a database of its own, because `setup` registers fixed node and repository names.
+async fn sweep_and_commit_race_round(pool: &DbPool, round: i64) {
+    let f = setup(pool, 3, "majority").await;
+    let id = begin(pool, &f).await;
+    votes(pool, &f, &id).await;
+    deadline_in(pool, &id, 30 + round * 3).await;
+    tokio::time::sleep(std::time::Duration::from_millis(25 + (round as u64) * 3)).await;
+    let (decided, swept) = tokio::join!(
+        codeyard_db_placement::cluster::writes::decide_write(pool, &id, f.primary, 1, true),
+        codeyard_db_placement::cluster::writes::abort_expired_write(pool, f.repo),
+    );
+    let decided = decided.unwrap();
+    swept.unwrap();
+    let view = codeyard_db_placement::cluster::writes::recovery_view(pool, f.repo)
+        .await
+        .unwrap();
+    let after = codeyard_db_placement::cluster::writes::load_write(pool, &id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(after.decision, decided.decision, "round {round}");
+    match after.decision.as_str() {
+        "commit" => {
+            assert_eq!(view.committed_version, 1, "round {round}");
+            assert_eq!(
+                view.refs.iter().find(|v| v.name == MAIN).unwrap().target,
+                NEW
+            );
         }
+        "abort" => {
+            assert_eq!(view.committed_version, 0, "round {round}");
+            assert_eq!(
+                view.refs.iter().find(|v| v.name == MAIN).unwrap().target,
+                OLD
+            );
+        }
+        other => panic!("round {round}: write is still {other}"),
     }
-    eprintln!("race rounds: {committed} committed, {aborted} aborted");
+}
+
+const RACE_ROUNDS: i64 = 12;
+
+#[tokio::test]
+async fn sqlite_sweep_and_commit_race_leave_one_outcome() {
+    for round in 0..RACE_ROUNDS {
+        let database = native::NativeDatabase::new().await;
+        sweep_and_commit_race_round(&database.pool, round).await;
+    }
+}
+
+#[tokio::test]
+async fn postgres_sweep_and_commit_race_leave_one_outcome() {
+    for round in 0..RACE_ROUNDS {
+        let mut database = native::PostgresDatabase::new().await;
+        sweep_and_commit_race_round(&database.pool, round).await;
+        database.finish().await;
+    }
 }
 
 macro_rules! engine_pair {
@@ -2188,9 +2201,4 @@ engine_pair!(
     sqlite_sweep_ignores_decided_writes,
     postgres_sweep_ignores_decided_writes,
     sweep_ignores_decided_writes
-);
-engine_pair!(
-    sqlite_sweep_and_commit_race_leave_one_outcome,
-    postgres_sweep_and_commit_race_leave_one_outcome,
-    sweep_and_commit_race_leave_one_outcome
 );
