@@ -111,13 +111,15 @@ it over the cluster network and imports it with `k3s ctr images import` over SSH
 registry is involved and pods use `pullPolicy: Never`. `up` installs the operator, a
 single-pod RustFS as the S3 store, and the chart with three PostgreSQL instances on worker
 nodes, two web pods, an SSH pod, three storage pods and a Traefik ingress on
-`codeyard.<node IP>.nip.io`. SSH stays a ClusterIP service and the test reaches it through
+`codeyard.<node IP>.nip.io` (`<namespace>.<node IP>.nip.io` when another namespace already uses the first name). SSH stays a ClusterIP service and the test reaches it through
 `kubectl port-forward`. Generated keys and passwords live only in cluster Secrets.
 
 `test` signs in through `/setup`, creates a token, a repository, pushes over HTTP and SSH,
 and opens an issue. The failure steps keep one issue write a second (REST API) and issue-page
 reads as the signed-in owner running, then check that every acknowledged issue is still
 there. The run revokes the test account's tokens when it ends.
+The `drain` step evicts every pod on the primary's node, so it refuses when other deployments' pods
+share that node; `DRAIN_SHARED_NODE=1` allows it (their controllers reschedule the pods).
 
 Measured on 2026-11-08 on seven k3s 1.35 nodes (4 vCPU, 8 GB, `local-path` volumes) with
 CloudNativePG 1.30.1 and PostgreSQL 18.6, after the startup database wait and the move of

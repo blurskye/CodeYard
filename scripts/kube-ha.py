@@ -12,7 +12,7 @@
 
 Settings: KUBE_CONTEXT (default: the current context), NAMESPACE (codeyard-test),
 NODE_SSH_KEY and NODE_SSH_USER (root) for `image`, INGRESS_IP (default: the first worker's
-external IP). Generated passwords and keys live only in cluster Secrets. Needs kubectl, helm,
+external IP; hosts carry the namespace when another namespace already uses codeyard.<ip>.nip.io). Generated passwords and keys live only in cluster Secrets. Needs kubectl, helm,
 git, ssh and ssh-keygen; `image` also needs podman and k3s nodes reachable over SSH.
 """
 import base64
@@ -259,10 +259,20 @@ def ingress_ip(found):
     return os.environ.get("INGRESS_IP") or next(address for _, address, control in found if not control)
 
 
+def ingress_hosts(found):
+    """Names for the forge and its S3 store. `codeyard.<ip>.nip.io` unless another namespace's
+    ingress already answers it; the second deployment then takes the namespace in the name, so
+    two test deployments never send each other's requests."""
+    ip = ingress_ip(found)
+    taken = {rule.get("host") for ingress in kube_json("get", "ingress", "--all-namespaces", namespaced=False)["items"]
+             if ingress["metadata"]["namespace"] != NS for rule in ingress["spec"].get("rules", [])}
+    name = "codeyard" if f"codeyard.{ip}.nip.io" not in taken else NS
+    return f"{name}.{ip}.nip.io", f"{name}-s3.{ip}.nip.io"
+
+
 def cmd_up(image):
     found = nodes()
-    ip = ingress_ip(found)
-    host, s3_host = f"codeyard.{ip}.nip.io", f"codeyard-s3.{ip}.nip.io"
+    host, s3_host = ingress_hosts(found)
     log(f"CloudNativePG {CNPG_VERSION}")
     kubectl("apply", "--server-side", "-f", CNPG_MANIFEST, namespaced=False)
     kubectl("-n", "cnpg-system", "rollout", "status", "deployment/cnpg-controller-manager",
@@ -631,12 +641,17 @@ def step_drain(forge):
     primary = pg_cluster()["status"]["currentPrimary"]
     node = kube_json("get", "pod", primary)["spec"]["nodeName"]
     # Draining evicts every pod on the node; only go ahead when they are all ours.
-    others = [f"{pod['metadata']['namespace']}/{pod['metadata']['name']}"
-              for pod in kube_json("get", "pods", "--all-namespaces", "--field-selector",
-                                   f"spec.nodeName={node}", namespaced=False)["items"]
+    others = [pod for pod in kube_json("get", "pods", "--all-namespaces", "--field-selector",
+                                       f"spec.nodeName={node}", namespaced=False)["items"]
               if pod["metadata"]["namespace"] != NS
               and not any(owner["kind"] == "DaemonSet" for owner in pod["metadata"].get("ownerReferences", []))]
-    expect(not others, f"{node} also runs {', '.join(others)}; not draining it")
+    names = ", ".join(f"{pod['metadata']['namespace']}/{pod['metadata']['name']}" for pod in others)
+    # Other deployments' pods are evicted too (their controllers reschedule them), so that needs
+    # DRAIN_SHARED_NODE=1. Another PostgreSQL primary would hold the drain on its own budget.
+    expect(not others or os.environ.get("DRAIN_SHARED_NODE") == "1",
+           f"{node} also runs {names}; set DRAIN_SHARED_NODE=1 to evict them too")
+    expect(not any(pod["metadata"].get("labels", {}).get("cnpg.io/instanceRole") == "primary" for pod in others),
+           f"{node} also runs another PostgreSQL primary ({names}); not draining it")
     before = web_restarts()
     drained = None
     try:

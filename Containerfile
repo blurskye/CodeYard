@@ -26,7 +26,8 @@ RUN cd /opt/codeyard-release \
     && install -m 0755 codeyard /runtime/usr/local/bin/codeyard \
     && install -m 0755 codeyard-actions /runtime/usr/local/bin/codeyard-actions \
     && install -m 0755 act /runtime/usr/local/bin/act \
-    && cp -R webui /runtime/app/webui/dist
+    && cp -R webui /runtime/app/webui/dist \
+    && chmod -R u=rwX,go=rX /runtime/app/webui/dist
 
 FROM docker.io/library/debian:trixie-slim
 
