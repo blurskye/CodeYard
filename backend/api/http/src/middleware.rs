@@ -246,8 +246,9 @@ fn streams_upload(request: &Request) -> bool {
         .extensions()
         .get::<MatchedPath>()
         .is_some_and(|matched| {
+            // axum 0.8 spells parameters `{name}`; the route constants spell them `:name`.
+            let matched = crate::cell_routes::policy_path(matched.as_str());
             let path = matched
-                .as_str()
                 .strip_prefix(crate::shared::repos::LEGACY_PREFIX)
                 .unwrap_or(matched.as_str());
             (*request.method() == Method::PUT

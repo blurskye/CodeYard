@@ -20,6 +20,25 @@ pub fn axum_path(path: &str) -> String {
         .join("/")
 }
 
+/// The inverse of [`axum_path`]: the path axum reports in `MatchedPath` (`{name}`, `{*name}`)
+/// back in the policy spelling the route constants use (`:name`, `*name`).
+pub fn policy_path(matched: &str) -> String {
+    matched
+        .split('/')
+        .map(|segment| {
+            match segment
+                .strip_prefix('{')
+                .and_then(|inner| inner.strip_suffix('}'))
+            {
+                Some(inner) if inner.starts_with('*') => inner.to_owned(),
+                Some(inner) if !inner.is_empty() => format!(":{inner}"),
+                _ => segment.to_owned(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
 impl<S: Clone + Send + Sync + 'static> CellRoutes<S> for Router<S> {
     fn cell_route(self, path: &str, route: MethodRouter<S>) -> Self {
         codeyard_types::cell_routes::record(path);
@@ -38,7 +57,7 @@ impl<S: Clone + Send + Sync + 'static> CellRoutes<S> for Router<S> {
 
 #[cfg(test)]
 mod tests {
-    use super::axum_path;
+    use super::{axum_path, policy_path};
 
     #[test]
     fn policy_paths_become_axum_paths() {
@@ -50,5 +69,13 @@ mod tests {
         assert_eq!(axum_path("/"), "/");
         assert_eq!(axum_path("/users/:user_id"), "/users/{user_id}");
         assert_eq!(axum_path("/plain/segments"), "/plain/segments");
+        for path in [
+            "/repos/:owner/:repo/git/ref/*ref",
+            "/v2/*path",
+            "/",
+            "/plain/x",
+        ] {
+            assert_eq!(policy_path(&axum_path(path)), path);
+        }
     }
 }
